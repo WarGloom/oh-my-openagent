@@ -19,6 +19,25 @@ import type { AvailableSkill, AvailableCategory } from "../../agents/dynamic-age
 
 describe("prompt-builder", () => {
   describe("buildSystemContent", () => {
+    test("#when no other system content exists #then Serena navigation reminder is added", () => {
+      const result = buildSystemContent({})
+
+      expect(result).toBeDefined()
+      expect(result).toContain("<serena_navigation>")
+      expect(result).toContain("use Serena tools first for codebase navigation")
+    })
+
+    test("#when system content already exists #then Serena navigation reminder is appended", () => {
+      const result = buildSystemContent({
+        skillContent: "Skill instructions",
+        categoryPromptAppend: "Category instructions",
+      })
+
+      expect(result).toContain("Skill instructions")
+      expect(result).toContain("Category instructions")
+      expect(result).toContain("<serena_navigation>")
+    })
+
     describe("#given non-plan agent with availableSkills", () => {
       test("#when availableSkills contains project-level skills #then system content includes available_skills section", () => {
         // given

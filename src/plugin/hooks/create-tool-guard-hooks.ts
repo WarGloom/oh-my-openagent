@@ -10,6 +10,7 @@ import {
   createEmptyTaskResponseDetectorHook,
   createRulesInjectorHook,
   createTasksTodowriteDisablerHook,
+  createSerenaNavigationGuardHook,
   createWriteExistingFileGuardHook,
   createBashFileReadGuardHook,
   createHashlineReadEnhancerHook,
@@ -34,6 +35,7 @@ export type ToolGuardHooks = {
   emptyTaskResponseDetector: ReturnType<typeof createEmptyTaskResponseDetectorHook> | null
   rulesInjector: ReturnType<typeof createRulesInjectorHook> | null
   tasksTodowriteDisabler: ReturnType<typeof createTasksTodowriteDisablerHook> | null
+  serenaNavigationGuard: ReturnType<typeof createSerenaNavigationGuardHook> | null
   writeExistingFileGuard: ReturnType<typeof createWriteExistingFileGuardHook> | null
   bashFileReadGuard: ReturnType<typeof createBashFileReadGuardHook> | null
   hashlineReadEnhancer: ReturnType<typeof createHashlineReadEnhancerHook> | null
@@ -105,6 +107,10 @@ export function createToolGuardHooks(args: {
         createTasksTodowriteDisablerHook({ experimental: pluginConfig.experimental }))
     : null
 
+  const serenaNavigationGuard = isHookEnabled("serena-navigation-guard")
+    ? safeHook("serena-navigation-guard", () => createSerenaNavigationGuardHook())
+    : null
+
   const writeExistingFileGuard = isHookEnabled("write-existing-file-guard")
     ? safeHook("write-existing-file-guard", () => createWriteExistingFileGuardHook(ctx))
     : null
@@ -141,6 +147,7 @@ export function createToolGuardHooks(args: {
     emptyTaskResponseDetector,
     rulesInjector,
     tasksTodowriteDisabler,
+    serenaNavigationGuard,
     writeExistingFileGuard,
     bashFileReadGuard,
     hashlineReadEnhancer,

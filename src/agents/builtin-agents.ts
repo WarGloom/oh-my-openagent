@@ -18,6 +18,7 @@ import {
   fetchAvailableModels,
   readConnectedProvidersCache,
   readProviderModelsCache,
+  applySerenaNavigationPrompt,
 } from "../shared"
 import { CATEGORY_DESCRIPTIONS } from "../tools/delegate-task/constants"
 import { mergeCategories } from "../shared/merge-categories"
@@ -176,6 +177,10 @@ export async function createBuiltinAgents(
   })
   if (atlasConfig) {
     result["atlas"] = atlasConfig
+  }
+
+  for (const [name, config] of Object.entries(result)) {
+    result[name] = applySerenaNavigationPrompt(config)
   }
 
   return result

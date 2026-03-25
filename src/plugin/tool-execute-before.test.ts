@@ -87,6 +87,34 @@ describe("createToolExecuteBeforeHandler", () => {
     expect(called).toBe(false)
   })
 
+  test("runs serena navigation guard before downstream tool execution", async () => {
+    let called = false
+    const ctx = {
+      client: {
+        session: {
+          messages: async () => ({ data: [] }),
+        },
+      },
+    }
+
+    const hooks = {
+      serenaNavigationGuard: {
+        "tool.execute.before": async (_input: unknown, _output: unknown) => {
+          called = true
+        },
+      },
+    }
+
+    const handler = createToolExecuteBeforeHandler({ ctx, hooks })
+
+    await handler(
+      { tool: "grep", sessionID: "ses_guard", callID: "call_guard" },
+      { args: { pattern: "foo" } as Record<string, unknown> },
+    )
+
+    expect(called).toBe(true)
+  })
+
   describe("task tool subagent_type normalization", () => {
     const emptyHooks = {}
 

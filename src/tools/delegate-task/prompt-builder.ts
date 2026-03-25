@@ -2,6 +2,7 @@ import type { BuildSystemContentInput } from "./types"
 import type { AvailableSkill } from "../../agents/dynamic-agent-prompt-builder"
 import { buildPlanAgentSystemPrepend, isPlanAgent } from "./constants"
 import { buildSystemContentWithTokenLimit } from "./token-limiter"
+import { appendSerenaNavigationPrompt } from "../../shared"
 
 const FREE_OR_LOCAL_PROMPT_TOKEN_LIMIT = 24000
 const PLAN_AGENT_PROMPT_BASE = `
@@ -85,7 +86,7 @@ export function buildSystemContent(input: BuildSystemContentInput): string | und
   const effectiveMaxPromptTokens = maxPromptTokens
     ?? (usesFreeOrLocalModel(model) ? FREE_OR_LOCAL_PROMPT_TOKEN_LIMIT : undefined)
 
-  return buildSystemContentWithTokenLimit(
+  const content = buildSystemContentWithTokenLimit(
     {
       skillContent,
       skillContents,
@@ -95,6 +96,8 @@ export function buildSystemContent(input: BuildSystemContentInput): string | und
     },
     effectiveMaxPromptTokens
   )
+
+  return appendSerenaNavigationPrompt(content)
 }
 
 export function buildTaskPrompt(prompt: string, agentName: string | undefined, tddEnabled?: boolean): string {

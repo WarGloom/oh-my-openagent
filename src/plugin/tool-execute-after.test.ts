@@ -32,4 +32,26 @@ describe("createToolExecuteAfterHandler", () => {
     expect(callOrder).toEqual(["truncator", "claude"])
     expect(claudeSawOutput).toBe("truncated output")
   })
+
+  it("#given serena guard exists #when tool.execute.after runs #then the guard receives the output", async () => {
+    let guardSawOutput = ""
+
+    const handler = createToolExecuteAfterHandler({
+      ctx: { directory: "/repo" } as never,
+      hooks: {
+        serenaNavigationGuard: {
+          "tool.execute.after": async (_input, output) => {
+            guardSawOutput = output.output
+          },
+        },
+      } as never,
+    })
+
+    await handler(
+      { tool: "serena_find_file", sessionID: "ses_guard", callID: "call_guard" },
+      { title: "result", output: "serena output", metadata: {} }
+    )
+
+    expect(guardSawOutput).toBe("serena output")
+  })
 })
