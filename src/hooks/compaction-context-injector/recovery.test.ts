@@ -157,8 +157,12 @@ describe("createCompactionContextInjector recovery", () => {
     expect(promptAsyncRecorder.calls[0]?.body.tools).toEqual({ bash: true })
   })
 
-  it("retries recovery when the recovered prompt config still mismatches expected model or tools", async () => {
+  it("backs off incomplete recovery until the cooldown expires", async () => {
     //#given
+    const originalDateNow = Date.now
+    let now = originalDateNow()
+    Date.now = () => now
+
     const promptAsyncRecorder = createPromptAsyncRecorder()
     const mismatchResponse = [
       {
@@ -192,23 +196,39 @@ describe("createCompactionContextInjector recovery", () => {
     )
     const injector = createCompactionContextInjector({ ctx })
 
-    //#when
-    await injector.capture("ses_retry_incomplete_recovery")
-    await injector.event({
-      event: {
-        type: "session.compacted",
-        properties: { sessionID: "ses_retry_incomplete_recovery" },
-      },
-    })
-    await injector.event({
-      event: {
-        type: "session.compacted",
-        properties: { sessionID: "ses_retry_incomplete_recovery" },
-      },
-    })
+    try {
+      //#when
+      await injector.capture("ses_retry_incomplete_recovery")
+      await injector.event({
+        event: {
+          type: "session.compacted",
+          properties: { sessionID: "ses_retry_incomplete_recovery" },
+        },
+      })
+      await injector.event({
+        event: {
+          type: "session.compacted",
+          properties: { sessionID: "ses_retry_incomplete_recovery" },
+        },
+      })
 
-    //#then
-    expect(promptAsyncRecorder.calls.length).toBe(2)
+      //#then
+      expect(promptAsyncRecorder.calls.length).toBe(1)
+
+      //#when
+      now += 61_000
+      await injector.event({
+        event: {
+          type: "session.compacted",
+          properties: { sessionID: "ses_retry_incomplete_recovery" },
+        },
+      })
+
+      //#then
+      expect(promptAsyncRecorder.calls.length).toBe(2)
+    } finally {
+      Date.now = originalDateNow
+    }
   })
 
   it("does not treat reasoning-only assistant messages as a no-text tail", async () => {

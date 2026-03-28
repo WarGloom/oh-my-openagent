@@ -38,7 +38,10 @@ export function createRecoveryLogic(
 
     const tailState = getTailState(sessionID)
     const now = Date.now()
-    if (tailState.lastRecoveryAt && now - tailState.lastRecoveryAt < RECOVERY_COOLDOWN_MS) {
+    if (
+      tailState.lastRecoveryAttemptAt &&
+      now - tailState.lastRecoveryAttemptAt < RECOVERY_COOLDOWN_MS
+    ) {
       return false
     }
 
@@ -75,6 +78,8 @@ export function createRecoveryLogic(
         return false
       }
     }
+
+    tailState.lastRecoveryAttemptAt = now
 
     try {
       await ctx.client.session.promptAsync({

@@ -9,6 +9,7 @@ export type TailMonitorState = {
   currentHasOutput: boolean
   consecutiveNoTextMessages: number
   lastCompactedAt?: number
+  lastRecoveryAttemptAt?: number
   lastRecoveryAt?: number
 }
 
