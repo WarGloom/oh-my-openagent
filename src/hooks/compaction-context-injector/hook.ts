@@ -28,6 +28,7 @@ export function createCompactionContextInjector(options?: {
     const created: TailMonitorState = {
       currentHasOutput: false,
       consecutiveNoTextMessages: 0,
+      consecutiveRecoveryFailures: 0,
     }
     tailStates.set(sessionID, created)
     return created

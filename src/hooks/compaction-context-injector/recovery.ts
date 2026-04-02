@@ -15,7 +15,7 @@ import {
   resolveLatestSessionPromptConfig,
   resolveSessionPromptConfig,
 } from "./session-prompt-config-resolver"
-import { AGENT_RECOVERY_PROMPT, NO_TEXT_TAIL_THRESHOLD, RECOVERY_COOLDOWN_MS, RECENT_COMPACTION_WINDOW_MS } from "./constants"
+import { AGENT_RECOVERY_PROMPT, NO_TEXT_TAIL_THRESHOLD, RECOVERY_COOLDOWN_MS, RECENT_COMPACTION_WINDOW_MS, MAX_CONSECUTIVE_RECOVERY_FAILURES } from "./constants"
 import type { CompactionContextClient } from "./types"
 import type { TailMonitorState } from "./tail-monitor"
 
@@ -42,6 +42,14 @@ export function createRecoveryLogic(
       tailState.lastRecoveryAttemptAt &&
       now - tailState.lastRecoveryAttemptAt < RECOVERY_COOLDOWN_MS
     ) {
+      return false
+    }
+
+    if (tailState.consecutiveRecoveryFailures >= MAX_CONSECUTIVE_RECOVERY_FAILURES) {
+      log(`[compaction-context-injector] Skipping recovery after ${tailState.consecutiveRecoveryFailures} consecutive failures`, {
+        sessionID,
+        reason,
+      })
       return false
     }
 
@@ -96,6 +104,7 @@ export function createRecoveryLogic(
 
       const recoveredPromptConfig = await resolveLatestSessionPromptConfig(ctx, sessionID)
       if (!isPromptConfigRecovered(recoveredPromptConfig, expectedPromptConfig)) {
+        tailState.consecutiveRecoveryFailures++
         log(`[compaction-context-injector] Re-injected agent config but recovery is still incomplete`, {
           sessionID,
           reason,
@@ -103,10 +112,12 @@ export function createRecoveryLogic(
           model,
           hasTools: !!tools,
           recoveredPromptConfig,
+          consecutiveFailures: tailState.consecutiveRecoveryFailures,
         })
         return false
       }
 
+      tailState.consecutiveRecoveryFailures = 0
       updateSessionAgent(sessionID, expectedPromptConfig.agent)
       if (model) {
         setSessionModel(sessionID, model)
