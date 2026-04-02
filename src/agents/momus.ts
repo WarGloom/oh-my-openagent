@@ -1,7 +1,7 @@
 import type { AgentConfig } from "@opencode-ai/sdk";
 import type { AgentMode, AgentPromptMetadata } from "./types";
 import { isGptModel } from "./types";
-import { createAgentToolRestrictions, DENY_HEAVY_MCP_TOOLS } from "../shared/permission-compat";
+import { createAgentToolRestrictions } from "../shared/permission-compat";
 
 const MODE: AgentMode = "subagent";
 
@@ -283,8 +283,10 @@ export { MOMUS_DEFAULT_PROMPT as MOMUS_SYSTEM_PROMPT };
 
 export function createMomusAgent(model: string): AgentConfig {
   const restrictions = createAgentToolRestrictions([
-    "write", "edit", "apply_patch", "task",
-    ...Object.keys(DENY_HEAVY_MCP_TOOLS),
+    "write",
+    "edit",
+    "apply_patch",
+    "task",
   ]);
 
   const base = {

@@ -1,7 +1,7 @@
 import type { AgentConfig } from "@opencode-ai/sdk"
 import type { AgentMode, AgentPromptMetadata } from "./types"
 import { buildAntiDuplicationSection } from "./dynamic-agent-prompt-builder"
-import { createAgentToolRestrictions, DENY_HEAVY_MCP_TOOLS } from "../shared/permission-compat"
+import { createAgentToolRestrictions } from "../shared/permission-compat"
 
 const MODE: AgentMode = "subagent"
 
@@ -293,8 +293,10 @@ call_omo_agent(subagent_type="librarian", prompt="I'm looking for proven impleme
 `
 
 const metisRestrictions = createAgentToolRestrictions([
-  "write", "edit", "apply_patch", "task",
-  ...Object.keys(DENY_HEAVY_MCP_TOOLS),
+  "write",
+  "edit",
+  "apply_patch",
+  "task",
 ])
 
 export function createMetisAgent(model: string): AgentConfig {
