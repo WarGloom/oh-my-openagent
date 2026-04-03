@@ -1,7 +1,7 @@
 import type { AgentConfig } from "@opencode-ai/sdk";
 import type { AgentMode, AgentPromptMetadata } from "./types";
 import { isGptModel } from "./types";
-import { createAgentToolRestrictions } from "../shared/permission-compat";
+import { createAgentToolRestrictions, DENY_HEAVY_MCP_TOOLS } from "../shared/permission-compat";
 
 const MODE: AgentMode = "subagent";
 
@@ -244,10 +244,8 @@ Your response goes directly to the user with no intermediate processing. Make yo
 
 export function createOracleAgent(model: string): AgentConfig {
   const restrictions = createAgentToolRestrictions([
-    "write",
-    "edit",
-    "apply_patch",
-    "task",
+    "write", "edit", "apply_patch", "task",
+    ...Object.keys(DENY_HEAVY_MCP_TOOLS),
   ]);
 
   const base = {
