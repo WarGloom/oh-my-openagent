@@ -91,7 +91,13 @@ export function createPreemptiveCompactionHook(
     if (lastTime && Date.now() - lastTime < PREEMPTIVE_COMPACTION_COOLDOWN_MS) return
 
     const cached = tokenCache.get(sessionID)
-    if (!cached) return
+    if (!cached) {
+      log("[preemptive-compaction] Skipping: no token data for session (provider may not report usage)", {
+        sessionID,
+        tool: input.tool,
+      })
+      return
+    }
 
     const actualLimit = resolveActualContextLimit(
       cached.providerID,
@@ -100,7 +106,7 @@ export function createPreemptiveCompactionHook(
     )
 
     if (actualLimit === null) {
-      log("[preemptive-compaction] Skipping preemptive compaction: unknown context limit for model", {
+      log("[preemptive-compaction] Skipping: unknown context limit for model", {
         providerID: cached.providerID,
         modelID: cached.modelID,
       })
@@ -109,6 +115,26 @@ export function createPreemptiveCompactionHook(
 
     const totalInputTokens = (cached.tokens.input ?? 0) + (cached.tokens.cache?.read ?? 0)
     const usageRatio = totalInputTokens / actualLimit
+
+    if (totalInputTokens === 0) {
+      log("[preemptive-compaction] Skipping: provider reports zero input tokens (usage data unavailable)", {
+        sessionID,
+        providerID: cached.providerID,
+        modelID: cached.modelID,
+      })
+      return
+    }
+
+    log("[preemptive-compaction] Token usage check", {
+      sessionID,
+      providerID: cached.providerID,
+      modelID: cached.modelID,
+      totalInputTokens,
+      actualLimit,
+      usageRatioPct: Math.round(usageRatio * 100),
+      threshold: Math.round(PREEMPTIVE_COMPACTION_THRESHOLD * 100),
+    })
+
     if (usageRatio < PREEMPTIVE_COMPACTION_THRESHOLD || !cached.modelID) return
 
     compactionInProgress.add(sessionID)
