@@ -32,15 +32,23 @@ export function createToolExecuteAfterHandler(input: {
   pendingTaskRefs: Map<string, PendingTaskRef>
   autoCommit: boolean
   getState: (sessionID: string) => SessionState
+  isCallerOrchestratorFn?: (sessionID: string | undefined, client?: PluginInput["client"]) => Promise<boolean>
 }): (toolInput: ToolExecuteAfterInput, toolOutput: ToolExecuteAfterOutput) => Promise<void> {
-  const { ctx, pendingFilePaths, pendingTaskRefs, autoCommit, getState } = input
+  const {
+    ctx,
+    pendingFilePaths,
+    pendingTaskRefs,
+    autoCommit,
+    getState,
+    isCallerOrchestratorFn = isCallerOrchestrator,
+  } = input
   return async (toolInput, toolOutput): Promise<void> => {
     // Guard against undefined output (e.g., from /review command - see issue #1035)
     if (!toolOutput) {
       return
     }
 
-    if (!(await isCallerOrchestrator(toolInput.sessionID, ctx.client))) {
+    if (!(await isCallerOrchestratorFn(toolInput.sessionID, ctx.client))) {
       return
     }
 

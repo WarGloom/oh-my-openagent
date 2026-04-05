@@ -8,31 +8,37 @@ import type { PluginInput } from "@opencode-ai/plugin"
 import type { Project } from "@opencode-ai/sdk"
 import { readBoulderState, writeBoulderState } from "../../features/boulder-state"
 import { createToolExecuteBeforeHandler } from "./tool-execute-before"
+import * as actualGitWorktreeModule from "../../shared/git-worktree"
 
-const isCallerOrchestratorMock = mock(async () => true)
 const collectGitDiffStatsMock = mock(() => ({
   filesChanged: 0,
   insertions: 0,
   deletions: 0,
 }))
+let createToolExecuteAfterHandler: (typeof import("./tool-execute-after"))["createToolExecuteAfterHandler"]
 
-mock.module("../../shared/session-utils", () => ({
-  isCallerOrchestrator: isCallerOrchestratorMock,
-}))
+function setupAtlasMocks(): void {
+  mock.module("../../shared/git-worktree", () => ({
+    collectGitDiffStats: collectGitDiffStatsMock,
+    formatFileChanges: mock(() => "No file changes"),
+  }))
+}
 
-mock.module("../../shared/git-worktree", () => ({
-  collectGitDiffStats: collectGitDiffStatsMock,
-  formatFileChanges: mock(() => "No file changes"),
-}))
+async function setupModuleUnderTest(): Promise<void> {
+  setupAtlasMocks()
+  const moduleExports = await import("./tool-execute-after")
+  mock.module("../../shared/git-worktree", () => actualGitWorktreeModule)
+  mock.restore()
+  createToolExecuteAfterHandler = moduleExports.createToolExecuteAfterHandler
+}
 
-afterAll(() => { mock.restore() })
+afterAll(() => {
+  mock.restore()
+})
 
-const { createToolExecuteAfterHandler } = await import("./tool-execute-after")
-
-type SessionGetInput = { path: { id: string } }
 type SessionGetResult = {
-  data: { parentID: string | undefined }
-  error?: undefined
+  data: { parentID?: string }
+  error: undefined
   request: Request
   response: Response
 }
@@ -40,14 +46,16 @@ type SessionGetResult = {
 describe("createToolExecuteAfterHandler background launch detection", () => {
   let testDirectory = ""
 
-  beforeEach(() => {
+  beforeEach(async () => {
     testDirectory = join(tmpdir(), `atlas-background-launch-${crypto.randomUUID()}`)
 
     if (!existsSync(testDirectory)) {
       mkdirSync(testDirectory, { recursive: true })
     }
 
-    isCallerOrchestratorMock.mockClear()
+    setupAtlasMocks()
+    await setupModuleUnderTest()
+
     collectGitDiffStatsMock.mockClear()
   })
 
@@ -55,6 +63,7 @@ describe("createToolExecuteAfterHandler background launch detection", () => {
     if (testDirectory && existsSync(testDirectory)) {
       rmSync(testDirectory, { recursive: true, force: true })
     }
+
   })
 
   function createProject(): Project {
@@ -78,17 +87,29 @@ describe("createToolExecuteAfterHandler background launch detection", () => {
     } as SessionGetResult
   }
 
+  function createClient(): PluginInput["client"] & {
+    session: {
+      get: ReturnType<typeof mock>
+    }
+  } {
+    return {
+      session: {
+        get: mock(async (_input?: unknown) => createSessionGetResult(undefined)),
+      },
+    } as PluginInput["client"] & {
+      session: {
+        get: ReturnType<typeof mock>
+      }
+    }
+  }
+
   function createHandler(parentSessionIDs?: Record<string, string | undefined>) {
     const project = createProject()
-    const client = {
-      session: {
-        get: async (input: SessionGetInput) => createSessionGetResult(parentSessionIDs?.[input.path.id]),
-      },
-    } as unknown as PluginInput["client"]
+    const client = createClient()
 
     if (parentSessionIDs) {
-      spyOn(client.session, "get").mockImplementation((input) => Promise.resolve(
-        createSessionGetResult(parentSessionIDs[input?.path?.id ?? ""]),
+      client.session.get.mockImplementation((input: { path?: { id?: string } }) => Promise.resolve(
+        createSessionGetResult(input.path?.id ? parentSessionIDs[input.path.id] : undefined),
       ) as never)
     }
 
@@ -107,6 +128,7 @@ describe("createToolExecuteAfterHandler background launch detection", () => {
       pendingTaskRefs: new Map(),
       autoCommit: true,
       getState: () => ({ promptFailureCount: 0 }),
+      isCallerOrchestratorFn: async () => true,
     })
   }
 
@@ -141,14 +163,10 @@ describe("createToolExecuteAfterHandler background launch detection", () => {
         const childSessionID = "ses_child123"
         const planPath = join(testDirectory, "background-launch-plan.md")
         const project = createProject()
-        const client = {
-          session: {
-            get: async () => createSessionGetResult(undefined),
-          },
-        } as unknown as PluginInput["client"]
+        const client = createClient()
 
-        spyOn(client.session, "get").mockImplementation((input) => Promise.resolve(
-          createSessionGetResult(input?.path?.id === childSessionID ? sessionID : undefined),
+        client.session.get.mockImplementation((input: { path?: { id?: string } }) => Promise.resolve(
+          createSessionGetResult(input.path?.id === childSessionID ? sessionID : undefined),
         ) as never)
 
         writeFileSync(planPath, `# Plan
@@ -181,6 +199,7 @@ describe("createToolExecuteAfterHandler background launch detection", () => {
           pendingTaskRefs,
           autoCommit: true,
           getState: () => ({ promptFailureCount: 0 }),
+          isCallerOrchestratorFn: async () => true,
         })
 
         await beforeHandler(
@@ -215,14 +234,10 @@ describe("createToolExecuteAfterHandler background launch detection", () => {
         const childSessionID = "ses_child_lookup_failure"
         const planPath = join(testDirectory, "background-launch-plan.md")
         const project = createProject()
-        const client = {
-          session: {
-            get: async () => createSessionGetResult(undefined),
-          },
-        } as unknown as PluginInput["client"]
+        const client = createClient()
 
-        spyOn(client.session, "get").mockImplementation((input) => {
-          if (input?.path?.id === childSessionID) {
+        client.session.get.mockImplementation((input: { path?: { id?: string } }) => {
+          if (input.path?.id === childSessionID) {
             return Promise.reject(new Error("lookup failed")) as never
           }
           return Promise.resolve(createSessionGetResult(undefined)) as never
@@ -258,6 +273,7 @@ describe("createToolExecuteAfterHandler background launch detection", () => {
           pendingTaskRefs,
           autoCommit: true,
           getState: () => ({ promptFailureCount: 0 }),
+          isCallerOrchestratorFn: async () => true,
         })
 
         await beforeHandler(
@@ -288,14 +304,10 @@ describe("createToolExecuteAfterHandler background launch detection", () => {
         const childSessionID = "ses_outside_lineage"
         const planPath = join(testDirectory, "background-launch-plan.md")
         const project = createProject()
-        const client = {
-          session: {
-            get: async () => createSessionGetResult(undefined),
-          },
-        } as unknown as PluginInput["client"]
+        const client = createClient()
 
-        spyOn(client.session, "get").mockImplementation((input) => Promise.resolve(
-          createSessionGetResult(input?.path?.id === childSessionID ? "ses_unrelated_parent" : undefined),
+        client.session.get.mockImplementation((input: { path?: { id?: string } }) => Promise.resolve(
+          createSessionGetResult(input.path?.id === childSessionID ? "ses_unrelated_parent" : undefined),
         ) as never)
 
         writeFileSync(planPath, `# Plan
@@ -328,6 +340,7 @@ describe("createToolExecuteAfterHandler background launch detection", () => {
           pendingTaskRefs,
           autoCommit: true,
           getState: () => ({ promptFailureCount: 0 }),
+          isCallerOrchestratorFn: async () => true,
         })
 
         await beforeHandler(
@@ -358,14 +371,10 @@ describe("createToolExecuteAfterHandler background launch detection", () => {
         const childSessionID = "ses_unrelated_child"
         const planPath = join(testDirectory, "background-launch-plan.md")
         const project = createProject()
-        const client = {
-          session: {
-            get: async () => createSessionGetResult(undefined),
-          },
-        } as unknown as PluginInput["client"]
+        const client = createClient()
 
-        spyOn(client.session, "get").mockImplementation((input) => Promise.resolve(
-          createSessionGetResult(input?.path?.id === childSessionID ? sessionID : undefined),
+        client.session.get.mockImplementation((input: { path?: { id?: string } }) => Promise.resolve(
+          createSessionGetResult(input.path?.id === childSessionID ? sessionID : undefined),
         ) as never)
 
         writeFileSync(planPath, `# Plan
@@ -399,6 +408,7 @@ describe("createToolExecuteAfterHandler background launch detection", () => {
           pendingTaskRefs,
           autoCommit: true,
           getState: () => ({ promptFailureCount: 0 }),
+          isCallerOrchestratorFn: async () => true,
         })
 
         await beforeHandler(

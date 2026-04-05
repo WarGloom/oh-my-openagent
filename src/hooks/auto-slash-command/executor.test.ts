@@ -1,8 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test"
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { executeSlashCommand } from "./executor"
+let executeSlashCommand: typeof import("./executor").executeSlashCommand
 
 const ENV_KEYS = [
   "CLAUDE_CONFIG_DIR",
@@ -95,6 +95,7 @@ describe("auto-slash command executor plugin dispatch", () => {
   let envSnapshot: EnvSnapshot
 
   beforeEach(() => {
+    mock.restore()
     tempDir = mkdtempSync(join(tmpdir(), "omo-executor-plugin-test-"))
     envSnapshot = {
       CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
@@ -103,6 +104,10 @@ describe("auto-slash command executor plugin dispatch", () => {
       OPENCODE_CONFIG_DIR: process.env.OPENCODE_CONFIG_DIR,
     }
     writePluginFixture(tempDir)
+  })
+
+  beforeEach(async () => {
+    ;({ executeSlashCommand } = await import(`./executor?test=${Date.now()}-${Math.random()}`))
   })
 
   afterEach(() => {

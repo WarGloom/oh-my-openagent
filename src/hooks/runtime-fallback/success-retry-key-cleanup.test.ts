@@ -5,6 +5,14 @@ import { createFallbackState } from "./fallback-state"
 
 type MessageUpdateHandlerModule = typeof import("./message-update-handler")
 
+const basePluginConfig = {
+  git_master: {
+    commit_footer: true,
+    include_co_authored_by: true,
+    git_env_prefix: "GIT_MASTER=1",
+  },
+}
+
 async function importFreshMessageUpdateHandlerModule(): Promise<MessageUpdateHandlerModule> {
   return import(`./message-update-handler?success-retry-key-${Date.now()}-${Math.random()}`)
 }
@@ -37,7 +45,7 @@ function createDeps(messagesResponse: unknown): HookDeps {
       notify_on_fallback: false,
     },
     options: undefined,
-    pluginConfig: {},
+    pluginConfig: basePluginConfig,
     sessionStates: new Map(),
     sessionLastAccess: new Map(),
     sessionRetryInFlight: new Set(),
@@ -91,7 +99,7 @@ describe("createMessageUpdateHandler retry-key cleanup", () => {
     // then
     expect(deps.sessionAwaitingFallbackResult.has(sessionID)).toBe(false)
     expect(deps.sessionStatusRetryKeys.has(sessionID)).toBe(false)
-    expect(state.pendingFallbackModel).toBe(undefined)
+    expect(state.pendingFallbackModel).toBeUndefined()
     expect(clearCalls).toEqual([sessionID])
   })
 })

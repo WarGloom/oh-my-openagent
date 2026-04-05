@@ -39,6 +39,11 @@ describe("createRuntimeFallbackHook dispose retry-key cleanup", () => {
         notify_on_fallback: false,
       },
       pluginConfig: {
+        git_master: {
+          commit_footer: true,
+          include_co_authored_by: true,
+          git_env_prefix: "GIT_MASTER=1",
+        },
         categories: {
           test: {
             fallback_models: ["openai/gpt-5.2"],

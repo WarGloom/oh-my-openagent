@@ -1,7 +1,12 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 import type { HookDeps, RuntimeFallbackPluginInput } from "./types"
+import * as actualAutoRetryModule from "./auto-retry"
+import * as actualEventHandlerModule from "./event-handler"
+import * as actualMessageUpdateHandlerModule from "./message-update-handler"
+import * as actualChatMessageHandlerModule from "./chat-message-handler"
 
 let capturedDeps: HookDeps | undefined
+let createRuntimeFallbackHook: typeof import("./hook").createRuntimeFallbackHook
 
 const mockCreateAutoRetryHelpers = mock((deps: HookDeps) => {
   capturedDeps = deps
@@ -16,31 +21,47 @@ const mockCreateAutoRetryHelpers = mock((deps: HookDeps) => {
   }
 })
 
-const mockCreateEventHandler = mock(() => async () => {})
+const mockCreateEventHandler = mock(() => async (_args?: unknown) => {})
 const mockCreateMessageUpdateHandler = mock(() => async () => {})
 const mockCreateChatMessageHandler = mock(() => async () => {})
-
-mock.module("./auto-retry", () => ({
-  createAutoRetryHelpers: mockCreateAutoRetryHelpers,
-}))
-
-mock.module("./event-handler", () => ({
-  createEventHandler: mockCreateEventHandler,
-}))
-
-mock.module("./message-update-handler", () => ({
-  createMessageUpdateHandler: mockCreateMessageUpdateHandler,
-}))
-
-mock.module("./chat-message-handler", () => ({
-  createChatMessageHandler: mockCreateChatMessageHandler,
-}))
 
 afterAll(() => {
   mock.restore()
 })
 
-const { createRuntimeFallbackHook } = await import("./hook")
+async function importFreshRuntimeFallbackHookModule(): Promise<typeof import("./hook")> {
+  mock.module("./auto-retry", () => ({
+    createAutoRetryHelpers: mockCreateAutoRetryHelpers,
+  }))
+
+  mock.module("./event-handler", () => ({
+    createEventHandler: mockCreateEventHandler,
+  }))
+
+  mock.module("./message-update-handler", () => ({
+    createMessageUpdateHandler: mockCreateMessageUpdateHandler,
+  }))
+
+  mock.module("./chat-message-handler", () => ({
+    createChatMessageHandler: mockCreateChatMessageHandler,
+  }))
+
+  const module = await import(`./hook?test=${Date.now()}-${Math.random()}`)
+  mock.module("./auto-retry", () => actualAutoRetryModule)
+  mock.module("./event-handler", () => actualEventHandlerModule)
+  mock.module("./message-update-handler", () => actualMessageUpdateHandlerModule)
+  mock.module("./chat-message-handler", () => actualChatMessageHandlerModule)
+  mock.restore()
+  return module
+}
+
+const basePluginConfig = {
+  git_master: {
+    commit_footer: true,
+    include_co_authored_by: true,
+    git_env_prefix: "GIT_MASTER=1",
+  },
+}
 
 function createMockContext(): RuntimeFallbackPluginInput {
   return {
@@ -101,6 +122,10 @@ describe("createRuntimeFallbackHook dispose", () => {
     globalThis.clearTimeout = wrappedClearTimeout
   })
 
+  beforeEach(async () => {
+    ;({ createRuntimeFallbackHook } = await importFreshRuntimeFallbackHookModule())
+  })
+
   afterEach(() => {
     globalThis.setInterval = originalSetInterval
     globalThis.clearInterval = originalClearInterval
@@ -109,7 +134,7 @@ describe("createRuntimeFallbackHook dispose", () => {
 
   test("#given runtime-fallback hook created #when dispose() is called #then cleanup interval is cleared", () => {
     // given
-    const hook = createRuntimeFallbackHook(createMockContext(), { pluginConfig: {} })
+    const hook = createRuntimeFallbackHook(createMockContext(), { pluginConfig: basePluginConfig })
 
     // when
     hook.dispose?.()
@@ -121,7 +146,7 @@ describe("createRuntimeFallbackHook dispose", () => {
 
   test("#given hook with session state data #when dispose() is called #then all Maps and Sets are empty", () => {
     // given
-    const hook = createRuntimeFallbackHook(createMockContext(), { pluginConfig: {} })
+    const hook = createRuntimeFallbackHook(createMockContext(), { pluginConfig: basePluginConfig })
     const fallbackTimeout = setTimeout(() => {}, 60_000)
 
     capturedDeps?.sessionStates.set("session-1", {
@@ -149,7 +174,7 @@ describe("createRuntimeFallbackHook dispose", () => {
 
   test("#given hook with pending fallback timeouts #when dispose() is called #then timeouts are cleared before Map is emptied", () => {
     // given
-    const hook = createRuntimeFallbackHook(createMockContext(), { pluginConfig: {} })
+    const hook = createRuntimeFallbackHook(createMockContext(), { pluginConfig: basePluginConfig })
     const fallbackTimeout = setTimeout(() => {}, 60_000)
     capturedDeps?.sessionFallbackTimeouts.set("session-1", fallbackTimeout)
 

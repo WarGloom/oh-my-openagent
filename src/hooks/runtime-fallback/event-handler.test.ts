@@ -32,7 +32,13 @@ function createDeps(): HookDeps {
       notify_on_fallback: false,
     },
     options: undefined,
-    pluginConfig: {},
+    pluginConfig: {
+      git_master: {
+        commit_footer: true,
+        include_co_authored_by: true,
+        git_env_prefix: "GIT_MASTER=1",
+      },
+    },
     sessionStates: new Map(),
     sessionLastAccess: new Map(),
     sessionRetryInFlight: new Set(),
@@ -102,7 +108,7 @@ describe("createEventHandler", () => {
     expect(deps.sessionStatusRetryKeys.has(sessionID)).toBe(false)
     expect(clearCalls).toEqual([sessionID])
     expect(abortCalls).toEqual([])
-    expect(state.pendingFallbackModel).toBe(undefined)
+    expect(state.pendingFallbackModel).toBeUndefined()
   })
 
   it("#given a cancelled session #when session.error receives an abort error #then fallback retry state is reset", async () => {
