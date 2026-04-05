@@ -16,6 +16,7 @@ type TestPart = {
   tool_use_id?: string
   content?: string
   text?: string
+  state?: unknown
 }
 
 type TestMessage = {
@@ -127,12 +128,12 @@ describe("createToolPairValidatorHook", () => {
     ])
   })
 
-  it("injects only the missing tool_results for partial matches", async () => {
+  it("injects only the missing tool_results for partial tool_use matches", async () => {
     //#given
     const messages = [
       {
         info: { role: "assistant" },
-        parts: [{ type: "tool_use", id: "toolu_1" }, { type: "tool", callID: "call_2" }],
+        parts: [{ type: "tool_use", id: "toolu_1" }, { type: "tool_use", id: "toolu_2" }],
       },
       {
         info: { role: "user" },
@@ -149,8 +150,51 @@ describe("createToolPairValidatorHook", () => {
     //#then
     expect(messages[1]?.parts).toEqual([
       { type: "tool_result", tool_use_id: "toolu_1", content: "done" },
-      { type: "tool_result", tool_use_id: "call_2", content: TOOL_RESULT_PLACEHOLDER },
+      { type: "tool_result", tool_use_id: "toolu_2", content: TOOL_RESULT_PLACEHOLDER },
       { type: "text", text: "continue" },
+    ])
+  })
+
+  it("ignores OpenCode internal tool parts with completed state", async () => {
+    //#given
+    const messages = [
+      {
+        info: { role: "assistant" },
+        parts: [
+          {
+            type: "tool",
+            callID: "call_1",
+            state: {
+              status: "completed",
+              input: {},
+              output: "done",
+              time: { start: 1, end: 2 },
+            },
+          },
+        ],
+      },
+    ] satisfies TestMessage[]
+
+    //#when
+    await runTransform(messages)
+
+    //#then
+    expect(messages).toEqual([
+      {
+        info: { role: "assistant" },
+        parts: [
+          {
+            type: "tool",
+            callID: "call_1",
+            state: {
+              status: "completed",
+              input: {},
+              output: "done",
+              time: { start: 1, end: 2 },
+            },
+          },
+        ],
+      },
     ])
   })
 })

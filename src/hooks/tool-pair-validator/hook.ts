@@ -37,14 +37,10 @@ type MessagesTransformHook = {
 }
 
 function getToolUseID(part: TransformPart): string | null {
-  const candidate = part as { type?: unknown; id?: unknown; callID?: unknown }
+  const candidate = part as { type?: unknown; id?: unknown }
 
   if (candidate.type === "tool_use" && typeof candidate.id === "string" && candidate.id.length > 0) {
     return candidate.id
-  }
-
-  if (candidate.type === "tool" && typeof candidate.callID === "string" && candidate.callID.length > 0) {
-    return candidate.callID
   }
 
   return null
