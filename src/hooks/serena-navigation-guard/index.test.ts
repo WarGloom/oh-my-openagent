@@ -25,14 +25,14 @@ describe("serena-navigation-guard", () => {
 
   test("blocks manual navigation tools before Serena for enforced agents", async () => {
     const hook = createSerenaNavigationGuardHook()
-    updateSessionAgent(sessionID, "explore")
+    updateSessionAgent(sessionID, "oracle")
 
     await expect(
       hook["tool.execute.before"]({
         tool: "grep",
         sessionID,
         callID: "call_1",
-      })
+      }, { args: {} })
     ).rejects.toThrow("Serena-first navigation policy")
   })
 
@@ -45,7 +45,7 @@ describe("serena-navigation-guard", () => {
         tool: "glob",
         sessionID,
         callID: "call_1",
-      })
+      }, { args: {} })
     ).rejects.toThrow("serena_find_file")
   })
 
@@ -63,13 +63,13 @@ describe("serena-navigation-guard", () => {
         tool: "read",
         sessionID,
         callID: "call_2",
-      })
+      }, { args: {} })
     ).rejects.toThrow("Serena-first navigation policy")
   })
 
   test("allows manual navigation after a failed Serena attempt", async () => {
     const hook = createSerenaNavigationGuardHook()
-    updateSessionAgent(sessionID, "explore")
+    updateSessionAgent(sessionID, "oracle")
 
     await hook["tool.execute.after"](
       { tool: "serena_find_symbol", sessionID, callID: "call_serena" },
@@ -81,7 +81,34 @@ describe("serena-navigation-guard", () => {
         tool: "grep",
         sessionID,
         callID: "call_2",
-      })
+      }, { args: {} })
+    ).resolves.toBeUndefined()
+  })
+
+  test("treats MCP-style Serena text errors as failed attempts", async () => {
+    const hook = createSerenaNavigationGuardHook()
+    updateSessionAgent(sessionID, "oracle")
+
+    await expect(
+      Reflect.apply(hook["tool.execute.after"], hook, [
+        { tool: "serena_check_onboarding_performed", sessionID, callID: "call_serena" },
+        {
+          content: [
+            {
+              type: "text",
+              text: "Error: onboarding check failed",
+            },
+          ],
+        },
+      ])
+    ).resolves.toBeUndefined()
+
+    await expect(
+      hook["tool.execute.before"]({
+        tool: "read",
+        sessionID,
+        callID: "call_2",
+      }, { args: {} })
     ).resolves.toBeUndefined()
   })
 
@@ -95,7 +122,7 @@ describe("serena-navigation-guard", () => {
         tool: "grep",
         sessionID,
         callID: "call_1",
-      })
+      }, { args: {} })
     ).resolves.toBeUndefined()
   })
 
@@ -108,7 +135,7 @@ describe("serena-navigation-guard", () => {
         tool: "grep",
         sessionID,
         callID: "call_1",
-      })
+      }, { args: {} })
     ).resolves.toBeUndefined()
   })
 })

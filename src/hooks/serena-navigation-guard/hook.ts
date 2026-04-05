@@ -1,3 +1,6 @@
+import { readFileSync, existsSync } from "fs"
+import { join } from "path"
+import { homedir } from "os"
 import { getSessionAgent } from "../../features/claude-code-session-state"
 import { getSystemMcpServerNames } from "../../features/claude-code-mcp-loader"
 import { log } from "../../shared"
@@ -5,6 +8,7 @@ import { getAgentConfigKey } from "../../shared/agent-display-names"
 import {
   EXCLUDED_AGENT_KEYS,
   MANUAL_NAVIGATION_TOOLS,
+  MAX_VIOLATIONS_BEFORE_FALLBACK,
   SERENA_NAVIGATION_TOOL_HINTS,
   SERENA_TOOL_PREFIX,
 } from "./constants"
@@ -16,9 +20,13 @@ type HookInput = {
 }
 
 type HookOutput = {
-  title: string
-  output: string
-  metadata: Record<string, unknown>
+  title?: string
+  output?: string
+  metadata?: Record<string, unknown>
+  content?: Array<{
+    type?: string
+    text?: string
+  }>
 }
 
 type SessionState = {
@@ -34,8 +42,35 @@ const TOOL_FAILURE_PATTERNS = [
   /\bno such tool\b/i,
 ]
 
+function isOpencodeSerenaAvailable(): boolean {
+  const xdgConfig = process.env.XDG_CONFIG_HOME || join(homedir(), ".config")
+  const candidates = [
+    join(process.cwd(), "opencode.json"),
+    join(process.cwd(), "opencode.jsonc"),
+    join(process.cwd(), ".opencode", "opencode.json"),
+    join(process.cwd(), ".opencode", "opencode.jsonc"),
+    join(xdgConfig, "opencode", "opencode.json"),
+    join(xdgConfig, "opencode", "opencode.jsonc"),
+    join(xdgConfig, "opencode", "config.json"),
+  ]
+  for (const candidate of candidates) {
+    if (!existsSync(candidate)) continue
+    try {
+      const config = JSON.parse(readFileSync(candidate, "utf-8")) as Record<string, unknown>
+      const mcp = config.mcp as Record<string, unknown> | undefined
+      if (mcp && Object.keys(mcp).some((key) => key.toLowerCase().includes("serena"))) return true
+    } catch {
+      continue
+    }
+  }
+  return false
+}
+
 function isSerenaServerAvailable(): boolean {
-  return Array.from(getSystemMcpServerNames()).some((name) => name.toLowerCase().includes("serena"))
+  return (
+    Array.from(getSystemMcpServerNames()).some((name) => name.toLowerCase().includes("serena")) ||
+    isOpencodeSerenaAvailable()
+  )
 }
 
 function isSerenaTool(toolName: string): boolean {
@@ -46,7 +81,32 @@ function isManualNavigationTool(toolName: string): boolean {
   return MANUAL_NAVIGATION_TOOLS.has(toolName.toLowerCase())
 }
 
-function isToolFailure(outputText: string): boolean {
+function getToolOutputText(output: HookOutput): string | null {
+  if (typeof output.output === "string") {
+    return output.output
+  }
+
+  if (!Array.isArray(output.content)) {
+    return null
+  }
+
+  const textParts = output.content
+    .filter((item) => item.type === "text" && typeof item.text === "string")
+    .map((item) => item.text)
+
+  if (textParts.length === 0) {
+    return null
+  }
+
+  return textParts.join("\n")
+}
+
+function isToolFailure(output: HookOutput): boolean {
+  const outputText = getToolOutputText(output)
+  if (!outputText) {
+    return false
+  }
+
   return TOOL_FAILURE_PATTERNS.some((pattern) => pattern.test(outputText.trim()))
 }
 
@@ -120,6 +180,16 @@ export function createSerenaNavigationGuardHook() {
         return
       }
 
+      if (state.violationCount >= MAX_VIOLATIONS_BEFORE_FALLBACK) {
+        log("[serena-navigation-guard] Circuit breaker tripped; allowing manual navigation fallback", {
+          sessionID: input.sessionID,
+          tool: input.tool,
+          agent: agentName,
+          violationCount: state.violationCount,
+        })
+        return
+      }
+
       log("[serena-navigation-guard] Blocking manual navigation before Serena", {
         sessionID: input.sessionID,
         callID: input.callID,
@@ -139,7 +209,7 @@ export function createSerenaNavigationGuardHook() {
       }
 
       const state = getState(input.sessionID)
-      if (isToolFailure(output.output)) {
+      if (isToolFailure(output)) {
         state.failedSerenaAttempt = true
         log("[serena-navigation-guard] Serena tool failed; enabling manual fallback", {
           sessionID: input.sessionID,
