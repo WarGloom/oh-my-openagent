@@ -1,9 +1,9 @@
-import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
+import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 import type { HookDeps, RuntimeFallbackPluginInput } from "./types"
-import * as actualAutoRetryModule from "./auto-retry"
-import * as actualEventHandlerModule from "./event-handler"
-import * as actualMessageUpdateHandlerModule from "./message-update-handler"
-import * as actualChatMessageHandlerModule from "./chat-message-handler"
+import * as autoRetryModule from "./auto-retry"
+import * as eventHandlerModule from "./event-handler"
+import * as messageUpdateHandlerModule from "./message-update-handler"
+import * as chatMessageHandlerModule from "./chat-message-handler"
 
 let capturedDeps: HookDeps | undefined
 let createRuntimeFallbackHook: typeof import("./hook").createRuntimeFallbackHook
@@ -29,40 +29,6 @@ afterAll(() => {
   mock.restore()
 })
 
-async function importFreshRuntimeFallbackHookModule(): Promise<typeof import("./hook")> {
-  mock.module("./auto-retry", () => ({
-    createAutoRetryHelpers: mockCreateAutoRetryHelpers,
-  }))
-
-  mock.module("./event-handler", () => ({
-    createEventHandler: mockCreateEventHandler,
-  }))
-
-  mock.module("./message-update-handler", () => ({
-    createMessageUpdateHandler: mockCreateMessageUpdateHandler,
-  }))
-
-  mock.module("./chat-message-handler", () => ({
-    createChatMessageHandler: mockCreateChatMessageHandler,
-  }))
-
-  const module = await import(`./hook?test=${Date.now()}-${Math.random()}`)
-  mock.module("./auto-retry", () => actualAutoRetryModule)
-  mock.module("./event-handler", () => actualEventHandlerModule)
-  mock.module("./message-update-handler", () => actualMessageUpdateHandlerModule)
-  mock.module("./chat-message-handler", () => actualChatMessageHandlerModule)
-  mock.restore()
-  return module
-}
-
-const basePluginConfig = {
-  git_master: {
-    commit_footer: true,
-    include_co_authored_by: true,
-    git_env_prefix: "GIT_MASTER=1",
-  },
-}
-
 function createMockContext(): RuntimeFallbackPluginInput {
   return {
     client: {
@@ -79,6 +45,14 @@ function createMockContext(): RuntimeFallbackPluginInput {
   }
 }
 
+const basePluginConfig = {
+  git_master: {
+    commit_footer: true,
+    include_co_authored_by: true,
+    git_env_prefix: "GIT_MASTER=1",
+  },
+}
+
 describe("createRuntimeFallbackHook dispose", () => {
   const originalSetInterval = globalThis.setInterval
   const originalClearInterval = globalThis.clearInterval
@@ -89,6 +63,7 @@ describe("createRuntimeFallbackHook dispose", () => {
   const timeoutMapSizesDuringClear: number[] = []
 
   beforeEach(() => {
+    mock.restore()
     capturedDeps = undefined
     createdIntervals.length = 0
     clearedIntervals.length = 0
@@ -99,6 +74,11 @@ describe("createRuntimeFallbackHook dispose", () => {
     mockCreateEventHandler.mockClear()
     mockCreateMessageUpdateHandler.mockClear()
     mockCreateChatMessageHandler.mockClear()
+
+    spyOn(autoRetryModule, "createAutoRetryHelpers").mockImplementation(mockCreateAutoRetryHelpers)
+    spyOn(eventHandlerModule, "createEventHandler").mockImplementation(mockCreateEventHandler)
+    spyOn(messageUpdateHandlerModule, "createMessageUpdateHandler").mockImplementation(mockCreateMessageUpdateHandler)
+    spyOn(chatMessageHandlerModule, "createChatMessageHandler").mockImplementation(mockCreateChatMessageHandler)
 
     const wrappedSetInterval = ((handler: () => void, timeout?: number) => {
       const interval = originalSetInterval(handler, timeout)
@@ -123,10 +103,11 @@ describe("createRuntimeFallbackHook dispose", () => {
   })
 
   beforeEach(async () => {
-    ;({ createRuntimeFallbackHook } = await importFreshRuntimeFallbackHookModule())
+    ;({ createRuntimeFallbackHook } = await import(`./hook?test=${Date.now()}-${Math.random()}`))
   })
 
   afterEach(() => {
+    mock.restore()
     globalThis.setInterval = originalSetInterval
     globalThis.clearInterval = originalClearInterval
     globalThis.clearTimeout = originalClearTimeout
