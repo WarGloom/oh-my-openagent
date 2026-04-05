@@ -1,7 +1,15 @@
 import { describe, expect, test, spyOn, beforeEach, afterEach, mock } from "bun:test"
-import { resolveModel, resolveModelWithFallback, type ModelResolutionInput, type ExtendedModelResolutionInput, type ModelResolutionResult, type ModelSource } from "./model-resolver"
+import type { ModelResolutionInput, ExtendedModelResolutionInput } from "./model-resolver"
 import * as logger from "./logger"
 import * as connectedProvidersCache from "./connected-providers-cache"
+
+let resolveModel: typeof import("./model-resolver").resolveModel
+let resolveModelWithFallback: typeof import("./model-resolver").resolveModelWithFallback
+
+beforeEach(async () => {
+  mock.restore()
+  ;({ resolveModel, resolveModelWithFallback } = await import(`./model-resolver?test=${Date.now()}-${Math.random()}`))
+})
 
 describe("resolveModel", () => {
   describe("priority chain", () => {
@@ -260,6 +268,50 @@ describe("resolveModelWithFallback", () => {
 
       // then
       expect(result!.source).not.toBe("override")
+    })
+  })
+
+  describe("Step 2b: User fallback models", () => {
+    test("uses providerless user fallback before hardcoded chain when connected provider exists", () => {
+      // given
+      const cacheSpy = spyOn(connectedProvidersCache, "readConnectedProvidersCache").mockReturnValue(["openai", "anthropic"])
+      const input: ExtendedModelResolutionInput = {
+        userFallbackModels: ["gpt-5.4", "anthropic/claude-opus-4-6"],
+        fallbackChain: [
+          { providers: ["anthropic"], model: "claude-opus-4-6" },
+        ],
+        availableModels: new Set(),
+        systemDefaultModel: "google/gemini-3.1-pro",
+      }
+
+      // when
+      const result = resolveModelWithFallback(input)
+
+      // then
+      expect(result!.model).toBe("openai/gpt-5.4")
+      expect(result!.source).toBe("provider-fallback")
+      cacheSpy.mockRestore()
+    })
+
+    test("parses providerless variant user fallback before hardcoded chain", () => {
+      // given
+      const cacheSpy = spyOn(connectedProvidersCache, "readConnectedProvidersCache").mockReturnValue(["openai", "anthropic"])
+      const input: ExtendedModelResolutionInput = {
+        userFallbackModels: ["gpt-5.4 high", "anthropic/claude-opus-4-6"],
+        fallbackChain: [
+          { providers: ["anthropic"], model: "claude-opus-4-6" },
+        ],
+        availableModels: new Set(),
+        systemDefaultModel: "google/gemini-3.1-pro",
+      }
+
+      // when
+      const result = resolveModelWithFallback(input)
+
+      // then
+      expect(result!.model).toBe("openai/gpt-5.4")
+      expect(result!.source).toBe("provider-fallback")
+      cacheSpy.mockRestore()
     })
   })
 
