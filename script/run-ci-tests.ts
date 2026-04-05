@@ -58,18 +58,25 @@ function collapseNestedTargets(isolatedTargets: string[]): string[] {
 export async function createCiTestPlan(rootDirectory: string = process.cwd()): Promise<CiTestPlan> {
   const allTestFiles = await collectTestFiles(rootDirectory)
   const isolatedModuleMockFiles: string[] = []
+  const isolatedRuntimeFallbackFiles: string[] = []
 
   for (const testFile of allTestFiles) {
     if (await usesModuleMock(rootDirectory, testFile)) {
       isolatedModuleMockFiles.push(testFile)
     }
+    if (FILE_LEVEL_ISOLATION_PREFIXES.some((prefix) => testFile.startsWith(prefix))) {
+      isolatedRuntimeFallbackFiles.push(testFile)
+    }
   }
 
-  const isolatedTestTargets = collapseNestedTargets(
-    Array.from(new Set(isolatedModuleMockFiles.map((testFile) => toIsolatedTarget(testFile)))).sort((left, right) =>
-      left.localeCompare(right),
-    ),
-  )
+  const isolatedTestTargetInputs = Array.from(
+    new Set([
+      ...isolatedModuleMockFiles.map((testFile) => toIsolatedTarget(testFile)),
+      ...isolatedRuntimeFallbackFiles.map((testFile) => toIsolatedTarget(testFile)),
+    ]),
+  ).sort((left, right) => left.localeCompare(right))
+
+  const isolatedTestTargets = collapseNestedTargets(isolatedTestTargetInputs)
   const sharedTestFiles = allTestFiles.filter((testFile) => {
     return !isolatedTestTargets.some((isolatedTarget) => isCoveredByTarget(testFile, isolatedTarget))
   })

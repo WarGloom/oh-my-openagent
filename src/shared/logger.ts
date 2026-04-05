@@ -9,6 +9,14 @@ let flushTimer: ReturnType<typeof setTimeout> | null = null
 const FLUSH_INTERVAL_MS = 500
 const BUFFER_SIZE_LIMIT = 50
 
+export function _resetForTesting(): void {
+  if (flushTimer) {
+    clearTimeout(flushTimer)
+    flushTimer = null
+  }
+  buffer = []
+}
+
 function flush(): void {
   if (buffer.length === 0) return
   const data = buffer.join("")
