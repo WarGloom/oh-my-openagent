@@ -8,6 +8,7 @@ type CiTestPlan = {
 
 const TEST_ROOTS = ["bin", "script", "src"] as const
 const MODULE_MOCK_PATTERN = "mock.module("
+const FILE_LEVEL_ISOLATION_PREFIXES = ["src/hooks/runtime-fallback/"] as const
 
 async function collectTestFiles(rootDirectory: string): Promise<string[]> {
   const testFiles: string[] = []
@@ -29,6 +30,10 @@ async function usesModuleMock(rootDirectory: string, testFile: string): Promise<
 }
 
 function toIsolatedTarget(testFile: string): string {
+  if (FILE_LEVEL_ISOLATION_PREFIXES.some((prefix) => testFile.startsWith(prefix))) {
+    return testFile
+  }
+
   const pathSegments = testFile.split("/")
 
   if (pathSegments.length <= 3) {
@@ -123,6 +128,7 @@ async function main(): Promise<void> {
 
 export const moduleMockPattern = MODULE_MOCK_PATTERN
 export const testRoots = TEST_ROOTS
+export const fileLevelIsolationPrefixes = FILE_LEVEL_ISOLATION_PREFIXES
 
 if (process.argv.includes("--print-plan")) {
   const ciTestPlan = await createCiTestPlan()
