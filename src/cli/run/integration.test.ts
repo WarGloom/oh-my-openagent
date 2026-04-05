@@ -19,16 +19,24 @@ const mockCreateOpencodeClient = mock(() => ({ session: {} }))
 const mockIsPortAvailable = mock(() => Promise.resolve(true))
 const mockGetAvailableServerPort = mock(() => Promise.resolve({ port: 9999, wasAutoSelected: false }))
 
-mock.module("@opencode-ai/sdk", () => ({
-  createOpencode: mockCreateOpencode,
-  createOpencodeClient: mockCreateOpencodeClient,
-}))
+async function importFreshServerConnectionModule(): Promise<typeof import("./server-connection")> {
+  mock.module("@opencode-ai/sdk", () => ({
+    createOpencode: mockCreateOpencode,
+    createOpencodeClient: mockCreateOpencodeClient,
+  }))
 
-mock.module("../../shared/port-utils", () => ({
-  isPortAvailable: mockIsPortAvailable,
-  getAvailableServerPort: mockGetAvailableServerPort,
-  DEFAULT_SERVER_PORT: 4096,
-}))
+  mock.module("../../shared/port-utils", () => ({
+    isPortAvailable: mockIsPortAvailable,
+    getAvailableServerPort: mockGetAvailableServerPort,
+    DEFAULT_SERVER_PORT: 4096,
+  }))
+
+  const module = await import(`./server-connection?test=${Date.now()}-${Math.random()}`)
+  mock.module("@opencode-ai/sdk", () => originalSdk)
+  mock.module("../../shared/port-utils", () => originalPortUtils)
+  mock.restore()
+  return module
+}
 
 afterAll(() => {
   mock.module("@opencode-ai/sdk", () => originalSdk)
@@ -36,7 +44,11 @@ afterAll(() => {
   mock.restore()
 })
 
-const { createServerConnection } = await import("./server-connection")
+let createServerConnection: typeof import("./server-connection").createServerConnection
+
+beforeEach(async () => {
+  ;({ createServerConnection } = await importFreshServerConnectionModule())
+})
 
 interface MockWriteStream {
   write: (chunk: string) => boolean

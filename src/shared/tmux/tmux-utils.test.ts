@@ -63,13 +63,16 @@ describe("isInsideTmux", () => {
 
 describe("isServerRunning", () => {
   const originalFetch = globalThis.fetch
+  const SERVER_RUNNING_KEY = Symbol.for("oh-my-opencode:server-running-in-process")
 
   beforeEach(() => {
     resetServerCheck()
+    delete (globalThis as Record<symbol, boolean>)[SERVER_RUNNING_KEY]
   })
 
   afterEach(() => {
     globalThis.fetch = originalFetch
+    delete (globalThis as Record<symbol, boolean>)[SERVER_RUNNING_KEY]
   })
 
   test("returns true when server responds OK", async () => {
@@ -150,6 +153,16 @@ describe("isServerRunning", () => {
 })
 
 describe("resetServerCheck", () => {
+  const SERVER_RUNNING_KEY = Symbol.for("oh-my-opencode:server-running-in-process")
+
+  beforeEach(() => {
+    delete (globalThis as Record<symbol, boolean>)[SERVER_RUNNING_KEY]
+  })
+
+  afterEach(() => {
+    delete (globalThis as Record<symbol, boolean>)[SERVER_RUNNING_KEY]
+  })
+
   test("clears cache without throwing", () => {
     // given, #when, #then
     expect(() => resetServerCheck()).not.toThrow()

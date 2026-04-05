@@ -1,4 +1,4 @@
-import { describe, it, expect, mock, spyOn, afterEach } from "bun:test"
+import { beforeEach, describe, it, expect, mock, spyOn, afterEach } from "bun:test"
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
@@ -16,6 +16,10 @@ afterEach(() => {
       rmSync(dir, { recursive: true, force: true })
     }
   }
+})
+
+beforeEach(() => {
+  mock.restore()
 })
 
 function createTempDir(): string {

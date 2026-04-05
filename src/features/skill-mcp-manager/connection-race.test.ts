@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, mock, afterAll } from "bun:test"
 import type { ClaudeCodeMcpServer } from "../claude-code-mcp-loader/types"
 import type { SkillMcpClientInfo, SkillMcpManagerState } from "./types"
+import * as originalClientModule from "@modelcontextprotocol/sdk/client/index.js"
+import * as originalStdioModule from "@modelcontextprotocol/sdk/client/stdio.js"
 
 type Deferred<TValue> = {
   promise: Promise<TValue>
@@ -39,18 +41,34 @@ class MockStdioClientTransport {
   }
 }
 
-mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
-  Client: MockClient,
-}))
-
-mock.module("@modelcontextprotocol/sdk/client/stdio.js", () => ({
-  StdioClientTransport: MockStdioClientTransport,
-}))
-
 afterAll(() => { mock.restore() })
 
-const { disconnectAll, disconnectSession } = await import("./cleanup")
-const { getOrCreateClient } = await import("./connection")
+async function importFreshConnectionModules() {
+  mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
+    Client: MockClient,
+  }))
+
+  mock.module("@modelcontextprotocol/sdk/client/stdio.js", () => ({
+    StdioClientTransport: MockStdioClientTransport,
+  }))
+
+  const cleanupModule = await import(`./cleanup?test=${Date.now()}-${Math.random()}`)
+  const connectionModule = await import(`./connection?test=${Date.now()}-${Math.random()}`)
+
+  mock.module("@modelcontextprotocol/sdk/client/index.js", () => originalClientModule)
+  mock.module("@modelcontextprotocol/sdk/client/stdio.js", () => originalStdioModule)
+  mock.restore()
+
+  return {
+    disconnectAll: cleanupModule.disconnectAll,
+    disconnectSession: cleanupModule.disconnectSession,
+    getOrCreateClient: connectionModule.getOrCreateClient,
+  }
+}
+
+let disconnectAll: typeof import("./cleanup").disconnectAll
+let disconnectSession: typeof import("./cleanup").disconnectSession
+let getOrCreateClient: typeof import("./connection").getOrCreateClient
 
 function createDeferred<TValue>(): Deferred<TValue> {
   let resolvePromise: ((value: TValue) => void) | null = null
@@ -84,6 +102,10 @@ function createState(): SkillMcpManagerState {
     shutdownGeneration: 0,
     inFlightConnections: new Map(),
     disposed: false,
+    createOAuthProvider: () => ({
+      tokens: () => null,
+      login: async () => ({ accessToken: "test-token" }),
+    }),
   }
 
   trackedStates.push(state)
@@ -110,6 +132,10 @@ beforeEach(() => {
   pendingConnects.length = 0
   createdClients.length = 0
   createdTransports.length = 0
+})
+
+beforeEach(async () => {
+  ;({ disconnectAll, disconnectSession, getOrCreateClient } = await importFreshConnectionModules())
 })
 
 afterEach(async () => {

@@ -6,6 +6,8 @@ import type { OAuthTokenData } from "../mcp-oauth/storage"
 // Mock the MCP SDK transports to avoid network calls
 const mockHttpConnect = mock(() => Promise.reject(new Error("Mocked HTTP connection failure")))
 const mockHttpClose = mock(() => Promise.resolve())
+const mockStdioConnect = mock(() => Promise.reject(new Error("Mocked stdio connection failure")))
+const mockStdioClose = mock(() => Promise.resolve())
 let lastTransportInstance: { url?: URL; options?: { requestInit?: RequestInit } } = {}
 
 const mockTokens = mock(() => null as OAuthTokenData | null)
@@ -13,6 +15,34 @@ const mockLogin = mock(() => Promise.resolve({ accessToken: "test-token" } satis
 const mockRefresh = mock((_: string) => Promise.resolve({ accessToken: "refreshed-token" } satisfies OAuthTokenData))
 
 async function importFreshManagerModule(): Promise<typeof import("./manager")> {
+  mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
+    Client: class MockClient {
+      constructor(..._args: unknown[]) {}
+
+      async connect(transport: { start?: () => Promise<void> }) {
+        await transport.start?.()
+      }
+
+      async close() {}
+    },
+  }))
+
+  mock.module("@modelcontextprotocol/sdk/client/stdio.js", () => ({
+    StdioClientTransport: class MockStdioClientTransport {
+      constructor(
+        public options: { command: string; args?: string[]; env?: Record<string, string>; stderr?: string },
+      ) {}
+
+      async start() {
+        await mockStdioConnect()
+      }
+
+      async close() {
+        await mockStdioClose()
+      }
+    },
+  }))
+
   mock.module("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
     StreamableHTTPClientTransport: class MockStreamableHTTPClientTransport {
       constructor(public url: URL, public options?: { requestInit?: RequestInit }) {
@@ -48,6 +78,8 @@ describe("SkillMcpManager", () => {
     })
     mockHttpConnect.mockClear()
     mockHttpClose.mockClear()
+    mockStdioConnect.mockClear()
+    mockStdioClose.mockClear()
     mockTokens.mockClear()
     mockLogin.mockClear()
     mockRefresh.mockClear()
