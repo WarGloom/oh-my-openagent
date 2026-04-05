@@ -31,6 +31,7 @@ export function handleNonIdleEvent(args: {
         state.tokenLimitDetected = false
         sessionStateStore.recordActivity(sessionID)
       }
+      log(`[${HOOK_NAME}] Cancelling countdown on user-role message`, { sessionID })
       sessionStateStore.cancelCountdown(sessionID)
       return
     }
