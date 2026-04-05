@@ -28,6 +28,56 @@ describe("#given tool trimming prioritization", () => {
   })
 })
 
+describe("#given max_tools cap and low-priority background tools", () => {
+  test("#when background and background_cancel exceed cap #then they are removed before edit", () => {
+    const filteredTools = {
+      keep_one: fakeTool,
+      keep_two: fakeTool,
+      keep_three: fakeTool,
+      edit: fakeTool,
+      background_output: fakeTool,
+      background_cancel: fakeTool,
+    } satisfies ToolsRecord
+
+    trimToolsToCap(filteredTools, 4)
+
+    expect(filteredTools).not.toHaveProperty("background_output")
+    expect(filteredTools).not.toHaveProperty("background_cancel")
+    expect(filteredTools).toHaveProperty("edit")
+    expect(filteredTools).toHaveProperty("keep_one")
+    expect(filteredTools).toHaveProperty("keep_two")
+    expect(filteredTools).toHaveProperty("keep_three")
+  })
+})
+
+describe("#given background task aliases", () => {
+  test("#when creating tool registry #then MCP-prefixed background tool names are registered", () => {
+    const result = createToolRegistry({
+      ctx: { directory: "/tmp" } as Parameters<typeof createToolRegistry>[0]["ctx"],
+      pluginConfig: {},
+      managers: {
+        backgroundManager: {},
+        tmuxSessionManager: {},
+        skillMcpManager: {},
+      } as Parameters<typeof createToolRegistry>[0]["managers"],
+      skillContext: {
+        mergedSkills: [],
+        availableSkills: [],
+        browserProvider: "playwright",
+        disabledSkills: new Set(),
+      },
+      availableCategories: [],
+    })
+
+    expect(result.filteredTools).toHaveProperty("background_output")
+    expect(result.filteredTools).toHaveProperty("mcp_background_output")
+    expect(result.filteredTools).toHaveProperty("background_cancel")
+    expect(result.filteredTools).toHaveProperty("mcp_background_cancel")
+    expect(result.filteredTools["mcp_background_output"]).toBe(result.filteredTools["background_output"])
+    expect(result.filteredTools["mcp_background_cancel"]).toBe(result.filteredTools["background_cancel"])
+  })
+})
+
 describe("#given task_system configuration", () => {
   test("#when task_system is omitted #then task tools are not registered by default", () => {
     const result = createToolRegistry({
