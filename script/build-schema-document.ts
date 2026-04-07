@@ -1,8 +1,8 @@
-import { zodToJsonSchema } from "zod-to-json-schema"
+import { tool } from "@opencode-ai/plugin"
 import { OhMyOpenCodeConfigSchema } from "../src/config/schema"
 
 export function createOhMyOpenCodeJsonSchema(): Record<string, unknown> {
-  const jsonSchema = zodToJsonSchema(OhMyOpenCodeConfigSchema) as Record<string, unknown>
+  const jsonSchema = tool.schema.toJSONSchema(OhMyOpenCodeConfigSchema) as Record<string, unknown>
 
   return {
     ...jsonSchema,
