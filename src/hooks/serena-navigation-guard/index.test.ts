@@ -85,6 +85,32 @@ describe("serena-navigation-guard", () => {
     ).resolves.toBeUndefined()
   })
 
+  test("enforces Serena-first navigation for explore before fallback", async () => {
+    const hook = createSerenaNavigationGuardHook()
+    updateSessionAgent(sessionID, "explore")
+
+    await expect(
+      hook["tool.execute.before"]({
+        tool: "grep",
+        sessionID,
+        callID: "call_1",
+      }, { args: {} })
+    ).rejects.toThrow("Serena-first navigation policy")
+
+    await hook["tool.execute.after"](
+      { tool: "serena_find_symbol", sessionID, callID: "call_serena" },
+      { title: "error", output: "Error: symbol lookup failed", metadata: {} }
+    )
+
+    await expect(
+      hook["tool.execute.before"]({
+        tool: "grep",
+        sessionID,
+        callID: "call_2",
+      }, { args: {} })
+    ).resolves.toBeUndefined()
+  })
+
   test("treats MCP-style Serena text errors as failed attempts", async () => {
     const hook = createSerenaNavigationGuardHook()
     updateSessionAgent(sessionID, "oracle")

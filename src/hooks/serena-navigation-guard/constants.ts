@@ -21,7 +21,6 @@ export const SERENA_NAVIGATION_TOOL_HINTS = [
 
 export const EXCLUDED_AGENT_KEYS = new Set([
   "librarian",
-  "explore",
   "multimodal-looker",
   "compaction",
 ])
