@@ -25,6 +25,31 @@ function captureUserDisabledMcps(
   return disabled;
 }
 
+function prioritizeUserConfiguredMcps(
+  merged: Record<string, McpEntry>,
+  userMcp: Record<string, unknown> | undefined,
+): Record<string, McpEntry> {
+  if (!userMcp) {
+    return merged;
+  }
+
+  const prioritized: Record<string, McpEntry> = {};
+
+  for (const name of Object.keys(userMcp)) {
+    if (merged[name]) {
+      prioritized[name] = merged[name];
+    }
+  }
+
+  for (const [name, value] of Object.entries(merged)) {
+    if (!(name in prioritized)) {
+      prioritized[name] = value;
+    }
+  }
+
+  return prioritized;
+}
+
 export async function applyMcpConfig(params: {
   config: Record<string, unknown>;
   pluginConfig: OhMyOpenCodeConfig;
@@ -64,5 +89,5 @@ export async function applyMcpConfig(params: {
     delete merged[name];
   }
 
-  params.config.mcp = merged;
+  params.config.mcp = prioritizeUserConfiguredMcps(merged, userMcp);
 }
