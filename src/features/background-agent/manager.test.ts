@@ -7,6 +7,7 @@ import { getSessionPromptParams, clearSessionPromptParams } from "../../shared/s
 import { tmpdir } from "node:os"
 import type { PluginInput } from "@opencode-ai/plugin"
 import { _resetForTesting as resetClaudeCodeSessionState, subagentSessions } from "../claude-code-session-state"
+import { _resetForTesting as resetProcessCleanupForTesting } from "./process-cleanup"
 import type { BackgroundTask, ResumeInput } from "./types"
 import { MIN_IDLE_TIME_MS } from "./constants"
 import { BackgroundManager } from "./manager"
@@ -1820,6 +1821,14 @@ describe("BackgroundManager.resume model persistence", () => {
 })
 
 describe("BackgroundManager process cleanup", () => {
+  beforeEach(() => {
+    resetProcessCleanupForTesting()
+  })
+
+  afterEach(() => {
+    resetProcessCleanupForTesting()
+  })
+
   test("should remove listeners after last shutdown", () => {
     // given
     const signals = getCleanupSignals()
