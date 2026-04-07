@@ -18,6 +18,19 @@ IMPORTANT:
 Original task:
 {{PROMPT}}`
 
+const ULTRAWORK_CONTINUATION_PROMPT = `${SYSTEM_DIRECTIVE_PREFIX} - ULTRAWORK LOOP {{ITERATION}}/{{MAX}}]
+
+Your previous attempt did not output the completion promise. Continue working on the task.
+
+IMPORTANT:
+- Review your progress so far
+- Continue from where you left off
+- When FULLY complete, output: <promise>{{PROMISE}}</promise>
+- Do not stop until the task is truly done
+
+Original task:
+{{PROMPT}}`
+
 const ULTRAWORK_VERIFICATION_PROMPT = `${SYSTEM_DIRECTIVE_PREFIX} - ULTRAWORK LOOP VERIFICATION {{ITERATION}}/{{MAX}}]
 
 You already emitted <promise>{{INITIAL_PROMISE}}</promise>. This does NOT finish the loop yet.
@@ -51,7 +64,9 @@ Original task:
 export function buildContinuationPrompt(state: RalphLoopState): string {
 	const template = state.verification_pending
 		? ULTRAWORK_VERIFICATION_PROMPT
-		: CONTINUATION_PROMPT
+		: state.ultrawork
+			? ULTRAWORK_CONTINUATION_PROMPT
+			: CONTINUATION_PROMPT
 	const continuationPrompt = template.replace(
 		"{{ITERATION}}",
 		String(state.iteration),
@@ -61,7 +76,7 @@ export function buildContinuationPrompt(state: RalphLoopState): string {
 		.replace("{{PROMISE}}", state.completion_promise)
 		.replace("{{PROMPT}}", state.prompt)
 
-	return state.ultrawork ? `ultrawork ${continuationPrompt}` : continuationPrompt
+	return continuationPrompt
 }
 
 export function buildVerificationFailurePrompt(state: RalphLoopState): string {
@@ -73,5 +88,5 @@ export function buildVerificationFailurePrompt(state: RalphLoopState): string {
 		.replace("{{PROMISE}}", state.completion_promise)
 		.replace("{{PROMPT}}", state.prompt)
 
-	return state.ultrawork ? `ultrawork ${continuationPrompt}` : continuationPrompt
+	return continuationPrompt
 }

@@ -1109,7 +1109,7 @@ Original task: Build something`
       expect(toastCalls.some(t => t.title === "Ralph Loop Complete!")).toBe(true)
     })
 
-    test("should prepend ultrawork to continuation prompt when ultrawork=true", async () => {
+    test("should emit an ultrawork system directive continuation prompt when ultrawork=true", async () => {
       // given - hook with ultrawork mode enabled
       const hook = createRalphLoopHook(createMockPluginInput())
       hook.startLoop("session-123", "Build API", { ultrawork: true })
@@ -1119,9 +1119,9 @@ Original task: Build something`
         event: { type: "session.idle", properties: { sessionID: "session-123" } },
       })
 
-      // then - prompt should start with "ultrawork "
+      // then - prompt should stay a system directive while preserving ultrawork mode
       expect(promptCalls.length).toBe(1)
-      expect(promptCalls[0].text).toMatch(/^ultrawork /)
+      expect(promptCalls[0].text).toMatch(/^\[SYSTEM DIRECTIVE: OH-MY-OPENCODE - ULTRAWORK LOOP /)
     })
 
     test("should NOT prepend ultrawork to continuation prompt when ultrawork=false", async () => {
