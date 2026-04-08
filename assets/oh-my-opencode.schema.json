@@ -17,7 +17,8 @@
     "disabled_mcps": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "minLength": 1
       }
     },
     "disabled_agents": {
@@ -124,10 +125,14 @@
                         ]
                       },
                       "temperature": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 2
                       },
                       "top_p": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
                       },
                       "maxTokens": {
                         "type": "number"
@@ -186,10 +191,14 @@
                             ]
                           },
                           "temperature": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 2
                           },
                           "top_p": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
                           },
                           "maxTokens": {
                             "type": "number"
@@ -237,10 +246,14 @@
               }
             },
             "temperature": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2
             },
             "top_p": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
             },
             "prompt": {
               "type": "string"
@@ -272,7 +285,8 @@
               ]
             },
             "color": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
             },
             "permission": {
               "type": "object",
@@ -461,10 +475,14 @@
                         ]
                       },
                       "temperature": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 2
                       },
                       "top_p": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
                       },
                       "maxTokens": {
                         "type": "number"
@@ -523,10 +541,14 @@
                             ]
                           },
                           "temperature": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 2
                           },
                           "top_p": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
                           },
                           "maxTokens": {
                             "type": "number"
@@ -574,10 +596,14 @@
               }
             },
             "temperature": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2
             },
             "top_p": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
             },
             "prompt": {
               "type": "string"
@@ -609,7 +635,8 @@
               ]
             },
             "color": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
             },
             "permission": {
               "type": "object",
@@ -798,10 +825,14 @@
                         ]
                       },
                       "temperature": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 2
                       },
                       "top_p": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
                       },
                       "maxTokens": {
                         "type": "number"
@@ -860,10 +891,14 @@
                             ]
                           },
                           "temperature": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 2
                           },
                           "top_p": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
                           },
                           "maxTokens": {
                             "type": "number"
@@ -911,10 +946,14 @@
               }
             },
             "temperature": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2
             },
             "top_p": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
             },
             "prompt": {
               "type": "string"
@@ -946,7 +985,8 @@
               ]
             },
             "color": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
             },
             "permission": {
               "type": "object",
@@ -1135,10 +1175,14 @@
                         ]
                       },
                       "temperature": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 2
                       },
                       "top_p": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
                       },
                       "maxTokens": {
                         "type": "number"
@@ -1197,10 +1241,14 @@
                             ]
                           },
                           "temperature": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 2
                           },
                           "top_p": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
                           },
                           "maxTokens": {
                             "type": "number"
@@ -1248,10 +1296,14 @@
               }
             },
             "temperature": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2
             },
             "top_p": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
             },
             "prompt": {
               "type": "string"
@@ -1283,7 +1335,8 @@
               ]
             },
             "color": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
             },
             "permission": {
               "type": "object",
@@ -1475,10 +1528,14 @@
                         ]
                       },
                       "temperature": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 2
                       },
                       "top_p": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
                       },
                       "maxTokens": {
                         "type": "number"
@@ -1537,10 +1594,14 @@
                             ]
                           },
                           "temperature": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 2
                           },
                           "top_p": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
                           },
                           "maxTokens": {
                             "type": "number"
@@ -1588,10 +1649,14 @@
               }
             },
             "temperature": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2
             },
             "top_p": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
             },
             "prompt": {
               "type": "string"
@@ -1623,7 +1688,8 @@
               ]
             },
             "color": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
             },
             "permission": {
               "type": "object",
@@ -1812,10 +1878,14 @@
                         ]
                       },
                       "temperature": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 2
                       },
                       "top_p": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
                       },
                       "maxTokens": {
                         "type": "number"
@@ -1874,10 +1944,14 @@
                             ]
                           },
                           "temperature": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 2
                           },
                           "top_p": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
                           },
                           "maxTokens": {
                             "type": "number"
@@ -1925,10 +1999,14 @@
               }
             },
             "temperature": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2
             },
             "top_p": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
             },
             "prompt": {
               "type": "string"
@@ -1960,7 +2038,8 @@
               ]
             },
             "color": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
             },
             "permission": {
               "type": "object",
@@ -2149,10 +2228,14 @@
                         ]
                       },
                       "temperature": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 2
                       },
                       "top_p": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
                       },
                       "maxTokens": {
                         "type": "number"
@@ -2211,10 +2294,14 @@
                             ]
                           },
                           "temperature": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 2
                           },
                           "top_p": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
                           },
                           "maxTokens": {
                             "type": "number"
@@ -2262,10 +2349,14 @@
               }
             },
             "temperature": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2
             },
             "top_p": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
             },
             "prompt": {
               "type": "string"
@@ -2297,7 +2388,8 @@
               ]
             },
             "color": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
             },
             "permission": {
               "type": "object",
@@ -2486,10 +2578,14 @@
                         ]
                       },
                       "temperature": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 2
                       },
                       "top_p": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
                       },
                       "maxTokens": {
                         "type": "number"
@@ -2548,10 +2644,14 @@
                             ]
                           },
                           "temperature": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 2
                           },
                           "top_p": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
                           },
                           "maxTokens": {
                             "type": "number"
@@ -2599,10 +2699,14 @@
               }
             },
             "temperature": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2
             },
             "top_p": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
             },
             "prompt": {
               "type": "string"
@@ -2634,7 +2738,8 @@
               ]
             },
             "color": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
             },
             "permission": {
               "type": "object",
@@ -2823,10 +2928,14 @@
                         ]
                       },
                       "temperature": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 2
                       },
                       "top_p": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
                       },
                       "maxTokens": {
                         "type": "number"
@@ -2885,10 +2994,14 @@
                             ]
                           },
                           "temperature": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 2
                           },
                           "top_p": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
                           },
                           "maxTokens": {
                             "type": "number"
@@ -2936,10 +3049,14 @@
               }
             },
             "temperature": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2
             },
             "top_p": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
             },
             "prompt": {
               "type": "string"
@@ -2971,7 +3088,8 @@
               ]
             },
             "color": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
             },
             "permission": {
               "type": "object",
@@ -3160,10 +3278,14 @@
                         ]
                       },
                       "temperature": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 2
                       },
                       "top_p": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
                       },
                       "maxTokens": {
                         "type": "number"
@@ -3222,10 +3344,14 @@
                             ]
                           },
                           "temperature": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 2
                           },
                           "top_p": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
                           },
                           "maxTokens": {
                             "type": "number"
@@ -3273,10 +3399,14 @@
               }
             },
             "temperature": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2
             },
             "top_p": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
             },
             "prompt": {
               "type": "string"
@@ -3308,7 +3438,8 @@
               ]
             },
             "color": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
             },
             "permission": {
               "type": "object",
@@ -3497,10 +3628,14 @@
                         ]
                       },
                       "temperature": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 2
                       },
                       "top_p": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
                       },
                       "maxTokens": {
                         "type": "number"
@@ -3559,10 +3694,14 @@
                             ]
                           },
                           "temperature": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 2
                           },
                           "top_p": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
                           },
                           "maxTokens": {
                             "type": "number"
@@ -3610,10 +3749,14 @@
               }
             },
             "temperature": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2
             },
             "top_p": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
             },
             "prompt": {
               "type": "string"
@@ -3645,7 +3788,8 @@
               ]
             },
             "color": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
             },
             "permission": {
               "type": "object",
@@ -3834,10 +3978,14 @@
                         ]
                       },
                       "temperature": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 2
                       },
                       "top_p": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
                       },
                       "maxTokens": {
                         "type": "number"
@@ -3896,10 +4044,14 @@
                             ]
                           },
                           "temperature": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 2
                           },
                           "top_p": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
                           },
                           "maxTokens": {
                             "type": "number"
@@ -3947,10 +4099,14 @@
               }
             },
             "temperature": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2
             },
             "top_p": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
             },
             "prompt": {
               "type": "string"
@@ -3982,7 +4138,8 @@
               ]
             },
             "color": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
             },
             "permission": {
               "type": "object",
@@ -4171,10 +4328,14 @@
                         ]
                       },
                       "temperature": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 2
                       },
                       "top_p": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
                       },
                       "maxTokens": {
                         "type": "number"
@@ -4233,10 +4394,14 @@
                             ]
                           },
                           "temperature": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 2
                           },
                           "top_p": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
                           },
                           "maxTokens": {
                             "type": "number"
@@ -4284,10 +4449,14 @@
               }
             },
             "temperature": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2
             },
             "top_p": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
             },
             "prompt": {
               "type": "string"
@@ -4319,7 +4488,8 @@
               ]
             },
             "color": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
             },
             "permission": {
               "type": "object",
@@ -4508,10 +4678,14 @@
                         ]
                       },
                       "temperature": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 2
                       },
                       "top_p": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
                       },
                       "maxTokens": {
                         "type": "number"
@@ -4570,10 +4744,14 @@
                             ]
                           },
                           "temperature": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 2
                           },
                           "top_p": {
-                            "type": "number"
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
                           },
                           "maxTokens": {
                             "type": "number"
@@ -4621,10 +4799,14 @@
               }
             },
             "temperature": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2
             },
             "top_p": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
             },
             "prompt": {
               "type": "string"
@@ -4656,7 +4838,8 @@
               ]
             },
             "color": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
             },
             "permission": {
               "type": "object",
@@ -4856,10 +5039,14 @@
                       ]
                     },
                     "temperature": {
-                      "type": "number"
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 2
                     },
                     "top_p": {
-                      "type": "number"
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
                     },
                     "maxTokens": {
                       "type": "number"
@@ -4918,10 +5105,14 @@
                           ]
                         },
                         "temperature": {
-                          "type": "number"
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 2
                         },
                         "top_p": {
-                          "type": "number"
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 1
                         },
                         "maxTokens": {
                           "type": "number"
@@ -4960,10 +5151,14 @@
             "type": "string"
           },
           "temperature": {
-            "type": "number"
+            "type": "number",
+            "minimum": 0,
+            "maximum": 2
           },
           "top_p": {
-            "type": "number"
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
           },
           "maxTokens": {
             "type": "number"
@@ -5019,7 +5214,9 @@
             "type": "string"
           },
           "max_prompt_tokens": {
-            "type": "number"
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
           },
           "is_unstable_agent": {
             "type": "boolean"
@@ -5135,7 +5332,9 @@
                 },
                 "turns": {
                   "default": 3,
-                  "type": "number"
+                  "type": "number",
+                  "minimum": 1,
+                  "maximum": 10
                 }
               },
               "required": [
@@ -5202,7 +5401,9 @@
                     },
                     "turns": {
                       "default": 5,
-                      "type": "number"
+                      "type": "number",
+                      "minimum": 1,
+                      "maximum": 20
                     }
                   },
                   "required": [
@@ -5226,7 +5427,8 @@
           "type": "boolean"
         },
         "plugin_load_timeout_ms": {
-          "type": "number"
+          "type": "number",
+          "minimum": 1000
         },
         "safe_hook_creation": {
           "type": "boolean"
@@ -5241,7 +5443,9 @@
           "type": "boolean"
         },
         "max_tools": {
-          "type": "number"
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
         }
       },
       "additionalProperties": false
@@ -5369,7 +5573,9 @@
         },
         "default_max_iterations": {
           "default": 100,
-          "type": "number"
+          "type": "number",
+          "minimum": 1,
+          "maximum": 1000
         },
         "state_dir": {
           "type": "string"
@@ -5408,13 +5614,17 @@
               }
             },
             "max_fallback_attempts": {
-              "type": "number"
+              "type": "number",
+              "minimum": 1,
+              "maximum": 20
             },
             "cooldown_seconds": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0
             },
             "timeout_seconds": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0
             },
             "notify_on_fallback": {
               "type": "boolean"
@@ -5428,7 +5638,8 @@
       "type": "object",
       "properties": {
         "defaultConcurrency": {
-          "type": "number"
+          "type": "number",
+          "minimum": 1
         },
         "providerConcurrency": {
           "type": "object",
@@ -5436,7 +5647,8 @@
             "type": "string"
           },
           "additionalProperties": {
-            "type": "number"
+            "type": "number",
+            "minimum": 0
           }
         },
         "modelConcurrency": {
@@ -5445,32 +5657,44 @@
             "type": "string"
           },
           "additionalProperties": {
-            "type": "number"
+            "type": "number",
+            "minimum": 0
           }
         },
         "maxDepth": {
-          "type": "number"
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
         },
         "maxDescendants": {
-          "type": "number"
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
         },
         "staleTimeoutMs": {
-          "type": "number"
+          "type": "number",
+          "minimum": 60000
         },
         "messageStalenessTimeoutMs": {
-          "type": "number"
+          "type": "number",
+          "minimum": 60000
         },
         "taskTtlMs": {
-          "type": "number"
+          "type": "number",
+          "minimum": 300000
         },
         "sessionGoneTimeoutMs": {
-          "type": "number"
+          "type": "number",
+          "minimum": 10000
         },
         "syncPollTimeoutMs": {
-          "type": "number"
+          "type": "number",
+          "minimum": 60000
         },
         "maxToolCalls": {
-          "type": "number"
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 9007199254740991
         },
         "circuitBreaker": {
           "type": "object",
@@ -5479,10 +5703,14 @@
               "type": "boolean"
             },
             "maxToolCalls": {
-              "type": "number"
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 9007199254740991
             },
             "consecutiveThreshold": {
-              "type": "number"
+              "type": "integer",
+              "minimum": 5,
+              "maximum": 9007199254740991
             }
           },
           "additionalProperties": false
@@ -5509,10 +5737,13 @@
           "type": "boolean"
         },
         "refresh_timeout_ms": {
-          "type": "number"
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
         },
         "source_url": {
-          "type": "string"
+          "type": "string",
+          "format": "uri"
         }
       },
       "additionalProperties": false
@@ -5758,15 +5989,19 @@
         },
         "main_pane_size": {
           "default": 60,
-          "type": "number"
+          "type": "number",
+          "minimum": 20,
+          "maximum": 80
         },
         "main_pane_min_width": {
           "default": 120,
-          "type": "number"
+          "type": "number",
+          "minimum": 40
         },
         "agent_pane_min_width": {
           "default": 40,
-          "type": "number"
+          "type": "number",
+          "minimum": 20
         },
         "isolation": {
           "default": "inline",
