@@ -7,9 +7,18 @@ import { PROJECT_MARKERS } from "./constants";
  * Checks for PROJECT_MARKERS (.git, pyproject.toml, package.json, etc.)
  *
  * @param startPath - Starting path to search from (file or directory)
+ * @param stopAt - Optional boundary directory; the walk inspects this
+ *   directory for markers and then halts, returning null if none were
+ *   found at or below it. Use this in tests to keep the walk inside a
+ *   sandbox directory and prevent accidental matches against shared
+ *   parents like /tmp that may contain stray project markers from
+ *   unrelated processes.
  * @returns Project root path or null if not found
  */
-export function findProjectRoot(startPath: string): string | null {
+export function findProjectRoot(
+  startPath: string,
+  stopAt?: string,
+): string | null {
   let current: string;
 
   try {
@@ -25,6 +34,10 @@ export function findProjectRoot(startPath: string): string | null {
       if (existsSync(markerPath)) {
         return current;
       }
+    }
+
+    if (stopAt !== undefined && current === stopAt) {
+      return null;
     }
 
     const parent = dirname(current);
