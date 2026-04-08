@@ -5,7 +5,10 @@ import * as skillLoader from "../features/opencode-skill-loader";
 import type { OhMyOpenCodeConfig } from "../config";
 import type { PluginComponents } from "./plugin-components-loader";
 import { applyCommandConfig } from "./command-config-handler";
-import { getAgentListDisplayName } from "../shared/agent-display-names";
+import {
+  getAgentDisplayName,
+  getAgentListDisplayName,
+} from "../shared/agent-display-names";
 
 function createPluginComponents(): PluginComponents {
   return {
@@ -97,7 +100,7 @@ describe("applyCommandConfig", () => {
     expect(commandConfig["agents-global-skill"]?.description).toContain("Agents global skill");
   });
 
-  test("remaps Atlas command agents to the list display name used by runtime agent lookup", async () => {
+  test("normalizes Atlas command agents to the exported list key used by opencode command routing", async () => {
     // given
     loadBuiltinCommandsSpy.mockReturnValue({
       "start-work": {
@@ -105,6 +108,31 @@ describe("applyCommandConfig", () => {
         description: "(builtin) Start work",
         template: "template",
         agent: "atlas",
+      },
+    });
+    const config: Record<string, unknown> = { command: {} };
+
+    // when
+    await applyCommandConfig({
+      config,
+      pluginConfig: createPluginConfig(),
+      ctx: { directory: "/tmp" },
+      pluginComponents: createPluginComponents(),
+    });
+
+    // then
+    const commandConfig = config.command as Record<string, { agent?: string }>;
+    expect(commandConfig["start-work"]?.agent).toBe(getAgentListDisplayName("atlas"));
+  });
+
+  test("normalizes legacy display-name command agents to the exported list key", async () => {
+    // given
+    loadBuiltinCommandsSpy.mockReturnValue({
+      "start-work": {
+        name: "start-work",
+        description: "(builtin) Start work",
+        template: "template",
+        agent: getAgentDisplayName("atlas"),
       },
     });
     const config: Record<string, unknown> = { command: {} };

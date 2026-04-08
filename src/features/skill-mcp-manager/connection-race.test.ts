@@ -117,6 +117,7 @@ function createClientInfo(sessionID: string): SkillMcpClientInfo {
     serverName: "race-server",
     skillName: "race-skill",
     sessionID,
+    scope: "builtin",
   }
 }
 

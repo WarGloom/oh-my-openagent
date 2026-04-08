@@ -288,7 +288,7 @@ describe("runtime-fallback", () => {
       expect(errorLog).toBeDefined()
     })
 
-    test("should trigger fallback when session.error says you've reached your usage limit", async () => {
+    test("should NOT trigger fallback for quota exhaustion without auto-retry signal (STOP classification)", async () => {
       const hook = createRuntimeFallbackHook(createMockPluginInput(), {
         config: createMockConfig({ notify_on_fallback: false }),
         pluginConfig: createMockPluginConfigWithCategoryFallback(["zai-coding-plan/glm-5.1"]),
@@ -314,11 +314,10 @@ describe("runtime-fallback", () => {
       })
 
       const fallbackLog = logCalls.find((c) => c.msg.includes("Preparing fallback"))
-      expect(fallbackLog).toBeDefined()
-      expect(fallbackLog?.data).toMatchObject({ from: "kimi-for-coding/k2p5", to: "zai-coding-plan/glm-5.1" })
+      expect(fallbackLog).toBeUndefined()
 
       const skipLog = logCalls.find((c) => c.msg.includes("Error not retryable"))
-      expect(skipLog).toBeUndefined()
+      expect(skipLog).toBeDefined()
     })
 
     test("should continue fallback chain when fallback model is not found", async () => {
@@ -525,7 +524,7 @@ describe("runtime-fallback", () => {
 
     test("should trigger fallback on OpenAI auto-retry signal in message.updated", async () => {
       const hook = createRuntimeFallbackHook(createMockPluginInput(), {
-        config: createMockConfig({ notify_on_fallback: false }),
+        config: createMockConfig({ notify_on_fallback: false, timeout_seconds: 30 }),
         pluginConfig: createMockPluginConfigWithCategoryFallback(["anthropic/claude-opus-4-6"]),
       })
 
@@ -2067,7 +2066,7 @@ describe("runtime-fallback", () => {
       expect(retriedModels).toContain("openai/gpt-5.3-codex")
     })
 
-    test("triggers fallback when message contains type:error parts (e.g. Minimax insufficient balance)", async () => {
+    test("does NOT trigger fallback for quota exhaustion in error parts without auto-retry signal (STOP classification)", async () => {
       const retriedModels: string[] = []
 
       const hook = createRuntimeFallbackHook(
@@ -2115,7 +2114,10 @@ describe("runtime-fallback", () => {
         },
       })
 
-      expect(retriedModels).toContain("openai/gpt-5.4")
+      expect(retriedModels).toHaveLength(0)
+
+      const skipLog = logCalls.find((c) => c.msg.includes("message.updated error not retryable"))
+      expect(skipLog).toBeDefined()
     })
 
     test("triggers fallback when message has mixed text and error parts", async () => {

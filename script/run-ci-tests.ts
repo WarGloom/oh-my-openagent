@@ -8,7 +8,6 @@ type CiTestPlan = {
 
 const TEST_ROOTS = ["bin", "script", "src"] as const
 const MODULE_MOCK_PATTERN = "mock.module("
-const FILE_LEVEL_ISOLATION_PREFIXES = ["src/hooks/runtime-fallback/"] as const
 
 async function collectTestFiles(rootDirectory: string): Promise<string[]> {
   const testFiles: string[] = []
@@ -30,17 +29,7 @@ async function usesModuleMock(rootDirectory: string, testFile: string): Promise<
 }
 
 function toIsolatedTarget(testFile: string): string {
-  if (FILE_LEVEL_ISOLATION_PREFIXES.some((prefix) => testFile.startsWith(prefix))) {
-    return testFile
-  }
-
-  const pathSegments = testFile.split("/")
-
-  if (pathSegments.length <= 3) {
-    return testFile
-  }
-
-  return pathSegments.slice(0, -1).join("/")
+  return testFile
 }
 
 function isCoveredByTarget(testFile: string, isolatedTarget: string): boolean {
@@ -58,25 +47,18 @@ function collapseNestedTargets(isolatedTargets: string[]): string[] {
 export async function createCiTestPlan(rootDirectory: string = process.cwd()): Promise<CiTestPlan> {
   const allTestFiles = await collectTestFiles(rootDirectory)
   const isolatedModuleMockFiles: string[] = []
-  const isolatedRuntimeFallbackFiles: string[] = []
 
   for (const testFile of allTestFiles) {
     if (await usesModuleMock(rootDirectory, testFile)) {
       isolatedModuleMockFiles.push(testFile)
     }
-    if (FILE_LEVEL_ISOLATION_PREFIXES.some((prefix) => testFile.startsWith(prefix))) {
-      isolatedRuntimeFallbackFiles.push(testFile)
-    }
   }
 
-  const isolatedTestTargetInputs = Array.from(
-    new Set([
-      ...isolatedModuleMockFiles.map((testFile) => toIsolatedTarget(testFile)),
-      ...isolatedRuntimeFallbackFiles.map((testFile) => toIsolatedTarget(testFile)),
-    ]),
-  ).sort((left, right) => left.localeCompare(right))
-
-  const isolatedTestTargets = collapseNestedTargets(isolatedTestTargetInputs)
+  const isolatedTestTargets = collapseNestedTargets(
+    Array.from(new Set(isolatedModuleMockFiles.map((testFile) => toIsolatedTarget(testFile)))).sort((left, right) =>
+      left.localeCompare(right),
+    ),
+  )
   const sharedTestFiles = allTestFiles.filter((testFile) => {
     return !isolatedTestTargets.some((isolatedTarget) => isCoveredByTarget(testFile, isolatedTarget))
   })
@@ -135,7 +117,6 @@ async function main(): Promise<void> {
 
 export const moduleMockPattern = MODULE_MOCK_PATTERN
 export const testRoots = TEST_ROOTS
-export const fileLevelIsolationPrefixes = FILE_LEVEL_ISOLATION_PREFIXES
 
 if (process.argv.includes("--print-plan")) {
   const ciTestPlan = await createCiTestPlan()
