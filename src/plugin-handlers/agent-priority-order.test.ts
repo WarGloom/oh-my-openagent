@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
 import { reorderAgentsByPriority } from "./agent-priority-order"
-import { getAgentListDisplayName } from "../shared/agent-display-names"
+import { getAgentDisplayName, getAgentListDisplayName } from "../shared/agent-display-names"
 
 describe("reorderAgentsByPriority", () => {
   test("moves core agents to canonical order and injects runtime order fields", () => {
@@ -10,7 +10,7 @@ describe("reorderAgentsByPriority", () => {
     const hephaestus = getAgentListDisplayName("hephaestus")
     const prometheus = getAgentListDisplayName("prometheus")
     const atlas = getAgentListDisplayName("atlas")
-    const oracle = getAgentListDisplayName("oracle")
+    const oracle = getAgentDisplayName("oracle")
 
     const agents: Record<string, unknown> = {
       [oracle]: { name: "oracle", mode: "subagent" },

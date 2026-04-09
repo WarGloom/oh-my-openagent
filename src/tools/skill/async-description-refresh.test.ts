@@ -26,6 +26,8 @@ async function waitForRefresh(predicate: () => boolean): Promise<void> {
 
     await new Promise<void>((resolve) => setTimeout(resolve, 10))
   }
+
+  throw new Error("Timed out waiting for async skill description refresh")
 }
 
 describe("skill tool - async native skill description refresh", () => {

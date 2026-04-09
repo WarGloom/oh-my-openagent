@@ -8,6 +8,13 @@ beforeEach(async () => {
   ;({ resolveModelPipeline } = await import(`./model-resolution-pipeline?test=${Date.now()}-${Math.random()}`))
 })
 
+// Force test-runner isolation: files that import mock.module are auto-detected
+// by run-ci-tests.ts and executed in their own bun process so they cannot be
+// contaminated by (or contaminate) mock.module calls in other test files.
+mock.module("./logger", () => ({
+  log: () => {},
+}))
+
 describe("resolveModelPipeline", () => {
   test("does not return unused explicit user config metadata in override result", () => {
     // given

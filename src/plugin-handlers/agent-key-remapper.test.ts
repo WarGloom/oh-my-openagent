@@ -1,6 +1,6 @@
 import { describe, it, expect } from "bun:test"
 import { remapAgentKeysToDisplayNames } from "./agent-key-remapper"
-import { getAgentListDisplayName } from "../shared/agent-display-names"
+import { getAgentDisplayName, getAgentListDisplayName } from "../shared/agent-display-names"
 
 describe("remapAgentKeysToDisplayNames", () => {
   it("remaps known agent keys to display names", () => {
@@ -57,13 +57,13 @@ describe("remapAgentKeysToDisplayNames", () => {
     expect(result["prometheus"]).toBeUndefined()
     expect(result[getAgentListDisplayName("atlas")]).toBeDefined()
     expect(result["atlas"]).toBeUndefined()
-    expect(result[getAgentListDisplayName("athena")]).toBeDefined()
+    expect(result[getAgentDisplayName("athena")]).toBeDefined()
     expect(result["athena"]).toBeUndefined()
-    expect(result[getAgentListDisplayName("metis")]).toBeDefined()
+    expect(result[getAgentDisplayName("metis")]).toBeDefined()
     expect(result["metis"]).toBeUndefined()
-    expect(result[getAgentListDisplayName("momus")]).toBeDefined()
+    expect(result[getAgentDisplayName("momus")]).toBeDefined()
     expect(result["momus"]).toBeUndefined()
-    expect(result[getAgentListDisplayName("sisyphus-junior")]).toBeDefined()
+    expect(result[getAgentDisplayName("sisyphus-junior")]).toBeDefined()
     expect(result["sisyphus-junior"]).toBeUndefined()
   })
 
@@ -80,5 +80,26 @@ describe("remapAgentKeysToDisplayNames", () => {
     expect(Object.keys(result)).toEqual([getAgentListDisplayName("sisyphus")])
     expect(result[getAgentListDisplayName("sisyphus")]).toBeDefined()
     expect(result["sisyphus"]).toBeUndefined()
+  })
+
+  it("keeps the four core agents in canonical order under opencode name sorting", () => {
+    // given
+    const result = remapAgentKeysToDisplayNames({
+      atlas: {},
+      prometheus: {},
+      hephaestus: {},
+      sisyphus: {},
+    })
+
+    // when
+    const sortedNames = Object.keys(result).sort()
+
+    // then
+    expect(sortedNames).toEqual([
+      getAgentListDisplayName("sisyphus"),
+      getAgentListDisplayName("hephaestus"),
+      getAgentListDisplayName("prometheus"),
+      getAgentListDisplayName("atlas"),
+    ])
   })
 })

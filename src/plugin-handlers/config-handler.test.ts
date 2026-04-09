@@ -465,7 +465,7 @@ describe("default_agent behavior with Sisyphus orchestration", () => {
     await handler(config)
 
     // then
-    expect(config.default_agent).toBe(getAgentDisplayName("hephaestus"))
+    expect(config.default_agent).toBe(getAgentListDisplayName("hephaestus"))
   })
 
   test("canonicalizes configured default_agent when key uses mixed case", async () => {
@@ -489,7 +489,7 @@ describe("default_agent behavior with Sisyphus orchestration", () => {
     await handler(config)
 
     // then
-    expect(config.default_agent).toBe(getAgentDisplayName("hephaestus"))
+    expect(config.default_agent).toBe(getAgentListDisplayName("hephaestus"))
   })
 
   test("canonicalizes configured default_agent key to display name", async () => {
@@ -513,13 +513,13 @@ describe("default_agent behavior with Sisyphus orchestration", () => {
     await handler(config)
 
     // #then
-    expect(config.default_agent).toBe(getAgentDisplayName("hephaestus"))
+    expect(config.default_agent).toBe(getAgentListDisplayName("hephaestus"))
   })
 
   test("preserves existing display-name default_agent", async () => {
     // #given
     const pluginConfig = createPluginConfig({})
-    const displayName = getAgentDisplayName("hephaestus")
+    const displayName = getAgentListDisplayName("hephaestus")
     const config: Record<string, unknown> = {
       model: "anthropic/claude-opus-4-6",
       default_agent: displayName,
@@ -561,7 +561,7 @@ describe("default_agent behavior with Sisyphus orchestration", () => {
     await handler(config)
 
     // #then
-    expect(config.default_agent).toBe(getAgentDisplayName("sisyphus"))
+    expect(config.default_agent).toBe(getAgentListDisplayName("sisyphus"))
   })
 
   test("sets default_agent to sisyphus when configured default_agent is empty after trim", async () => {
@@ -585,7 +585,7 @@ describe("default_agent behavior with Sisyphus orchestration", () => {
     await handler(config)
 
     // then
-    expect(config.default_agent).toBe(getAgentDisplayName("sisyphus"))
+    expect(config.default_agent).toBe(getAgentListDisplayName("sisyphus"))
   })
 
   test("preserves custom default_agent names while trimming whitespace", async () => {
@@ -1301,7 +1301,7 @@ describe("per-agent todowrite/todoread deny when task_system enabled", () => {
     getAgentListDisplayName("hephaestus"),
     getAgentListDisplayName("prometheus"),
     getAgentListDisplayName("atlas"),
-    getAgentListDisplayName("sisyphus-junior"),
+    getAgentDisplayName("sisyphus-junior"),
   ])
 
   test("denies todowrite and todoread for primary agents when task_system is enabled", async () => {
