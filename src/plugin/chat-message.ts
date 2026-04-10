@@ -1,11 +1,12 @@
 import type { OhMyOpenCodeConfig } from "../config"
 import type { PluginContext } from "./types"
 
-import { hasConnectedProvidersCache } from "../shared"
+import { isModelCacheAvailable } from "../shared"
 import { getAgentConfigKey } from "../shared/agent-display-names"
 import { getSessionModel, setSessionModel } from "../shared/session-model-state"
 import { getMainSessionID, setSessionAgent, subagentSessions } from "../features/claude-code-session-state"
 import { applyUltraworkModelOverrideOnMessage } from "./ultrawork-model-override"
+import { NATIVE_LOOP_TRIGGERED_FLAG } from "./command-execute-before"
 import { parseRalphLoopArguments } from "../hooks/ralph-loop/command-arguments"
 
 import type { CreatedHooks } from "../create-hooks"
@@ -209,7 +210,7 @@ export function createChatMessageHandler(args: {
       await hooks.startWork["chat.message"]?.(input, output)
     }
 
-    if (!hasConnectedProvidersCache()) {
+    if (!isModelCacheAvailable()) {
       pluginContext.client.tui
         .showToast({
           body: {
@@ -223,7 +224,7 @@ export function createChatMessageHandler(args: {
         .catch(() => {})
     }
 
-    if (hooks.ralphLoop) {
+    if (hooks.ralphLoop && output.message[NATIVE_LOOP_TRIGGERED_FLAG] !== true) {
       const parts = output.parts
       const promptText =
         parts

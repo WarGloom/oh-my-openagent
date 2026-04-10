@@ -1,15 +1,17 @@
 import { afterEach, beforeEach, describe, test, expect } from "bun:test"
-import { mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { randomUUID } from "node:crypto"
 
 import { createChatMessageHandler } from "./chat-message"
 import { createAutoSlashCommandHook } from "../hooks/auto-slash-command"
+import { createKeywordDetectorHook } from "../hooks/keyword-detector"
 import { createStartWorkHook } from "../hooks/start-work"
 import { readBoulderState } from "../features/boulder-state"
 import { _resetForTesting, setMainSession, subagentSessions, registerAgentName, updateSessionAgent, getSessionAgent } from "../features/claude-code-session-state"
 import { getAgentListDisplayName } from "../shared/agent-display-names"
+import { getOmoOpenCodeCacheDir, getOpenCodeCacheDir } from "../shared/data-path"
 import { clearSessionModel, getSessionModel, setSessionModel } from "../shared/session-model-state"
 
 type ChatMessagePart = { type: string; text?: string; [key: string]: unknown }
@@ -45,6 +47,94 @@ afterEach(() => {
   clearSessionModel("test-session")
   clearSessionModel("main-session")
   clearSessionModel("subagent-session")
+})
+
+describe("createChatMessageHandler - cache warning behavior", () => {
+  let cacheRoot = ""
+  let originalXdgCacheHome: string | undefined
+
+  beforeEach(() => {
+    cacheRoot = join(tmpdir(), `chat-message-cache-${randomUUID()}`)
+    originalXdgCacheHome = process.env.XDG_CACHE_HOME
+    process.env.XDG_CACHE_HOME = cacheRoot
+  })
+
+  afterEach(() => {
+    if (originalXdgCacheHome === undefined) {
+      delete process.env.XDG_CACHE_HOME
+    } else {
+      process.env.XDG_CACHE_HOME = originalXdgCacheHome
+    }
+
+    if (existsSync(cacheRoot)) {
+      rmSync(cacheRoot, { recursive: true, force: true })
+    }
+  })
+
+  test("does not show provider cache warning when provider-models cache exists", async () => {
+    // given
+    const toastCalls: Array<{ body: { title: string; message: string } }> = []
+    const providerModelsCachePath = join(getOmoOpenCodeCacheDir(), "provider-models.json")
+    mkdirSync(getOmoOpenCodeCacheDir(), { recursive: true })
+    writeFileSync(providerModelsCachePath, JSON.stringify({
+      models: {
+        openai: [{ id: "gpt-5.4" }],
+      },
+      connected: ["openai"],
+      updatedAt: new Date().toISOString(),
+    }))
+
+    const args = createMockHandlerArgs()
+    args.ctx = {
+      client: {
+        tui: {
+          showToast: async (input: { body: { title: string; message: string } }) => {
+            toastCalls.push(input)
+          },
+        },
+      },
+    } as never
+    const handler = createChatMessageHandler(args)
+
+    // when
+    await handler(createMockInput("sisyphus"), createMockOutput())
+
+    // then
+    expect(toastCalls).toHaveLength(0)
+  })
+
+  test("does not show provider cache warning when OpenCode models cache exists", async () => {
+    // given
+    const toastCalls: Array<{ body: { title: string; message: string } }> = []
+    const modelsCachePath = join(getOpenCodeCacheDir(), "models.json")
+    mkdirSync(getOpenCodeCacheDir(), { recursive: true })
+    writeFileSync(modelsCachePath, JSON.stringify({
+      openai: {
+        id: "openai",
+        models: {
+          "gpt-5.4": { id: "gpt-5.4" },
+        },
+      },
+    }))
+
+    const args = createMockHandlerArgs()
+    args.ctx = {
+      client: {
+        tui: {
+          showToast: async (input: { body: { title: string; message: string } }) => {
+            toastCalls.push(input)
+          },
+        },
+      },
+    } as never
+    const handler = createChatMessageHandler(args)
+
+    // when
+    await handler(createMockInput("sisyphus"), createMockOutput())
+
+    // then
+    expect(toastCalls).toHaveLength(0)
+  })
 })
 
 describe("createChatMessageHandler - /start-work integration", () => {
@@ -209,6 +299,42 @@ describe("createChatMessageHandler - /ulw-loop raw slash fallback", () => {
         },
       },
     ])
+  })
+})
+
+describe("createChatMessageHandler - plain ultrawork keyword routing", () => {
+  test("does not start ralph loop when plain ulw text flows through the full chat.message pipeline", async () => {
+    // given
+    setMainSession("test-session")
+    const startLoopCalls: Array<{
+      sessionID: string
+      prompt: string
+      options: Record<string, unknown>
+    }> = []
+    const ralphLoop = {
+      startLoop: (sessionID: string, prompt: string, options?: Record<string, unknown>) => {
+        startLoopCalls.push({ sessionID, prompt, options: options ?? {} })
+        return true
+      },
+      cancelLoop: () => true,
+    }
+    const args = createMockHandlerArgs()
+    args.hooks.ralphLoop = ralphLoop
+    args.hooks.keywordDetector = createKeywordDetectorHook(args.ctx as never, undefined, ralphLoop)
+    const handler = createChatMessageHandler(args)
+    const input = createMockInput("sisyphus")
+    const output: ChatMessageHandlerOutput = {
+      message: {},
+      parts: [{ type: "text", text: "ulw fix the flaky keyword tests" }],
+    }
+
+    // when
+    await handler(input, output)
+
+    // then
+    expect(startLoopCalls).toHaveLength(0)
+    expect(output.parts[0]?.text).toContain("ULTRAWORK MODE ENABLED!")
+    expect(output.parts[0]?.text).toContain("ulw fix the flaky keyword tests")
   })
 })
 

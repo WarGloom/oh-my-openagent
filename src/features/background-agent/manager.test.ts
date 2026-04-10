@@ -13,6 +13,7 @@ import { MIN_IDLE_TIME_MS } from "./constants"
 import { BackgroundManager } from "./manager"
 import { ConcurrencyManager } from "./concurrency"
 import { initTaskToastManager, _resetTaskToastManagerForTesting } from "../task-toast-manager/manager"
+import { _resetForTesting as resetProcessCleanupState } from "./process-cleanup"
 
 mock.module("../../shared/connected-providers-cache", () => ({
   readConnectedProvidersCache: () => null,
@@ -1942,6 +1943,7 @@ describe("BackgroundManager process cleanup", () => {
 
   test("should remove listeners after last shutdown", () => {
     // given
+    resetProcessCleanupState()
     const signals = getCleanupSignals()
     const baseline = getListenerCounts(signals)
     const managerA = createBackgroundManager()
@@ -1960,6 +1962,8 @@ describe("BackgroundManager process cleanup", () => {
       expect(afterFirstShutdown[signal]).toBe(baseline[signal] + 1)
       expect(afterSecondShutdown[signal]).toBe(baseline[signal])
     }
+
+    resetProcessCleanupState()
   })
 })
 

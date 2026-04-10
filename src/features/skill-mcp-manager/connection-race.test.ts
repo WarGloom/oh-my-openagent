@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, mock, afterAll } from "bun:test"
+import type { StdioServerParameters } from "@modelcontextprotocol/sdk/client/stdio.js"
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js"
 import type { ClaudeCodeMcpServer } from "../claude-code-mcp-loader/types"
+import { setStdioClientDependenciesForTesting } from "./stdio-client"
 import type { SkillMcpClientInfo, SkillMcpManagerState } from "./types"
 import * as originalClientModule from "@modelcontextprotocol/sdk/client/index.js"
 import * as originalStdioModule from "@modelcontextprotocol/sdk/client/stdio.js"
@@ -25,7 +28,14 @@ class MockClient {
     createdClients.push(this)
   }
 
-  async connect(_transport: MockStdioClientTransport): Promise<void> {
+  readonly listTools = mock(async () => ({ tools: [] }))
+  readonly listResources = mock(async () => ({ resources: [] }))
+  readonly listPrompts = mock(async () => ({ prompts: [] }))
+  readonly callTool = mock(async () => ({ content: [] }))
+  readonly readResource = mock(async () => ({ contents: [] }))
+  readonly getPrompt = mock(async () => ({ messages: [] }))
+
+  async connect(_transport: Transport): Promise<void> {
     const pendingConnect = pendingConnects.shift()
     if (pendingConnect) {
       await pendingConnect.promise
@@ -35,8 +45,10 @@ class MockClient {
 
 class MockStdioClientTransport {
   readonly close = mock(async () => {})
+  readonly start = mock(async () => {})
+  readonly send = mock(async () => {})
 
-  constructor(_options: { command: string; args?: string[]; env?: Record<string, string>; stderr?: string }) {
+  constructor(_options: StdioServerParameters) {
     createdTransports.push(this)
   }
 }
@@ -95,18 +107,19 @@ function createState(): SkillMcpManagerState {
     pendingConnections: new Map(),
     disconnectedSessions: new Map(),
     authProviders: new Map(),
-    cleanupRegistered: false,
-    cleanupInterval: null,
-    cleanupHandlers: [],
-    idleTimeoutMs: 5 * 60 * 1000,
-    shutdownGeneration: 0,
-    inFlightConnections: new Map(),
-    disposed: false,
-    createOAuthProvider: () => ({
-      tokens: () => null,
-      login: async () => ({ accessToken: "test-token" }),
-    }),
-  }
+      cleanupRegistered: false,
+      cleanupInterval: null,
+      cleanupHandlers: [],
+      idleTimeoutMs: 5 * 60 * 1000,
+      shutdownGeneration: 0,
+      inFlightConnections: new Map(),
+      disposed: false,
+      createOAuthProvider: () => ({
+        tokens: () => null,
+        login: async () => ({ accessToken: "test-token" }),
+        refresh: async () => ({ accessToken: "test-token" }),
+      }),
+    }
 
   trackedStates.push(state)
   return state
@@ -133,6 +146,10 @@ beforeEach(() => {
   pendingConnects.length = 0
   createdClients.length = 0
   createdTransports.length = 0
+  setStdioClientDependenciesForTesting({
+    createClient: (clientInfo, options) => new MockClient(clientInfo, options),
+    createTransport: (options) => new MockStdioClientTransport(options),
+  })
 })
 
 beforeEach(async () => {
@@ -148,6 +165,7 @@ afterEach(async () => {
   pendingConnects.length = 0
   createdClients.length = 0
   createdTransports.length = 0
+  setStdioClientDependenciesForTesting()
 })
 
 describe("getOrCreateClient disconnect race", () => {

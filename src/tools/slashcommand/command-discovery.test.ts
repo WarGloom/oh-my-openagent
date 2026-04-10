@@ -2,8 +2,19 @@ import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:te
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import * as actualPluginCommandDiscoveryModule from "../../shared/plugin-command-discovery"
 import * as actualSharedModule from "../../shared"
+
+function requireFresh<T>(modulePath: string): T {
+  const resolvedPath = require.resolve(modulePath)
+  if (require.cache?.[resolvedPath]) {
+    delete require.cache[resolvedPath]
+  }
+  return require(modulePath) as T
+}
+
+function discoverCommandsSync(...args: Parameters<typeof import("./command-discovery").discoverCommandsSync>): ReturnType<typeof import("./command-discovery").discoverCommandsSync> {
+  return requireFresh<typeof import("./command-discovery")>("./command-discovery").discoverCommandsSync(...args)
+}
 
 const ENV_KEYS = [
   "CLAUDE_CONFIG_DIR",
@@ -14,7 +25,6 @@ const ENV_KEYS = [
 
 type EnvKey = (typeof ENV_KEYS)[number]
 type EnvSnapshot = Record<EnvKey, string | undefined>
-let discoverCommandsSync: typeof import("./command-discovery").discoverCommandsSync
 
 function createLoaderBuster(): string {
   return `${Date.now()}-${Math.random()}`
@@ -111,10 +121,8 @@ describe("slashcommand command discovery plugin integration", () => {
   let projectDir = ""
   let envSnapshot: EnvSnapshot
 
-  beforeEach(async () => {
+  beforeEach(() => {
     mock.restore()
-    const moduleUnderTest = await importFreshCommandDiscoveryModule()
-    discoverCommandsSync = moduleUnderTest.discoverCommandsSync
     tempDir = mkdtempSync(join(tmpdir(), "omo-command-discovery-test-"))
     envSnapshot = {
       CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,

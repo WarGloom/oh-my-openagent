@@ -1,14 +1,14 @@
-import { describe, expect, test, beforeEach, afterEach, mock, spyOn } from "bun:test"
+import { describe, expect, test, beforeEach, afterEach, mock } from "bun:test"
 import type { RuntimeFallbackConfig, OhMyOpenCodeConfig } from "../../config"
-import { SessionCategoryRegistry } from "../../shared/session-category-registry"
 import * as loggerModule from "../../shared/logger"
+import { SessionCategoryRegistry } from "../../shared/session-category-registry"
 
-let createRuntimeFallbackHook: typeof import("./index").createRuntimeFallbackHook
-let logCalls: Array<{ msg: string; data?: unknown }>
+type RuntimeFallbackModule = typeof import("./hook")
 
 describe("runtime-fallback", () => {
+  let logCalls: Array<{ msg: string; data?: unknown }>
   let toastCalls: Array<{ title: string; message: string; variant: string }>
-  let logSpy: ReturnType<typeof spyOn>
+  let createRuntimeFallbackHook: RuntimeFallbackModule["createRuntimeFallbackHook"]
 
   beforeEach(async () => {
     mock.restore()
@@ -16,17 +16,22 @@ describe("runtime-fallback", () => {
     toastCalls = []
     SessionCategoryRegistry.clear()
 
-    logSpy = spyOn(loggerModule, "log").mockImplementation((msg: string, data?: unknown) => {
-      logCalls.push({ msg, data })
-    })
+    const cacheBuster = `${Date.now()}-${Math.random()}`
 
-    ;({ createRuntimeFallbackHook } = await import(`./index?test=${Date.now()}-${Math.random()}`))
+    mock.module("../../shared/logger", () => ({
+      ...loggerModule,
+      log: (msg: string, data?: unknown) => {
+        logCalls.push({ msg, data })
+      },
+    }))
+
+    const runtimeFallbackModule: RuntimeFallbackModule = await import(`./hook?test=${cacheBuster}`)
+    createRuntimeFallbackHook = runtimeFallbackModule.createRuntimeFallbackHook
   })
 
   afterEach(() => {
-    logSpy?.mockRestore()
-    mock.restore()
     SessionCategoryRegistry.clear()
+    mock.restore()
   })
 
   function createMockPluginInput(overrides?: {
