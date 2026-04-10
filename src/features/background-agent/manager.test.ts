@@ -5555,3 +5555,101 @@ describe("BackgroundManager - tool permission spread order", () => {
     manager.shutdown()
   })
 })
+
+describe("BackgroundManager - task removal robustness against notification failures", () => {
+  // These tests pin the invariant that task cleanup (scheduleTaskRemoval) must
+  // happen independently of the async notification chain. Previously, four
+  // terminal-transition paths (tryCompleteTask happy path, processKey startTask
+  // error, launch promptAsync error, resume promptAsync error) deferred
+  // scheduleTaskRemoval to the tail of notifyParentSession. If anything in the
+  // notification pipeline threw — notably the unprotected setup region at the
+  // top of notifyParentSession — the task would be marked terminal, pinned in
+  // the notifications map (task-poller.ts:47 prune trap), and never scheduled
+  // for removal. These tests simulate that failure mode for each path and
+  // assert that scheduleTaskRemoval fires regardless.
+
+  test("tryCompleteTask should schedule task removal even when notifyParentSession throws", async () => {
+    //#given
+    const manager = createBackgroundManager()
+    const task = createMockTask({
+      id: "task-try-complete-notify-throw",
+      sessionID: "ses-try-complete-notify-throw",
+      parentSessionID: "parent-try-complete-notify-throw",
+      status: "running",
+    })
+    getTaskMap(manager).set(task.id, task)
+    ;(manager as unknown as { notifyParentSession: (t: BackgroundTask) => Promise<void> })
+      .notifyParentSession = async () => {
+        throw new Error("simulated notification pipeline failure")
+      }
+
+    //#when
+    const result = await tryCompleteTaskForTest(manager, task)
+
+    //#then - task marked complete, removal timer armed, not dependent on notify
+    expect(result).toBe(true)
+    expect(task.status).toBe("completed")
+    expect(getCompletionTimers(manager).has(task.id)).toBe(true)
+
+    manager.shutdown()
+  })
+
+  test("processKey should schedule task removal when startTask throws and notify also throws", async () => {
+    //#given
+    const manager = createBackgroundManager()
+    const concurrencyKey = "test-agent"
+    const task = createMockTask({
+      id: "task-process-key-notify-throw",
+      sessionID: "session-process-key-notify-throw",
+      parentSessionID: "session-root-process-key",
+      status: "pending",
+      agent: "test-agent",
+      rootSessionID: "session-root-process-key",
+    })
+    delete (task as Partial<BackgroundTask>).sessionID
+
+    const input = {
+      description: task.description,
+      prompt: task.prompt,
+      agent: task.agent,
+      parentSessionID: task.parentSessionID,
+      parentMessageID: task.parentMessageID,
+    }
+
+    getTaskMap(manager).set(task.id, task)
+    getQueuesByKey(manager).set(concurrencyKey, [{ task, input }])
+    getRootDescendantCounts(manager).set("session-root-process-key", 1)
+    getPreStartDescendantReservations(manager).add(task.id)
+
+    ;(manager as unknown as {
+      startTask: (item: { task: BackgroundTask; input: typeof input }) => Promise<void>
+    }).startTask = async () => {
+      throw new Error("simulated startTask failure")
+    }
+    ;(manager as unknown as { notifyParentSession: (t: BackgroundTask) => Promise<void> })
+      .notifyParentSession = async () => {
+        throw new Error("simulated notification pipeline failure")
+      }
+
+    //#when
+    await processKeyForTest(manager, concurrencyKey)
+    await flushBackgroundNotifications()
+
+    //#then - error path marked terminal, removal timer armed even though notify threw
+    expect(task.status).toBe("error")
+    expect(getCompletionTimers(manager).has(task.id)).toBe(true)
+
+    manager.shutdown()
+  })
+
+  // TODO: add parallel tests for the two remaining fragile paths that set a
+  //   task to "interrupt" after an internal promptAsync failure:
+  //     - launch promptAsync catch handler at manager.ts ~L612-640 (inside the
+  //       promptWithModelSuggestionRetry fallback chain starting at ~L587)
+  //     - resume promptAsync catch handler at manager.ts ~L877-923
+  //   A naive manager.launch() / manager.resume() test doesn't reach the
+  //   promptAsync call because the createBackgroundManager() stub client lacks
+  //   session.get / session.create; full integration stubs are required. Once
+  //   those tests are added, the same direct scheduleTaskRemoval pattern
+  //   applied to L414 / L1670 here should also be applied to L615 / L897.
+})

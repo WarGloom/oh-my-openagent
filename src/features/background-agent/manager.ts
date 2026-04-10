@@ -430,6 +430,12 @@ export class BackgroundManager {
           }
 
           this.markForNotification(item.task)
+          // Schedule removal directly rather than relying on notifyParentSession's
+          // tail call. If the async notification chain throws before reaching that
+          // tail, the task would be pinned in both `tasks` and `notifications`
+          // maps forever by the prune trap at task-poller.ts:47. This mirrors the
+          // pattern used by handleSessionErrorEvent / cancelTask / failCrashedTask.
+          this.scheduleTaskRemoval(item.task.id)
           this.enqueueNotificationForParent(item.task.parentSessionID, () => this.notifyParentSession(item.task)).catch(err => {
             log("[background-agent] Failed to notify on startTask error:", err)
           })
@@ -1684,6 +1690,14 @@ export class BackgroundManager {
     }
 
     this.markForNotification(task)
+    // Schedule removal directly rather than relying on notifyParentSession's
+    // tail call. If the notification chain throws before reaching that tail
+    // (e.g. from the unprotected setup region at the top of notifyParentSession,
+    // the toast manager, or the notification text builder), the task would be
+    // pinned in both `tasks` and `notifications` maps forever by the prune trap
+    // at task-poller.ts:47. This mirrors the pattern used by
+    // handleSessionErrorEvent / cancelTask / failCrashedTask.
+    this.scheduleTaskRemoval(task.id)
 
     const idleTimer = this.idleDeferralTimers.get(task.id)
     if (idleTimer) {
