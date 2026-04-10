@@ -71,6 +71,12 @@ export async function applyMcpConfig(params: {
     }
   }
 
+  // Spread order determines collision winners (last write wins).
+  // userMcp spreads after mcpResult so user config overrides Claude Code
+  // on name collision. prioritizeUserConfiguredMcps (called below) then
+  // reorders keys so user-configured MCPs appear first in opencode's MCP
+  // state, which controls the trim order of any downstream tool-budget
+  // filter — user MCPs survive trimming when many MCP servers are loaded.
   const merged = {
     ...createBuiltinMcps(disabledMcps, params.pluginConfig),
     ...mcpResult.servers,

@@ -27,7 +27,12 @@ const syncSessionCreatedCallbacks: Array<
 
 mock.module("../tools", () => ({
   builtinTools: { bash: fakeTool, read: fakeTool },
-  createBackgroundTools: mock(() => ({})),
+  createBackgroundTools: mock(() => ({
+    background_output: fakeTool,
+    mcp_background_output: fakeTool,
+    background_cancel: fakeTool,
+    mcp_background_cancel: fakeTool,
+  })),
   createCallOmoAgent: mock(() => fakeTool),
   createLookAt: mock(() => fakeTool),
   createSkillMcpTool: mock(() => fakeTool),
