@@ -1,10 +1,7 @@
-import { readFileSync, existsSync } from "fs"
-import { join } from "path"
-import { homedir } from "os"
 import { getSessionAgent } from "../../features/claude-code-session-state"
-import { getSystemMcpServerNames } from "../../features/claude-code-mcp-loader"
 import { log } from "../../shared"
 import { getAgentConfigKey } from "../../shared/agent-display-names"
+import { isSerenaServerAvailable } from "../../shared/serena-availability"
 import {
   EXCLUDED_AGENT_KEYS,
   MANUAL_NAVIGATION_TOOLS,
@@ -41,37 +38,6 @@ const TOOL_FAILURE_PATTERNS = [
   /\btool error\b/i,
   /\bno such tool\b/i,
 ]
-
-function isOpencodeSerenaAvailable(): boolean {
-  const xdgConfig = process.env.XDG_CONFIG_HOME || join(homedir(), ".config")
-  const candidates = [
-    join(process.cwd(), "opencode.json"),
-    join(process.cwd(), "opencode.jsonc"),
-    join(process.cwd(), ".opencode", "opencode.json"),
-    join(process.cwd(), ".opencode", "opencode.jsonc"),
-    join(xdgConfig, "opencode", "opencode.json"),
-    join(xdgConfig, "opencode", "opencode.jsonc"),
-    join(xdgConfig, "opencode", "config.json"),
-  ]
-  for (const candidate of candidates) {
-    if (!existsSync(candidate)) continue
-    try {
-      const config = JSON.parse(readFileSync(candidate, "utf-8")) as Record<string, unknown>
-      const mcp = config.mcp as Record<string, unknown> | undefined
-      if (mcp && Object.keys(mcp).some((key) => key.toLowerCase().includes("serena"))) return true
-    } catch {
-      continue
-    }
-  }
-  return false
-}
-
-function isSerenaServerAvailable(): boolean {
-  return (
-    Array.from(getSystemMcpServerNames()).some((name) => name.toLowerCase().includes("serena")) ||
-    isOpencodeSerenaAvailable()
-  )
-}
 
 function isSerenaTool(toolName: string): boolean {
   return toolName.toLowerCase().startsWith(SERENA_TOOL_PREFIX)

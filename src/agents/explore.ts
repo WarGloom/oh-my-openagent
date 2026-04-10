@@ -107,7 +107,6 @@ Your response has **FAILED** if:
 ## Tool Strategy
 
 Use the right tool for the job:
-- **Codebase navigation** Serena tools (serena_find_file, serena_search_for_pattern, serena_get_symbols_overview, serena_find_symbol, serena_find_referencing_symbols, serena_read_file)
 - **Semantic search** (definitions, references): LSP tools
 - **Structural patterns** (function shapes, class structures): ast_grep_search  
 - **Text patterns** (strings, comments, logs): grep
