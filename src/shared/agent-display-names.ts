@@ -33,10 +33,10 @@ const AGENT_LIST_SORT_PREFIXES: Record<string, string> = {
   atlas: "\u200B\u200B\u200B\u200B",
 }
 
-const ZERO_WIDTH_AGENT_CHARACTERS_REGEX = /[\u200B\u200C\u200D\uFEFF]/g
+const INVISIBLE_AGENT_CHARACTERS_REGEX = /[\u200B\u200C\u200D\uFEFF]/g
 
 export function stripInvisibleAgentCharacters(agentName: string): string {
-  return agentName.replace(ZERO_WIDTH_AGENT_CHARACTERS_REGEX, "")
+  return agentName.replace(INVISIBLE_AGENT_CHARACTERS_REGEX, "")
 }
 
 export function stripAgentListSortPrefix(agentName: string): string {
@@ -71,11 +71,7 @@ export function getAgentDisplayName(configKey: string): string {
 }
 
 /**
- * @deprecated Do NOT use for config.agent keys or API-facing names.
- * ZWSP prefixes leak into the /agent API response and break prompt_async consumers.
- * Use getAgentDisplayName() instead. The `order` field injected by
- * reorderAgentsByPriority() handles sort ordering without invisible characters.
- * See: https://github.com/code-yeongyu/oh-my-openagent/issues/3238
+ * Runtime-facing agent name used for OpenCode list ordering.
  */
 export function getAgentListDisplayName(configKey: string): string {
   return getAgentRuntimeName(configKey)
@@ -98,18 +94,23 @@ const LEGACY_DISPLAY_NAMES: Record<string, string> = {
   "athena-junior (council)": "athena-junior",
 }
 
-/**
- * Resolve an agent name (display name or config key) to its lowercase config key.
- * "Atlas - Plan Executor" -> "atlas", "Atlas (Plan Executor)" -> "atlas", "atlas" -> "atlas"
- */
-export function getAgentConfigKey(agentName: string): string {
+function resolveKnownAgentConfigKey(agentName: string): string | undefined {
   const lower = stripAgentListSortPrefix(agentName).trim().toLowerCase()
   const reversed = REVERSE_DISPLAY_NAMES[lower]
   if (reversed !== undefined) return reversed
   const legacy = LEGACY_DISPLAY_NAMES[lower]
   if (legacy !== undefined) return legacy
   if (AGENT_DISPLAY_NAMES[lower] !== undefined) return lower
-  return lower
+  return undefined
+}
+
+/**
+ * Resolve an agent name (display name or config key) to its lowercase config key.
+ * "Atlas - Plan Executor" -> "atlas", "Atlas (Plan Executor)" -> "atlas", "atlas" -> "atlas"
+ */
+export function getAgentConfigKey(agentName: string): string {
+  const lower = stripAgentListSortPrefix(agentName).trim().toLowerCase()
+  return resolveKnownAgentConfigKey(agentName) ?? lower
 }
 
 /**
@@ -128,17 +129,9 @@ export function normalizeAgentForPrompt(agentName: string | undefined): string |
     return undefined
   }
 
-  const lower = trimmed.toLowerCase()
-  const reversed = REVERSE_DISPLAY_NAMES[lower]
-  if (reversed !== undefined) {
-    return AGENT_DISPLAY_NAMES[reversed] ?? trimmed
-  }
-  const legacy = LEGACY_DISPLAY_NAMES[lower]
-  if (legacy !== undefined) {
-    return AGENT_DISPLAY_NAMES[legacy] ?? trimmed
-  }
-  if (AGENT_DISPLAY_NAMES[lower] !== undefined) {
-    return AGENT_DISPLAY_NAMES[lower]
+  const configKey = resolveKnownAgentConfigKey(trimmed)
+  if (configKey !== undefined) {
+    return AGENT_DISPLAY_NAMES[configKey] ?? trimmed
   }
 
   return trimmed
@@ -154,18 +147,5 @@ export function normalizeAgentForPromptKey(agentName: string | undefined): strin
     return undefined
   }
 
-  const lower = trimmed.toLowerCase()
-  const reversed = REVERSE_DISPLAY_NAMES[lower]
-  if (reversed !== undefined) {
-    return reversed
-  }
-  const legacy = LEGACY_DISPLAY_NAMES[lower]
-  if (legacy !== undefined) {
-    return legacy
-  }
-  if (AGENT_DISPLAY_NAMES[lower] !== undefined) {
-    return lower
-  }
-
-  return trimmed
+  return resolveKnownAgentConfigKey(trimmed) ?? trimmed
 }
