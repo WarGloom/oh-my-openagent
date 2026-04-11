@@ -33,8 +33,21 @@ const AGENT_LIST_SORT_PREFIXES: Record<string, string> = {
   atlas: "\u200B\u200B\u200B\u200B",
 }
 
+const ZERO_WIDTH_AGENT_CHARACTERS_REGEX = /[\u200B\u200C\u200D\uFEFF]/g
+
+export function stripInvisibleAgentCharacters(agentName: string): string {
+  return agentName.replace(ZERO_WIDTH_AGENT_CHARACTERS_REGEX, "")
+}
+
 export function stripAgentListSortPrefix(agentName: string): string {
-  return agentName.replace(/^\u200B+/, "")
+  return stripInvisibleAgentCharacters(agentName)
+}
+
+export function getAgentRuntimeName(configKey: string): string {
+  const displayName = getAgentDisplayName(configKey)
+  const prefix = AGENT_LIST_SORT_PREFIXES[configKey.toLowerCase()]
+
+  return prefix ? `${prefix}${displayName}` : displayName
 }
 
 /**
@@ -65,10 +78,7 @@ export function getAgentDisplayName(configKey: string): string {
  * See: https://github.com/code-yeongyu/oh-my-openagent/issues/3238
  */
 export function getAgentListDisplayName(configKey: string): string {
-  const displayName = getAgentDisplayName(configKey)
-  const prefix = AGENT_LIST_SORT_PREFIXES[configKey.toLowerCase()]
-
-  return prefix ? `${prefix}${displayName}` : displayName
+  return getAgentRuntimeName(configKey)
 }
 
 const REVERSE_DISPLAY_NAMES: Record<string, string> = Object.fromEntries(
@@ -93,7 +103,7 @@ const LEGACY_DISPLAY_NAMES: Record<string, string> = {
  * "Atlas - Plan Executor" -> "atlas", "Atlas (Plan Executor)" -> "atlas", "atlas" -> "atlas"
  */
 export function getAgentConfigKey(agentName: string): string {
-  const lower = stripAgentListSortPrefix(agentName).toLowerCase()
+  const lower = stripAgentListSortPrefix(agentName).trim().toLowerCase()
   const reversed = REVERSE_DISPLAY_NAMES[lower]
   if (reversed !== undefined) return reversed
   const legacy = LEGACY_DISPLAY_NAMES[lower]
@@ -113,7 +123,7 @@ export function normalizeAgentForPrompt(agentName: string | undefined): string |
     return undefined
   }
 
-  const trimmed = stripAgentListSortPrefix(agentName.trim())
+  const trimmed = stripAgentListSortPrefix(agentName).trim()
   if (!trimmed) {
     return undefined
   }
@@ -139,7 +149,7 @@ export function normalizeAgentForPromptKey(agentName: string | undefined): strin
     return undefined
   }
 
-  const trimmed = stripAgentListSortPrefix(agentName.trim())
+  const trimmed = stripAgentListSortPrefix(agentName).trim()
   if (!trimmed) {
     return undefined
   }

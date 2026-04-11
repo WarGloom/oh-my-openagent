@@ -3,7 +3,7 @@
 import { describe, test, expect, spyOn, beforeEach, afterEach, mock } from "bun:test"
 import type { CategoryConfig } from "../config/schema"
 import type { OhMyOpenCodeConfig } from "../config"
-import { getAgentDisplayName } from "../shared/agent-display-names"
+import { getAgentDisplayName, getAgentRuntimeName } from "../shared/agent-display-names"
 import { resolveCategoryConfig } from "./category-config-resolver"
 
 import * as agents from "../agents"
@@ -315,6 +315,63 @@ describe("Plan agent demote behavior", () => {
     ])
   })
 
+  test("backfills core agent runtime names when builtin configs omit name", async () => {
+    // #given
+    const createBuiltinAgentsMock = agents.createBuiltinAgents as unknown as {
+      mockResolvedValue: (value: Record<string, unknown>) => void
+    }
+    createBuiltinAgentsMock.mockResolvedValue({
+      sisyphus: { prompt: "test", mode: "primary" },
+      hephaestus: { prompt: "test", mode: "primary" },
+      oracle: { prompt: "test", mode: "subagent" },
+      atlas: { prompt: "test", mode: "primary" },
+    })
+    const pluginConfig = createPluginConfig({
+      sisyphus_agent: {
+        planner_enabled: true,
+      },
+    })
+    const config: Record<string, unknown> = {
+      model: "anthropic/claude-opus-4-6",
+      agent: {},
+    }
+    const handler = createConfigHandler({
+      ctx: { directory: "/tmp" },
+      pluginConfig,
+      modelCacheState: {
+        anthropicContext1MEnabled: false,
+        modelContextLimitsCache: new Map(),
+      },
+    })
+
+    // #when
+    await handler(config)
+
+    // #then
+    const emittedCoreEntries = Object.entries(
+      config.agent as Record<string, { name?: string }>,
+    ).slice(0, 4)
+
+    expect(emittedCoreEntries).toEqual([
+      [
+        getAgentDisplayName("sisyphus"),
+        expect.objectContaining({ name: getAgentRuntimeName("sisyphus") }),
+      ],
+      [
+        getAgentDisplayName("hephaestus"),
+        expect.objectContaining({ name: getAgentRuntimeName("hephaestus") }),
+      ],
+      [
+        getAgentDisplayName("prometheus"),
+        expect.objectContaining({ name: getAgentRuntimeName("prometheus") }),
+      ],
+      [
+        getAgentDisplayName("atlas"),
+        expect.objectContaining({ name: getAgentRuntimeName("atlas") }),
+      ],
+    ])
+  })
+
   test("plan agent should be demoted to subagent without inheriting prometheus prompt", async () => {
     // #given
     const pluginConfig = createPluginConfig({
@@ -479,7 +536,7 @@ describe("default_agent behavior with Sisyphus orchestration", () => {
     await handler(config)
 
     // then
-    expect(config.default_agent).toBe(getAgentDisplayName("hephaestus"))
+    expect(config.default_agent).toBe(getAgentRuntimeName("hephaestus"))
   })
 
   test("canonicalizes configured default_agent when key uses mixed case", async () => {
@@ -503,7 +560,7 @@ describe("default_agent behavior with Sisyphus orchestration", () => {
     await handler(config)
 
     // then
-    expect(config.default_agent).toBe(getAgentDisplayName("hephaestus"))
+    expect(config.default_agent).toBe(getAgentRuntimeName("hephaestus"))
   })
 
   test("canonicalizes configured default_agent key to display name", async () => {
@@ -527,7 +584,7 @@ describe("default_agent behavior with Sisyphus orchestration", () => {
     await handler(config)
 
     // #then
-    expect(config.default_agent).toBe(getAgentDisplayName("hephaestus"))
+    expect(config.default_agent).toBe(getAgentRuntimeName("hephaestus"))
   })
 
   test("preserves existing display-name default_agent", async () => {
@@ -575,7 +632,31 @@ describe("default_agent behavior with Sisyphus orchestration", () => {
     await handler(config)
 
     // #then
-    expect(config.default_agent).toBe(getAgentDisplayName("sisyphus"))
+    expect(config.default_agent).toBe(getAgentRuntimeName("sisyphus"))
+  })
+
+  test("uses canonical default_agent display name so OpenCode lookups match emitted agent keys", async () => {
+    // given
+    const pluginConfig = createPluginConfig({})
+    const config: Record<string, unknown> = {
+      model: "anthropic/claude-opus-4-6",
+      default_agent: "hephaestus",
+      agent: {},
+    }
+    const handler = createConfigHandler({
+      ctx: { directory: "/tmp" },
+      pluginConfig,
+      modelCacheState: {
+        anthropicContext1MEnabled: false,
+        modelContextLimitsCache: new Map(),
+      },
+    })
+
+    // when
+    await handler(config)
+
+    // then
+    expect(config.default_agent).toBe(getAgentRuntimeName("hephaestus"))
   })
 
   test("sets default_agent to sisyphus when configured default_agent is empty after trim", async () => {
@@ -599,7 +680,7 @@ describe("default_agent behavior with Sisyphus orchestration", () => {
     await handler(config)
 
     // then
-    expect(config.default_agent).toBe(getAgentDisplayName("sisyphus"))
+    expect(config.default_agent).toBe(getAgentRuntimeName("sisyphus"))
   })
 
   test("preserves custom default_agent names while trimming whitespace", async () => {

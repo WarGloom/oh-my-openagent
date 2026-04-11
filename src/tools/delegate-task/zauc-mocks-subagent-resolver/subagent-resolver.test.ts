@@ -163,6 +163,21 @@ describe("resolveSubagentExecution", () => {
     expect(result.categoryModel).toEqual({ providerID: "openai", modelID: "gpt-5.3-codex" })
   })
 
+  test("matches agents even when zero-width characters are present in the requested name", async () => {
+    //#given
+    const args = createBaseArgs({ subagent_type: "\uFEFFSisyphus - Ultraworker" })
+    const executorCtx = createExecutorContext(async () => ([
+      { name: "\u200BSisyphus - Ultraworker", mode: "subagent", model: "openai/gpt-5.3-codex" },
+    ]))
+
+    //#when
+    const result = await resolveSubagentExecution(args, executorCtx, "oracle", "deep")
+
+    //#then
+    expect(result.error).toBeUndefined()
+    expect(result.agentToUse).toBe("Sisyphus - Ultraworker")
+  })
+
   test("uses agent override fallback_models for subagent runtime fallback chain", async () => {
     //#given
     readProviderModelsCacheMock.mockReturnValue({
@@ -731,5 +746,25 @@ describe("resolveSubagentExecution - agent name sanitization", () => {
     //#then
     expect(result.error).toBeUndefined()
     expect(result.agentToUse).toBe("explore")
+  })
+
+  test("matches runtime agent names that include invisible sort prefixes", async () => {
+    //#given
+    readProviderModelsCacheMock.mockReturnValue({
+      models: {},
+      connected: [],
+      updatedAt: "2026-03-03T00:00:00.000Z",
+    })
+    const args = createBaseArgs({ subagent_type: "Sisyphus - Ultraworker" })
+    const executorCtx = createExecutorContext(async () => ([
+      { name: "\u200BSisyphus - Ultraworker", mode: "subagent", model: "openai/gpt-5.3-codex" },
+    ]))
+
+    //#when
+    const result = await resolveSubagentExecution(args, executorCtx, "oracle", "deep")
+
+    //#then
+    expect(result.error).toBeUndefined()
+    expect(result.agentToUse).toBe("Sisyphus - Ultraworker")
   })
 })

@@ -40,14 +40,25 @@ const OhMyOpenCodePlugin: Plugin = async (ctx) => {
   const pluginConfig = loadPluginConfig(ctx.directory, ctx)
 
   const posthog = createPluginPostHog()
-  posthog.capture({
-    distinctId: getPostHogDistinctId(),
-    event: "plugin_loaded",
-    properties: {
-      has_openclaw: !!pluginConfig.openclaw,
-      tmux_enabled: isTmuxIntegrationEnabled(pluginConfig),
-    },
-  })
+  const distinctId = getPostHogDistinctId()
+  try {
+    posthog.trackActive(distinctId, "plugin_loaded")
+  } catch {
+    // telemetry failure is non-fatal, silently ignore
+  }
+  try {
+    posthog.capture({
+      distinctId,
+      event: "plugin_loaded",
+      properties: {
+        entry_point: "plugin",
+        has_openclaw: !!pluginConfig.openclaw,
+        tmux_enabled: isTmuxIntegrationEnabled(pluginConfig),
+      },
+    })
+  } catch {
+    // telemetry failure is non-fatal, silently ignore
+  }
   if (pluginConfig.openclaw) {
     await initializeOpenClaw(pluginConfig.openclaw)
   }
