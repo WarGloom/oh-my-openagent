@@ -2,12 +2,12 @@ export type ShellType = "unix" | "powershell" | "cmd" | "csh"
 
 /**
  * Detect the current shell type based on environment variables.
- * 
+ *
  * Detection priority:
  * 1. SHELL env var → Unix shell (explicit user choice takes precedence)
  * 2. PSModulePath → PowerShell
  * 3. Platform fallback → win32: cmd, others: unix
- * 
+ *
  * Note: SHELL is checked before PSModulePath because on Windows, PSModulePath
  * is always set by the system even when the active shell is Git Bash or WSL.
  * An explicit SHELL variable indicates the user's chosen shell overrides that.
@@ -30,7 +30,7 @@ export function detectShellType(): ShellType {
 
 /**
  * Shell-escape a value for use in environment variable assignment.
- * 
+ *
  * @param value - The value to escape
  * @param shellType - The target shell type
  * @returns Escaped value appropriate for the shell
