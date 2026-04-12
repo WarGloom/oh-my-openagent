@@ -760,13 +760,13 @@ describe("skill tool - short name resolution", () => {
   it("does not resolve short name when ambiguous (multiple matches)", async () => {
     // given
     const loadedSkills = [
-      createMockSkill("superpowers/debugging"),
-      createMockSkill("utils/debugging"),
+      createMockSkill("superpowers/ambiguous-skill-test"),
+      createMockSkill("utils/ambiguous-skill-test"),
     ]
     const tool = createSkillTool({ skills: loadedSkills })
 
     // when / then, should not resolve (ambiguous), should suggest both
-    return expect(tool.execute({ name: "debugging" }, mockContext)).rejects.toThrow(
+    return expect(tool.execute({ name: "ambiguous-skill-test" }, mockContext)).rejects.toThrow(
       "not found"
     )
   })
