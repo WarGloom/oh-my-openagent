@@ -88,14 +88,14 @@ export async function executeSyncTask(
 
     if (onSyncSessionCreated) {
       log("[task] Invoking onSyncSessionCreated callback", { sessionID, parentID: parentContext.sessionID })
-      await onSyncSessionCreated({
+      void onSyncSessionCreated({
         sessionID,
         parentID: parentContext.sessionID,
         title: args.description,
       }).catch((err) => {
-      log("[task] onSyncSessionCreated callback failed", { error: String(err) })
+        log("[task] onSyncSessionCreated callback failed", { error: String(err) })
       })
-      await new Promise(r => setTimeout(r, 200))
+      await new Promise((r) => setTimeout(r, 200))
     }
 
     taskId = `sync_${sessionID.slice(0, 8)}`

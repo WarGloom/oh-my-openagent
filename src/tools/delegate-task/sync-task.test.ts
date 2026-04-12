@@ -558,6 +558,58 @@ describe("executeSyncTask - cleanup on error paths", () => {
     expect(taskMeta).toBeDefined()
     expect(taskMeta.metadata.spawnDepth).toBe(3) // NOT 1 (the fallback value)
   })
+
+  test("does not block when onSyncSessionCreated never resolves", async () => {
+    const mockClient = {
+      session: {
+        create: async () => ({ data: { id: "ses_test_12345678" } }),
+      },
+    }
+
+    const { executeSyncTask } = require("./sync-task")
+
+    const deps = {
+      createSyncSession: async () => ({ ok: true, sessionID: "ses_test_12345678" }),
+      sendSyncPrompt: async () => null,
+      pollSyncSession: async () => null,
+      fetchSyncResult: async () => ({ ok: true as const, textContent: "Result" }),
+    }
+
+    const mockCtx = {
+      sessionID: "parent-session",
+      callID: "call-123",
+      metadata: () => {},
+    }
+
+    const mockExecutorCtx = {
+      client: mockClient,
+      directory: "/tmp",
+      onSyncSessionCreated: async () => new Promise(() => {}),
+    }
+
+    const args = {
+      prompt: "test prompt",
+      description: "test task",
+      category: "test",
+      load_skills: [],
+      run_in_background: false,
+      command: null,
+    }
+
+    const result = await Promise.race([
+      executeSyncTask(args, mockCtx, mockExecutorCtx, {
+        sessionID: "parent-session",
+      }, "test-agent", undefined, undefined, undefined, undefined, deps),
+      new Promise((_, reject) => {
+        setTimeout(() => {
+          reject(new Error("onSyncSessionCreated was awaited and blocked execution"))
+        }, 500)
+      }),
+    ])
+
+    expect(result).toContain("Task completed")
+  })
+
 })
 
 export {}
