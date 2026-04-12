@@ -19,29 +19,20 @@ const mockGetAvailableServerPort = mock(() => Promise.resolve({ port: 4096, wasA
 const mockConsoleLog = mock(() => {})
 const mockWithWorkingOpencodePath = mock((startServer: () => Promise<unknown>) => startServer())
 
-async function importFreshServerConnectionModule(): Promise<typeof import("./server-connection")> {
-  mock.module("@opencode-ai/sdk", () => ({
-    createOpencode: mockCreateOpencode,
-    createOpencodeClient: mockCreateOpencodeClient,
-  }))
+mock.module("@opencode-ai/sdk", () => ({
+  createOpencode: mockCreateOpencode,
+  createOpencodeClient: mockCreateOpencodeClient,
+}))
 
-  mock.module("../../shared/port-utils", () => ({
-    isPortAvailable: mockIsPortAvailable,
-    getAvailableServerPort: mockGetAvailableServerPort,
-    DEFAULT_SERVER_PORT: 4096,
-  }))
+mock.module("../../shared/port-utils", () => ({
+  isPortAvailable: mockIsPortAvailable,
+  getAvailableServerPort: mockGetAvailableServerPort,
+  DEFAULT_SERVER_PORT: 4096,
+}))
 
-  mock.module("./opencode-binary-resolver", () => ({
-    withWorkingOpencodePath: mockWithWorkingOpencodePath,
-  }))
-
-  const module = await import(`./server-connection?test=${Date.now()}-${Math.random()}`)
-  mock.module("@opencode-ai/sdk", () => originalSdk)
-  mock.module("../../shared/port-utils", () => originalPortUtils)
-  mock.module("./opencode-binary-resolver", () => originalBinaryResolver)
-  mock.restore()
-  return module
-}
+mock.module("./opencode-binary-resolver", () => ({
+  withWorkingOpencodePath: mockWithWorkingOpencodePath,
+}))
 
 afterAll(() => {
   mock.module("@opencode-ai/sdk", () => originalSdk)
@@ -50,11 +41,10 @@ afterAll(() => {
   mock.restore()
 })
 
-let createServerConnection: typeof import("./server-connection").createServerConnection
+const { createServerConnection } = await import("./server-connection")
 
 describe("createServerConnection", () => {
-  beforeEach(async () => {
-    ;({ createServerConnection } = await importFreshServerConnectionModule())
+  beforeEach(() => {
     mockCreateOpencode.mockClear()
     mockCreateOpencodeClient.mockClear()
     mockIsPortAvailable.mockClear()
