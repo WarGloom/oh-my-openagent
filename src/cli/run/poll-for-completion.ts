@@ -3,6 +3,7 @@ import type { RunContext } from "./types"
 import type { EventState } from "./events"
 import { checkCompletionConditions } from "./completion"
 import { normalizeSDKResponse } from "../../shared"
+import { logRunTrace, runDebugIteration, traceRunStep } from "./run-debug"
 
 const DEFAULT_POLL_INTERVAL_MS = 500
 const DEFAULT_REQUIRED_CONSECUTIVE = 1
@@ -10,6 +11,8 @@ const ERROR_GRACE_CYCLES = 3
 const MIN_STABILIZATION_MS = 1_000
 const DEFAULT_EVENT_WATCHDOG_MS = 30_000 // 30 seconds
 const DEFAULT_SECONDARY_MEANINGFUL_WORK_TIMEOUT_MS = 60_000 // 60 seconds
+const MAX_STATUS_TIMEOUT_CYCLES = 3
+const STATUS_TIMEOUT_MS = 5_000
 
 export interface PollOptions {
   pollIntervalMs?: number
@@ -19,11 +22,16 @@ export interface PollOptions {
   secondaryMeaningfulWorkTimeoutMs?: number
 }
 
+type MainSessionStatusProbe = {
+  status: "idle" | "busy" | "retry" | null
+  timedOut: boolean
+}
+
 export async function pollForCompletion(
   ctx: RunContext,
   eventState: EventState,
   abortController: AbortController,
-  options: PollOptions = {}
+  options: PollOptions = {},
 ): Promise<number> {
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
   const requiredConsecutive =
@@ -41,12 +49,24 @@ export async function pollForCompletion(
   let errorCycleCount = 0
   let firstWorkTimestamp: number | null = null
   let secondaryTimeoutChecked = false
+  let iteration = 0
+  let consecutiveStatusTimeouts = 0
   const pollStartTimestamp = Date.now()
 
+  logRunTrace(
+    `pollForCompletion start (pollInterval=${pollIntervalMs}ms, requiredConsecutive=${requiredConsecutive})`,
+  )
+
   while (!abortController.signal.aborted) {
+    iteration += 1
+    runDebugIteration(
+      `pollForCompletion iteration=${iteration} aborted=${abortController.signal.aborted}`,
+      iteration,
+    )
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
 
     if (abortController.signal.aborted) {
+      logRunTrace(`pollForCompletion returning 130 due abort at iteration ${iteration}`)
       return 130
     }
 
@@ -54,11 +74,14 @@ export async function pollForCompletion(
       errorCycleCount++
       if (errorCycleCount >= ERROR_GRACE_CYCLES) {
         console.error(
-          pc.red(`\n\nSession ended with error: ${eventState.lastError}`)
+          pc.red(`
+
+Session ended with error: ${eventState.lastError}`)
         )
         console.error(
           pc.yellow("Check if todos were completed before the error.")
         )
+        logRunTrace(`pollForCompletion returning 1 due main session error (iteration ${iteration})`)
         return 1
       }
       continue
@@ -72,13 +95,27 @@ export async function pollForCompletion(
       if (timeSinceLastEvent > eventWatchdogMs) {
         console.log(
           pc.yellow(
-            `\n  No events for ${Math.round(
+            `
+  No events for ${Math.round(
               timeSinceLastEvent / 1000
             )}s, verifying session status...`
           )
         )
 
-        mainSessionStatus = await getMainSessionStatus(ctx)
+        const statusProbe = await traceRunStep(`getMainSessionStatus (watchdog path, iteration=${iteration})`, () => getMainSessionStatus(ctx))
+        mainSessionStatus = statusProbe.status
+        if (statusProbe.timedOut) {
+          consecutiveStatusTimeouts += 1
+        } else {
+          consecutiveStatusTimeouts = 0
+        }
+        if (consecutiveStatusTimeouts >= MAX_STATUS_TIMEOUT_CYCLES) {
+          console.error(pc.red(`
+Session status check timed out ${consecutiveStatusTimeouts} times in a row. Aborting run.`))
+          logRunTrace(`pollForCompletion returning 1 due repeated status timeouts at iteration ${iteration}`)
+          return 1
+        }
+
         if (mainSessionStatus === "idle") {
           eventState.mainSessionIdle = true
         } else if (mainSessionStatus === "busy" || mainSessionStatus === "retry") {
@@ -90,7 +127,19 @@ export async function pollForCompletion(
     }
 
     if (mainSessionStatus === null) {
-      mainSessionStatus = await getMainSessionStatus(ctx)
+      const statusProbe = await traceRunStep(`getMainSessionStatus (poll loop, iteration=${iteration})`, () => getMainSessionStatus(ctx))
+      mainSessionStatus = statusProbe.status
+      if (statusProbe.timedOut) {
+        consecutiveStatusTimeouts += 1
+      } else {
+        consecutiveStatusTimeouts = 0
+      }
+      if (consecutiveStatusTimeouts >= MAX_STATUS_TIMEOUT_CYCLES) {
+        console.error(pc.red(`
+Session status check timed out ${consecutiveStatusTimeouts} times in a row. Aborting run.`))
+        logRunTrace(`pollForCompletion returning 1 due repeated status timeouts at iteration ${iteration}`)
+        return 1
+      }
     }
     if (mainSessionStatus === "busy" || mainSessionStatus === "retry") {
       eventState.mainSessionIdle = false
@@ -145,7 +194,8 @@ export async function pollForCompletion(
           eventState.hasReceivedMeaningfulWork = true
           console.log(
             pc.yellow(
-              `\n  No meaningful work events for ${Math.round(
+              `
+  No meaningful work events for ${Math.round(
                 secondaryMeaningfulWorkTimeoutMs / 1000
               )}s but session has active work - assuming in progress`
             )
@@ -163,15 +213,17 @@ export async function pollForCompletion(
       }
     }
 
-    const shouldExit = await checkCompletionConditions(ctx)
+    const shouldExit = await traceRunStep(`checkCompletionConditions (iteration=${iteration})`, () => checkCompletionConditions(ctx))
     if (shouldExit) {
       if (abortController.signal.aborted) {
+        logRunTrace(`pollForCompletion returning 130 after check due abort at iteration ${iteration}`)
         return 130
       }
 
       consecutiveCompleteChecks++
       if (consecutiveCompleteChecks >= requiredConsecutive) {
         console.log(pc.green("\n\nAll tasks completed."))
+        logRunTrace(`pollForCompletion returning 0 at iteration ${iteration}`)
         return 0
       }
     } else {
@@ -179,26 +231,46 @@ export async function pollForCompletion(
     }
   }
 
+  logRunTrace(`pollForCompletion returning 130 after loop exited`) 
   return 130
 }
 
 async function getMainSessionStatus(
   ctx: RunContext
-): Promise<"idle" | "busy" | "retry" | null> {
+): Promise<MainSessionStatusProbe> {
   try {
-    const statusesRes = await ctx.client.session.status({
-      query: { directory: ctx.directory },
-    })
+    let timeout: ReturnType<typeof setTimeout> | null = null
+    const statusesRes = await Promise.race([
+      ctx.client.session.status({
+        query: { directory: ctx.directory },
+      }),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          reject(new Error("Timed out while reading session status"))
+        }, STATUS_TIMEOUT_MS)
+        timeout.unref?.()
+      }),
+    ])
+
+    if (timeout) {
+      clearTimeout(timeout)
+    }
+
     const statuses = normalizeSDKResponse(
       statusesRes,
       {} as Record<string, { type?: string }>
     )
     const status = statuses[ctx.sessionID]?.type
     if (status === "idle" || status === "busy" || status === "retry") {
-      return status
+      return { status, timedOut: false }
     }
-    return null
-  } catch {
-    return null
+    return { status: null, timedOut: false }
+  } catch (error) {
+    const isTimeout =
+      error instanceof Error && error.message.includes("Timed out while reading session status")
+    if (isTimeout) {
+      logRunTrace("getMainSessionStatus timed out")
+    }
+    return { status: null, timedOut: isTimeout }
   }
 }
