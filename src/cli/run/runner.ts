@@ -13,6 +13,7 @@ import { loadAgentProfileColors } from "./agent-profile-colors"
 import { suppressRunInput } from "./stdin-suppression"
 import { createTimestampedStdoutController } from "./timestamp-output"
 import { createCliPostHog, getPostHogDistinctId } from "../../shared/posthog"
+import { logRunTrace, traceRunStep } from "./run-debug"
 
 export { resolveRunAgent }
 
@@ -74,13 +75,16 @@ export async function run(options: RunOptions): Promise<number> {
   }
 
   try {
-    const resolvedModel = resolveRunModel(options.model)
+    const resolvedModel = await traceRunStep("resolve run model", async () => resolveRunModel(options.model))
 
-    const { client, cleanup: serverCleanup } = await createServerConnection({
-      port: options.port,
-      attach: options.attach,
-      signal: abortController.signal,
-    })
+    logRunTrace("begin run orchestration")
+    const { client, cleanup: serverCleanup } = await traceRunStep("createServerConnection", async () =>
+      createServerConnection({
+        port: options.port,
+        attach: options.attach,
+        signal: abortController.signal,
+      }),
+    )
 
     const cleanup = () => {
       serverCleanup()
@@ -97,11 +101,13 @@ export async function run(options: RunOptions): Promise<number> {
     process.on("SIGINT", handleSigint)
 
     try {
-      const sessionID = await resolveSession({
-        client,
-        sessionId: options.sessionId,
-        directory,
-      })
+      const sessionID = await traceRunStep("resolveSession", async () =>
+        resolveSession({
+          client,
+          sessionId: options.sessionId,
+          directory,
+        }),
+      )
 
       console.log(pc.dim(`Session: ${sessionID}`))
 
@@ -116,14 +122,23 @@ export async function run(options: RunOptions): Promise<number> {
         abortController,
         verbose: options.verbose ?? false,
       }
-      const events = await client.event.subscribe({ query: { directory } })
+      const events = await traceRunStep("client.event.subscribe", async () =>
+        client.event.subscribe({ query: { directory } }),
+      )
       const eventState = createEventState()
-      eventState.agentColorsByName = await loadAgentProfileColors(client)
+      void loadAgentProfileColors(client)
+        .then((colors) => {
+          eventState.agentColorsByName = colors
+        })
+        .catch(() => {
+          eventState.agentColorsByName = {}
+        })
+      logRunTrace("start event processor")
       const eventProcessor = processEvents(ctx, events.stream, eventState).catch(
         () => {},
       )
 
-      await client.session.promptAsync({
+      await traceRunStep("client.session.promptAsync", async () => client.session.promptAsync({
         path: { id: sessionID },
         body: {
           agent: resolvedAgent,
@@ -134,12 +149,16 @@ export async function run(options: RunOptions): Promise<number> {
           parts: [{ type: "text", text: message }],
         },
         query: { directory },
-      })
-      const exitCode = await pollForCompletion(ctx, eventState, abortController)
+      }) )
+      const exitCode = await traceRunStep("pollForCompletion", async () =>
+        pollForCompletion(ctx, eventState, abortController),
+      )
 
       abortController.abort()
+      logRunTrace("abort requested after pollForCompletion")
 
       await waitForEventProcessorShutdown(eventProcessor)
+      logRunTrace("event processor stopped")
       cleanup()
 
       const durationMs = Date.now() - startTime
