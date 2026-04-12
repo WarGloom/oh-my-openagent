@@ -59,7 +59,7 @@ describe("resolveModelPipeline", () => {
 
     // then
     expect(result).toEqual({
-      model: "anthropic/claude-opus-4-6",
+      model: "anthropic/claude-opus-4.6",
       provenance: "provider-fallback",
       attempted: ["anthropic/claude-opus-4-6"],
     })
