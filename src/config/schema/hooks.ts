@@ -47,7 +47,6 @@ export const HookNameSchema = z.enum([
   "stop-continuation-guard",
   "tasks-todowrite-disabler",
   "serena-navigation-guard",
-  "serena-usage-reminder",
   "runtime-fallback",
   "write-existing-file-guard",
   "bash-file-read-guard",

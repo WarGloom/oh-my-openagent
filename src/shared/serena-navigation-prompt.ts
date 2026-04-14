@@ -9,6 +9,9 @@ Priority for project navigation:
 - Use Serena file/symbol/pattern tools to find files, symbols, references, and module structure
 - Prefer Serena semantic navigation over manual full-file reads whenever possible
 - Only fall back to plain text search or whole-file reads when Serena cannot answer the question or the target is non-code
+- If you find yourself repeating grep/glob/read calls, stop and switch to Serena symbolic tools instead of continuing manual search loops
+- Start with Serena for navigation tasks: activate/check onboarding, then use symbol overview, symbol lookup, references, pattern search, and targeted Serena reads
+- Treat repeated manual navigation as a failure mode: Serena first, plain grep/glob/read only as fallback after Serena is insufficient
 </serena_navigation>`
 
 export function getSerenaNavigationPrompt(): string {
