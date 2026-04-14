@@ -11,6 +11,7 @@ import {
   createRulesInjectorHook,
   createTasksTodowriteDisablerHook,
   createSerenaNavigationGuardHook,
+  createSerenaUsageReminderHook,
   createWriteExistingFileGuardHook,
   createBashFileReadGuardHook,
   createHashlineReadEnhancerHook,
@@ -36,6 +37,7 @@ export type ToolGuardHooks = {
   rulesInjector: ReturnType<typeof createRulesInjectorHook> | null
   tasksTodowriteDisabler: ReturnType<typeof createTasksTodowriteDisablerHook> | null
   serenaNavigationGuard: ReturnType<typeof createSerenaNavigationGuardHook> | null
+  serenaUsageReminder: ReturnType<typeof createSerenaUsageReminderHook> | null
   writeExistingFileGuard: ReturnType<typeof createWriteExistingFileGuardHook> | null
   bashFileReadGuard: ReturnType<typeof createBashFileReadGuardHook> | null
   hashlineReadEnhancer: ReturnType<typeof createHashlineReadEnhancerHook> | null
@@ -111,6 +113,10 @@ export function createToolGuardHooks(args: {
     ? safeHook("serena-navigation-guard", () => createSerenaNavigationGuardHook())
     : null
 
+  const serenaUsageReminder = isHookEnabled("serena-usage-reminder")
+    ? safeHook("serena-usage-reminder", () => createSerenaUsageReminderHook())
+    : null
+
   const writeExistingFileGuard = isHookEnabled("write-existing-file-guard")
     ? safeHook("write-existing-file-guard", () => createWriteExistingFileGuardHook(ctx))
     : null
@@ -148,6 +154,7 @@ export function createToolGuardHooks(args: {
     rulesInjector,
     tasksTodowriteDisabler,
     serenaNavigationGuard,
+    serenaUsageReminder,
     writeExistingFileGuard,
     bashFileReadGuard,
     hashlineReadEnhancer,
