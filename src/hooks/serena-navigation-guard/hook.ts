@@ -206,7 +206,9 @@ export function createSerenaNavigationGuardHook() {
         return
       }
 
+      state.failedSerenaAttempt = false
       state.successfulSerenaAttempt = true
+      state.violationCount = 0
       log("[serena-navigation-guard] Serena tool succeeded", {
         sessionID: input.sessionID,
         callID: input.callID,

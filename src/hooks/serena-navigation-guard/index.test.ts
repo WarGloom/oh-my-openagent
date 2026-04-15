@@ -98,6 +98,87 @@ describe("serena-navigation-guard", () => {
     ).resolves.toBeUndefined()
   })
 
+  test("re-enables Serena-first blocking after a successful Serena call resets circuit breaker", async () => {
+    const hook = createSerenaNavigationGuardHook()
+    updateSessionAgent(sessionID, "oracle")
+
+    await expect(
+      hook["tool.execute.before"]({
+        tool: "grep",
+        sessionID,
+        callID: "call_1",
+      }, { args: {} })
+    ).rejects.toThrow("Serena-first navigation policy")
+
+    await expect(
+      hook["tool.execute.before"]({
+        tool: "grep",
+        sessionID,
+        callID: "call_2",
+      }, { args: {} })
+    ).rejects.toThrow("Serena-first navigation policy")
+
+    await expect(
+      hook["tool.execute.before"]({
+        tool: "grep",
+        sessionID,
+        callID: "call_3",
+      }, { args: {} })
+    ).rejects.toThrow("Serena-first navigation policy")
+
+    await expect(
+      hook["tool.execute.before"]({
+        tool: "grep",
+        sessionID,
+        callID: "call_4",
+      }, { args: {} })
+    ).resolves.toBeUndefined()
+
+    await hook["tool.execute.after"](
+      { tool: "serena_find_symbol", sessionID, callID: "call_serena_success" },
+      { title: "ok", output: "found symbol", metadata: {} }
+    )
+
+    await expect(
+      hook["tool.execute.before"]({
+        tool: "grep",
+        sessionID,
+        callID: "call_5",
+      }, { args: {} })
+    ).rejects.toThrow("Serena-first navigation policy")
+  })
+
+  test("re-enables Serena-first blocking after a later successful Serena call clears failed fallback", async () => {
+    const hook = createSerenaNavigationGuardHook()
+    updateSessionAgent(sessionID, "oracle")
+
+    await hook["tool.execute.after"](
+      { tool: "serena_find_symbol", sessionID, callID: "call_serena_fail" },
+      { title: "error", output: "Error: symbol lookup failed", metadata: {} }
+    )
+
+    await expect(
+      hook["tool.execute.before"]({
+        tool: "read",
+        sessionID,
+        callID: "call_allowed_after_failure",
+      }, { args: {} })
+    ).resolves.toBeUndefined()
+
+    await hook["tool.execute.after"](
+      { tool: "serena_find_symbol", sessionID, callID: "call_serena_success" },
+      { title: "ok", output: "found symbol", metadata: {} }
+    )
+
+    await expect(
+      hook["tool.execute.before"]({
+        tool: "read",
+        sessionID,
+        callID: "call_blocked_after_success",
+      }, { args: {} })
+    ).rejects.toThrow("Serena-first navigation policy")
+  })
+
   test("does not enforce for explore agent (excluded)", async () => {
     const hook = createSerenaNavigationGuardHook()
     updateSessionAgent(sessionID, "explore")
