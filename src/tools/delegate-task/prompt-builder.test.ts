@@ -65,7 +65,7 @@ describe("prompt-builder", () => {
       test("#when agent is explore #then system content includes available_skills section", () => {
         // given
         const availableSkills: AvailableSkill[] = [
-          { name: "code-review", description: "Review code quality", location: "project" },
+          { name: "review-work", description: "Review code quality", location: "project" },
         ]
 
         // when
@@ -76,7 +76,7 @@ describe("prompt-builder", () => {
 
         // then
         expect(result).toBeDefined()
-        expect(result).toContain("code-review")
+        expect(result).toContain("review-work")
       })
 
       test("#when availableSkills is empty #then system content does not include available_skills section", () => {
