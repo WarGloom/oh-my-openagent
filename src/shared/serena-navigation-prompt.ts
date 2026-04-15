@@ -8,6 +8,7 @@ If Serena tools are available in this session, use Serena tools first for codeba
 Priority for project navigation:
 - Use Serena file/symbol/pattern tools to find files, symbols, references, and module structure
 - Prefer Serena semantic navigation over manual full-file reads whenever possible
+- Use plain Read directly for obvious non-code files such as docs, markdown, logs, and config files
 - Only fall back to plain text search or whole-file reads when Serena cannot answer the question or the target is non-code
 - If you find yourself repeating grep/glob/read calls, stop and switch to Serena symbolic tools instead of continuing manual search loops
 - Start with Serena for navigation tasks: activate/check onboarding, then use symbol overview, symbol lookup, references, pattern search, and targeted Serena reads

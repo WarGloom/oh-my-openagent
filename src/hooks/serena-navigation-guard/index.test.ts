@@ -67,6 +67,19 @@ describe("serena-navigation-guard", () => {
     ).rejects.toThrow("Serena-first navigation policy")
   })
 
+  test("allows direct read for obvious non-code files", async () => {
+    const hook = createSerenaNavigationGuardHook()
+    updateSessionAgent(sessionID, "oracle")
+
+    await expect(
+      hook["tool.execute.before"]({
+        tool: "read",
+        sessionID,
+        callID: "call_non_code_read",
+      }, { args: { filePath: "/repo/TECH_DEBT_AUDIT.md" } })
+    ).resolves.toBeUndefined()
+  })
+
   test("allows manual navigation after a failed Serena attempt", async () => {
     const hook = createSerenaNavigationGuardHook()
     updateSessionAgent(sessionID, "oracle")

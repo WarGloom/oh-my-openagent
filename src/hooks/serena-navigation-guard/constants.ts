@@ -19,6 +19,28 @@ export const SERENA_NAVIGATION_TOOL_HINTS = [
   "serena_read_file",
 ]
 
+export const NON_CODE_FILE_EXTENSIONS = new Set([
+  ".md",
+  ".mdx",
+  ".txt",
+  ".rst",
+  ".adoc",
+  ".log",
+  ".json",
+  ".jsonc",
+  ".yaml",
+  ".yml",
+  ".toml",
+  ".ini",
+  ".cfg",
+  ".conf",
+  ".env",
+  ".lock",
+  ".csv",
+  ".tsv",
+  ".xml",
+])
+
 export const EXCLUDED_AGENT_KEYS = new Set([
   "explore",
   "librarian",

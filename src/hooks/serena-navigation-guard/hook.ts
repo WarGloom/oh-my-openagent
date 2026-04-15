@@ -1,4 +1,5 @@
 import { getSessionAgent } from "../../features/claude-code-session-state"
+import path from "node:path"
 import { log } from "../../shared"
 import { getAgentConfigKey } from "../../shared/agent-display-names"
 import { isSerenaServerAvailable } from "../../shared/serena-availability"
@@ -6,6 +7,7 @@ import {
   EXCLUDED_AGENT_KEYS,
   MANUAL_NAVIGATION_TOOLS,
   MAX_VIOLATIONS_BEFORE_FALLBACK,
+  NON_CODE_FILE_EXTENSIONS,
   SERENA_NAVIGATION_TOOL_HINTS,
   SERENA_TOOL_PREFIX,
 } from "./constants"
@@ -84,6 +86,19 @@ function shouldEnforceForAgent(agentName: string | undefined): boolean {
   return !EXCLUDED_AGENT_KEYS.has(getAgentConfigKey(agentName))
 }
 
+function isObviousNonCodeRead(toolName: string, args: Record<string, unknown>): boolean {
+  if (toolName.toLowerCase() !== "read") {
+    return false
+  }
+
+  const filePath = typeof args.filePath === "string" ? args.filePath : null
+  if (!filePath) {
+    return false
+  }
+
+  return NON_CODE_FILE_EXTENSIONS.has(path.extname(filePath).toLowerCase())
+}
+
 function buildViolationMessage(toolName: string, violationCount: number): string {
   const reminder =
     violationCount === 0
@@ -92,11 +107,13 @@ function buildViolationMessage(toolName: string, violationCount: number): string
           `Do not use \`${toolName}\` for project navigation before trying Serena.`,
           "Use Serena first for codebase structure, symbol lookup, and targeted reads.",
           `Start with: ${SERENA_NAVIGATION_TOOL_HINTS.join(", ")}`,
+          "For obvious non-code files like docs, logs, and config files, use plain Read directly.",
           "If Serena fails to answer, retry with grep/glob/read afterwards.",
         ]
       : [
           "Serena-first navigation policy still applies.",
           `Retry with Serena before using \`${toolName}\`.`,
+          "Obvious non-code files like docs, logs, and config files are fine to read directly.",
           "Plain grep/glob/read is allowed only after a Serena tool fails in this session.",
         ]
 
@@ -125,7 +142,7 @@ export function createSerenaNavigationGuardHook() {
   return {
     "tool.execute.before": async (
       input: HookInput,
-      _output: { args: Record<string, unknown> },
+      output: { args: Record<string, unknown> },
     ) => {
       if (!serenaAvailable) {
         return
@@ -133,6 +150,10 @@ export function createSerenaNavigationGuardHook() {
 
       const toolName = input.tool.toLowerCase()
       if (!isManualNavigationTool(toolName)) {
+        return
+      }
+
+      if (isObviousNonCodeRead(toolName, output.args)) {
         return
       }
 
