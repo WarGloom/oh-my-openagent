@@ -1,5 +1,4 @@
 import type { AgentConfig } from "@opencode-ai/sdk"
-import { isSerenaServerAvailable } from "./serena-availability"
 
 const SERENA_NAVIGATION_PROMPT = `
 <serena_navigation>
@@ -16,18 +15,10 @@ Priority for project navigation:
 </serena_navigation>`
 
 export function getSerenaNavigationPrompt(): string {
-  if (!isSerenaServerAvailable()) {
-    return ""
-  }
-
   return SERENA_NAVIGATION_PROMPT
 }
 
 export function appendSerenaNavigationPrompt(prompt: string | undefined): string {
-  if (!isSerenaServerAvailable()) {
-    return prompt ?? ""
-  }
-
   if (!prompt) {
     return SERENA_NAVIGATION_PROMPT
   }
@@ -40,10 +31,6 @@ export function appendSerenaNavigationPrompt(prompt: string | undefined): string
 }
 
 export function applySerenaNavigationPrompt(config: AgentConfig): AgentConfig {
-  if (!isSerenaServerAvailable()) {
-    return config
-  }
-
   return {
     ...config,
     prompt: appendSerenaNavigationPrompt(config.prompt),

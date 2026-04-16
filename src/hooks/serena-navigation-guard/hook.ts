@@ -2,7 +2,7 @@ import { getSessionAgent } from "../../features/claude-code-session-state"
 import path from "node:path"
 import { log } from "../../shared"
 import { getAgentConfigKey } from "../../shared/agent-display-names"
-import { isSerenaServerAvailable } from "../../shared/serena-availability"
+import { resolveSessionTools } from "../../shared/resolve-session-tools"
 import {
   EXCLUDED_AGENT_KEYS,
   MANUAL_NAVIGATION_TOOLS,
@@ -47,6 +47,14 @@ function isSerenaTool(toolName: string): boolean {
 
 function isManualNavigationTool(toolName: string): boolean {
   return MANUAL_NAVIGATION_TOOLS.has(toolName.toLowerCase())
+}
+
+type SerenaNavigationGuardDeps = {
+  client: {
+    session: {
+      messages: (input: { path: { id: string } }) => Promise<unknown>
+    }
+  }
 }
 
 function getToolOutputText(output: HookOutput): string | null {
@@ -120,9 +128,17 @@ function buildViolationMessage(toolName: string, violationCount: number): string
   return reminder.join("\n")
 }
 
-export function createSerenaNavigationGuardHook() {
-  const serenaAvailable = isSerenaServerAvailable()
+export function createSerenaNavigationGuardHook(deps: SerenaNavigationGuardDeps) {
   const sessionState = new Map<string, SessionState>()
+
+  const hasSerenaToolAccess = async (sessionID: string): Promise<boolean> => {
+    const sessionTools = await resolveSessionTools(deps.client, sessionID)
+    if (!sessionTools) {
+      return false
+    }
+
+    return Object.entries(sessionTools).some(([toolName, enabled]) => enabled && isSerenaTool(toolName))
+  }
 
   const getState = (sessionID: string): SessionState => {
     const existing = sessionState.get(sessionID)
@@ -144,7 +160,7 @@ export function createSerenaNavigationGuardHook() {
       input: HookInput,
       output: { args: Record<string, unknown> },
     ) => {
-      if (!serenaAvailable) {
+      if (!(await hasSerenaToolAccess(input.sessionID))) {
         return
       }
 
@@ -191,7 +207,7 @@ export function createSerenaNavigationGuardHook() {
     },
 
     "tool.execute.after": async (input: HookInput, output: HookOutput) => {
-      if (!serenaAvailable || !isSerenaTool(input.tool)) {
+      if (!(await hasSerenaToolAccess(input.sessionID)) || !isSerenaTool(input.tool)) {
         return
       }
 

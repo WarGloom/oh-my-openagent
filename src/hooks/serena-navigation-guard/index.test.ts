@@ -1,12 +1,9 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 
 import { _resetForTesting, updateSessionAgent } from "../../features/claude-code-session-state"
+import { clearSessionTools, setSessionTools } from "../../shared/session-tools-store"
 
-const getSystemMcpServerNamesMock = mock(() => new Set<string>())
-
-mock.module("../../features/claude-code-mcp-loader", () => ({
-  getSystemMcpServerNames: getSystemMcpServerNamesMock,
-}))
+const messagesMock = mock(async () => ({ data: [] }))
 
 const { createSerenaNavigationGuardHook } = await import("./hook")
 
@@ -15,16 +12,23 @@ describe("serena-navigation-guard", () => {
 
   beforeEach(() => {
     _resetForTesting()
-    getSystemMcpServerNamesMock.mockReset()
-    getSystemMcpServerNamesMock.mockReturnValue(new Set(["serena"]))
+    messagesMock.mockReset()
+    messagesMock.mockResolvedValue({ data: [] })
+    clearSessionTools()
+    setSessionTools(sessionID, {
+      serena_find_file: true,
+      serena_find_symbol: true,
+      serena_check_onboarding_performed: true,
+    })
   })
 
   afterEach(() => {
     _resetForTesting()
+    clearSessionTools()
   })
 
   test("blocks manual navigation tools before Serena for enforced agents", async () => {
-    const hook = createSerenaNavigationGuardHook()
+    const hook = createSerenaNavigationGuardHook({ client: { session: { messages: messagesMock } } })
     updateSessionAgent(sessionID, "oracle")
 
     await expect(
@@ -37,7 +41,7 @@ describe("serena-navigation-guard", () => {
   })
 
   test("includes the Serena reminder on the first blocked attempt", async () => {
-    const hook = createSerenaNavigationGuardHook()
+    const hook = createSerenaNavigationGuardHook({ client: { session: { messages: messagesMock } } })
     updateSessionAgent(sessionID, "Sisyphus (Ultraworker)")
 
     await expect(
@@ -50,7 +54,7 @@ describe("serena-navigation-guard", () => {
   })
 
   test("keeps blocking after successful Serena usage", async () => {
-    const hook = createSerenaNavigationGuardHook()
+    const hook = createSerenaNavigationGuardHook({ client: { session: { messages: messagesMock } } })
     updateSessionAgent(sessionID, "oracle")
 
     await hook["tool.execute.after"](
@@ -68,7 +72,7 @@ describe("serena-navigation-guard", () => {
   })
 
   test("allows direct read for obvious non-code files", async () => {
-    const hook = createSerenaNavigationGuardHook()
+    const hook = createSerenaNavigationGuardHook({ client: { session: { messages: messagesMock } } })
     updateSessionAgent(sessionID, "oracle")
 
     await expect(
@@ -81,7 +85,7 @@ describe("serena-navigation-guard", () => {
   })
 
   test("allows manual navigation after a failed Serena attempt", async () => {
-    const hook = createSerenaNavigationGuardHook()
+    const hook = createSerenaNavigationGuardHook({ client: { session: { messages: messagesMock } } })
     updateSessionAgent(sessionID, "oracle")
 
     await hook["tool.execute.after"](
@@ -99,7 +103,7 @@ describe("serena-navigation-guard", () => {
   })
 
   test("re-enables Serena-first blocking after a successful Serena call resets circuit breaker", async () => {
-    const hook = createSerenaNavigationGuardHook()
+    const hook = createSerenaNavigationGuardHook({ client: { session: { messages: messagesMock } } })
     updateSessionAgent(sessionID, "oracle")
 
     await expect(
@@ -149,7 +153,7 @@ describe("serena-navigation-guard", () => {
   })
 
   test("re-enables Serena-first blocking after a later successful Serena call clears failed fallback", async () => {
-    const hook = createSerenaNavigationGuardHook()
+    const hook = createSerenaNavigationGuardHook({ client: { session: { messages: messagesMock } } })
     updateSessionAgent(sessionID, "oracle")
 
     await hook["tool.execute.after"](
@@ -180,7 +184,7 @@ describe("serena-navigation-guard", () => {
   })
 
   test("does not enforce for explore agent (excluded)", async () => {
-    const hook = createSerenaNavigationGuardHook()
+    const hook = createSerenaNavigationGuardHook({ client: { session: { messages: messagesMock } } })
     updateSessionAgent(sessionID, "explore")
 
     await expect(
@@ -193,7 +197,7 @@ describe("serena-navigation-guard", () => {
   })
 
   test("treats MCP-style Serena text errors as failed attempts", async () => {
-    const hook = createSerenaNavigationGuardHook()
+    const hook = createSerenaNavigationGuardHook({ client: { session: { messages: messagesMock } } })
     updateSessionAgent(sessionID, "oracle")
 
     await expect(
@@ -220,9 +224,10 @@ describe("serena-navigation-guard", () => {
   })
 
   test("does not enforce when Serena MCP is unavailable", async () => {
-    getSystemMcpServerNamesMock.mockReturnValue(new Set(["playwright"]))
-    const hook = createSerenaNavigationGuardHook()
-    updateSessionAgent(sessionID, "explore")
+    clearSessionTools()
+    setSessionTools(sessionID, { grep: true, read: true })
+    const hook = createSerenaNavigationGuardHook({ client: { session: { messages: messagesMock } } })
+    updateSessionAgent(sessionID, "oracle")
 
     await expect(
       hook["tool.execute.before"]({
@@ -234,7 +239,7 @@ describe("serena-navigation-guard", () => {
   })
 
   test("does not enforce for excluded agents", async () => {
-    const hook = createSerenaNavigationGuardHook()
+    const hook = createSerenaNavigationGuardHook({ client: { session: { messages: messagesMock } } })
     updateSessionAgent(sessionID, "librarian")
 
     await expect(
@@ -244,5 +249,31 @@ describe("serena-navigation-guard", () => {
         callID: "call_1",
       }, { args: {} })
     ).resolves.toBeUndefined()
+  })
+
+  test("loads Serena tool availability from session messages when cache is empty", async () => {
+    clearSessionTools()
+    messagesMock.mockImplementationOnce(async () => ({
+      data: [
+        {
+          info: {
+            tools: {
+              serena_find_file: true,
+              grep: true,
+            },
+          },
+        },
+      ],
+    } as never))
+    const hook = createSerenaNavigationGuardHook({ client: { session: { messages: messagesMock } } })
+    updateSessionAgent(sessionID, "oracle")
+
+    await expect(
+      hook["tool.execute.before"]({
+        tool: "grep",
+        sessionID,
+        callID: "call_from_messages",
+      }, { args: {} })
+    ).rejects.toThrow("Serena-first navigation policy")
   })
 })

@@ -3203,7 +3203,7 @@ describe("sisyphus-task", () => {
       const result = buildSystemContent({ skillContent: undefined, categoryPromptAppend: undefined })
 
       // then
-      expect(result).toContain("<serena_navigation>")
+      expect(result).toBeUndefined()
     })
 
     test("returns skill content only when skills provided without category", () => {
@@ -3216,7 +3216,7 @@ describe("sisyphus-task", () => {
 
       // then
       expect(result).toContain(skillContent)
-      expect(result).toContain("<serena_navigation>")
+      expect(result).not.toContain("<serena_navigation>")
     })
 
     test("returns category promptAppend only when no skills", () => {
@@ -3229,7 +3229,7 @@ describe("sisyphus-task", () => {
 
       // then
       expect(result).toContain(categoryPromptAppend)
-      expect(result).toContain("<serena_navigation>")
+      expect(result).not.toContain("<serena_navigation>")
     })
 
     test("combines skill content and category promptAppend with separator", () => {
@@ -3281,7 +3281,7 @@ describe("sisyphus-task", () => {
       expect(result).toContain("`deep`")
       expect(result).not.toContain("prompt-engineer")
       expect(result).toContain(buildPlanAgentSystemPrepend(availableCategories, availableSkills))
-      expect(result).toContain("<serena_navigation>")
+      expect(result).not.toContain("<serena_navigation>")
     })
 
     test("does not prepend plan agent prompt for prometheus agent", () => {
@@ -3297,7 +3297,7 @@ describe("sisyphus-task", () => {
 
       //#then - prometheus should NOT get plan agent system prepend
       expect(result).toContain(skillContent)
-      expect(result).toContain("<serena_navigation>")
+      expect(result).not.toContain("<serena_navigation>")
       expect(result).not.toContain("MANDATORY CONTEXT GATHERING PROTOCOL")
     })
 
@@ -3314,7 +3314,7 @@ describe("sisyphus-task", () => {
 
       //#then
       expect(result).toContain(skillContent)
-      expect(result).toContain("<serena_navigation>")
+      expect(result).not.toContain("<serena_navigation>")
       expect(result).not.toContain("MANDATORY CONTEXT GATHERING PROTOCOL")
     })
 
@@ -3364,7 +3364,7 @@ describe("sisyphus-task", () => {
 
       // then
       expect(result).toContain(skillContent)
-      expect(result).toContain("<serena_navigation>")
+      expect(result).not.toContain("<serena_navigation>")
       expect(result).not.toContain("<system>")
     })
 
@@ -3378,7 +3378,7 @@ describe("sisyphus-task", () => {
 
       // then
       expect(result).toContain(skillContent)
-      expect(result).toContain("<serena_navigation>")
+      expect(result).not.toContain("<serena_navigation>")
       expect(result).not.toContain("<system>")
     })
   })

@@ -108,7 +108,7 @@ export function createToolGuardHooks(args: {
     : null
 
   const serenaNavigationGuard = isHookEnabled("serena-navigation-guard")
-    ? safeHook("serena-navigation-guard", () => createSerenaNavigationGuardHook())
+    ? safeHook("serena-navigation-guard", () => createSerenaNavigationGuardHook({ client: ctx.client }))
     : null
 
   const writeExistingFileGuard = isHookEnabled("write-existing-file-guard")
