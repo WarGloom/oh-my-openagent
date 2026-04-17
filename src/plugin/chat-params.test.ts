@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { createChatParamsHandler, type ChatParamsOutput } from "./chat-params"
 import * as dataPathModule from "../shared/data-path"
 import { writeProviderModelsCache } from "../shared"
+import { _resetProviderAuthCacheForTesting } from "../shared/opencode-provider-auth"
 import {
   clearSessionPromptParams,
   getSessionPromptParams,
@@ -15,9 +16,18 @@ import {
 describe("createChatParamsHandler", () => {
   let tempCacheRoot = ""
   let getCacheDirSpy: ReturnType<typeof spyOn>
+  const originalXdgDataHome = process.env.XDG_DATA_HOME
+
+  function writeAuthFile(providerEntries: Record<string, Record<string, unknown>>): void {
+    const opencodeDir = join(tempCacheRoot, "opencode")
+    mkdirSync(opencodeDir, { recursive: true })
+    writeFileSync(join(opencodeDir, "auth.json"), JSON.stringify(providerEntries), "utf-8")
+    _resetProviderAuthCacheForTesting()
+  }
 
   beforeEach(() => {
     tempCacheRoot = mkdtempSync(join(tmpdir(), "chat-params-cache-"))
+    process.env.XDG_DATA_HOME = tempCacheRoot
     getCacheDirSpy = spyOn(dataPathModule, "getOmoOpenCodeCacheDir").mockReturnValue(
       join(tempCacheRoot, "oh-my-opencode"),
     )
@@ -28,9 +38,15 @@ describe("createChatParamsHandler", () => {
     clearSessionPromptParams("ses_chat_params")
     clearSessionPromptParams("ses_chat_params_temperature")
     writeProviderModelsCache({ connected: [], models: {} })
+    _resetProviderAuthCacheForTesting()
     getCacheDirSpy?.mockRestore()
     if (tempCacheRoot) {
       rmSync(tempCacheRoot, { recursive: true, force: true })
+    }
+    if (originalXdgDataHome === undefined) {
+      delete process.env.XDG_DATA_HOME
+    } else {
+      process.env.XDG_DATA_HOME = originalXdgDataHome
     }
   })
 
@@ -252,5 +268,75 @@ describe("createChatParamsHandler", () => {
       topK: 1,
       options: {},
     })
+  })
+
+  test("drops thinking for anthropic oauth sessions", async () => {
+    //#given
+    writeAuthFile({ anthropic: { type: "oauth" } })
+    setSessionPromptParams("ses_chat_params", {
+      options: {
+        thinking: { type: "enabled", budgetTokens: 4096 },
+      },
+    })
+
+    const handler = createChatParamsHandler({
+      anthropicEffort: null,
+    })
+
+    const input = {
+      sessionID: "ses_chat_params",
+      agent: { name: "oracle" },
+      model: { providerID: "anthropic", modelID: "claude-opus-4-6" },
+      provider: { id: "anthropic" },
+      message: {},
+    }
+
+    const output: ChatParamsOutput = {
+      temperature: 0.1,
+      topP: 1,
+      topK: 1,
+      options: {},
+    }
+
+    //#when
+    await handler(input, output)
+
+    //#then
+    expect(output.options.thinking).toBeUndefined()
+  })
+
+  test("preserves thinking for anthropic api-key sessions", async () => {
+    //#given
+    writeAuthFile({ anthropic: { type: "api", key: "sk-ant-xxx" } })
+    setSessionPromptParams("ses_chat_params", {
+      options: {
+        thinking: { type: "enabled", budgetTokens: 4096 },
+      },
+    })
+
+    const handler = createChatParamsHandler({
+      anthropicEffort: null,
+    })
+
+    const input = {
+      sessionID: "ses_chat_params",
+      agent: { name: "oracle" },
+      model: { providerID: "anthropic", modelID: "claude-opus-4-6" },
+      provider: { id: "anthropic" },
+      message: {},
+    }
+
+    const output: ChatParamsOutput = {
+      temperature: 0.1,
+      topP: 1,
+      topK: 1,
+      options: {},
+    }
+
+    //#when
+    await handler(input, output)
+
+    //#then
+    expect(output.options.thinking).toEqual({ type: "enabled", budgetTokens: 4096 })
   })
 })

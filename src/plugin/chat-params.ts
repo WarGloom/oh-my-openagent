@@ -1,5 +1,5 @@
 import { getSessionPromptParams } from "../shared/session-prompt-params-state"
-import { getModelCapabilities, resolveCompatibleModelSettings } from "../shared"
+import { getModelCapabilities, isProviderUsingOAuth, log, resolveCompatibleModelSettings } from "../shared"
 
 export type ChatParamsInput = {
   sessionID: string
@@ -23,6 +23,10 @@ export type ChatParamsOutput = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
+}
+
+function shouldDisableAnthropicThinking(providerID: string): boolean {
+  return providerID === "anthropic" && isProviderUsingOAuth(providerID)
 }
 
 function buildChatParamsInput(raw: unknown): ChatParamsHookInput | null {
@@ -175,6 +179,15 @@ export function createChatParamsHandler(args: {
       } else {
         delete output.options.thinking
       }
+    }
+
+    if (output.options.thinking !== undefined && shouldDisableAnthropicThinking(normalizedInput.model.providerID)) {
+      delete output.options.thinking
+      log("chat-params: dropped thinking for anthropic oauth session", {
+        sessionID: normalizedInput.sessionID,
+        provider: normalizedInput.model.providerID,
+        model: normalizedInput.model.modelID,
+      })
     }
 
     await args.anthropicEffort?.["chat.params"]?.(normalizedInput, output)
