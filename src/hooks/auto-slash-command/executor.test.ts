@@ -2,13 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test"
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import * as actualDiscoveryModule from "../../features/claude-code-plugin-loader/discovery"
-import * as actualCommandLoaderModule from "../../features/claude-code-plugin-loader/command-loader"
-import * as actualSkillLoaderModule from "../../features/claude-code-plugin-loader/skill-loader"
-import * as actualPluginLoaderIndexModule from "../../features/claude-code-plugin-loader/index"
-import * as actualPluginCommandDiscoveryModule from "../../shared/plugin-command-discovery"
-import * as actualSharedModule from "../../shared"
-let executeSlashCommand: typeof import("./executor").executeSlashCommand
+import { clearCommandLoaderCache } from "../../features/claude-code-command-loader"
+import { executeSlashCommand } from "./executor"
 
 const ENV_KEYS = [
   "CLAUDE_CONFIG_DIR",
@@ -19,33 +14,6 @@ const ENV_KEYS = [
 
 type EnvKey = (typeof ENV_KEYS)[number]
 type EnvSnapshot = Record<EnvKey, string | undefined>
-
-function createLoaderBuster(): string {
-  return `${Date.now()}-${Math.random()}`
-}
-
-async function restorePluginLoaderModules(): Promise<void> {
-  mock.module("../../features/claude-code-plugin-loader/discovery", () => actualDiscoveryModule)
-  mock.module("../../features/claude-code-plugin-loader/command-loader", () => actualCommandLoaderModule)
-  mock.module("../../features/claude-code-plugin-loader/command-loader.ts", () => actualCommandLoaderModule)
-  mock.module("../../features/claude-code-plugin-loader/skill-loader", () => actualSkillLoaderModule)
-  mock.module("../../features/claude-code-plugin-loader/skill-loader.ts", () => actualSkillLoaderModule)
-  mock.module("../../features/claude-code-plugin-loader", () => actualPluginLoaderIndexModule)
-  mock.module("../../features/claude-code-plugin-loader/index", () => actualPluginLoaderIndexModule)
-  mock.module("../../features/claude-code-plugin-loader/index.ts", () => actualPluginLoaderIndexModule)
-  mock.module("../../features/claude-code-plugin-loader/loader", () => actualPluginLoaderIndexModule)
-  mock.module("../../features/claude-code-plugin-loader/loader.ts", () => actualPluginLoaderIndexModule)
-
-  mock.module("../../shared/plugin-command-discovery", () => actualPluginCommandDiscoveryModule)
-  mock.module("../../shared/plugin-command-discovery.ts", () => actualPluginCommandDiscoveryModule)
-  mock.module("../../shared", () => actualSharedModule)
-  mock.module("../../shared/index", () => actualSharedModule)
-  mock.module("../../shared/index.ts", () => actualSharedModule)
-}
-
-async function importFreshExecutorModule() {
-  return import(`./executor?auto-slash-executor-cache-fix=${createLoaderBuster()}`)
-}
 
 function writePluginFixture(baseDir: string): void {
   const claudeConfigDir = join(baseDir, "claude-config")
@@ -127,9 +95,8 @@ describe("auto-slash command executor plugin dispatch", () => {
   let tempDir = ""
   let envSnapshot: EnvSnapshot
 
-  beforeEach(async () => {
-    mock.restore()
-    await restorePluginLoaderModules()
+  beforeEach(() => {
+    clearCommandLoaderCache()
     tempDir = mkdtempSync(join(tmpdir(), "omo-executor-plugin-test-"))
     envSnapshot = {
       CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
@@ -140,12 +107,8 @@ describe("auto-slash command executor plugin dispatch", () => {
     writePluginFixture(tempDir)
   })
 
-  beforeEach(async () => {
-    ({ executeSlashCommand } = await importFreshExecutorModule())
-  })
-
   afterEach(() => {
-    mock.restore()
+    clearCommandLoaderCache()
     for (const key of ENV_KEYS) {
       const previousValue = envSnapshot[key]
       if (previousValue === undefined) {

@@ -2,6 +2,12 @@ import { existsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { PROJECT_MARKERS } from "./constants";
 
+const projectRootCache = new Map<string, string | null>();
+
+export function clearProjectRootCache(): void {
+  projectRootCache.clear();
+}
+
 /**
  * Find project root by walking up from startPath.
  * Checks for PROJECT_MARKERS (.git, pyproject.toml, package.json, etc.)
@@ -16,6 +22,24 @@ import { PROJECT_MARKERS } from "./constants";
  * @returns Project root path or null if not found
  */
 export function findProjectRoot(
+  startPath: string,
+  stopAt?: string,
+): string | null {
+  // Bypass cache when stopAt is provided so test sandboxes don't
+  // pollute the shared cache with sandbox-bounded results.
+  if (stopAt !== undefined) {
+    return findProjectRootWithoutCache(startPath, stopAt);
+  }
+  if (projectRootCache.has(startPath)) {
+    return projectRootCache.get(startPath) ?? null;
+  }
+
+  const projectRoot = findProjectRootWithoutCache(startPath);
+  projectRootCache.set(startPath, projectRoot);
+  return projectRoot;
+}
+
+function findProjectRootWithoutCache(
   startPath: string,
   stopAt?: string,
 ): string | null {
