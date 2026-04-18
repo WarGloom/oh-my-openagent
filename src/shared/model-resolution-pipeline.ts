@@ -4,7 +4,7 @@ import { fuzzyMatchModel } from "./model-availability"
 import type { FallbackEntry } from "./model-requirements"
 import { transformModelForProvider } from "./provider-model-id-transform"
 import { normalizeModel } from "./model-normalization"
-import { parseModelString, parseVariantFromModelID } from "../tools/delegate-task/model-string-parser"
+import { parseModelString, parseVariantFromModelID } from "./model-string-parser"
 
 type ParsedFallbackModel = {
   baseModel: string
