@@ -910,6 +910,29 @@ describe("ExperimentalConfigSchema feature flags", () => {
     }
   })
 
+  test("accepts anthropic_advisor configuration", () => {
+    //#given
+    const config = {
+      anthropic_advisor: {
+        enabled: true,
+        advisor_model: "claude-opus-4-7",
+        max_uses: 2,
+        caching_ttl: "5m",
+        agents: ["oracle"],
+        executor_models: ["claude-sonnet-4-6"],
+      },
+    }
+
+    //#when
+    const result = ExperimentalConfigSchema.safeParse(config)
+
+    //#then
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.anthropic_advisor).toEqual(config.anthropic_advisor)
+    }
+  })
+
   test("rejects non-boolean disable_omo_env", () => {
     //#given
     const config = { disable_omo_env: "true" }

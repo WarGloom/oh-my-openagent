@@ -37,6 +37,9 @@ export function createPluginInterface(args: {
       const handler = createChatParamsHandler({
         anthropicEffort: hooks.anthropicEffort,
         client: ctx.client,
+        experimental: {
+          anthropicAdvisor: pluginConfig.experimental?.anthropic_advisor,
+        },
       })
       await handler(input, output)
     },

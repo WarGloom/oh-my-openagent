@@ -1,6 +1,15 @@
 import { z } from "zod"
 import { DynamicContextPruningConfigSchema } from "./dynamic-context-pruning"
 
+const AnthropicAdvisorConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  advisor_model: z.string().optional(),
+  max_uses: z.number().int().min(1).optional(),
+  caching_ttl: z.enum(["5m", "1h"]).optional(),
+  agents: z.array(z.string()).optional(),
+  executor_models: z.array(z.string()).optional(),
+})
+
 export const ExperimentalConfigSchema = z.object({
   aggressive_truncation: z.boolean().optional(),
   auto_resume: z.boolean().optional(),
@@ -18,6 +27,8 @@ export const ExperimentalConfigSchema = z.object({
   disable_omo_env: z.boolean().optional(),
   /** Remove anthropic-beta headers in outbound chat requests */
   disable_anthropic_beta_headers: z.boolean().optional(),
+  /** Enable Anthropic advisor-tool injection for selected agents/models */
+  anthropic_advisor: AnthropicAdvisorConfigSchema.optional(),
   /** Enable hashline_edit tool for improved file editing with hash-based line anchors */
   hashline_edit: z.boolean().optional(),
   /** Append fallback model info to session title when a runtime fallback occurs (default: false) */

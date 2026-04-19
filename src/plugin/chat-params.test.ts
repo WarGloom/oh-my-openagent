@@ -339,4 +339,118 @@ describe("createChatParamsHandler", () => {
     //#then
     expect(output.options.thinking).toEqual({ type: "enabled", budgetTokens: 4096 })
   })
+
+  test("injects anthropicAdvisor when experimental advisor config is enabled", async () => {
+    //#given
+    writeAuthFile({ anthropic: { type: "api", key: "sk-ant-xxx" } })
+    const handler = createChatParamsHandler({
+      anthropicEffort: null,
+      experimental: {
+        anthropicAdvisor: {
+          enabled: true,
+          advisor_model: "claude-opus-4-7",
+          max_uses: 2,
+          caching_ttl: "5m",
+          agents: ["oracle"],
+        },
+      },
+    })
+
+    const output: ChatParamsOutput = {
+      temperature: 0.1,
+      topP: 1,
+      topK: 1,
+      options: {},
+    }
+
+    //#when
+    await handler(
+      {
+        sessionID: "ses_chat_params",
+        agent: { name: "oracle" },
+        model: { providerID: "anthropic", modelID: "claude-sonnet-4-6" },
+        provider: { id: "anthropic" },
+        message: {},
+      },
+      output,
+    )
+
+    //#then
+    expect(output.options.anthropicAdvisor).toEqual({
+      model: "claude-opus-4-7",
+      maxUses: 2,
+      caching: { ttl: "5m" },
+    })
+  })
+
+  test("does not inject anthropicAdvisor when agent is not allowed", async () => {
+    //#given
+    writeAuthFile({ anthropic: { type: "api", key: "sk-ant-xxx" } })
+    const handler = createChatParamsHandler({
+      anthropicEffort: null,
+      experimental: {
+        anthropicAdvisor: {
+          enabled: true,
+          agents: ["sisyphus"],
+        },
+      },
+    })
+
+    const output: ChatParamsOutput = {
+      temperature: 0.1,
+      topP: 1,
+      topK: 1,
+      options: {},
+    }
+
+    //#when
+    await handler(
+      {
+        sessionID: "ses_chat_params",
+        agent: { name: "oracle" },
+        model: { providerID: "anthropic", modelID: "claude-sonnet-4-6" },
+        provider: { id: "anthropic" },
+        message: {},
+      },
+      output,
+    )
+
+    //#then
+    expect(output.options.anthropicAdvisor).toBeUndefined()
+  })
+
+  test("does not inject anthropicAdvisor for anthropic oauth sessions", async () => {
+    //#given
+    writeAuthFile({ anthropic: { type: "oauth" } })
+    const handler = createChatParamsHandler({
+      anthropicEffort: null,
+      experimental: {
+        anthropicAdvisor: {
+          enabled: true,
+        },
+      },
+    })
+
+    const output: ChatParamsOutput = {
+      temperature: 0.1,
+      topP: 1,
+      topK: 1,
+      options: {},
+    }
+
+    //#when
+    await handler(
+      {
+        sessionID: "ses_chat_params",
+        agent: { name: "oracle" },
+        model: { providerID: "anthropic", modelID: "claude-sonnet-4-6" },
+        provider: { id: "anthropic" },
+        message: {},
+      },
+      output,
+    )
+
+    //#then
+    expect(output.options.anthropicAdvisor).toBeUndefined()
+  })
 })
