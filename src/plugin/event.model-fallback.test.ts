@@ -138,6 +138,33 @@ describe("createEventHandler - model fallback", () => {
     expect(promptCalls).toEqual([sessionID])
   })
 
+  test("triggers retry prompt for session.error hit-limit messages with retry countdown", async () => {
+    //#given
+    const sessionID = "ses_main_fallback_limit_retry"
+    setMainSession(sessionID)
+    const modelFallback = createModelFallbackHook()
+    const { handler, abortCalls, promptCalls } = createHandler({ hooks: { modelFallback } })
+
+    //#when
+    await handler({
+      event: {
+        type: "session.error",
+        properties: {
+          sessionID,
+          error: {
+            name: "APIError",
+            message:
+              "Claude Code returned an error result: You've hit your limit · resets 4pm (Asia/Jerusalem) [retrying in 3m 18s attempt #8]",
+          },
+        },
+      },
+    })
+
+    //#then
+    expect(abortCalls).toEqual([sessionID])
+    expect(promptCalls).toEqual([sessionID])
+  })
+
   test("triggers retry prompt on session.status retry events and applies fallback", async () => {
     //#given
     const sessionID = "ses_status_retry_fallback"

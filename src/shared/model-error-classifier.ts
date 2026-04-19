@@ -103,6 +103,9 @@ const AUTO_RETRY_GATE_PATTERNS = [
   "rate limit",
   "cooling down",
   "credentials for model",
+  "hit your limit",
+  "usage limit",
+  "limit reached",
 ]
 
 function hasProviderAutoRetrySignal(message: string): boolean {
@@ -141,12 +144,14 @@ export function isRetryableModelError(error: ErrorInfo): boolean {
   // Check message patterns for unknown errors
   const msg = error.message?.toLowerCase() ?? ""
 
-  // STOP patterns take precedence over retryable patterns
-  if (STOP_MESSAGE_PATTERNS.some((pattern) => msg.includes(pattern))) {
+  const hasAutoRetrySignal = hasProviderAutoRetrySignal(msg)
+
+  // STOP patterns only win when the provider is not already advertising an auto-retry countdown.
+  if (STOP_MESSAGE_PATTERNS.some((pattern) => msg.includes(pattern)) && !hasAutoRetrySignal) {
     return false
   }
 
-  if (hasProviderAutoRetrySignal(msg)) {
+  if (hasAutoRetrySignal) {
     return true
   }
   return RETRYABLE_MESSAGE_PATTERNS.some((pattern) => msg.includes(pattern))

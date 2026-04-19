@@ -183,6 +183,32 @@ describe("model-error-classifier", () => {
     expect(result).toBe(false)
   })
 
+  test("treats hit-your-limit reset message with retrying countdown as retryable", () => {
+    //#given
+    const error = {
+      message: "You've hit your limit · resets 4pm (Asia/Jerusalem) [retrying in 3m 18s attempt #8]",
+    }
+
+    //#when
+    const result = shouldRetryError(error)
+
+    //#then
+    expect(result).toBe(true)
+  })
+
+  test("treats usage-limit reset message with retrying countdown as retryable", () => {
+    //#given
+    const error = {
+      message: "The usage limit has been reached for your account [retrying in 27s attempt #6]",
+    }
+
+    //#when
+    const result = shouldRetryError(error)
+
+    //#then
+    expect(result).toBe(true)
+  })
+
   test("treats insufficient credits message as non-retryable STOP error (no error name)", () => {
     //#given
     const error = { message: "insufficient credits to complete this request" }
