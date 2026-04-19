@@ -5446,6 +5446,42 @@
         "disable_anthropic_beta_headers": {
           "type": "boolean"
         },
+        "anthropic_advisor": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "advisor_model": {
+              "type": "string"
+            },
+            "max_uses": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "caching_ttl": {
+              "type": "string",
+              "enum": [
+                "5m",
+                "1h"
+              ]
+            },
+            "agents": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "executor_models": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
         "hashline_edit": {
           "type": "boolean"
         },

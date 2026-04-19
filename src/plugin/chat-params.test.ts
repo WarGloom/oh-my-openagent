@@ -453,4 +453,189 @@ describe("createChatParamsHandler", () => {
     //#then
     expect(output.options.anthropicAdvisor).toBeUndefined()
   })
+
+  test("does not inject anthropicAdvisor when experimental advisor is explicitly disabled", async () => {
+    //#given
+    writeAuthFile({ anthropic: { type: "api", key: "sk-ant-xxx" } })
+    const handler = createChatParamsHandler({
+      anthropicEffort: null,
+      experimental: {
+        anthropicAdvisor: {
+          enabled: false,
+        },
+      },
+    })
+
+    const output: ChatParamsOutput = {
+      temperature: 0.1,
+      topP: 1,
+      topK: 1,
+      options: {},
+    }
+
+    //#when
+    await handler(
+      {
+        sessionID: "ses_chat_params",
+        agent: { name: "oracle" },
+        model: { providerID: "anthropic", modelID: "claude-sonnet-4-6" },
+        provider: { id: "anthropic" },
+        message: {},
+      },
+      output,
+    )
+
+    //#then
+    expect(output.options.anthropicAdvisor).toBeUndefined()
+  })
+
+  test("does not inject anthropicAdvisor for non-anthropic providers", async () => {
+    //#given
+    const handler = createChatParamsHandler({
+      anthropicEffort: null,
+      experimental: {
+        anthropicAdvisor: {
+          enabled: true,
+        },
+      },
+    })
+
+    const output: ChatParamsOutput = {
+      temperature: 0.1,
+      topP: 1,
+      topK: 1,
+      options: {},
+    }
+
+    //#when
+    await handler(
+      {
+        sessionID: "ses_chat_params",
+        agent: { name: "oracle" },
+        model: { providerID: "openai", modelID: "gpt-5.4" },
+        provider: { id: "openai" },
+        message: {},
+      },
+      output,
+    )
+
+    //#then
+    expect(output.options.anthropicAdvisor).toBeUndefined()
+  })
+
+  test("injects anthropicAdvisor for provider-prefixed matching executor model", async () => {
+    //#given
+    writeAuthFile({ anthropic: { type: "api", key: "sk-ant-xxx" } })
+    const handler = createChatParamsHandler({
+      anthropicEffort: null,
+      experimental: {
+        anthropicAdvisor: {
+          enabled: true,
+          executor_models: ["anthropic/claude-sonnet-4-6"],
+        },
+      },
+    })
+
+    const output: ChatParamsOutput = {
+      temperature: 0.1,
+      topP: 1,
+      topK: 1,
+      options: {},
+    }
+
+    //#when
+    await handler(
+      {
+        sessionID: "ses_chat_params",
+        agent: { name: "oracle" },
+        model: { providerID: "anthropic", modelID: "anthropic/claude-sonnet-4-6" },
+        provider: { id: "anthropic" },
+        message: {},
+      },
+      output,
+    )
+
+    //#then
+    expect(output.options.anthropicAdvisor).toEqual({ model: "claude-opus-4-7" })
+  })
+
+  test("does not inject anthropicAdvisor when custom executor model list does not match", async () => {
+    //#given
+    writeAuthFile({ anthropic: { type: "api", key: "sk-ant-xxx" } })
+    const handler = createChatParamsHandler({
+      anthropicEffort: null,
+      experimental: {
+        anthropicAdvisor: {
+          enabled: true,
+          executor_models: ["claude-opus-4-7"],
+        },
+      },
+    })
+
+    const output: ChatParamsOutput = {
+      temperature: 0.1,
+      topP: 1,
+      topK: 1,
+      options: {},
+    }
+
+    //#when
+    await handler(
+      {
+        sessionID: "ses_chat_params",
+        agent: { name: "oracle" },
+        model: { providerID: "anthropic", modelID: "claude-sonnet-4-6" },
+        provider: { id: "anthropic" },
+        message: {},
+      },
+      output,
+    )
+
+    //#then
+    expect(output.options.anthropicAdvisor).toBeUndefined()
+  })
+
+  test("does not override an existing anthropicAdvisor option", async () => {
+    //#given
+    writeAuthFile({ anthropic: { type: "api", key: "sk-ant-xxx" } })
+    const handler = createChatParamsHandler({
+      anthropicEffort: null,
+      experimental: {
+        anthropicAdvisor: {
+          enabled: true,
+          max_uses: 2,
+        },
+      },
+    })
+
+    const output: ChatParamsOutput = {
+      temperature: 0.1,
+      topP: 1,
+      topK: 1,
+      options: {
+        anthropicAdvisor: {
+          model: "claude-opus-4-7",
+          maxUses: 9,
+        },
+      },
+    }
+
+    //#when
+    await handler(
+      {
+        sessionID: "ses_chat_params",
+        agent: { name: "oracle" },
+        model: { providerID: "anthropic", modelID: "claude-sonnet-4-6" },
+        provider: { id: "anthropic" },
+        message: {},
+      },
+      output,
+    )
+
+    //#then
+    expect(output.options.anthropicAdvisor).toEqual({
+      model: "claude-opus-4-7",
+      maxUses: 9,
+    })
+  })
 })
