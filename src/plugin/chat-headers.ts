@@ -10,6 +10,10 @@ type ChatHeadersInput = {
   }
 }
 
+type ChatHeadersConfig = {
+  disableAnthropicBetaHeaders?: boolean
+}
+
 type ChatHeadersOutput = {
   headers: Record<string, string>
 }
@@ -52,6 +56,13 @@ function isChatHeadersOutput(raw: unknown): raw is ChatHeadersOutput {
 
 function isCopilotProvider(providerID: string): boolean {
   return providerID === "github-copilot" || providerID === "github-copilot-enterprise"
+}
+
+function isAnthropicProvider(providerID: string): boolean {
+  const normalized = providerID.toLowerCase()
+  return normalized === "anthropic"
+    || normalized === "google-vertex-anthropic"
+    || normalized === "aws-bedrock-anthropic"
 }
 
 async function hasInternalMarker(
@@ -114,13 +125,21 @@ async function isOmoInternalMessage(input: ChatHeadersInput, client: PluginConte
   return hasInternalMarker(client, input.sessionID, input.message.id)
 }
 
-export function createChatHeadersHandler(args: { ctx: PluginContext }): (input: unknown, output: unknown) => Promise<void> {
-  const { ctx } = args
+export function createChatHeadersHandler(args: {
+  ctx: PluginContext
+  experimental?: ChatHeadersConfig
+}): (input: unknown, output: unknown) => Promise<void> {
+  const { ctx, experimental } = args
+  const disableAnthropicBetaHeaders = experimental?.disableAnthropicBetaHeaders === true
 
   return async (input, output): Promise<void> => {
     const normalizedInput = buildChatHeadersInput(input)
     if (!normalizedInput) return
     if (!isChatHeadersOutput(output)) return
+
+    if (disableAnthropicBetaHeaders && isAnthropicProvider(normalizedInput.provider.id)) {
+      delete output.headers["anthropic-beta"]
+    }
 
     if (!isCopilotProvider(normalizedInput.provider.id)) return
 

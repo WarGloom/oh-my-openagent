@@ -4,6 +4,117 @@ import { OMO_INTERNAL_INITIATOR_MARKER } from "../shared"
 import { createChatHeadersHandler } from "./chat-headers"
 
 describe("createChatHeadersHandler", () => {
+  test("strips anthropic-beta header for anthropic providers when experimental flag is enabled", async () => {
+    const handler = createChatHeadersHandler({
+      ctx: {
+        client: {
+          session: {
+            message: async () => ({
+              data: {
+                parts: [],
+              },
+            }),
+          },
+        },
+      } as never,
+      experimental: {
+        disableAnthropicBetaHeaders: true,
+      },
+    })
+    const output: { headers: Record<string, string> } = {
+      headers: {
+        "anthropic-beta": "prompt-caching-2024-07-18",
+      },
+    }
+
+    await handler(
+      {
+        sessionID: "ses_7",
+        provider: { id: "anthropic" },
+        message: {
+          role: "assistant",
+        },
+      },
+      output,
+    )
+
+    expect(output.headers["anthropic-beta"]).toBeUndefined()
+  })
+
+  test("keeps anthropic-beta header for anthropic providers when experimental flag is disabled", async () => {
+    const handler = createChatHeadersHandler({
+      ctx: {
+        client: {
+          session: {
+            message: async () => ({
+              data: {
+                parts: [],
+              },
+            }),
+          },
+        },
+      } as never,
+      experimental: {
+        disableAnthropicBetaHeaders: false,
+      },
+    })
+    const output: { headers: Record<string, string> } = {
+      headers: {
+        "anthropic-beta": "prompt-caching-2024-07-18",
+      },
+    }
+
+    await handler(
+      {
+        sessionID: "ses_8",
+        provider: { id: "google-vertex-anthropic" },
+        message: {
+          role: "assistant",
+        },
+      },
+      output,
+    )
+
+    expect(output.headers["anthropic-beta"]).toBe("prompt-caching-2024-07-18")
+  })
+
+  test("does not modify anthropic-beta for non-anthropic providers", async () => {
+    const handler = createChatHeadersHandler({
+      ctx: {
+        client: {
+          session: {
+            message: async () => ({
+              data: {
+                parts: [],
+              },
+            }),
+          },
+        },
+      } as never,
+      experimental: {
+        disableAnthropicBetaHeaders: true,
+      },
+    })
+    const output: { headers: Record<string, string> } = {
+      headers: {
+        "anthropic-beta": "prompt-caching-2024-07-18",
+      },
+    }
+
+    await handler(
+      {
+        sessionID: "ses_9",
+        provider: { id: "openai" },
+        message: {
+          role: "assistant",
+        },
+      },
+      output,
+    )
+
+    expect(output.headers["anthropic-beta"]).toBe("prompt-caching-2024-07-18")
+  })
+
   test("sets x-initiator=agent for Copilot internal marker messages", async () => {
     const handler = createChatHeadersHandler({
       ctx: {

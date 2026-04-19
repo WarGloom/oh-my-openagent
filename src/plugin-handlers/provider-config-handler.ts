@@ -18,6 +18,10 @@ type ProviderModelConfig = {
   };
 }
 
+type ProviderConfigExperimental = {
+  disableAnthropicBetaHeaders?: boolean
+}
+
 function supportsImageInput(modelConfig: ProviderModelConfig | undefined): boolean {
   if (modelConfig?.modalities?.input?.includes("image")) {
     return true
@@ -29,6 +33,7 @@ function supportsImageInput(modelConfig: ProviderModelConfig | undefined): boole
 export function applyProviderConfig(params: {
   config: Record<string, unknown>;
   modelCacheState: ModelCacheState;
+  experimental?: ProviderConfigExperimental;
 }): void {
   const providers = params.config.provider as
     | Record<string, ProviderConfig>
@@ -38,8 +43,11 @@ export function applyProviderConfig(params: {
   modelContextLimitsCache.clear()
 
   const anthropicBeta = providers?.anthropic?.options?.headers?.["anthropic-beta"];
+  const disableAnthropicBetaHeaders = params.experimental?.disableAnthropicBetaHeaders === true
   params.modelCacheState.anthropicContext1MEnabled =
-    anthropicBeta?.includes("context-1m") ?? false;
+    disableAnthropicBetaHeaders
+      ? false
+      : anthropicBeta?.includes("context-1m") ?? false
 
   const visionCapableModelsCache = params.modelCacheState.visionCapableModelsCache
     ?? new Map<string, VisionCapableModel>()

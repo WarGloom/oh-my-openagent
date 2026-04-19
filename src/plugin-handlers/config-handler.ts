@@ -25,7 +25,13 @@ export function createConfigHandler(deps: ConfigHandlerDeps) {
     const formatterConfig = config.formatter;
 
     setAdditionalAllowedMcpEnvVars(pluginConfig.mcp_env_allowlist ?? [])
-    applyProviderConfig({ config, modelCacheState });
+    applyProviderConfig({
+      config,
+      modelCacheState,
+      experimental: {
+        disableAnthropicBetaHeaders: pluginConfig.experimental?.disable_anthropic_beta_headers,
+      },
+    });
     clearFormatterCache()
 
     const pluginComponents = await loadPluginComponents({ pluginConfig });

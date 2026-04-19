@@ -5443,6 +5443,9 @@
         "disable_omo_env": {
           "type": "boolean"
         },
+        "disable_anthropic_beta_headers": {
+          "type": "boolean"
+        },
         "hashline_edit": {
           "type": "boolean"
         },

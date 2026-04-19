@@ -840,6 +840,34 @@ describe("ExperimentalConfigSchema feature flags", () => {
     }
   })
 
+  test("accepts disable_anthropic_beta_headers as true", () => {
+    //#given
+    const config = { disable_anthropic_beta_headers: true }
+
+    //#when
+    const result = ExperimentalConfigSchema.safeParse(config)
+
+    //#then
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.disable_anthropic_beta_headers).toBe(true)
+    }
+  })
+
+  test("accepts disable_anthropic_beta_headers as false", () => {
+    //#given
+    const config = { disable_anthropic_beta_headers: false }
+
+    //#when
+    const result = ExperimentalConfigSchema.safeParse(config)
+
+    //#then
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.disable_anthropic_beta_headers).toBe(false)
+    }
+  })
+
   test("accepts disable_omo_env as false", () => {
     //#given
     const config = { disable_omo_env: false }
@@ -865,6 +893,20 @@ describe("ExperimentalConfigSchema feature flags", () => {
     expect(result.success).toBe(true)
     if (result.success) {
       expect(result.data.disable_omo_env).toBeUndefined()
+    }
+  })
+
+  test("disable_anthropic_beta_headers is optional", () => {
+    //#given
+    const config = { safe_hook_creation: true }
+
+    //#when
+    const result = ExperimentalConfigSchema.safeParse(config)
+
+    //#then
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.disable_anthropic_beta_headers).toBeUndefined()
     }
   })
 

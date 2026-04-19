@@ -41,7 +41,12 @@ export function createPluginInterface(args: {
       await handler(input, output)
     },
 
-    "chat.headers": createChatHeadersHandler({ ctx }),
+    "chat.headers": createChatHeadersHandler({
+      ctx,
+      experimental: {
+        disableAnthropicBetaHeaders: pluginConfig.experimental?.disable_anthropic_beta_headers,
+      },
+    }),
 
     "command.execute.before": createCommandExecuteBeforeHandler({
       hooks,
