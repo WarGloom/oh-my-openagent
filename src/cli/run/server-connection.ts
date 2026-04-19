@@ -1,9 +1,21 @@
 import { createOpencode, createOpencodeClient } from "@opencode-ai/sdk"
 import pc from "picocolors"
 import type { ServerConnection } from "./types"
+import { injectServerAuthIntoClient } from "../../shared/opencode-server-auth"
 import { getAvailableServerPort, isPortAvailable, DEFAULT_SERVER_PORT } from "../../shared/port-utils"
 import { withWorkingOpencodePath } from "./opencode-binary-resolver"
 import { logRunTrace, traceRunStep } from "./run-debug"
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]", "0.0.0.0"])
+
+function isLoopbackAttachUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return LOOPBACK_HOSTS.has(parsed.hostname)
+  } catch {
+    return false
+  }
+}
 
 function isPortStartFailure(error: unknown, port: number): boolean {
   if (!(error instanceof Error)) {
@@ -45,6 +57,9 @@ export async function createServerConnection(options: {
     logRunTrace(`attaching to explicit server ${attach}`)
     console.log(pc.dim("Attaching to existing server at"), pc.cyan(attach))
     const client = createOpencodeClient({ baseUrl: attach })
+    if (isLoopbackAttachUrl(attach)) {
+      injectServerAuthIntoClient(client)
+    }
     return { client, cleanup: () => {} }
   }
 
@@ -73,6 +88,7 @@ export async function createServerConnection(options: {
         logRunTrace(`requested port ${port} became occupied before startup completed; attaching`) 
         console.log(pc.dim("Port"), pc.cyan(port.toString()), pc.dim("became occupied, attaching to existing server"))
         const client = createOpencodeClient({ baseUrl: `http://127.0.0.1:${port}` })
+        injectServerAuthIntoClient(client)
         return { client, cleanup: () => {} }
       }
     }
@@ -80,6 +96,7 @@ export async function createServerConnection(options: {
     logRunTrace(`requested port ${port} was already occupied; attaching`) 
     console.log(pc.dim("Port"), pc.cyan(port.toString()), pc.dim("is occupied, attaching to existing server"))
     const client = createOpencodeClient({ baseUrl: `http://127.0.0.1:${port}` })
+    injectServerAuthIntoClient(client)
     return { client, cleanup: () => {} }
   }
 
@@ -102,6 +119,7 @@ export async function createServerConnection(options: {
     logRunTrace(`port range exhausted; attaching to default port ${DEFAULT_SERVER_PORT}`)
     console.log(pc.dim("Port range exhausted, attaching to existing server on"), pc.cyan(DEFAULT_SERVER_PORT.toString()))
     const client = createOpencodeClient({ baseUrl: `http://127.0.0.1:${DEFAULT_SERVER_PORT}` })
+    injectServerAuthIntoClient(client)
     return { client, cleanup: () => {} }
   }
 
