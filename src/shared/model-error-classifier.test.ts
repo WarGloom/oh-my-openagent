@@ -196,6 +196,19 @@ describe("model-error-classifier", () => {
     expect(result).toBe(true)
   })
 
+  test("treats hit-your-limit reset message without retrying countdown as retryable", () => {
+    //#given
+    const error = {
+      message: "Claude Code returned an error result: You've hit your limit · resets 6pm (Asia/Jerusalem)",
+    }
+
+    //#when
+    const result = shouldRetryError(error)
+
+    //#then
+    expect(result).toBe(true)
+  })
+
   test("treats usage-limit reset message with retrying countdown as retryable", () => {
     //#given
     const error = {

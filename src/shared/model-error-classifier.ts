@@ -108,11 +108,23 @@ const AUTO_RETRY_GATE_PATTERNS = [
   "limit reached",
 ]
 
+const PROVIDER_LIMIT_RESET_PATTERNS = [
+  "hit your limit",
+  "reached your limit",
+]
+
 function hasProviderAutoRetrySignal(message: string): boolean {
   if (!message.includes("retrying in")) {
     return false
   }
   return AUTO_RETRY_GATE_PATTERNS.some((pattern) => message.includes(pattern))
+}
+
+function hasProviderResetWindowSignal(message: string): boolean {
+  if (!message.includes("resets")) {
+    return false
+  }
+  return PROVIDER_LIMIT_RESET_PATTERNS.some((pattern) => message.includes(pattern))
 }
 
 export interface ErrorInfo {
@@ -145,13 +157,18 @@ export function isRetryableModelError(error: ErrorInfo): boolean {
   const msg = error.message?.toLowerCase() ?? ""
 
   const hasAutoRetrySignal = hasProviderAutoRetrySignal(msg)
+  const hasResetWindowSignal = hasProviderResetWindowSignal(msg)
 
   // STOP patterns only win when the provider is not already advertising an auto-retry countdown.
-  if (STOP_MESSAGE_PATTERNS.some((pattern) => msg.includes(pattern)) && !hasAutoRetrySignal) {
+  if (
+    STOP_MESSAGE_PATTERNS.some((pattern) => msg.includes(pattern))
+    && !hasAutoRetrySignal
+    && !hasResetWindowSignal
+  ) {
     return false
   }
 
-  if (hasAutoRetrySignal) {
+  if (hasAutoRetrySignal || hasResetWindowSignal) {
     return true
   }
   return RETRYABLE_MESSAGE_PATTERNS.some((pattern) => msg.includes(pattern))
