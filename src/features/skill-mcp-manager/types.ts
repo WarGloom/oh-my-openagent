@@ -94,3 +94,6 @@ export interface SkillMcpClientConnectionParams {
   info: SkillMcpClientInfo
   config: ClaudeCodeMcpServer
 }
+
+export type GetOrCreateClientFn = (params: SkillMcpClientConnectionParams) => Promise<McpClient>
+export type GetOrCreateClientWithRetryFn = GetOrCreateClientFn

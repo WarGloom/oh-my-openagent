@@ -7,6 +7,8 @@ import { handlePostRequestAuthError, handleStepUpIfNeeded } from "./oauth-handle
 import type {
   McpClient,
   OAuthProviderFactory,
+  GetOrCreateClientFn,
+  GetOrCreateClientWithRetryFn,
   SkillMcpClientInfo,
   SkillMcpManagerState,
   SkillMcpServerContext,
@@ -14,8 +16,14 @@ import type {
 
 export class SkillMcpManager {
   private readonly state: SkillMcpManagerState
+  private readonly getOrCreateClientImpl: GetOrCreateClientFn
+  private readonly getOrCreateClientWithRetryImplFn: GetOrCreateClientWithRetryFn
 
-  constructor(options: { createOAuthProvider?: OAuthProviderFactory } = {}) {
+  constructor(options: {
+    createOAuthProvider?: OAuthProviderFactory
+    getOrCreateClient?: GetOrCreateClientFn
+    getOrCreateClientWithRetryImpl?: GetOrCreateClientWithRetryFn
+  } = {}) {
     this.state = {
       clients: new Map(),
       pendingConnections: new Map(),
@@ -30,6 +38,8 @@ export class SkillMcpManager {
       disposed: false,
       createOAuthProvider: options.createOAuthProvider ?? ((providerOptions) => new McpOAuthProvider(providerOptions)),
     }
+    this.getOrCreateClientImpl = options.getOrCreateClient ?? getOrCreateClient
+    this.getOrCreateClientWithRetryImplFn = options.getOrCreateClientWithRetryImpl ?? getOrCreateClientWithRetryImpl
   }
 
   private getClientKey(info: SkillMcpClientInfo): string {
@@ -38,7 +48,7 @@ export class SkillMcpManager {
 
   async getOrCreateClient(info: SkillMcpClientInfo, config: ClaudeCodeMcpServer): Promise<McpClient> {
     const clientKey = this.getClientKey(info)
-    return await getOrCreateClient({
+    return await this.getOrCreateClientImpl({
       state: this.state,
       clientKey,
       info,
@@ -160,7 +170,7 @@ export class SkillMcpManager {
   // NOTE: tests spy on this exact method name via `spyOn(manager as any, 'getOrCreateClientWithRetry')`.
   private async getOrCreateClientWithRetry(info: SkillMcpClientInfo, config: ClaudeCodeMcpServer): Promise<McpClient> {
     const clientKey = this.getClientKey(info)
-    return await getOrCreateClientWithRetryImpl({
+    return await this.getOrCreateClientWithRetryImplFn({
       state: this.state,
       clientKey,
       info,
