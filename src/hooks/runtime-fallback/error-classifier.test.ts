@@ -45,6 +45,20 @@ describe("runtime-fallback error classifier", () => {
     expect(signal).toBeDefined()
   })
 
+  test("detects Claude limit reset status signals without retrying-in countdown text", () => {
+    //#given
+    const info = {
+      status:
+        "Claude Code returned an error result: You've hit your limit · resets 10pm (Asia/Jerusalem)",
+    }
+
+    //#when
+    const signal = extractAutoRetrySignal(info)
+
+    //#then
+    expect(signal).toBeDefined()
+  })
+
   test("treats cooling-down retry messages as retryable", () => {
     //#given
     const error = {

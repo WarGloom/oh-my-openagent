@@ -710,6 +710,64 @@ describe("runtime-fallback", () => {
       expect(promptCalls.length).toBe(1)
     })
 
+    test("should trigger fallback on Claude limit reset session.status signal without retrying-in countdown text", async () => {
+      const promptCalls: unknown[] = []
+      const hook = createRuntimeFallbackHook(
+        createMockPluginInput({
+          session: {
+            messages: async () => ({
+              data: [
+                {
+                  info: { role: "user" },
+                  parts: [{ type: "text", text: "continue" }],
+                },
+              ],
+            }),
+            promptAsync: async (args) => {
+              promptCalls.push(args)
+              return {}
+            },
+          },
+        }),
+        {
+          config: createMockConfig({ notify_on_fallback: false }),
+          pluginConfig: createMockPluginConfigWithCategoryFallback(["openai/gpt-5.2"]),
+        }
+      )
+
+      const sessionID = "test-session-status-limit-reset"
+      SessionCategoryRegistry.register(sessionID, "test")
+
+      await hook.event({
+        event: {
+          type: "session.created",
+          properties: { info: { id: sessionID, model: "anthropic/claude-opus-4-7" } },
+        },
+      })
+
+      await hook.event({
+        event: {
+          type: "session.status",
+          properties: {
+            sessionID,
+            status: {
+              type: "retry",
+              attempt: 1,
+              message: "Claude Code returned an error result: You've hit your limit · resets 10pm (Asia/Jerusalem)",
+            },
+          },
+        },
+      })
+
+      const signalLog = logCalls.find((c) => c.msg.includes("Detected provider auto-retry signal in session.status"))
+      expect(signalLog).toBeDefined()
+
+      const fallbackLog = logCalls.find((c) => c.msg.includes("Preparing fallback"))
+      expect(fallbackLog).toBeDefined()
+      expect(fallbackLog?.data).toMatchObject({ from: "anthropic/claude-opus-4-7", to: "openai/gpt-5.2" })
+      expect(promptCalls.length).toBe(1)
+    })
+
     test("should deduplicate session.status countdown updates for the same retry attempt", async () => {
       const promptCalls: unknown[] = []
       const hook = createRuntimeFallbackHook(
