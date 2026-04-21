@@ -139,8 +139,10 @@ saved_branch=$(git branch --show-current)
 git remote update --prune
 git checkout {BASE_BRANCH}
 git reset --hard {UPSTREAM_REMOTE}/{BASE_BRANCH}
-git push {FORK_REMOTE} {BASE_BRANCH} --force-with-lease
+push_status=0
+git push {FORK_REMOTE} {BASE_BRANCH} --force-with-lease || push_status=$?
 git checkout "$saved_branch"
+test $push_status -eq 0
 ```
 
 ### Rules:
@@ -151,8 +153,32 @@ git checkout "$saved_branch"
 - `meridian`: refresh `main` from `origin/main`, push to `fork/main`
 
 - If the fork push is blocked by a **pre-existing base-branch verification failure**, report it clearly, keep the refreshed local base branch, and continue the sync using that local refreshed baseline.
+- After refreshing a local base branch, you MUST re-check every active feature branch against the refreshed base branch before deciding whether a merge is needed. Pre-refresh behind/ahead counts are stale once the base branch moves.
 
 </refresh>
+
+---
+
+## Phase 1.5: Re-check feature branches against refreshed bases
+
+This phase is mandatory immediately after Phase 1.
+
+<post_refresh_recheck>
+
+For every repo that is not currently on its base branch, run:
+
+```bash
+git log --oneline HEAD..{BASE_BRANCH} | wc -l
+git log --oneline {BASE_BRANCH}..HEAD | wc -l
+```
+
+Rules:
+
+- If `HEAD..{BASE_BRANCH}` is non-zero after refresh, the feature branch is behind the refreshed base and MUST be merged or explicitly skipped with a reason.
+- Do not rely on Phase 0 divergence counts after a base refresh.
+- Report the post-refresh behind/ahead counts before declaring any feature branch "already up to date".
+
+</post_refresh_recheck>
 
 ---
 
