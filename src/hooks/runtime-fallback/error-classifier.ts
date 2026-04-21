@@ -2,6 +2,11 @@ import { DEFAULT_CONFIG, RETRYABLE_ERROR_PATTERNS } from "./constants"
 
 export { extractAutoRetrySignal } from "./auto-retry-signal"
 
+function hasProviderResetWindowSignal(message: string): boolean {
+  return message.includes("resets")
+    && (message.includes("hit your limit") || message.includes("reached your limit"))
+}
+
 export function getErrorMessage(error: unknown): string {
   if (!error) return ""
   if (typeof error === "string") return error.toLowerCase()
@@ -132,7 +137,9 @@ export function classifyErrorType(error: unknown): string | undefined {
     /exhausted\s+your\s+capacity/i.test(message) ||
     /out\s+of\s+credits?/i.test(message) ||
     /payment.?required/i.test(message) ||
-    /usage\s+limit/i.test(message)
+    /usage\s+limit/i.test(message) ||
+    /hit\s+your\s+limit/i.test(message) ||
+    /reached\s+your\s+limit/i.test(message)
   ) {
     return "quota_exceeded"
   }
@@ -172,7 +179,7 @@ export function isRetryableError(error: unknown, retryOnErrors: number[]): boole
     // When a provider signals an auto-retry (e.g. "retrying in ~2 weeks"),
     // we should still trigger fallback to another model rather than STOP.
     const hasAutoRetrySignal = /retrying\s+in/i.test(message)
-    return hasAutoRetrySignal
+    return hasAutoRetrySignal || hasProviderResetWindowSignal(message)
   }
 
   if (statusCode && retryOnErrors.includes(statusCode)) {
