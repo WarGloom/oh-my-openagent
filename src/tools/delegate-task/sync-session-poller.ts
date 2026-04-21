@@ -52,6 +52,13 @@ export function isSessionComplete(messages: SessionMessage[]): boolean {
 
 const DEFAULT_MAX_ASSISTANT_TURNS = 300
 
+type SessionStatusSnapshot = {
+  type: string
+  attempt?: number
+  message?: string
+  next?: number
+}
+
 export async function pollSyncSession(
   ctx: ToolContextWithMetadata,
   client: OpencodeClient,
@@ -102,14 +109,14 @@ export async function pollSyncSession(
     await wait(syncTiming.POLL_INTERVAL_MS)
     pollCount++
 
-    let statusResult: { data?: Record<string, { type: string }> }
+    let statusResult: { data?: Record<string, SessionStatusSnapshot> }
     try {
       statusResult = await client.session.status()
     } catch (error) {
       log("[task] Poll status fetch failed, retrying", { sessionID: input.sessionID, error: String(error) })
       continue
     }
-    const allStatuses = normalizeSDKResponse(statusResult, {} as Record<string, { type: string }>)
+    const allStatuses = normalizeSDKResponse(statusResult, {} as Record<string, SessionStatusSnapshot>)
     const sessionStatus = allStatuses[input.sessionID]
 
     if (pollCount % 10 === 0) {
@@ -118,6 +125,9 @@ export async function pollSyncSession(
         pollCount,
         elapsed: Math.floor((Date.now() - pollStart) / 1000) + "s",
         sessionStatus: sessionStatus?.type ?? "not_in_status",
+        statusAttempt: sessionStatus?.attempt,
+        statusNext: sessionStatus?.next,
+        statusMessage: sessionStatus?.message,
       })
     }
 

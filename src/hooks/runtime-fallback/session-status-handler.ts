@@ -31,6 +31,14 @@ export function createSessionStatusHandler(
     if (!sessionID || status?.type !== "retry") return
 
     const retryMessage = typeof status.message === "string" ? status.message : ""
+    log(`[${HOOK_NAME}] session.status retry received`, {
+      sessionID,
+      agent,
+      model,
+      retryAttempt: status.attempt,
+      hasMessage: retryMessage.length > 0,
+      retryMessage,
+    })
     const retrySignal = extractAutoRetrySignal({ status: retryMessage, message: retryMessage })
     if (!retrySignal) {
       // Fallback: status.type is already "retry", so check the message against
@@ -38,11 +46,22 @@ export function createSessionStatusHandler(
       // retry status message may not contain "retrying in" text alongside the error.
       const messageLower = retryMessage.toLowerCase()
       const matchesRetryablePattern = RETRYABLE_ERROR_PATTERNS.some((pattern) => pattern.test(messageLower))
-      if (!matchesRetryablePattern) return
+      if (!matchesRetryablePattern) {
+        log(`[${HOOK_NAME}] session.status retry skipped - no retry signal or retryable pattern match`, {
+          sessionID,
+          retryAttempt: status.attempt,
+          retryMessage,
+        })
+        return
+      }
     }
 
     const retryKey = `${extractRetryAttempt(status.attempt, retryMessage)}:${normalizeRetryStatusMessage(retryMessage)}`
     if (sessionStatusRetryKeys.get(sessionID) === retryKey) {
+      log(`[${HOOK_NAME}] session.status retry deduped`, {
+        sessionID,
+        retryKey,
+      })
       return
     }
     sessionStatusRetryKeys.set(sessionID, retryKey)
@@ -67,6 +86,11 @@ export function createSessionStatusHandler(
       if (!sessionStates.has(sessionID)) {
         sessionStatusRetryKeys.delete(sessionID)
       }
+      log(`[${HOOK_NAME}] session.status retry skipped - no fallback models resolved`, {
+        sessionID,
+        resolvedAgent,
+        eventAgent: agent,
+      })
       return
     }
 
@@ -111,6 +135,9 @@ export function createSessionStatusHandler(
       sessionID,
       model: state.currentModel,
       retryAttempt: status.attempt,
+      retryMessage,
+      resolvedAgent,
+      fallbackModels,
     })
 
     await helpers.abortSessionRequest(sessionID, "session.status.retry-signal")
