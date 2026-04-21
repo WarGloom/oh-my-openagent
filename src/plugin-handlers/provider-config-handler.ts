@@ -2,7 +2,7 @@ import type { ModelCacheState, VisionCapableModel } from "../plugin-state";
 import { setVisionCapableModelsCache } from "../shared/vision-capable-models-cache"
 
 type ProviderConfig = {
-  options?: { headers?: Record<string, string> };
+  options?: { headers?: Record<string, string>; fetch?: ProviderFetch };
   models?: Record<string, ProviderModelConfig>;
 };
 
@@ -20,6 +20,64 @@ type ProviderModelConfig = {
 
 type ProviderConfigExperimental = {
   disableAnthropicBetaHeaders?: boolean
+}
+
+type ProviderFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
+
+const ANTHROPIC_BETA_HEADER = "anthropic-beta"
+const FETCH_WRAPPER_MARKER = Symbol("omoAnthropicBetaStripper")
+
+function isAnthropicProvider(providerID: string): boolean {
+  const normalized = providerID.toLowerCase()
+  return normalized === "anthropic"
+    || normalized === "google-vertex-anthropic"
+    || normalized === "aws-bedrock-anthropic"
+}
+
+function stripAnthropicBetaHeader(headersInit: RequestInit["headers"] | undefined): Headers | undefined {
+  if (!headersInit) return undefined
+  const headers = new Headers(headersInit)
+  headers.delete(ANTHROPIC_BETA_HEADER)
+  return headers
+}
+
+function wrapFetchToStripAnthropicBeta(existingFetch?: ProviderFetch): ProviderFetch {
+  if (existingFetch && (existingFetch as ProviderFetch & { [FETCH_WRAPPER_MARKER]?: boolean })[FETCH_WRAPPER_MARKER]) {
+    return existingFetch
+  }
+
+  const baseFetch = existingFetch ?? ((input: string | URL | Request, init?: RequestInit) => fetch(input, init))
+  const wrappedFetch: ProviderFetch = async (input, init) => {
+    if (input instanceof Request) {
+      const requestHeaders = new Headers(input.headers)
+      requestHeaders.delete(ANTHROPIC_BETA_HEADER)
+
+      const overrideHeaders = stripAnthropicBetaHeader(init?.headers)
+      if (overrideHeaders) {
+        overrideHeaders.forEach((value, key) => {
+          requestHeaders.set(key, value)
+        })
+      }
+
+      return baseFetch(new Request(input, { ...init, headers: requestHeaders }), undefined)
+    }
+
+    const nextHeaders = stripAnthropicBetaHeader(init?.headers)
+    return baseFetch(input, nextHeaders ? { ...init, headers: nextHeaders } : init)
+  }
+
+  ;(wrappedFetch as ProviderFetch & { [FETCH_WRAPPER_MARKER]?: boolean })[FETCH_WRAPPER_MARKER] = true
+  return wrappedFetch
+}
+
+function applyAnthropicBetaStripping(providerConfig: ProviderConfig | undefined): void {
+  if (!providerConfig) return
+
+  providerConfig.options ??= {}
+  if (providerConfig.options.headers) {
+    delete providerConfig.options.headers[ANTHROPIC_BETA_HEADER]
+  }
+  providerConfig.options.fetch = wrapFetchToStripAnthropicBeta(providerConfig.options.fetch)
 }
 
 function supportsImageInput(modelConfig: ProviderModelConfig | undefined): boolean {
@@ -56,6 +114,13 @@ export function applyProviderConfig(params: {
   setVisionCapableModelsCache(visionCapableModelsCache)
 
   if (!providers) return;
+
+  if (disableAnthropicBetaHeaders) {
+    for (const [providerID, providerConfig] of Object.entries(providers)) {
+      if (!isAnthropicProvider(providerID)) continue
+      applyAnthropicBetaStripping(providerConfig)
+    }
+  }
 
   for (const [providerID, providerConfig] of Object.entries(providers)) {
     const models = providerConfig?.models;

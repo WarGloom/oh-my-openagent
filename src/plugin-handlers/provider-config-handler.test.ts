@@ -97,6 +97,54 @@ describe("applyProviderConfig", () => {
     expect(modelCacheState.anthropicContext1MEnabled).toBe(false)
   })
 
+  test("wraps anthropic provider fetch to strip anthropic-beta headers when experimental flag is enabled", async () => {
+    // given
+    const modelCacheState = createModelCacheState()
+    const fetchCalls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = []
+    const config = {
+      provider: {
+        anthropic: {
+          options: {
+            headers: {
+              "anthropic-beta": "interleaved-thinking-2025-05-14",
+            },
+            fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+              fetchCalls.push({ input, init })
+              return new Response(null, { status: 204 })
+            },
+          },
+        },
+      },
+    } satisfies Record<string, unknown>
+
+    // when
+    applyProviderConfig({
+      config,
+      modelCacheState,
+      experimental: {
+        disableAnthropicBetaHeaders: true,
+      },
+    })
+
+    const wrappedFetch = ((config.provider as Record<string, { options?: { fetch?: typeof fetch; headers?: Record<string, string> } }>).anthropic?.options?.fetch)
+    if (!wrappedFetch) {
+      throw new Error("Expected anthropic fetch wrapper to be installed")
+    }
+
+    await wrappedFetch("https://example.com", {
+      headers: {
+        "anthropic-beta": "context-1m-2025-08-07",
+        "x-test": "1",
+      },
+    })
+
+    // then
+    expect(fetchCalls).toHaveLength(1)
+    expect(new Headers(fetchCalls[0]?.init?.headers).get("anthropic-beta")).toBeNull()
+    expect(new Headers(fetchCalls[0]?.init?.headers).get("x-test")).toBe("1")
+    expect(((config.provider as Record<string, { options?: { headers?: Record<string, string> } }>).anthropic?.options?.headers ?? {})["anthropic-beta"]).toBeUndefined()
+  })
+
   test("caches vision-capable models from modalities and capabilities", () => {
     // given
     const modelCacheState = createModelCacheState()
