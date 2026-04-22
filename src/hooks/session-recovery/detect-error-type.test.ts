@@ -190,6 +190,32 @@ describe("extractUnavailableToolName", () => {
     expect(result).toBe("invalid")
   })
 
+  it("#given unavailable tool error with available-tools list #when underscore count differs #then returns matching available tool", () => {
+    //#given
+    const error = {
+      message: "invalid [tool=serena__get_symbols_overview, error=Model tried to call unavailable tool 'serena__get_symbols_overview'. Available tools: invalid, serena_get_symbols_overview, read]",
+    }
+
+    //#when
+    const result = extractUnavailableToolName(error)
+
+    //#then
+    expect(result).toBe("serena_get_symbols_overview")
+  })
+
+  it("#given unavailable tool error without available-tools alias match #when extracting #then returns original tool name", () => {
+    //#given
+    const error = {
+      message: "Model tried to call unavailable tool 'serena__missing_tool'. Available tools: invalid, read, grep",
+    }
+
+    //#when
+    const result = extractUnavailableToolName(error)
+
+    //#then
+    expect(result).toBe("serena__missing_tool")
+  })
+
   it("#given error without unavailable tool name #when extracting #then returns null", () => {
     //#given
     const error = { message: "dummy_tool appeared without tool name" }

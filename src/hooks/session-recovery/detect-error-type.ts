@@ -48,7 +48,28 @@ export function extractUnavailableToolName(error: unknown): string | null {
   try {
     const message = getErrorMessage(error)
     const match = message.match(/(?:unavailable tool|no such tool)[:\s'"]+([^'".\s]+)/)
-    return match ? match[1] : null
+    if (!match) return null
+
+    const toolName = match[1]
+    const availableToolsMatch = message.match(/available tools:\s*([^\]]+)/)
+    if (!availableToolsMatch) {
+      return toolName
+    }
+
+    const availableTools = availableToolsMatch[1]
+      .split(",")
+      .map((candidate) => candidate.trim())
+      .filter(Boolean)
+
+    const normalizeUnderscoreRuns = (candidate: string): string => candidate.replace(/_+/g, "_")
+    const normalizedToolName = normalizeUnderscoreRuns(toolName)
+    const matches = availableTools.filter((candidate) => normalizeUnderscoreRuns(candidate) === normalizedToolName)
+
+    if (matches.length === 1) {
+      return matches[0]
+    }
+
+    return toolName
   } catch {
     return null
   }
