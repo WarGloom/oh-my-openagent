@@ -788,6 +788,37 @@ describe("resolveSubagentExecution", () => {
     expect(result.categoryModel?.modelID).toBe("gpt-5.4")
   })
 
+  test("uses runtime agent registry as authoritative when it is non-empty", async () => {
+    //#given
+    readProviderModelsCacheMock.mockReturnValue({
+      models: { openai: ["gpt-5.4"] },
+      connected: ["openai"],
+      updatedAt: "2026-03-03T00:00:00.000Z",
+    })
+    readConnectedProvidersCacheMock.mockReturnValue(["openai"])
+    loadUserAgentsMock.mockImplementation(() => ({
+      "my-user-agent": {
+        description: "User-only agent",
+        mode: "subagent",
+        prompt: "User prompt",
+        model: "openai/gpt-5.4",
+      },
+    }))
+    const args = createBaseArgs({ subagent_type: "my-user-agent" })
+    const executorCtx = createExecutorContext(async () => ([
+      { name: "explore", mode: "subagent", model: "openai/gpt-5.4" },
+    ]))
+
+    //#when
+    const result = await resolveSubagentExecution(args, executorCtx, "sisyphus", "deep")
+
+    //#then
+    expect(result.agentToUse).toBe("")
+    expect(result.categoryModel).toBeUndefined()
+    expect(result.error).toContain('Unknown agent: "my-user-agent"')
+    expect(result.error).toContain("explore")
+  })
+
   test("project agent takes precedence over user agent with same name", async () => {
     //#given
     readProviderModelsCacheMock.mockReturnValue({
@@ -962,5 +993,26 @@ describe("resolveSubagentExecution - agent name sanitization", () => {
     //#then
     expect(result.error).toBeUndefined()
     expect(result.agentToUse).toBe("Sisyphus - Ultraworker")
+  })
+
+  test("maps common OMO alias Explorer to explore", async () => {
+    //#given
+    readProviderModelsCacheMock.mockReturnValue({
+      models: { openai: ["gpt-5.4-mini"] },
+      connected: ["openai"],
+      updatedAt: "2026-03-03T00:00:00.000Z",
+    })
+    const args = createBaseArgs({ subagent_type: "Explorer" })
+    const executorCtx = createExecutorContext(async () => ([
+      { name: "explore", mode: "subagent", model: "openai/gpt-5.4-mini" },
+    ]))
+
+    //#when
+    const result = await resolveSubagentExecution(args, executorCtx, "sisyphus", "deep")
+
+    //#then
+    expect(result.error).toBeUndefined()
+    expect(result.agentToUse).toBe("explore")
+    expect(result.categoryModel?.modelID).toBe("gpt-5.4-mini")
   })
 })

@@ -9,6 +9,21 @@ export type AgentInfo = {
   model?: string | { providerID: string; modelID: string }
 }
 
+const BUILTIN_AGENT_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  explore: ["explorer"],
+}
+
+function normalizeComparableName(name: string): string {
+  return stripAgentListSortPrefix(name).trim().toLowerCase()
+}
+
+function expandBuiltinAliases(agentName: string): string[] {
+  const normalized = normalizeComparableName(agentName)
+  return Object.entries(BUILTIN_AGENT_ALIASES)
+    .filter(([builtinName, aliases]) => normalized === builtinName || aliases.includes(normalized))
+    .map(([builtinName]) => builtinName)
+}
+
 export function sanitizeSubagentType(subagentType: string): string {
   return subagentType.trim().replace(/^[\\\/"']+|[\\\/"']+$/g, "").trim()
 }
@@ -43,11 +58,15 @@ export function mergeWithClaudeCodeAgents(
 }
 
 function buildComparableNames(agentName: string): Set<string> {
+  const aliasExpansions = expandBuiltinAliases(agentName)
   return new Set([
     agentName,
     getAgentDisplayName(agentName),
     getAgentConfigKey(agentName),
-  ].map(name => stripAgentListSortPrefix(name).trim().toLowerCase()))
+    ...aliasExpansions,
+    ...aliasExpansions.map((name) => getAgentDisplayName(name)),
+    ...aliasExpansions.map((name) => getAgentConfigKey(name)),
+  ].map(normalizeComparableName))
 }
 
 function matchesRequestedAgent(agent: AgentInfo, requestedAgentName: string): boolean {

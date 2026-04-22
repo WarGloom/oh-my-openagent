@@ -70,8 +70,10 @@ Create the work plan directly - that's your job as the planning agent.`,
       preferResponseOnMissingData: true,
     })
 
-    const mergedAgents = mergeWithClaudeCodeAgents(agents, executorCtx.directory)
-    const matchedPrimaryAgent = findPrimaryAgentMatch(mergedAgents, agentToUse)
+    const availableAgents = agents.length > 0
+      ? agents
+      : mergeWithClaudeCodeAgents(agents, executorCtx.directory)
+    const matchedPrimaryAgent = findPrimaryAgentMatch(availableAgents, agentToUse)
 
     if (matchedPrimaryAgent) {
       return {
@@ -81,12 +83,12 @@ Create the work plan directly - that's your job as the planning agent.`,
       }
     }
 
-    const matchedAgent = findCallableAgentMatch(mergedAgents, agentToUse)
+    const matchedAgent = findCallableAgentMatch(availableAgents, agentToUse)
     if (!matchedAgent) {
       return {
         agentToUse: "",
         categoryModel: undefined,
-        error: `Unknown agent: "${agentToUse}". Available agents: ${listCallableAgentNames(mergedAgents)}`,
+        error: `Unknown agent: "${agentToUse}". Available agents: ${listCallableAgentNames(availableAgents)}`,
       }
     }
 
