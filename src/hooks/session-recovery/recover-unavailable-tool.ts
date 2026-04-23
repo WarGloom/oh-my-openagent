@@ -1,5 +1,5 @@
 import type { createOpencodeClient } from "@opencode-ai/sdk"
-import { extractUnavailableToolName } from "./detect-error-type"
+import { extractUnavailableToolName, normalizeUnavailableToolAlias } from "./detect-error-type"
 import { readParts } from "./storage"
 import type { MessageData } from "./types"
 import { normalizeSDKResponse } from "../../shared"
@@ -84,7 +84,7 @@ export async function recoverUnavailableTool(
 
   const unavailableToolName = extractUnavailableToolName(failedAssistantMsg.info?.error)
   const matchingToolUses = unavailableToolName
-    ? toolUseParts.filter((part) => part.name.toLowerCase() === unavailableToolName)
+    ? toolUseParts.filter((part) => normalizeUnavailableToolAlias(part.name) === normalizeUnavailableToolAlias(unavailableToolName))
     : []
   const targetToolUses = matchingToolUses.length > 0 ? matchingToolUses : toolUseParts
 

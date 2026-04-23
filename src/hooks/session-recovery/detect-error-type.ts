@@ -44,6 +44,17 @@ export function extractMessageIndex(error: unknown): number | null {
   }
 }
 
+export function normalizeUnavailableToolAlias(candidate: string): string {
+  const normalizedCandidate = candidate.toLowerCase().replace(/_+/g, "_")
+  const serenaPrefixIndex = normalizedCandidate.indexOf("serena_")
+
+  if (serenaPrefixIndex >= 0) {
+    return normalizedCandidate.slice(serenaPrefixIndex).replace(/^(serena_)+/, "serena_")
+  }
+
+  return normalizedCandidate
+}
+
 export function extractUnavailableToolName(error: unknown): string | null {
   try {
     const message = getErrorMessage(error)
@@ -61,9 +72,8 @@ export function extractUnavailableToolName(error: unknown): string | null {
       .map((candidate) => candidate.trim())
       .filter(Boolean)
 
-    const normalizeUnderscoreRuns = (candidate: string): string => candidate.replace(/_+/g, "_")
-    const normalizedToolName = normalizeUnderscoreRuns(toolName)
-    const matches = availableTools.filter((candidate) => normalizeUnderscoreRuns(candidate) === normalizedToolName)
+    const normalizedToolName = normalizeUnavailableToolAlias(toolName)
+    const matches = availableTools.filter((candidate) => normalizeUnavailableToolAlias(candidate) === normalizedToolName)
 
     if (matches.length === 1) {
       return matches[0]

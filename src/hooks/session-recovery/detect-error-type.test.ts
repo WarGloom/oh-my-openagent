@@ -216,6 +216,19 @@ describe("extractUnavailableToolName", () => {
     expect(result).toBe("serena__missing_tool")
   })
 
+  it("#given serena mcp alias with available serena tool #when extracting #then returns the canonical serena tool", () => {
+    //#given
+    const error = {
+      message: "Model tried to call unavailable tool 'mcp__plugin_serena_serena__activate_project'. Available tools: invalid, serena_activate_project, read",
+    }
+
+    //#when
+    const result = extractUnavailableToolName(error)
+
+    //#then
+    expect(result).toBe("serena_activate_project")
+  })
+
   it("#given error without unavailable tool name #when extracting #then returns null", () => {
     //#given
     const error = { message: "dummy_tool appeared without tool name" }
