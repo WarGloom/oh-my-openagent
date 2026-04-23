@@ -3,6 +3,7 @@ import type { AutoRetryHelpers } from "./auto-retry"
 import { HOOK_NAME, RETRYABLE_ERROR_PATTERNS } from "./constants"
 import { log } from "../../shared/logger"
 import { extractAutoRetrySignal } from "./error-classifier"
+import { isUnavailableToolLikeError } from "./error-classifier"
 import { createFallbackState } from "./fallback-state"
 import { getFallbackModelsForSession } from "./fallback-models"
 import { normalizeRetryStatusMessage, extractRetryAttempt } from "../../shared/retry-status-utils"
@@ -39,6 +40,16 @@ export function createSessionStatusHandler(
       hasMessage: retryMessage.length > 0,
       retryMessage,
     })
+
+    if (isUnavailableToolLikeError(retryMessage)) {
+      log(`[${HOOK_NAME}] session.status retry skipped - unavailable tool recovery in progress`, {
+        sessionID,
+        retryAttempt: status.attempt,
+        retryMessage,
+      })
+      return
+    }
+
     const retrySignal = extractAutoRetrySignal({ status: retryMessage, message: retryMessage })
     if (!retrySignal) {
       // Fallback: status.type is already "retry", so check the message against

@@ -113,4 +113,37 @@ describe("createSessionStatusHandler", () => {
     expect(state.pendingFallbackModel).toBe("google/gemini-2.5-pro")
     SessionCategoryRegistry.clear()
   })
+
+  it("#given an unavailable-tool retry message #when session.status is handled #then runtime fallback does not launch", async () => {
+    // given
+    SessionCategoryRegistry.clear()
+    const sessionID = "session-status-unavailable-tool"
+    SessionCategoryRegistry.register(sessionID, "test")
+
+    const deps = createDeps()
+    const abortCalls: string[] = []
+    const retryCalls: Array<{ sessionID: string; model: string; source: string }> = []
+    const state = createFallbackState("anthropic/claude-opus-4-7")
+    deps.sessionStates.set(sessionID, state)
+
+    const handler = createSessionStatusHandler(deps, createHelpers(abortCalls, retryCalls), deps.sessionStatusRetryKeys)
+
+    // when
+    await handler({
+      sessionID,
+      model: "anthropic/claude-opus-4-7",
+      status: {
+        type: "retry",
+        attempt: 1,
+        message: "Model tried to call unavailable tool 'mcp__plugin_serena_serena__activate_project'. Tool not available. Please try again.",
+      },
+    })
+
+    // then
+    expect(abortCalls).toEqual([])
+    expect(retryCalls).toEqual([])
+    expect(deps.sessionStatusRetryKeys.size).toBe(0)
+    expect(state.pendingFallbackModel).toBeUndefined()
+    SessionCategoryRegistry.clear()
+  })
 })

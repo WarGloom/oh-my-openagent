@@ -124,6 +124,20 @@ describe("runtime-fallback error classifier", () => {
     //#then
     expect(signal).toBeUndefined()
   })
+
+  test("treats unavailable tool alias errors as non-retryable", () => {
+    //#given
+    const error = {
+      message:
+        "Model tried to call unavailable tool 'mcp__plugin_serena_serena__activate_project'. Tool not available. Please try again.",
+    }
+
+    //#when
+    const retryable = isRetryableError(error, [400, 403, 408, 429, 500, 502, 503, 504, 529])
+
+    //#then
+    expect(retryable).toBe(false)
+  })
 })
 
 describe("extractStatusCode", () => {

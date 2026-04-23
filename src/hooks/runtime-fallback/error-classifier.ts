@@ -147,6 +147,18 @@ export function classifyErrorType(error: unknown): string | undefined {
   return undefined
 }
 
+export function isUnavailableToolLikeError(error: unknown): boolean {
+  const message = getErrorMessage(error)
+
+  return (
+    message.includes("unavailable tool")
+    || message.includes("model tried to call unavailable")
+    || message.includes("no such tool")
+    || message.includes("nosuchtoolerror")
+    || message.includes("tool not available")
+  )
+}
+
 export function containsErrorContent(
   parts: Array<{ type?: string; text?: string }> | undefined
 ): { hasError: boolean; errorMessage?: string } {
@@ -166,6 +178,10 @@ export function isRetryableError(error: unknown, retryOnErrors: number[]): boole
   const statusCode = extractStatusCode(error, retryOnErrors)
   const message = getErrorMessage(error)
   const errorType = classifyErrorType(error)
+
+  if (isUnavailableToolLikeError(error)) {
+    return false
+  }
 
   if (errorType === "missing_api_key") {
     return true
