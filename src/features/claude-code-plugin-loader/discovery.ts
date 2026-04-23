@@ -111,17 +111,60 @@ function derivePluginNameFromKey(pluginKey: string): string {
   return keyWithoutVersion
 }
 
+function getPluginEnablementLookupKeys(pluginKey: string): string[] {
+  const keyWithoutSource = pluginKey.startsWith("npm:") ? pluginKey.slice(4) : pluginKey
+
+  let versionSeparator: number
+  if (keyWithoutSource.startsWith("@")) {
+    const scopeEnd = keyWithoutSource.indexOf("/")
+    versionSeparator = scopeEnd > 0 ? keyWithoutSource.indexOf("@", scopeEnd) : -1
+  } else {
+    versionSeparator = keyWithoutSource.lastIndexOf("@")
+  }
+
+  const keyWithoutVersion = versionSeparator > 0 ? keyWithoutSource.slice(0, versionSeparator) : keyWithoutSource
+  const pluginName = derivePluginNameFromKey(pluginKey)
+
+  return [...new Set([
+    pluginKey,
+    keyWithoutSource,
+    keyWithoutVersion,
+    pluginName,
+  ])]
+}
+
+function resolvePluginEnabledValue(
+  pluginKey: string,
+  enabledPlugins: Record<string, boolean> | undefined,
+): boolean | undefined {
+  if (!enabledPlugins) {
+    return undefined
+  }
+
+  for (const lookupKey of getPluginEnablementLookupKeys(pluginKey)) {
+    if (lookupKey in enabledPlugins) {
+      return enabledPlugins[lookupKey]
+    }
+  }
+
+  return undefined
+}
+
 function isPluginEnabled(
   pluginKey: string,
   settingsEnabledPlugins: Record<string, boolean> | undefined,
   overrideEnabledPlugins: Record<string, boolean> | undefined,
 ): boolean {
-  if (overrideEnabledPlugins && pluginKey in overrideEnabledPlugins) {
-    return overrideEnabledPlugins[pluginKey]
+  const overrideValue = resolvePluginEnabledValue(pluginKey, overrideEnabledPlugins)
+  if (overrideValue !== undefined) {
+    return overrideValue
   }
-  if (settingsEnabledPlugins && pluginKey in settingsEnabledPlugins) {
-    return settingsEnabledPlugins[pluginKey]
+
+  const settingsValue = resolvePluginEnabledValue(pluginKey, settingsEnabledPlugins)
+  if (settingsValue !== undefined) {
+    return settingsValue
   }
+
   return true
 }
 
