@@ -107,13 +107,18 @@ export function createAtlasEventHandler(input: {
     if (event.type === "session.compacted") {
       const sessionID = resolveSessionEventID(props)
       if (sessionID) {
-        const compactedState = sessions.get(sessionID)
-        if (compactedState?.pendingRetryTimer) {
+        const compactedState = getState(sessionID)
+        if (compactedState.pendingRetryTimer) {
           clearTimeout(compactedState.pendingRetryTimer)
           compactedState.pendingRetryTimer = undefined
         }
-        sessions.delete(sessionID)
-        log(`[${HOOK_NAME}] Session compacted: cleaned up`, { sessionID })
+        compactedState.lastCompactedAt = Date.now()
+        compactedState.promptFailureCount = 0
+        compactedState.lastFailureAt = undefined
+        compactedState.lastEventWasAbortError = false
+        compactedState.skipNextIdleAfterRuntimeErrorRetry = false
+        compactedState.isInjectingContinuation = false
+        log(`[${HOOK_NAME}] Session compacted: armed compaction guard`, { sessionID })
       }
     }
   }

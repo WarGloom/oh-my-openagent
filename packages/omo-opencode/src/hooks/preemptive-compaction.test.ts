@@ -331,7 +331,10 @@ describe("preemptive-compaction", () => {
 
     //#then
     expect(ctx.client.tui.showToast).toHaveBeenCalledTimes(1)
-    const toastCall = ctx.client.tui.showToast.mock.calls[0]?.[0]
+    const toastCalls = ctx.client.tui.showToast.mock.calls as unknown as Array<[
+      { body: { title: string; variant: string; message: string } },
+    ]>
+    const toastCall = toastCalls[0]?.[0]
     expect(toastCall?.body?.title).toBe("Preemptive compaction failed")
     expect(toastCall?.body?.variant).toBe("warning")
     expect(String(toastCall?.body?.message)).toContain("upstream rate limited")
@@ -407,7 +410,7 @@ describe("preemptive-compaction", () => {
 
   it("should use 1M limit when model cache flag is enabled", async () => {
     //#given
-    const hook = createPreemptiveCompactionHook(ctx as never, {}, {
+    const hook = createPreemptiveCompactionHook(ctx as never, {} as never, {
       anthropicContext1MEnabled: true,
     })
     const sessionID = "ses_1m_flag"
@@ -446,7 +449,7 @@ describe("preemptive-compaction", () => {
   it("should keep env var fallback when model cache flag is disabled", async () => {
     //#given
     process.env[ANTHROPIC_CONTEXT_ENV_KEY] = "true"
-    const hook = createPreemptiveCompactionHook(ctx as never, {}, {
+    const hook = createPreemptiveCompactionHook(ctx as never, {} as never, {
       anthropicContext1MEnabled: false,
     })
     const sessionID = "ses_env_fallback"
@@ -569,10 +572,10 @@ describe("preemptive-compaction", () => {
     }
   })
 
-  // #given first compaction succeeded and context grew again
-  // #when tool.execute.after runs after new high-token message
-  // #then should trigger compaction again (re-compaction)
-  it("should allow re-compaction when context grows after successful compaction", async () => {
+  // #given first compaction succeeded but reported usage stays above threshold
+  // #when tool.execute.after runs after another high-token message
+  // #then should not repeat compaction while the previous compaction did not relieve pressure
+  it("should not re-compact while post-compaction usage remains above threshold", async () => {
     const hook = createPreemptiveCompactionHook(ctx as never, {} as never)
     const sessionID = "ses_recompact"
 
@@ -605,7 +608,7 @@ describe("preemptive-compaction", () => {
 
     expect(ctx.client.session.summarize).toHaveBeenCalledTimes(1)
 
-    // when - advance past the 60s cooldown window, then new message with high tokens
+    // when - advance past the 60s cooldown window, then another high-token message arrives
     const originalNow = Date.now
     Date.now = () => originalNow() + 61_000
     await hook.event({
@@ -634,7 +637,133 @@ describe("preemptive-compaction", () => {
       { title: "", output: "test", metadata: null }
     )
 
-    // then - summarize should fire again
+    // then - summarize should not fire again
+    expect(ctx.client.session.summarize).toHaveBeenCalledTimes(1)
+    Date.now = originalNow
+  })
+
+  // #given another compaction source already compacted the high-token session
+  // #when tool.execute.after runs before usage drops below threshold
+  // #then preemptive compaction should not immediately re-compact stale cache
+  it("should suppress preemptive compaction after external session.compacted", async () => {
+    const hook = createPreemptiveCompactionHook(ctx as never, {} as never)
+    const sessionID = "ses_external_compacted"
+
+    await hook.event({
+      event: {
+        type: "message.updated",
+        properties: {
+          info: {
+            role: "assistant",
+            sessionID,
+            providerID: "anthropic",
+            modelID: "claude-sonnet-4-6",
+            finish: true,
+            tokens: { input: 170000, output: 0, reasoning: 0, cache: { read: 10000, write: 0 } },
+          },
+        },
+      },
+    })
+
+    await hook.event({
+      event: {
+        type: "session.compacted",
+        properties: { sessionID },
+      },
+    })
+
+    await hook["tool.execute.after"](
+      { tool: "bash", sessionID, callID: "call_after_external_compaction" },
+      { title: "", output: "test", metadata: null }
+    )
+
+    expect(ctx.client.session.summarize).not.toHaveBeenCalled()
+  })
+
+  // #given first compaction succeeded and usage later drops below threshold before growing again
+  // #when tool.execute.after runs after the new high-token message
+  // #then should trigger compaction again
+  it("should allow re-compaction after usage drops below threshold and grows again", async () => {
+    const hook = createPreemptiveCompactionHook(ctx as never, {} as never)
+    const sessionID = "ses_recompact_after_drop"
+
+    await hook.event({
+      event: {
+        type: "message.updated",
+        properties: {
+          info: {
+            role: "assistant",
+            sessionID,
+            providerID: "anthropic",
+            modelID: "claude-sonnet-4-6",
+            finish: true,
+            tokens: {
+              input: 170000,
+              output: 0,
+              reasoning: 0,
+              cache: { read: 10000, write: 0 },
+            },
+          },
+        },
+      },
+    })
+
+    await hook["tool.execute.after"](
+      { tool: "bash", sessionID, callID: "call_1" },
+      { title: "", output: "test", metadata: null }
+    )
+
+    expect(ctx.client.session.summarize).toHaveBeenCalledTimes(1)
+
+    const originalNow = Date.now
+    Date.now = () => originalNow() + 61_000
+    await hook.event({
+      event: {
+        type: "message.updated",
+        properties: {
+          info: {
+            role: "assistant",
+            sessionID,
+            providerID: "anthropic",
+            modelID: "claude-sonnet-4-6",
+            finish: true,
+            tokens: {
+              input: 100000,
+              output: 0,
+              reasoning: 0,
+              cache: { read: 10000, write: 0 },
+            },
+          },
+        },
+      },
+    })
+
+    await hook.event({
+      event: {
+        type: "message.updated",
+        properties: {
+          info: {
+            role: "assistant",
+            sessionID,
+            providerID: "anthropic",
+            modelID: "claude-sonnet-4-6",
+            finish: true,
+            tokens: {
+              input: 170000,
+              output: 0,
+              reasoning: 0,
+              cache: { read: 10000, write: 0 },
+            },
+          },
+        },
+      },
+    })
+
+    await hook["tool.execute.after"](
+      { tool: "bash", sessionID, callID: "call_2" },
+      { title: "", output: "test", metadata: null }
+    )
+
     expect(ctx.client.session.summarize).toHaveBeenCalledTimes(2)
     Date.now = originalNow
   })

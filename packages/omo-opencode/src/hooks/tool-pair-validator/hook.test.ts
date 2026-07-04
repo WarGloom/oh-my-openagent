@@ -244,7 +244,7 @@ describe("createToolPairValidatorHook", () => {
     const messages = [
       {
         info: { role: "assistant" },
-        parts: [{ type: "tool_use", id: "toolu_1" }, { type: "tool", callID: "call_2" }],
+        parts: [{ type: "tool_use", id: "toolu_1" }, { type: "tool_use", id: "toolu_2" }],
       },
       {
         info: { role: "user" },
@@ -254,17 +254,17 @@ describe("createToolPairValidatorHook", () => {
         ],
       },
     ] satisfies TestMessage[]
-
+  
     //#when
     await runTransform(messages)
-
+  
     //#then
     expect(messages[1]?.parts).toEqual([
       { type: "tool_result", tool_use_id: "toolu_1", content: "done" },
       {
         type: "tool_result",
-        toolUseId: "call_2",
-        tool_use_id: "call_2",
+        toolUseId: "toolu_2",
+        tool_use_id: "toolu_2",
         isError: true,
         content: [{ type: "text", text: TOOL_RESULT_PLACEHOLDER }],
       },

@@ -51,6 +51,7 @@ export interface MessageInfo {
   error?: { name?: string; data?: unknown }
   agent?: string
   model?: { providerID: string; modelID: string; variant?: string }
+  runtimeFallbackModelOverride?: boolean
   providerID?: string
   modelID?: string
   tools?: Record<string, ToolPermission>
@@ -64,6 +65,7 @@ export interface MessageWithInfo {
 export interface ResolvedMessageInfo {
   agent?: string
   model?: { providerID: string; modelID: string; variant?: string }
+  modelSuppressed?: boolean
   tools?: Record<string, ToolPermission>
 }
 

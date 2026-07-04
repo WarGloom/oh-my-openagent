@@ -6,6 +6,7 @@ import { setMainSession, subagentSessions, _resetForTesting } from "../../featur
 import { releaseAllPromptAsyncReservationsForTesting } from "../shared/prompt-async-gate"
 import { createTodoContinuationEnforcer } from "."
 import {
+  COMPACTION_GUARD_MS,
   CONTINUATION_COOLDOWN_MS,
   FAILURE_RESET_WINDOW_MS,
   MAX_CONSECUTIVE_FAILURES,
@@ -21,7 +22,7 @@ interface FakeTimers {
 }
 
 function createFakeTimers(): FakeTimers {
-  const REAL_MAX_DELAY_MS = 60_000
+  const REAL_MAX_DELAY_MS = COMPACTION_GUARD_MS + 1
   const originalNow = Date.now()
   let clockNow = originalNow
   let timerNow = 0
@@ -159,6 +160,9 @@ describe("todo-continuation-enforcer", () => {
       role: "user" | "assistant"
       finish?: string
       error?: { name: string; data?: { message: string } }
+      agent?: string
+      modelID?: string
+      providerID?: string
     }
     parts?: Array<{ type: string; text?: string; synthetic?: boolean }>
   }
@@ -1923,6 +1927,84 @@ describe("todo-continuation-enforcer", () => {
 
     // then - no continuation while the compaction marker is the latest event
     expect(promptCalls).toHaveLength(0)
+  })
+
+  test("should keep compaction guard armed after compaction even when agent info resolves", async () => {
+    // given - a compacted Atlas session still has incomplete todos and resolvable agent info
+    const sessionID = "main-compaction-guard-active"
+    setMainSession(sessionID)
+    mockMessages = [
+      {
+        info: {
+          id: "msg-1",
+          role: "assistant",
+          finish: "stop",
+          agent: "atlas",
+          modelID: "gpt-5.4",
+          providerID: "openai",
+        },
+      },
+    ]
+
+    const hook = createTodoContinuationEnforcer(createMockPluginInput(), {
+      backgroundManager: createMockBackgroundManager(false),
+    })
+
+    // when - compaction completes and the session immediately idles again
+    await hook.handler({ event: { type: "session.compacted", properties: { sessionID } } })
+    await hook.handler({ event: { type: "session.idle", properties: { sessionID } } })
+    await fakeTimers.advanceBy(3000)
+
+    // then - the active compaction guard prevents an immediate continuation loop
+    expect(promptCalls).toHaveLength(0)
+
+    // when - the guard window elapses without another idle event
+    await fakeTimers.advanceBy(COMPACTION_GUARD_MS, true)
+
+    // then - normal continuation resumes from the scheduled guard retry
+    expect(promptCalls).toHaveLength(1)
+  })
+
+  test("should retry after active compaction guard even when agent info is unresolved", async () => {
+    // given - compaction guard is active before agent info is available
+    const sessionID = "main-compaction-guard-no-agent"
+    mockMessages = [
+      {
+        info: {
+          id: "msg-1",
+          role: "assistant",
+        },
+      },
+    ]
+
+    const hook = createTodoContinuationEnforcer(createMockPluginInput(), {
+      backgroundManager: createMockBackgroundManager(false),
+    })
+
+    await hook.handler({ event: { type: "session.compacted", properties: { sessionID } } })
+    await hook.handler({ event: { type: "session.idle", properties: { sessionID } } })
+    await fakeTimers.advanceBy(3000)
+
+    expect(promptCalls).toHaveLength(0)
+
+    // when - agent info becomes available before the scheduled guard retry fires
+    mockMessages = [
+      {
+        info: {
+          id: "msg-2",
+          role: "assistant",
+          finish: "stop",
+          agent: "atlas",
+          modelID: "gpt-5.4",
+          providerID: "openai",
+        },
+      },
+    ]
+    await fakeTimers.advanceBy(COMPACTION_GUARD_MS, true)
+    await fakeTimers.advanceBy(3000, true)
+
+    // then - continuation resumes from timers only, without another idle event
+    expect(promptCalls).toHaveLength(1)
   })
 
   test("should skip injection when prometheus agent is after compaction", async () => {

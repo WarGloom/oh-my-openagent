@@ -1,3 +1,5 @@
+/// <reference types="bun-types" />
+
 import { afterEach, describe, expect, test } from "bun:test"
 
 import { injectContinuation } from "./continuation-injection"
@@ -49,6 +51,44 @@ describe("injectContinuation", () => {
 
     // then
     expect(capturedAgent).toBe("Sisyphus - ultraworker")
+  })
+
+  test("invalidates background todo observation after accepted injection", async () => {
+    // given
+    const invalidatedSessions: string[] = []
+    const ctx = {
+      directory: "/tmp/test",
+      client: {
+        session: {
+          todo: async () => ({ data: [{ id: "1", content: "todo", status: "pending", priority: "high" }] }),
+          promptAsync: async () => ({}),
+        },
+      },
+    }
+    const sessionStateStore = {
+      getExistingState: () => ({ inFlight: false, lastInjectedAt: 0, consecutiveFailures: 0 }),
+    }
+    const backgroundManager = {
+      getTasksByParentSession: () => [],
+      invalidateSessionTodoObservation: (sessionID: string) => {
+        invalidatedSessions.push(sessionID)
+      },
+    }
+
+    // when
+    await injectContinuation({
+      ctx: ctx as never,
+      sessionID: "ses_invalidate_todo_observation",
+      resolvedInfo: {
+        agent: "Sisyphus - ultraworker",
+        model: { providerID: "anthropic", modelID: "claude-sonnet-4-20250514" },
+      },
+      sessionStateStore: sessionStateStore as never,
+      backgroundManager: backgroundManager as never,
+    })
+
+    // then
+    expect(invalidatedSessions).toEqual(["ses_invalidate_todo_observation"])
   })
 
   test("#given resolved agent name still carries a ZWSP sort prefix #when continuation is injected #then promptAsync receives the agent name without the ZWSP prefix", async () => {
@@ -237,6 +277,51 @@ describe("injectContinuation", () => {
     expect(capturedBody?.variant).toBe("max")
   })
 
+  test("#given resolved model is suppressed #when reinjecting continuation #then promptAsync does not relaunch stale fallback model", async () => {
+    // given
+    let capturedBody:
+      | {
+          model?: { providerID: string; modelID: string }
+          variant?: string
+        }
+      | undefined
+    const ctx = {
+      directory: "/tmp/test",
+      client: {
+        session: {
+          todo: async () => ({ data: [{ id: "1", content: "todo", status: "pending", priority: "high" }] }),
+          promptAsync: async (input: {
+            body: {
+              model?: { providerID: string; modelID: string }
+              variant?: string
+            }
+          }) => {
+            capturedBody = input.body
+            return {}
+          },
+        },
+      },
+    }
+    const sessionStateStore = {
+      getExistingState: () => ({ inFlight: false, lastInjectedAt: 0, consecutiveFailures: 0 }),
+    }
+
+    // when
+    await injectContinuation({
+      ctx: ctx as never,
+      sessionID: "ses_suppressed_fallback_model",
+      resolvedInfo: {
+        agent: "Sisyphus - ultraworker",
+        modelSuppressed: true,
+      },
+      sessionStateStore: sessionStateStore as never,
+    })
+
+    // then
+    expect(capturedBody?.model).toBeUndefined()
+    expect(capturedBody?.variant).toBeUndefined()
+  })
+
   test("#given a peer-message hold survives an unrelated release #when todo continuation injects #then it does not record a queued prompt as injected", async () => {
     // given
     const sessionID = "ses_todo_reserved_by_peer_message"
@@ -289,6 +374,70 @@ describe("injectContinuation", () => {
     // then
     expect(peerMessageResult.status).toBe("dispatched")
     expect(promptCalls).toBe(1)
+    expect(state.inFlight).toBe(false)
+    expect(state.lastInjectedAt).toBe(0)
+    expect(state.awaitingPostInjectionProgressCheck).not.toBe(true)
+  })
+
+  test("#given continuation injection is blocked by a peer prompt hold #when the hold is released #then continuation retries from the prompt queue", async () => {
+    // given
+    const sessionID = "ses_todo_peer_hold_queue_retry"
+    const promptCalls: Array<{ body: { parts?: Array<{ text: string }> } }> = []
+    const ctx = {
+      directory: "/tmp/test",
+      client: {
+        session: {
+          todo: async () => ({ data: [{ id: "1", content: "continue work", status: "pending", priority: "high" }] }),
+          promptAsync: async (input: { body: { parts?: Array<{ text: string }> } }) => {
+            promptCalls.push(input)
+            return {}
+          },
+        },
+      },
+    }
+    const state = {
+      inFlight: false,
+      lastInjectedAt: 0,
+      consecutiveFailures: 0,
+      awaitingPostInjectionProgressCheck: false,
+    }
+    const sessionStateStore = {
+      getExistingState: () => state,
+    }
+    const peerMessageResult = await dispatchInternalPrompt({
+      mode: "async",
+      client: ctx.client,
+      sessionID,
+      source: "team-live-delivery",
+      settleMs: 0,
+      postDispatchHoldMs: 1000,
+      input: {
+        path: { id: sessionID },
+        body: { parts: [{ type: "text", text: '<peer_message from="teammate">hello</peer_message>' }] },
+      },
+    })
+    promptCalls.splice(0)
+
+    // when
+    await injectContinuation({
+      ctx: ctx as never,
+      sessionID,
+      resolvedInfo: {
+        agent: "Sisyphus - ultraworker",
+        model: { providerID: "anthropic", modelID: "claude-sonnet-4-20250514" },
+      },
+      sessionStateStore: sessionStateStore as never,
+    })
+    const released = releasePromptAsyncReservation(sessionID, "test-release", {
+      reservedBy: "team-live-delivery",
+    })
+    await new Promise<void>((resolve) => setTimeout(resolve, 200))
+
+    // then
+    expect(peerMessageResult.status).toBe("dispatched")
+    expect(released).toBe(true)
+    expect(promptCalls).toHaveLength(1)
+    expect(promptCalls[0]?.body.parts?.[0]?.text).toContain("continue")
     expect(state.inFlight).toBe(false)
     expect(state.lastInjectedAt).toBe(0)
     expect(state.awaitingPostInjectionProgressCheck).not.toBe(true)

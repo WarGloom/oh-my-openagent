@@ -61,6 +61,8 @@ describe("keyword-detector hyperplan keyword", () => {
     expect(text).toContain("<hyperplan-mode>")
     expect(text).toContain('skill(name="hyperplan")')
     expect(text).toContain("HYPERPLAN MODE ENABLED")
+    expect(text).toContain("<hyperplan-handoff>")
+    expect(text).toContain("formalization-only")
     expect(text).toContain("unspecified-low")
     expect(text).toContain("unspecified-high")
     expect(text).toContain("artistry")

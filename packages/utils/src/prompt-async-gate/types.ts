@@ -78,6 +78,7 @@ export type PromptAsyncReservationReleaseOptions = {
   // Lets an intentional recovery release clear a stale `model-suggestion-retry`
   // reservation that outlived its aborted dispatch. Never matches `user-prompt`.
   readonly supersedeTransientRetryOwners?: boolean
+  readonly logOnMismatch?: boolean
 }
 
 export type PromptDispatchClient = {

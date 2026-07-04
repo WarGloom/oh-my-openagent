@@ -3,7 +3,7 @@ import type { PluginInput } from "@opencode-ai/plugin"
 import { isSyntheticOrInternalUserMessage, normalizeSDKResponse } from "../../shared"
 import { isCompactionMessage } from "../../shared/compaction-marker"
 
-import type { MessageInfo, MessageWithInfo, ResolveLatestMessageInfoResult } from "./types"
+import type { MessageWithInfo, ResolveLatestMessageInfoResult } from "./types"
 
 export async function resolveLatestMessageInfo(
   ctx: PluginInput,
@@ -34,11 +34,17 @@ export async function resolveLatestMessageInfo(
     if (isSyntheticOrInternalUserMessage(message)) {
       continue
     }
-    if (info?.agent || info?.model || (info?.modelID && info?.providerID)) {
+    if (!info) {
+      continue
+    }
+    const model = info?.model ?? (info?.providerID && info?.modelID ? { providerID: info.providerID, modelID: info.modelID } : undefined)
+    const suppressModel = Boolean(model) && (Boolean(info?.error) || info?.runtimeFallbackModelOverride === true)
+    if (info?.agent || model) {
       return {
         resolvedInfo: {
           agent: info.agent,
-          model: info.model ?? (info.providerID && info.modelID ? { providerID: info.providerID, modelID: info.modelID } : undefined),
+          model: suppressModel ? undefined : model,
+          ...(suppressModel ? { modelSuppressed: true } : {}),
           tools: info.tools,
         },
         encounteredCompaction,

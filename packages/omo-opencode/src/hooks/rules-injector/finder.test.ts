@@ -375,8 +375,11 @@ describe("findProjectRoot", () => {
     const file = join(isolatedDir, "file.txt");
     writeFileSync(file, "content");
 
-    // when finding project root
-    const root = findProjectRoot(file);
+    // when finding project root, bounded to TEST_DIR so the walk does
+    // not escape into the shared /tmp parent (which is environment-
+    // dependent and may contain stray project markers from unrelated
+    // processes)
+    const root = findProjectRoot(file, TEST_DIR);
 
     // then should return null
     expect(root).toBeNull();

@@ -19,7 +19,8 @@ function matchesExpectedModel(
 
   return (
     actualModel?.providerID === expectedModel.providerID &&
-    actualModel.modelID === expectedModel.modelID
+    actualModel.modelID === expectedModel.modelID &&
+    (expectedModel.variant === undefined || actualModel.variant === expectedModel.variant)
   )
 }
 
