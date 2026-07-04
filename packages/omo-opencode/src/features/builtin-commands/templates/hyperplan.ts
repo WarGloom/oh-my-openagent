@@ -10,6 +10,8 @@ After loading the skill, follow its 7-phase workflow EXACTLY using this user req
 
 Roster contract: call \`team_create\` with category members \`unspecified-low\`, \`unspecified-high\`, \`ultrabrain\`, and \`artistry\`. Include \`deep\` only if the category is enabled; if \`deep\` is disabled or unavailable, retry without only that member and state the degraded roster.
 
+Final handoff contract: Phase 6 must use the skill's \`<hyperplan-handoff>\` formalization-only contract so Sisyphus structures the surviving bundle into an executable plan directly, with Momus/Oracle escalation only for saved-plan review or hard uncertainty. Do not invoke OpenCode runtime \`plan\`.
+
 <user-request>
 $ARGUMENTS
 </user-request>

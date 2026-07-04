@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, test, expect } from "bun:test"
 import { loadBuiltinCommands } from "./commands"
 import { HANDOFF_TEMPLATE } from "./templates/handoff"
+import { HYPERPLAN_TEMPLATE } from "./templates/hyperplan"
 import { REFACTOR_TEMPLATE } from "./templates/refactor"
 import { REMOVE_AI_SLOPS_TEMPLATE } from "./templates/remove-ai-slops"
 import type { BuiltinCommandName } from "./types"
@@ -94,6 +95,38 @@ describe("loadBuiltinCommands", () => {
   })
 })
 
+describe("HYPERPLAN_TEMPLATE", () => {
+  test("should hard-code the adversarial team categories for slash command execution", () => {
+    //#given - the slash command template owns /hyperplan execution context
+
+    //#when / #then
+    expect(HYPERPLAN_TEMPLATE).toContain("unspecified-low")
+    expect(HYPERPLAN_TEMPLATE).toContain("unspecified-high")
+    expect(HYPERPLAN_TEMPLATE).toContain("artistry")
+    expect(HYPERPLAN_TEMPLATE).toContain("ultrabrain")
+  })
+
+  test("should make deep conditional instead of requiring it unconditionally", () => {
+    //#given - deep may be disabled by user category config
+
+    //#when / #then
+    expect(HYPERPLAN_TEMPLATE).toContain("deep")
+    expect(HYPERPLAN_TEMPLATE).toContain("only if")
+    expect(HYPERPLAN_TEMPLATE).toContain("enabled")
+    expect(HYPERPLAN_TEMPLATE).toContain("retry")
+  })
+
+  test("should preserve the formalization-only plan handoff contract", () => {
+    //#given - the command template delegates detailed execution to the hyperplan skill
+
+    //#when / #then
+    expect(HYPERPLAN_TEMPLATE).toContain("<hyperplan-handoff>")
+    expect(HYPERPLAN_TEMPLATE).toContain("formalization-only")
+    expect(HYPERPLAN_TEMPLATE).toContain("Momus/Oracle")
+    expect(HYPERPLAN_TEMPLATE).not.toContain('subagent_type="plan"')
+  })
+})
+
 describe("loadBuiltinCommands - remove-ai-slops", () => {
   test("should include remove-ai-slops command in loaded commands", () => {
     //#given
@@ -177,6 +210,7 @@ describe("REFACTOR_TEMPLATE", () => {
     expect(REFACTOR_TEMPLATE).not.toContain("team_create")
     expect(REFACTOR_TEMPLATE).not.toContain("Team Mode Protocol")
   })
+
 })
 
 describe("loadBuiltinCommands - team mode gating for refactor", () => {

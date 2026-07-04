@@ -292,4 +292,25 @@ describe("AGENT_DISPLAY_NAMES", () => {
       expect(httpHeaderUnsafe.test(displayName)).toBe(false)
     }
   })
+
+  it("contains no invisible sort characters", () => {
+    // given all agent display names
+    const invisibleCharsRegex = /[\u200B\u200C\u200D\uFEFF]/
+
+    // when checking each display name
+    for (const [, displayName] of Object.entries(AGENT_DISPLAY_NAMES)) {
+      // then no display name should contain invisible sort characters
+      expect(invisibleCharsRegex.test(displayName)).toBe(false)
+    }
+  })
+
+  it("contains no visible whitespace sort prefixes", () => {
+    // given all agent display names
+    for (const [, displayName] of Object.entries(AGENT_DISPLAY_NAMES)) {
+      // when checking each display name
+      // then no display name should contain visible sort whitespace
+      expect(displayName).toBe(displayName.trimStart())
+      expect(displayName).toBe(displayName.trimEnd())
+    }
+  })
 })

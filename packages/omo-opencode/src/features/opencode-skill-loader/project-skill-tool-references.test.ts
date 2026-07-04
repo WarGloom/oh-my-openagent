@@ -21,6 +21,10 @@ async function readProjectSkill(...segments: string[]) {
   return Bun.file(join(PROJECT_ROOT, ".opencode", "skills", ...segments, "SKILL.md")).text()
 }
 
+async function readMirroredProjectSkill(...segments: string[]) {
+  return Bun.file(join(PROJECT_ROOT, ".agents", "skills", ...segments, "SKILL.md")).text()
+}
+
 describe("project skill tool references", () => {
   describe("#given work-with-pr skill instructions", () => {
     test("#when reading the commit guidance #then commits delegate through git-master without a fabricated task category", async () => {
@@ -47,6 +51,33 @@ describe("project skill tool references", () => {
       expect(usesRealToolNames).toBe(true)
       expect(skillContent).not.toContain("TaskCreate(")
       expect(skillContent).not.toContain("TaskUpdate(")
+    })
+
+    test("#when reading result collection guidance #then it waits for the all-complete notification", async () => {
+      const skillContents = await Promise.all([
+        readProjectSkill("github-triage"),
+        readMirroredProjectSkill("github-triage"),
+      ])
+
+      for (const skillContent of skillContents) {
+        expect(skillContent).toContain("Wait for the all-complete background task notification")
+        expect(skillContent).not.toContain("Poll `background_output()` per task")
+        expect(skillContent).not.toContain("As each completes")
+      }
+    })
+  })
+
+  describe("#given pre-publish-review skill instructions", () => {
+    test("#when reading result collection guidance #then it waits for the all-complete notification", async () => {
+      const skillContents = await Promise.all([
+        readProjectSkill("pre-publish-review"),
+        readMirroredProjectSkill("pre-publish-review"),
+      ])
+
+      for (const skillContent of skillContents) {
+        expect(skillContent).toContain("Wait for the all-complete background task notification")
+        expect(skillContent).not.toContain("As agents complete")
+      }
     })
   })
 })

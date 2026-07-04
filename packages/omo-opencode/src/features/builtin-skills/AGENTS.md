@@ -1,4 +1,4 @@
-# src/features/builtin-skills/ — 12 Built-in Skill Files
+# src/features/builtin-skills/ — 13 Built-in Skill Files
 
 **Generated:** 2026-05-15
 
@@ -11,7 +11,7 @@ Skills shipped inside the plugin (always available, no install). Registered via 
 ```
 builtin-skills/
 ├── index.ts              # Barrel exports
-├── skills.ts             # createBuiltinSkills() factory — registers all 12 below
+├── skills.ts             # createBuiltinSkills() factory — registers all 13 below
 ├── types.ts              # BuiltinSkill interface
 ├── skills/
 │   ├── git-master.ts                  # 1111 LOC
@@ -21,6 +21,7 @@ builtin-skills/
 │   ├── dev-browser.ts                 # Persistent page state
 │   ├── frontend.ts              # Design-first UI guidance
 │   ├── review-work.ts                 # 5-agent post-implementation review
+│   ├── customize-opencode.ts          # OpenCode/OMO config customization guidance
 │   ├── remove-ai-slops.ts             # Shared skill loader for remove-ai-slops
 │   ├── init-deep.ts                   # Shared skill loader for init-deep
 │   ├── team-mode.ts                   # 12 team_* tool documentation (gated)
@@ -46,6 +47,7 @@ builtin-skills/
 | `dev-browser` | 221 | — | Persistent page state browser for dev work |
 | `frontend` | 79 | — | Design-first UI development guidance |
 | `review-work` | ~500 | — | Post-implementation review orchestrator (5 parallel agents) |
+| `customize-opencode` | 36 | — | OpenCode/OMO config, skill, plugin, MCP, command, and permission guidance |
 | `$omo:remove-ai-slops` | — | — | Remove AI-generated code smells |
 | `init-deep` | — | — | Hierarchical AGENTS.md generation |
 | `security-research` | SKILL.md | — | Team Mode exploitability-driven security research |

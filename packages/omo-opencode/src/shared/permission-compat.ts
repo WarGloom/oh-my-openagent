@@ -3,6 +3,23 @@
  * This module only supports the new permission format.
  */
 
+/**
+ * Heavy MCP tool categories that read-only/advisory agents don't need.
+ * Uses wildcard patterns matched by OpenCode's Permission.disabled().
+ * Denying these saves ~25-40k tokens on small-context models (copilot 128k).
+ */
+export const DENY_HEAVY_MCP_TOOLS: Record<string, "deny"> = {
+  "mcp__plugin_playwright_*": "deny",
+  "mcp__chrome-devtools__*": "deny",
+  // Serena code mutation tools — keep read + memory tools available
+  "mcp__plugin_serena_serena__replace_symbol_body": "deny",
+  "mcp__plugin_serena_serena__replace_content": "deny",
+  "mcp__plugin_serena_serena__insert_after_symbol": "deny",
+  "mcp__plugin_serena_serena__insert_before_symbol": "deny",
+  "mcp__plugin_serena_serena__create_text_file": "deny",
+  "mcp__plugin_serena_serena__rename_symbol": "deny",
+}
+
 export type PermissionValue = "ask" | "allow" | "deny"
 
 export interface PermissionFormat {
