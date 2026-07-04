@@ -79,7 +79,12 @@ function isLocalizedQuotaExhaustionMessage(message: string): boolean {
 
 function hasProviderResetWindowSignal(message: string): boolean {
   return message.includes("resets")
-    && (message.includes("hit your limit") || message.includes("reached your limit"))
+    && (
+      message.includes("hit your limit") ||
+      message.includes("hit your session limit") ||
+      message.includes("reached your limit") ||
+      message.includes("reached your session limit")
+    )
 }
 
 export function classifyRuntimeFallbackError(error: unknown): RuntimeFallbackErrorType | undefined {

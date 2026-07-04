@@ -4,6 +4,7 @@ import { describe, test, expect, mock } from "bun:test"
 import { tmpdir } from "node:os"
 import type { PluginInput } from "@opencode-ai/plugin"
 import { BackgroundManager } from "./manager"
+import { getProviderAutoRetryDeferral } from "./provider-auto-retry-deferral"
 import { MIN_SESSION_GONE_POLLS } from "./session-existence"
 import type { BackgroundTask } from "./types"
 
@@ -18,6 +19,7 @@ function createPluginContext(client: object): PluginInput {
     directory,
     worktree: directory,
     serverUrl: new URL("http://localhost:4096"),
+    experimental_workspace: { register: () => {} },
     $: {} as PluginInput["$"],
     client: client as PluginInput["client"],
   }
@@ -73,7 +75,7 @@ describe("BackgroundManager polling overlap", () => {
 })
 
 
-function createRunningTask(sessionId: string): BackgroundTask {
+function createRunningTask(sessionId: string, overrides: Partial<BackgroundTask> = {}): BackgroundTask {
   return {
     id: `bg_test_${sessionId}`,
     sessionId,
@@ -85,6 +87,7 @@ function createRunningTask(sessionId: string): BackgroundTask {
     status: "running",
     startedAt: new Date(),
     progress: { toolCalls: 0, lastUpdate: new Date() },
+    ...overrides,
   }
 }
 
@@ -217,8 +220,20 @@ describe("BackgroundManager pollRunningTasks", () => {
             return {}
           },
         })
-        const task = createRunningTask(`ses-${testCase.name.replace(/ /g, "-")}`)
+        const task = createRunningTask(`ses-${testCase.name.replace(/ /g, "-")}`, {
+          fallbackChain: [
+            { model: "gpt-5.6", providers: ["openai"] },
+            { model: "claude-sonnet-4-6", providers: ["anthropic"] },
+          ],
+          attemptCount: 0,
+        })
         injectTask(manager, task)
+        const retryStatus = {
+          attempt: 1,
+          message: "Our servers are currently overloaded. Please try again later.",
+        }
+        const observationStart = 1_800_000_000_000
+        expect(getProviderAutoRetryDeferral(task, retryStatus, observationStart)).toBeDefined()
 
         //#when
         const poll = manager["pollRunningTasks"]
@@ -232,6 +247,9 @@ describe("BackgroundManager pollRunningTasks", () => {
         expect(task.error).toBeUndefined()
         expect(task.consecutiveMissedPolls ?? 0).toBe(0)
         expect(abortCallCount).toBe(0)
+        expect(
+          getProviderAutoRetryDeferral(task, retryStatus, observationStart + 30_000),
+        ).toBeUndefined()
 
         await manager.shutdown()
       }
@@ -276,7 +294,7 @@ describe("BackgroundManager pollRunningTasks", () => {
       expect(task.status).toBe("completed")
     })
 
-    test("#when output was already observed from events #then it completes without fetching messages", async () => {
+    test("#when output was already observed from events #then it still checks latest assistant finish before completion", async () => {
       //#given
       let messagesCallCount = 0
       const manager = createManagerWithClient({
@@ -306,7 +324,7 @@ describe("BackgroundManager pollRunningTasks", () => {
 
       //#then
       expect(task.status).toBe("completed")
-      expect(messagesCallCount).toBe(0)
+      expect(messagesCallCount).toBe(1)
     })
 
     test("#when todo state was already observed from events #then it completes without fetching todos", async () => {
@@ -344,6 +362,51 @@ describe("BackgroundManager pollRunningTasks", () => {
       //#then
       expect(task.status).toBe("completed")
       expect(todoCallCount).toBe(0)
+    })
+
+    test("#when cached completed todos are invalidated before idle polling #then it refreshes and waits on fresh incomplete todos", async () => {
+      //#given
+      let todoCallCount = 0
+      const manager = createManagerWithClient({
+        status: async () => ({ data: { "ses-idle-invalidated-todos": { type: "idle" } } }),
+        todo: async () => {
+          todoCallCount += 1
+          return {
+            data: [
+              { content: "continue result", status: "in_progress", priority: "high" },
+            ],
+          }
+        },
+      })
+      const task = createRunningTask("ses-idle-invalidated-todos")
+      injectTask(manager, task)
+
+      manager.handleEvent({
+        type: "message.part.updated",
+        properties: { sessionID: "ses-idle-invalidated-todos", type: "text" },
+      })
+      manager.handleEvent({
+        type: "todo.updated",
+        properties: {
+          sessionID: "ses-idle-invalidated-todos",
+          todos: [
+            { content: "continue result", status: "completed", priority: "high" },
+          ],
+        },
+      })
+
+      manager.invalidateSessionTodoObservation("ses-idle-invalidated-todos")
+
+      //#when
+      const poll = manager["pollRunningTasks"]
+      await poll.call(manager)
+
+      //#then
+      expect(task.status).toBe("running")
+      expect(task.completedAt).toBeUndefined()
+      expect(todoCallCount).toBe(1)
+
+      await manager.shutdown()
     })
 
     test("#when cached incomplete todos become complete before idle polling #then refreshes todos and completes", async () => {
@@ -385,6 +448,277 @@ describe("BackgroundManager pollRunningTasks", () => {
       //#then
       expect(task.status).toBe("completed")
       expect(todoCallCount).toBe(1)
+    })
+
+    test("#when idle task has no valid output and fallback is available #then retries through fallback instead of staying stuck", async () => {
+      //#given
+      const promptAsync = mock(async () => ({}))
+      const onSessionCreated = mock(async () => {})
+      const manager = createManagerWithClient({
+        status: async () => ({ data: { "ses-idle-no-output": { type: "idle" } } }),
+        messages: async () => ({ data: [] }),
+        promptAsync,
+      })
+      const task = createRunningTask("ses-idle-no-output", {
+        model: { providerID: "provider-a", modelID: "original-model" },
+        concurrencyKey: "provider-a/original-model",
+        concurrencyGroup: "provider-a/original-model",
+        fallbackChain: [{ model: "fallback-model-1", providers: ["provider-a"], variant: undefined }],
+        teamRunId: "team-run-1",
+        attemptCount: 0,
+        onSessionCreated,
+      })
+      injectTask(manager, task)
+
+      //#when
+      const poll = manager["pollRunningTasks"]
+      await poll.call(manager)
+
+      //#then
+      expect(promptAsync).toHaveBeenCalled()
+      expect(task.status).toBe("running")
+      expect(task.sessionId).toBe("ses-idle-no-output")
+      expect(task.model).toEqual({
+        providerID: "provider-a",
+        modelID: "fallback-model-1",
+        variant: undefined,
+      })
+      expect(task.attemptCount).toBe(1)
+      expect(onSessionCreated).toHaveBeenCalledWith("ses-idle-no-output", {
+        providerID: "provider-a",
+        modelID: "fallback-model-1",
+        variant: undefined,
+      })
+
+      await manager.shutdown()
+    })
+
+    test("#when polling sees no output immediately after same-session fallback dispatch #then waits instead of consuming the next fallback", async () => {
+      //#given
+      const promptAsync = mock(async () => ({}))
+      const manager = createManagerWithClient({
+        status: async () => ({ data: { "ses-idle-repeat-after-fallback": { type: "idle" } } }),
+        messages: async () => ({ data: [] }),
+        promptAsync,
+      })
+      const task = createRunningTask("ses-idle-repeat-after-fallback", {
+        model: { providerID: "provider-a", modelID: "original-model" },
+        concurrencyKey: "provider-a/original-model",
+        concurrencyGroup: "provider-a/original-model",
+        fallbackChain: [
+          { model: "fallback-model-1", providers: ["provider-a"], variant: undefined },
+          { model: "fallback-model-2", providers: ["provider-a"], variant: undefined },
+        ],
+        teamRunId: "team-run-1",
+        attemptCount: 0,
+        onSessionCreated: mock(async () => {}),
+      })
+      injectTask(manager, task)
+
+      //#when
+      const poll = manager["pollRunningTasks"]
+      await poll.call(manager)
+      await poll.call(manager)
+
+      //#then
+      expect(promptAsync).toHaveBeenCalledTimes(1)
+      expect(task.status).toBe("running")
+      expect(task.sessionId).toBe("ses-idle-repeat-after-fallback")
+      expect(task.model).toEqual({
+        providerID: "provider-a",
+        modelID: "fallback-model-1",
+        variant: undefined,
+      })
+      expect(task.attemptCount).toBe(1)
+
+      await manager.shutdown()
+    })
+
+    test("#when idle task has prior tool output but latest assistant turn is empty and incomplete #then retries through fallback", async () => {
+      for (const latestFinish of ["unknown", "tool-calls"] as const) {
+        //#given
+        const sessionID = `ses-idle-incomplete-latest-${latestFinish}`
+        const promptAsync = mock(async () => ({}))
+        const onSessionCreated = mock(async () => {})
+        const manager = createManagerWithClient({
+          status: async () => ({ data: { [sessionID]: { type: "idle" } } }),
+          messages: async () => ({
+            data: [{
+              info: { role: "user", id: "msg-1" },
+              parts: [{ type: "text", text: "go" }],
+            }, {
+              info: { role: "assistant", finish: "end_turn", id: "msg-2" },
+              parts: [{ type: "tool" }],
+            }, {
+              info: { role: "tool", id: "msg-3" },
+              parts: [{ type: "tool_result", content: "command output" }],
+            }, {
+              info: { role: "assistant", finish: latestFinish, id: "msg-4" },
+              parts: [],
+            }],
+          }),
+          promptAsync,
+        })
+        const task = createRunningTask(sessionID, {
+          model: { providerID: "provider-a", modelID: "original-model" },
+          concurrencyKey: "provider-a/original-model",
+          concurrencyGroup: "provider-a/original-model",
+          fallbackChain: [{ model: "fallback-model-1", providers: ["provider-a"], variant: undefined }],
+          teamRunId: "team-run-1",
+          attemptCount: 0,
+          onSessionCreated,
+        })
+        injectTask(manager, task)
+
+        //#when
+        const poll = manager["pollRunningTasks"]
+        await poll.call(manager)
+
+        //#then
+        expect(promptAsync).toHaveBeenCalled()
+        expect(task.status).toBe("running")
+        expect(task.sessionId).toBe(sessionID)
+        expect(task.model).toEqual({
+          providerID: "provider-a",
+          modelID: "fallback-model-1",
+          variant: undefined,
+        })
+        expect(task.attemptCount).toBe(1)
+        expect(onSessionCreated).toHaveBeenCalledWith(sessionID, {
+          providerID: "provider-a",
+          modelID: "fallback-model-1",
+          variant: undefined,
+        })
+
+        await manager.shutdown()
+      }
+    })
+
+    test("#when idle task has partial text in latest incomplete assistant turn #then retries through fallback", async () => {
+      //#given
+      const sessionID = "ses-idle-incomplete-latest-text"
+      const promptAsync = mock(async () => ({}))
+      const onSessionCreated = mock(async () => {})
+      const manager = createManagerWithClient({
+        status: async () => ({ data: { [sessionID]: { type: "idle" } } }),
+        messages: async () => ({
+          data: [{
+            info: { role: "user", id: "msg-1" },
+            parts: [{ type: "text", text: "go" }],
+          }, {
+            info: { role: "assistant", finish: "unknown", id: "msg-2" },
+            parts: [{ type: "text", text: "Thought: checking workspace" }],
+          }],
+        }),
+        promptAsync,
+      })
+      const task = createRunningTask(sessionID, {
+        model: { providerID: "provider-a", modelID: "original-model" },
+        concurrencyKey: "provider-a/original-model",
+        concurrencyGroup: "provider-a/original-model",
+        fallbackChain: [{ model: "fallback-model-1", providers: ["provider-a"], variant: undefined }],
+        teamRunId: "team-run-1",
+        attemptCount: 0,
+        onSessionCreated,
+      })
+      injectTask(manager, task)
+
+      //#when
+      const poll = manager["pollRunningTasks"]
+      await poll.call(manager)
+
+      //#then
+      expect(promptAsync).toHaveBeenCalled()
+      expect(task.status).toBe("running")
+      expect(task.sessionId).toBe(sessionID)
+      expect(task.model).toEqual({
+        providerID: "provider-a",
+        modelID: "fallback-model-1",
+        variant: undefined,
+      })
+      expect(task.attemptCount).toBe(1)
+      expect(onSessionCreated).toHaveBeenCalledWith(sessionID, {
+        providerID: "provider-a",
+        modelID: "fallback-model-1",
+        variant: undefined,
+      })
+
+      await manager.shutdown()
+    })
+
+    test("#when idle task has latest incomplete assistant turn with tool evidence #then waits without fallback", async () => {
+      for (const latestFinish of ["unknown", "tool-calls"] as const) {
+        //#given
+        const sessionID = `ses-idle-incomplete-latest-tool-${latestFinish}`
+        const promptAsync = mock(async () => ({}))
+        const onSessionCreated = mock(async () => {})
+        const manager = createManagerWithClient({
+          status: async () => ({ data: { [sessionID]: { type: "idle" } } }),
+          messages: async () => ({
+            data: [{
+              info: { role: "user", id: "msg-1" },
+              parts: [{ type: "text", text: "go" }],
+            }, {
+              info: { role: "assistant", finish: latestFinish, id: "msg-2" },
+              parts: [{ type: "tool" }],
+            }],
+          }),
+          promptAsync,
+        })
+        const task = createRunningTask(sessionID, {
+          model: { providerID: "provider-a", modelID: "original-model" },
+          concurrencyKey: "provider-a/original-model",
+          concurrencyGroup: "provider-a/original-model",
+          fallbackChain: [{ model: "fallback-model-1", providers: ["provider-a"], variant: undefined }],
+          teamRunId: "team-run-1",
+          attemptCount: 0,
+          onSessionCreated,
+        })
+        injectTask(manager, task)
+
+        //#when
+        const poll = manager["pollRunningTasks"]
+        await poll.call(manager)
+
+        //#then
+        expect(promptAsync).not.toHaveBeenCalled()
+        expect(task.status).toBe("running")
+        expect(task.sessionId).toBe(sessionID)
+        expect(task.model).toEqual({
+          providerID: "provider-a",
+          modelID: "original-model",
+        })
+        expect(task.attemptCount).toBe(0)
+        expect(onSessionCreated).not.toHaveBeenCalled()
+
+        await manager.shutdown()
+      }
+    })
+
+    test("#when idle task has no valid output and no fallback is available #then fails the task", async () => {
+      //#given
+      const sessionID = "ses-idle-no-output-polling-no-fallback"
+      const abort = mock(async () => ({}))
+      const promptAsync = mock(async () => ({}))
+      const manager = createManagerWithClient({
+        status: async () => ({ data: { [sessionID]: { type: "idle" } } }),
+        messages: async () => ({ data: [] }),
+        abort,
+        promptAsync,
+      })
+      const task = createRunningTask(sessionID)
+      injectTask(manager, task)
+
+      //#when
+      const poll = manager["pollRunningTasks"]
+      await poll.call(manager)
+      await manager.shutdown()
+
+      //#then
+      expect(task.status).toBe("error")
+      expect(task.error).toBe("Subagent session became idle without assistant/tool output and no fallback retry was available.")
+      expect(abort).toHaveBeenCalledWith({ path: { id: sessionID } })
+      expect(promptAsync).not.toHaveBeenCalled()
     })
   })
 
@@ -430,6 +764,121 @@ describe("BackgroundManager pollRunningTasks", () => {
     })
   })
 
+  describe("#given a running task whose session status is retry", () => {
+    test("#when first provider retry has fallback available #then waits on same session without consuming fallback", async () => {
+      //#given
+      const sessionID = "ses-retry-provider-autoretry"
+      const promptAsync = mock(async () => ({}))
+      const manager = createManagerWithClient({
+        status: async () => ({
+          data: {
+            [sessionID]: {
+              type: "retry",
+              message: "Our servers are currently overloaded. Please try again later.",
+              attempt: 1,
+            },
+          },
+        }),
+        promptAsync,
+      })
+      const task = createRunningTask(sessionID, {
+        model: { providerID: "openai", modelID: "gpt-5.4-mini" },
+        concurrencyKey: "openai/gpt-5.4-mini",
+        concurrencyGroup: "openai/gpt-5.4-mini",
+        fallbackChain: [
+          { model: "gpt-5.4-mini", providers: ["openai"] },
+          { model: "claude-sonnet-4-5", providers: ["anthropic"], variant: "max" },
+        ],
+        attemptCount: 0,
+      })
+      injectTask(manager, task)
+
+      //#when
+      const poll = manager["pollRunningTasks"]
+      await poll.call(manager)
+      await manager.shutdown()
+
+      //#then
+      expect(task.status).toBe("running")
+      expect(task.sessionId).toBe(sessionID)
+      expect(task.model).toEqual({
+        providerID: "openai",
+        modelID: "gpt-5.4-mini",
+      })
+      expect(task.attemptCount).toBe(0)
+      expect(promptAsync).not.toHaveBeenCalled()
+    })
+
+    test("#when provider reports a hard session limit on attempt one #then immediately uses the fallback", async () => {
+      //#given
+      const sessionID = "ses-retry-hard-session-limit"
+      const promptAsync = mock(async () => ({}))
+      const manager = createManagerWithClient({
+        status: async () => ({
+          data: {
+            [sessionID]: {
+              type: "retry",
+              message: "Too Many Requests: {\"error\":{\"message\":\"Sorry, you've exceeded your 5 hour session limits.\",\"code\":\"user_global_rate_limited:pro_plus\"}}",
+              attempt: 1,
+            },
+          },
+        }),
+        promptAsync,
+      })
+      const task = createRunningTask(sessionID, {
+        model: { providerID: "openai", modelID: "gpt-5.6" },
+        concurrencyKey: "openai/gpt-5.6",
+        concurrencyGroup: "openai/gpt-5.6",
+        fallbackChain: [
+          { model: "gpt-5.6", providers: ["openai"] },
+          { model: "claude-sonnet-4-6", providers: ["anthropic"], variant: "max" },
+        ],
+        attemptCount: 0,
+      })
+      injectTask(manager, task)
+
+      //#when
+      const poll = manager["pollRunningTasks"]
+      await poll.call(manager)
+      await manager.shutdown()
+
+      //#then
+      expect(task.status).toBe("running")
+      expect(task.sessionId).toBe(sessionID)
+      expect(task.model).toEqual({
+        providerID: "anthropic",
+        modelID: "claude-sonnet-4-6",
+        variant: "max",
+      })
+      expect(task.attemptCount).toBe(2)
+      expect(promptAsync).toHaveBeenCalledTimes(1)
+    })
+
+    test("#when no fallback retry is available #then fails the task and aborts the child session", async () => {
+      //#given
+      const abort = mock(async () => ({}))
+      const promptAsync = mock(async () => ({}))
+      const manager = createManagerWithClient({
+        status: async () => ({ data: { "ses-retry-no-fallback": { type: "retry", message: "quota exhausted", attempt: 1 } } }),
+        abort,
+        promptAsync,
+      })
+      const task = createRunningTask("ses-retry-no-fallback")
+      injectTask(manager, task)
+
+      //#when
+      const poll = manager["pollRunningTasks"]
+      await poll.call(manager)
+      await manager.shutdown()
+
+      //#then
+      expect(task.status).toBe("error")
+      expect(task.error).toBe("quota exhausted")
+      expect(abort).toHaveBeenCalled()
+      expect(promptAsync).not.toHaveBeenCalled()
+    })
+  })
+
   describe("#given a running task whose session has terminal non-idle status", () => {
     test('#when session status is "interrupted" #then completes the task', async () => {
       //#given
@@ -447,6 +896,48 @@ describe("BackgroundManager pollRunningTasks", () => {
       //#then
       expect(task.status).toBe("completed")
       expect(task.completedAt).toBeDefined()
+    })
+
+    test('#when interrupted session has no valid output and fallback is available #then retries through fallback', async () => {
+      //#given
+      const promptAsync = mock(async () => ({}))
+      const onSessionCreated = mock(async () => {})
+      const manager = createManagerWithClient({
+        status: async () => ({ data: { "ses-interrupted-no-output": { type: "interrupted" } } }),
+        messages: async () => ({ data: [] }),
+        promptAsync,
+      })
+      const task = createRunningTask("ses-interrupted-no-output", {
+        model: { providerID: "provider-a", modelID: "original-model" },
+        concurrencyKey: "provider-a/original-model",
+        concurrencyGroup: "provider-a/original-model",
+        fallbackChain: [{ model: "fallback-model-1", providers: ["provider-a"], variant: undefined }],
+        teamRunId: "team-run-1",
+        attemptCount: 0,
+        onSessionCreated,
+      })
+      injectTask(manager, task)
+
+      //#when
+      const poll = manager["pollRunningTasks"]
+      await poll.call(manager)
+      await manager.shutdown()
+
+      //#then
+      expect(promptAsync).toHaveBeenCalled()
+      expect(task.status).toBe("running")
+      expect(task.sessionId).toBe("ses-interrupted-no-output")
+      expect(task.model).toEqual({
+        providerID: "provider-a",
+        modelID: "fallback-model-1",
+        variant: undefined,
+      })
+      expect(task.attemptCount).toBe(1)
+      expect(onSessionCreated).toHaveBeenCalledWith("ses-interrupted-no-output", {
+        providerID: "provider-a",
+        modelID: "fallback-model-1",
+        variant: undefined,
+      })
     })
 
     test('#when session status is an unknown type #then completes the task', async () => {

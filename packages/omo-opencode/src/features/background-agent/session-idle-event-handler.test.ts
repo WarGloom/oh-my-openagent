@@ -30,7 +30,7 @@ describe("handleSessionIdleBackgroundEvent", () => {
         properties: {},
         findBySession: () => undefined,
         idleDeferralTimers: new Map(),
-        validateSessionHasOutput: () => Promise.resolve(true),
+        classifySessionOutput: () => Promise.resolve("ready"),
         checkSessionTodos: () => Promise.resolve(false),
         tryCompleteTask,
         emitIdleEvent: () => {},
@@ -51,7 +51,7 @@ describe("handleSessionIdleBackgroundEvent", () => {
         properties: { sessionID: 123 },
         findBySession: () => undefined,
         idleDeferralTimers: new Map(),
-        validateSessionHasOutput: () => Promise.resolve(true),
+        classifySessionOutput: () => Promise.resolve("ready"),
         checkSessionTodos: () => Promise.resolve(false),
         tryCompleteTask,
         emitIdleEvent: () => {},
@@ -72,7 +72,7 @@ describe("handleSessionIdleBackgroundEvent", () => {
         properties: { sessionID: "ses-unknown" },
         findBySession: () => undefined,
         idleDeferralTimers: new Map(),
-        validateSessionHasOutput: () => Promise.resolve(true),
+        classifySessionOutput: () => Promise.resolve("ready"),
         checkSessionTodos: () => Promise.resolve(false),
         tryCompleteTask,
         emitIdleEvent: () => {},
@@ -91,10 +91,10 @@ describe("handleSessionIdleBackgroundEvent", () => {
 
       //#when
       handleSessionIdleBackgroundEvent({
-        properties: { sessionID: task.sessionId! },
+        properties: { sessionID: task.sessionId },
         findBySession: () => task,
         idleDeferralTimers: new Map(),
-        validateSessionHasOutput: () => Promise.resolve(true),
+        classifySessionOutput: () => Promise.resolve("ready"),
         checkSessionTodos: () => Promise.resolve(false),
         tryCompleteTask,
         emitIdleEvent: () => {},
@@ -113,10 +113,10 @@ describe("handleSessionIdleBackgroundEvent", () => {
 
       //#when
       handleSessionIdleBackgroundEvent({
-        properties: { sessionID: task.sessionId! },
+        properties: { sessionID: task.sessionId },
         findBySession: () => task,
         idleDeferralTimers: new Map(),
-        validateSessionHasOutput: () => Promise.resolve(true),
+        classifySessionOutput: () => Promise.resolve("ready"),
         checkSessionTodos: () => Promise.resolve(false),
         tryCompleteTask,
         emitIdleEvent: () => {},
@@ -141,10 +141,10 @@ describe("handleSessionIdleBackgroundEvent", () => {
 
         //#when
         handleSessionIdleBackgroundEvent({
-          properties: { sessionID: task.sessionId! },
+          properties: { sessionID: task.sessionId },
           findBySession: () => task,
           idleDeferralTimers,
-          validateSessionHasOutput: () => Promise.resolve(true),
+          classifySessionOutput: () => Promise.resolve("ready"),
           checkSessionTodos: () => Promise.resolve(false),
           tryCompleteTask: () => Promise.resolve(true),
           emitIdleEvent,
@@ -175,10 +175,10 @@ describe("handleSessionIdleBackgroundEvent", () => {
 
         //#when
         handleSessionIdleBackgroundEvent({
-          properties: { sessionID: task.sessionId! },
+          properties: { sessionID: task.sessionId },
           findBySession: () => task,
           idleDeferralTimers,
-          validateSessionHasOutput: () => Promise.resolve(true),
+          classifySessionOutput: () => Promise.resolve("ready"),
           checkSessionTodos: () => Promise.resolve(false),
           tryCompleteTask: () => Promise.resolve(true),
           emitIdleEvent,
@@ -206,10 +206,10 @@ describe("handleSessionIdleBackgroundEvent", () => {
 
         //#when
         handleSessionIdleBackgroundEvent({
-          properties: { sessionID: task.sessionId! },
+          properties: { sessionID: task.sessionId },
           findBySession: () => task,
           idleDeferralTimers,
-          validateSessionHasOutput: () => Promise.resolve(true),
+          classifySessionOutput: () => Promise.resolve("ready"),
           checkSessionTodos: () => Promise.resolve(false),
           tryCompleteTask: () => Promise.resolve(true),
           emitIdleEvent,
@@ -233,10 +233,10 @@ describe("handleSessionIdleBackgroundEvent", () => {
 
       //#when
       handleSessionIdleBackgroundEvent({
-        properties: { sessionID: task.sessionId! },
+        properties: { sessionID: task.sessionId },
         findBySession: () => task,
         idleDeferralTimers: new Map(),
-        validateSessionHasOutput: () => Promise.resolve(true),
+        classifySessionOutput: () => Promise.resolve("ready"),
         checkSessionTodos: () => Promise.resolve(false),
         tryCompleteTask,
         emitIdleEvent: () => {},
@@ -254,10 +254,10 @@ describe("handleSessionIdleBackgroundEvent", () => {
 
       //#when
       handleSessionIdleBackgroundEvent({
-        properties: { sessionID: task.sessionID! },
+        properties: { sessionID: task.sessionId },
         findBySession: () => task,
         idleDeferralTimers: new Map(),
-        validateSessionHasOutput: () => Promise.resolve(true),
+        classifySessionOutput: () => Promise.resolve("ready"),
         checkSessionTodos: () => Promise.resolve(false),
         tryCompleteTask,
         emitIdleEvent: () => {},
@@ -275,10 +275,10 @@ describe("handleSessionIdleBackgroundEvent", () => {
 
       //#when
       handleSessionIdleBackgroundEvent({
-        properties: { sessionID: task.sessionId! },
+        properties: { sessionID: task.sessionId },
         findBySession: () => task,
         idleDeferralTimers: new Map(),
-        validateSessionHasOutput: () => Promise.resolve(false),
+        classifySessionOutput: () => Promise.resolve("no-output"),
         checkSessionTodos: () => Promise.resolve(false),
         tryCompleteTask,
         emitIdleEvent: () => {},
@@ -289,6 +289,54 @@ describe("handleSessionIdleBackgroundEvent", () => {
       expect(tryCompleteTask).not.toHaveBeenCalled()
     })
 
+    it("#when session has no valid output and fallback succeeds #then should invoke fallback and not complete task", async () => {
+      //#given
+      const task = createRunningTask()
+      const tryCompleteTask = mock(() => Promise.resolve(true))
+      const tryFallbackForNoOutputIdle = mock(() => Promise.resolve(true))
+
+      //#when
+      handleSessionIdleBackgroundEvent({
+        properties: { sessionID: task.sessionId },
+        findBySession: () => task,
+        idleDeferralTimers: new Map(),
+        classifySessionOutput: () => Promise.resolve("no-output"),
+        checkSessionTodos: () => Promise.resolve(false),
+        tryCompleteTask,
+        tryFallbackForNoOutputIdle,
+        emitIdleEvent: () => {},
+      })
+
+      //#then
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      expect(tryFallbackForNoOutputIdle).toHaveBeenCalledWith(task, "session.idle no-output")
+      expect(tryCompleteTask).not.toHaveBeenCalled()
+    })
+
+    it("#when latest assistant turn is incomplete #then should not fallback or complete task", async () => {
+      //#given
+      const task = createRunningTask()
+      const tryCompleteTask = mock(() => Promise.resolve(true))
+      const tryFallbackForNoOutputIdle = mock(() => Promise.resolve(true))
+
+      //#when
+      handleSessionIdleBackgroundEvent({
+        properties: { sessionID: task.sessionId },
+        findBySession: () => task,
+        idleDeferralTimers: new Map(),
+        classifySessionOutput: () => Promise.resolve("incomplete-latest-assistant"),
+        checkSessionTodos: () => Promise.resolve(false),
+        tryCompleteTask,
+        tryFallbackForNoOutputIdle,
+        emitIdleEvent: () => {},
+      })
+
+      //#then
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      expect(tryFallbackForNoOutputIdle).not.toHaveBeenCalled()
+      expect(tryCompleteTask).not.toHaveBeenCalled()
+    })
+
     it("#when task has incomplete todos #then should not complete task", async () => {
       //#given
       const task = createRunningTask()
@@ -296,10 +344,10 @@ describe("handleSessionIdleBackgroundEvent", () => {
 
       //#when
       handleSessionIdleBackgroundEvent({
-        properties: { sessionID: task.sessionId! },
+        properties: { sessionID: task.sessionId },
         findBySession: () => task,
         idleDeferralTimers: new Map(),
-        validateSessionHasOutput: () => Promise.resolve(true),
+        classifySessionOutput: () => Promise.resolve("ready"),
         checkSessionTodos: () => Promise.resolve(true),
         tryCompleteTask,
         emitIdleEvent: () => {},
@@ -317,12 +365,12 @@ describe("handleSessionIdleBackgroundEvent", () => {
 
       //#when
       handleSessionIdleBackgroundEvent({
-        properties: { sessionID: task.sessionId! },
+        properties: { sessionID: task.sessionId },
         findBySession: () => task,
         idleDeferralTimers: new Map(),
-        validateSessionHasOutput: async () => {
+        classifySessionOutput: async () => {
           task.status = "completed"
-          return true
+          return "ready"
         },
         checkSessionTodos: () => Promise.resolve(false),
         tryCompleteTask,
@@ -341,10 +389,10 @@ describe("handleSessionIdleBackgroundEvent", () => {
 
       //#when
       handleSessionIdleBackgroundEvent({
-        properties: { sessionID: task.sessionId! },
+        properties: { sessionID: task.sessionId },
         findBySession: () => task,
         idleDeferralTimers: new Map(),
-        validateSessionHasOutput: () => Promise.resolve(true),
+        classifySessionOutput: () => Promise.resolve("ready"),
         checkSessionTodos: async () => {
           task.status = "cancelled"
           return false

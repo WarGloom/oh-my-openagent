@@ -1,5 +1,6 @@
 import type { BackgroundTaskConfig } from "../../config/schema"
 import type { OpencodeClient } from "./constants"
+import { extractErrorMessage } from "./error-classifier"
 
 export const DEFAULT_MAX_SUBAGENT_DEPTH = 3
 
@@ -37,7 +38,7 @@ export async function resolveSubagentSpawnContext(
         ...(directory ? { query: { directory } } : {}),
       })
       if (response.error) {
-        throw new Error(String(response.error))
+        throw new Error(extractErrorMessage(response.error) ?? "Unknown session lookup error")
       }
 
       if (!response.data) {
@@ -46,7 +47,7 @@ export async function resolveSubagentSpawnContext(
 
       nextParentSessionID = response.data.parentID
     } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error)
+      const reason = extractErrorMessage(error) ?? "Unknown session lookup error"
       throw new Error(
         `Subagent spawn blocked: failed to resolve session lineage for ${parentSessionID}, so background_task.maxDepth cannot be enforced safely. ${reason}`
       )

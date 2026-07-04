@@ -28,6 +28,9 @@ export interface TaskProgress {
 
 export type BackgroundTaskAttemptStatus = BackgroundTaskStatus
 
+export type UserToolPermission = "ask" | "allow" | "deny"
+export type BackgroundTaskUserPermission = Readonly<Record<string, UserToolPermission>>
+
 export interface BackgroundTaskAttempt {
   attemptId: string
   attemptNumber: number
@@ -75,11 +78,15 @@ export interface BackgroundTask {
   parentTools?: Record<string, boolean>
   skillContent?: string
   sessionPermission?: SessionPermissionRule[]
+  /** Immutable copy of category/user tool permissions from launch time. */
+  userPermission?: BackgroundTaskUserPermission
   /** Marks if the task was launched from an unstable agent/category */
   isUnstableAgent?: boolean
   /** Category used for this task (e.g., 'quick', 'visual-engineering') */
   category?: string
-  onSessionCreated?: (sessionId: string) => void | Promise<void>
+  onSessionCreated?: (sessionId: string, model?: DelegatedModelConfig) => void | Promise<void>
+  /** Last failed fallback retry token; prevents re-dispatching the same failed prompt. */
+  failedFallbackRetryToken?: string
   /** Pending retry notification details for the next spawned retry session */
   retryNotification?: {
     previousSessionID?: string
@@ -128,14 +135,15 @@ export interface LaunchInput {
   skillContent?: string
   category?: string
   sessionPermission?: SessionPermissionRule[]
-  onSessionCreated?: (sessionId: string) => void | Promise<void>
+  onSessionCreated?: (sessionId: string, model?: DelegatedModelConfig) => void | Promise<void>
   /** User tool overrides (ask/allow/deny) from category or agent config. Merged into launchTools before hardcoded restrictions. */
-  userPermission?: Record<string, "ask" | "allow" | "deny">
+  userPermission?: BackgroundTaskUserPermission
 }
 
 export interface ResumeInput {
   sessionId: string
   prompt: string
+  system?: string
   parentSessionId: string
   parentMessageId: string
   parentModel?: { providerID: string; modelID: string }

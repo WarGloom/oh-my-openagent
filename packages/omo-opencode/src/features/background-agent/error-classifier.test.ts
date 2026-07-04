@@ -1,3 +1,5 @@
+/// <reference types="bun-types" />
+
 import { describe, test, expect } from "bun:test"
 import {
   isRecord,
@@ -5,6 +7,7 @@ import {
   getErrorText,
   extractErrorName,
   extractErrorMessage,
+  extractErrorStatusCode,
   getSessionErrorMessage,
   isTerminalSessionError,
 } from "./error-classifier"
@@ -430,5 +433,21 @@ describe("isTerminalSessionError", () => {
     test("does NOT classify as terminal when only a generic error name is present", () => {
       expect(isTerminalSessionError({ name: "ProviderNotFoundError" })).toBe(false)
     })
+  })
+})
+
+describe("extractErrorStatusCode", () => {
+  test("#given auth statusCode #when extracting status #then it returns 401", () => {
+    expect(extractErrorStatusCode({ statusCode: 401 })).toBe(401)
+  })
+
+  test("#given auth code #when extracting status #then it returns 403", () => {
+    expect(extractErrorStatusCode({ code: 403 })).toBe(403)
+  })
+
+  test("#given string status #when extracting status #then it returns numeric status", () => {
+    expect(extractErrorStatusCode({ status: "401" })).toBe(401)
+  })
+})
   })
 })

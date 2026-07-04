@@ -128,7 +128,9 @@ const AUTO_RETRY_GATE_PATTERNS = [
 
 const PROVIDER_LIMIT_RESET_PATTERNS = [
   "hit your limit",
+  "hit your session limit",
   "reached your limit",
+  "reached your session limit",
 ]
 
 function hasProviderAutoRetrySignal(message: string): boolean {

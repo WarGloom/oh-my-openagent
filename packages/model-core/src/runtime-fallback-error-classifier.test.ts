@@ -53,6 +53,26 @@ describe("runtime fallback error classifier", () => {
         expectedStatusCode: undefined,
       },
       {
+        label: "claude code session limit reset window",
+        error: {
+          name: "SessionRetry",
+          message: "Claude Code returned an error result: You've hit your session limit · resets 2:30am (Asia/Jerusalem)",
+        },
+        expectedType: "quota_exceeded",
+        expectedRetryable: true,
+        expectedStatusCode: undefined,
+      },
+      {
+        label: "github copilot pro plus five-hour session limit",
+        error: {
+          name: "SessionRetry",
+          message: "Too Many Requests: {\"error\":{\"message\":\"Sorry, you've exceeded your 5 hour session limits.\",\"code\":\"user_global_rate_limited:pro_plus\"}}",
+        },
+        expectedType: "quota_exceeded",
+        expectedRetryable: true,
+        expectedStatusCode: undefined,
+      },
+      {
         label: "anthropic abort",
         error: {
           name: "MessageAbortedError",
@@ -202,6 +222,19 @@ describe("runtime fallback error classifier", () => {
     //#given
     const retryInfo = {
       status: "Claude Code returned an error result: You've hit your limit · resets 10pm (Asia/Jerusalem)",
+    }
+
+    //#when
+    const signal = extractRuntimeFallbackAutoRetrySignal(retryInfo)
+
+    //#then
+    expect(signal).toEqual({ signal: retryInfo.status })
+  })
+
+  test("extracts provider session-limit reset-window auto-retry signals", () => {
+    //#given
+    const retryInfo = {
+      status: "Claude Code returned an error result: You've hit your session limit · resets 2:30am (Asia/Jerusalem)",
     }
 
     //#when

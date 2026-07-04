@@ -4,7 +4,7 @@ import {
   getSessionPromptParams,
 } from "../../shared/session-prompt-params-state"
 import { releaseAllPromptAsyncReservationsForTesting } from "../../shared/prompt-async-gate"
-import { buildFallbackBody, createTask, isAgentNotFoundError, resumeTask, startTask } from "./spawner"
+import { buildBackgroundTaskPromptTools, buildFallbackBody, createTask, isAgentNotFoundError, resumeTask, startTask } from "./spawner"
 import type { BackgroundTask } from "./types"
 
 type PromptRequest = {
@@ -17,8 +17,178 @@ type PromptRequest = {
     model?: { providerID: string; modelID: string }
     variant?: string
     options?: unknown
+    system?: string
   }
 }
+
+describe("background-agent spawner resume", () => {
+  afterEach(() => {
+    clearSessionPromptParams("session-resume")
+    releaseAllPromptAsyncReservationsForTesting()
+  })
+
+  test("forwards hidden system context and persists current continuation state", async () => {
+    //#given
+    const promptCalls: PromptRequest[] = []
+    const client = {
+      session: {
+        promptAsync: async (args: PromptRequest) => {
+          promptCalls.push(args)
+          return { data: {} }
+        },
+      },
+    } as never
+    const task: BackgroundTask = {
+      id: "bg_resume",
+      sessionId: "session-resume",
+      parentSessionId: "parent-session",
+      parentMessageId: "parent-message",
+      description: "resume test",
+      prompt: "launch prompt",
+      skillContent: "launch system",
+      agent: "explore",
+      status: "completed",
+      startedAt: new Date(),
+      completedAt: new Date(),
+    }
+    const input = {
+      sessionId: "session-resume",
+      prompt: "continuation prompt",
+      system: "<available_skills>hidden</available_skills>",
+      parentSessionId: "parent-session",
+      parentMessageId: "parent-message-2",
+    }
+
+    //#when
+    await resumeTask(task, input, {
+      client,
+      directory: "/tmp/test",
+      concurrencyManager: { acquire: async () => {}, release: () => {} } as never,
+      onTaskError: mock(() => {}),
+    })
+    await waitForCondition(() => promptCalls.length === 1)
+
+    //#then
+    expect(promptCalls[0].body.system).toBe(input.system)
+    expect(promptCalls[0].body.parts).toEqual([{ type: "text", text: "continuation prompt\n<!-- OMO_INTERNAL_INITIATOR -->" }])
+    expect(task.prompt).toBe(input.prompt)
+    expect(task.skillContent).toBe(input.system)
+  })
+
+  test("rejects a foreign parent before dispatch or mutation", async () => {
+    //#given
+    const promptCalls: PromptRequest[] = []
+    const task: BackgroundTask = {
+      id: "bg_resume_foreign",
+      sessionId: "session-resume",
+      parentSessionId: "parent-session",
+      parentMessageId: "parent-message",
+      description: "resume ownership test",
+      prompt: "launch prompt",
+      agent: "explore",
+      status: "completed",
+      startedAt: new Date(),
+      completedAt: new Date(),
+    }
+
+    //#when / #then
+    await expect(resumeTask(task, {
+      sessionId: "session-resume",
+      prompt: "continuation prompt",
+      parentSessionId: "foreign-parent",
+      parentMessageId: "parent-message-2",
+    }, {
+      client: { session: { promptAsync: async (args: PromptRequest) => promptCalls.push(args) } } as never,
+      directory: "/tmp/test",
+      concurrencyManager: { acquire: async () => {}, release: () => {} } as never,
+      onTaskError: mock(() => {}),
+    })).rejects.toThrow("Resume forbidden: task belongs to a different parent session")
+    expect(promptCalls).toHaveLength(0)
+    expect(task.prompt).toBe("launch prompt")
+  })
+
+  test("clears stale skill context when continuation omits system", async () => {
+    //#given
+    const task: BackgroundTask = {
+      id: "bg_resume_no_system",
+      sessionId: "session-resume",
+      parentSessionId: "parent-session",
+      parentMessageId: "parent-message",
+      description: "resume no system test",
+      prompt: "launch prompt",
+      skillContent: "stale launch system",
+      agent: "explore",
+      status: "completed",
+      startedAt: new Date(),
+      completedAt: new Date(),
+    }
+
+    //#when
+    await resumeTask(task, {
+      sessionId: "session-resume",
+      prompt: "continuation without skills",
+      parentSessionId: "parent-session",
+      parentMessageId: "parent-message-2",
+    }, {
+      client: { session: { promptAsync: async () => ({ data: {} }) } } as never,
+      directory: "/tmp/test",
+      concurrencyManager: { acquire: async () => {}, release: () => {} } as never,
+      onTaskError: mock(() => {}),
+    })
+
+    //#then
+    expect(task.skillContent).toBeUndefined()
+  })
+
+  test("restores continuation state when the prompt gate skips dispatch", async () => {
+    //#given
+    const releasedKeys: string[] = []
+    const task: BackgroundTask = {
+      id: "bg_resume_skipped",
+      sessionId: "session-resume",
+      parentSessionId: "parent-session",
+      parentMessageId: "parent-message",
+      description: "resume skipped test",
+      prompt: "launch prompt",
+      skillContent: "launch system",
+      agent: "explore",
+      status: "completed",
+      startedAt: new Date(),
+      completedAt: new Date(),
+      concurrencyGroup: "explore",
+    }
+
+    //#when
+    await resumeTask(task, {
+      sessionId: "session-resume",
+      prompt: "continuation prompt",
+      system: "continuation system",
+      parentSessionId: "parent-session",
+      parentMessageId: "parent-message-2",
+    }, {
+      client: {
+        session: {
+          status: async () => ({ data: { "session-resume": { type: "busy" } } }),
+          promptAsync: async () => ({ data: {} }),
+        },
+      } as never,
+      directory: "/tmp/test",
+      concurrencyManager: {
+        acquire: async () => {},
+        release: (key: string) => releasedKeys.push(key),
+      } as never,
+      onTaskError: mock(() => {}),
+    })
+    await waitForCondition(() => releasedKeys.length === 1)
+
+    //#then
+    expect(task.status).toBe("completed")
+    expect(task.parentMessageId).toBe("parent-message")
+    expect(task.prompt).toBe("launch prompt")
+    expect(task.skillContent).toBe("launch system")
+    expect(task.concurrencyKey).toBeUndefined()
+  })
+})
 
 /**
  * Poll until `fn()` returns true or timeout elapses.
@@ -951,5 +1121,19 @@ describe("background-agent spawner fallback helper characterization", () => {
         question: false,
       },
     })
+  })
+
+  test("keeps hardcoded agent restrictions stronger than user tool denies", () => {
+    const tools = buildBackgroundTaskPromptTools({
+      agent: "multimodal-looker",
+      includeTeamToolDenylist: true,
+      userPermission: Object.freeze({
+        read: "deny",
+      }),
+    })
+
+    expect(tools.task).toBe(false)
+    expect(tools.call_omo_agent).toBe(true)
+    expect(tools.read).toBe(true)
   })
 })

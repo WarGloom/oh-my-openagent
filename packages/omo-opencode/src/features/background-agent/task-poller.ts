@@ -111,7 +111,12 @@ export function pruneStaleTasksAndNotifications(args: {
   }
 }
 
-export type SessionStatusMap = Record<string, { type: string }>
+export type SessionStatusMap = Record<string, {
+  type: string
+  message?: string
+  attempt?: unknown
+  next?: unknown
+}>
 
 async function interruptStaleTask(args: {
   task: BackgroundTask
