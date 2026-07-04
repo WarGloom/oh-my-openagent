@@ -253,7 +253,6 @@ jobs:
             - Covers Linux/macOS socket and Windows named-pipe daemon smoke.
           JOB_SUMMARY_NEXT: Inspect the first omo-senpi build, sync, directive, or package test failure for this OS.
         run: GITHUB_STEP_SUMMARY="$GITHUB_STEP_SUMMARY" bash .github/scripts/write-job-summary.sh
-
   lazycodex-published-smoke:
     runs-on: ubuntu-latest
     continue-on-error: true
@@ -364,7 +363,7 @@ jobs:
 
   auto-commit-schema:
     runs-on: ubuntu-latest
-    needs: [test, typecheck, codex-compatibility, senpi-compatibility, build]
+    needs: [test, typecheck, codex-compatibility, build]
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     permissions:
       contents: write
@@ -414,7 +413,7 @@ jobs:
 
   draft-release:
     runs-on: ubuntu-latest
-    needs: [test, typecheck, codex-compatibility, senpi-compatibility, build]
+    needs: [test, typecheck, codex-compatibility, build]
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     permissions:
       contents: write
