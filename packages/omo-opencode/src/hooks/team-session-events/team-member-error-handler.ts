@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 
 import type { TeamModeConfig } from "../../config/schema/team-mode"
+import type { BackgroundTask } from "../../features/background-agent/types"
 import { findResolvedMemberSession } from "../../features/team-mode/member-session-resolution"
 import { sendMessage } from "../../features/team-mode/team-mailbox/send"
 import {
@@ -19,12 +20,18 @@ import {
 
 type HookInput = { event: { type: string; properties?: unknown } }
 export type HookImpl = (input: HookInput) => Promise<void>
+type ManagedBackgroundTask = Pick<BackgroundTask, "status" | "teamRunId">
 type TeamMemberErrorHandlerDeps = {
   client?: {
     session?: {
       status?: () => Promise<unknown>
       messages?: (input: { path: { id: string } }) => Promise<unknown>
     }
+  }
+  backgroundManager?: {
+    findBySession: (sessionID: string) => ManagedBackgroundTask | undefined
+    getFallbackRetryResult?: (sessionID: string) => Promise<boolean> | undefined
+    consumeFallbackRetryResult?: (sessionID: string) => Promise<boolean> | undefined
   }
   settleMs?: number
 }
@@ -120,6 +127,37 @@ async function sessionHistoryContainsPendingMessage(
   }
 }
 
+async function shouldDeferToBackgroundTask(
+  deps: TeamMemberErrorHandlerDeps,
+  sessionID: string,
+  teamRunId: string,
+): Promise<boolean> {
+  const task = deps.backgroundManager?.findBySession(sessionID)
+  if (!task || task.teamRunId !== teamRunId) {
+    return false
+  }
+
+  if (task.status !== "pending" && task.status !== "running") {
+    return false
+  }
+
+  const retryResult = deps.backgroundManager?.consumeFallbackRetryResult?.(sessionID)
+    ?? deps.backgroundManager?.getFallbackRetryResult?.(sessionID)
+  if (!retryResult) {
+    return false
+  }
+
+  return retryResult.catch((error) => {
+    log("team member background fallback result failed", {
+      event: "team-mode-member-error-background-fallback-result-failed",
+      teamRunId,
+      sessionID,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return false
+  })
+}
+
 export function createTeamMemberErrorHandler(
   config: TeamModeConfig,
   deps: TeamMemberErrorHandlerDeps = {},
@@ -153,6 +191,17 @@ export function createTeamMemberErrorHandler(
       if (await sessionHistoryContainsPendingMessage(deps, erroredSessionID, pendingInjectedMessageIds)) {
         log("team member session error ignored after pending peer message reached history", {
           event: "team-mode-member-error-peer-message-accepted",
+          teamRunId: runtimeState.teamRunId,
+          teamName: runtimeState.teamName,
+          memberName: runtimeMember.memberName,
+          sessionID: erroredSessionID,
+          pendingCount: pendingInjectedMessageIds.length,
+        })
+        return
+      }
+      if (await shouldDeferToBackgroundTask(deps, erroredSessionID, runtimeState.teamRunId)) {
+        log("team member session error deferred to background task", {
+          event: "team-mode-member-error-background-managed",
           teamRunId: runtimeState.teamRunId,
           teamName: runtimeState.teamName,
           memberName: runtimeMember.memberName,

@@ -207,6 +207,59 @@ describe("createTeamRun", () => {
     ])
   })
 
+  test("updates member session and model when background fallback creates a retry session", async () => {
+    // given
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-runtime-fallback-session-"))
+    temporaryDirectories.push(baseDir)
+    const task = { id: "task-1", status: "pending" } as BackgroundTask
+    let resolveSessionAvailable = () => {}
+    const sessionAvailable = new Promise<void>((resolve) => {
+      resolveSessionAvailable = resolve
+    })
+    const { manager } = createManager(
+      baseDir,
+      async (input) => {
+        task.parentSessionId = input.parentSessionId
+        task.parentMessageId = input.parentMessageId
+        task.description = input.description
+        task.prompt = input.prompt
+        task.agent = input.agent
+        task.status = "pending"
+        queueMicrotask(async () => {
+          await input.onSessionCreated?.("session-fallback", {
+            providerID: "anthropic",
+            modelID: "claude-opus-4-8",
+            variant: "max",
+          })
+          task.sessionId = "session-fallback"
+          task.status = "running"
+          resolveSessionAvailable()
+        })
+        return task
+      },
+      () => task,
+    )
+    const config = createConfig(baseDir)
+
+    // when
+    const runtimeState = await createTeamRun(createSpec(1), "lead-session", createContext(baseDir, manager), config, manager)
+    await sessionAvailable
+    const updatedRuntimeState = await loadRuntimeState(runtimeState.teamRunId, config)
+
+    // then
+    expect(updatedRuntimeState.members[0]?.sessionId).toBe("session-fallback")
+    expect(updatedRuntimeState.members[0]?.model).toEqual({
+      providerID: "anthropic",
+      modelID: "claude-opus-4-8",
+      variant: "max",
+    })
+    expect(lookupTeamSession("session-fallback")).toEqual({
+      teamRunId: runtimeState.teamRunId,
+      memberName: "member-1",
+      role: "lead",
+    })
+  })
+
   test("member prompt only documents member-safe communication tools", async () => {
     // given
     const baseDir = await mkdtemp(path.join(tmpdir(), "team-runtime-member-prompt-"))

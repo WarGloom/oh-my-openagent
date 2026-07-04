@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import * as spawnWithWindowsHideModule from "../../shared/spawn-with-windows-hide";
 
 const mockLoadInteractiveBashSessionState = mock(() => null);
@@ -33,6 +33,10 @@ describe("createInteractiveBashSessionTracker", () => {
     mockSpawnWithWindowsHide.mockImplementation(() => {
       throw new Error("tmux unavailable");
     });
+  });
+
+  afterEach(() => {
+    mock.restore();
   });
 
   it("#given tracked tmux session kill throws #when session is deleted #then cleanup still completes", async () => {

@@ -1,4 +1,5 @@
 import type { TeamModeConfig } from "../../config/schema/team-mode"
+import type { BackgroundTask } from "../../features/background-agent/types"
 import { findResolvedMemberSession } from "../../features/team-mode/member-session-resolution"
 import { loadRuntimeState, transitionRuntimeState } from "../../features/team-mode/team-state-store/store"
 import type { RuntimeStateMember } from "../../features/team-mode/types"
@@ -9,6 +10,15 @@ type HookInput = { event: { type: string; properties?: unknown } }
 export type HookImpl = (input: HookInput) => Promise<void>
 
 type MemberStatus = RuntimeStateMember["status"]
+type ManagedBackgroundTask = Pick<BackgroundTask, "status" | "teamRunId">
+type TeamMemberStatusHandlerDeps = {
+  backgroundManager?: {
+    findBySession: (sessionID: string) => ManagedBackgroundTask | undefined
+    getFallbackRetryResult?: (sessionID: string) => Promise<boolean> | undefined
+    consumeFallbackRetryResult?: (sessionID: string) => Promise<boolean> | undefined
+    hasValidSessionOutput?: (sessionID: string) => Promise<boolean>
+  }
+}
 
 const IDLE_TRANSITION_SOURCE_STATUSES: ReadonlySet<MemberStatus> = new Set(["running"])
 const COMPLETED_TRANSITION_SOURCE_STATUSES: ReadonlySet<MemberStatus> = new Set(["running", "idle", "pending"])
@@ -54,7 +64,43 @@ async function transitionMemberStatus(
   })
 }
 
-export function createTeamMemberStatusHandler(config: TeamModeConfig): HookImpl {
+async function shouldKeepBackgroundManagedMemberRunning(
+  deps: TeamMemberStatusHandlerDeps,
+  sessionID: string,
+  teamRunId: string,
+): Promise<boolean> {
+  const task = deps.backgroundManager?.findBySession(sessionID)
+  if (!task || task.teamRunId !== teamRunId) {
+    return false
+  }
+
+  if (task.status !== "pending" && task.status !== "running") {
+    return false
+  }
+
+  const retryResult = deps.backgroundManager?.consumeFallbackRetryResult?.(sessionID)
+    ?? deps.backgroundManager?.getFallbackRetryResult?.(sessionID)
+  if (retryResult) {
+    const retried = await retryResult.catch((error) => {
+      log("team member background fallback result failed during idle status", {
+        event: "team-mode-member-idle-background-fallback-result-failed",
+        teamRunId,
+        sessionID,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      return false
+    })
+    if (retried) return true
+  }
+
+  const hasValidOutput = await deps.backgroundManager?.hasValidSessionOutput?.(sessionID)
+  return hasValidOutput === false
+}
+
+export function createTeamMemberStatusHandler(
+  config: TeamModeConfig,
+  deps: TeamMemberStatusHandlerDeps = {},
+): HookImpl {
   return async ({ event }: HookInput): Promise<void> => {
     if (event.type === "session.idle") {
       const sessionID = getSessionIDFromIdleEvent(event.properties)
@@ -62,6 +108,15 @@ export function createTeamMemberStatusHandler(config: TeamModeConfig): HookImpl 
       try {
         const runtimeMember = await findResolvedMemberSession(sessionID, config, "team member status handler")
         if (runtimeMember === null) return
+        if (await shouldKeepBackgroundManagedMemberRunning(deps, sessionID, runtimeMember.teamRunId)) {
+          log("team member idle deferred to background task", {
+            event: "team-mode-member-idle-background-managed",
+            teamRunId: runtimeMember.teamRunId,
+            memberName: runtimeMember.memberName,
+            sessionID,
+          })
+          return
+        }
         await transitionMemberStatus(runtimeMember, IDLE_TRANSITION_SOURCE_STATUSES, "idle", config, sessionID, "idled")
       } catch (error) {
         log("team member status handler failed on session.idle", {

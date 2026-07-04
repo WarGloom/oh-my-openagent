@@ -195,6 +195,74 @@ describe("createTeamMemberErrorHandler", () => {
     expect(workerInboxEntries).not.toContain(`${messageId}.json`)
   })
 
+  test("keeps a retryable background-managed member running while fallback recovery owns the error", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    const config = createConfig(baseDir)
+    const teamRunId = randomUUID()
+    await seedRuntimeState(createRuntimeState(teamRunId), config)
+    const consumedSessions: string[] = []
+    const handler = createTeamMemberErrorHandler(config, {
+      backgroundManager: {
+        findBySession: () => ({
+          status: "running",
+          teamRunId,
+        }),
+        consumeFallbackRetryResult: (sessionID: string) => {
+          consumedSessions.push(sessionID)
+          return Promise.resolve(true)
+        },
+        getFallbackRetryResult: () => {
+          throw new Error("consume should be preferred")
+        },
+      },
+    })
+
+    // when
+    await handler({
+      event: {
+        type: "session.error",
+        properties: { sessionID: "member-session", error: new Error("hit rate limit") },
+      },
+    })
+
+    // then
+    const runtimeState = await loadRuntimeState(teamRunId, config)
+    expect(runtimeState.status).toBe("active")
+    expect(runtimeState.members[0]?.status).toBe("running")
+    expect(consumedSessions).toEqual(["member-session"])
+  })
+
+  test("marks a retryable background-managed member errored when fallback recovery does not start", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    const config = createConfig(baseDir)
+    const teamRunId = randomUUID()
+    await seedRuntimeState(createRuntimeState(teamRunId), config)
+    const handler = createTeamMemberErrorHandler(config, {
+      backgroundManager: {
+        findBySession: () => ({
+          status: "running",
+          teamRunId,
+        }),
+        getFallbackRetryResult: () => Promise.resolve(false),
+      },
+    })
+
+    // when
+    await handler({
+      event: {
+        type: "session.error",
+        properties: { sessionID: "member-session", error: new Error("hit rate limit") },
+      },
+    })
+
+    // then
+    const runtimeState = await loadRuntimeState(teamRunId, config)
+    expect(runtimeState.status).toBe("active")
+    expect(runtimeState.members[0]?.status).toBe("errored")
+  })
+
   test("marks the member errored during the spawn race when the registry tracks the fresh session before disk state persists it", async () => {
     // given
     const baseDir = await createTemporaryBaseDir()

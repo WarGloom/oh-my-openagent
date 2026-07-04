@@ -89,6 +89,100 @@ describe("createTeamMemberStatusHandler", () => {
     expect(runtimeState.members[0]?.status).toBe("idle")
   })
 
+  test("keeps a background-managed member running when idle has no valid output", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    const config = createConfig(baseDir)
+    const teamRunId = randomUUID()
+    await seedRuntimeState(createRuntimeState(teamRunId, buildMember({ status: "running" })), config)
+    const handler = createTeamMemberStatusHandler(config, {
+      backgroundManager: {
+        findBySession: () => ({ status: "running", teamRunId }),
+        hasValidSessionOutput: async () => false,
+      },
+    })
+
+    // when
+    await handler({ event: { type: "session.idle", properties: { sessionID: "member-session" } } })
+
+    // then
+    const runtimeState = await loadRuntimeState(teamRunId, config)
+    expect(runtimeState.members[0]?.status).toBe("running")
+  })
+
+  test("keeps a background-managed member running while fallback retry owns idle recovery", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    const config = createConfig(baseDir)
+    const teamRunId = randomUUID()
+    await seedRuntimeState(createRuntimeState(teamRunId, buildMember({ status: "running" })), config)
+    const consumedSessions: string[] = []
+    const handler = createTeamMemberStatusHandler(config, {
+      backgroundManager: {
+        findBySession: () => ({ status: "running", teamRunId }),
+        consumeFallbackRetryResult: (sessionID: string) => {
+          consumedSessions.push(sessionID)
+          return Promise.resolve(true)
+        },
+        getFallbackRetryResult: () => {
+          throw new Error("consume should be preferred")
+        },
+        hasValidSessionOutput: async () => true,
+      },
+    })
+
+    // when
+    await handler({ event: { type: "session.idle", properties: { sessionID: "member-session" } } })
+
+    // then
+    const runtimeState = await loadRuntimeState(teamRunId, config)
+    expect(runtimeState.members[0]?.status).toBe("running")
+    expect(consumedSessions).toEqual(["member-session"])
+  })
+
+  test("keeps a background-managed member running when fallback does not start and idle still has no output", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    const config = createConfig(baseDir)
+    const teamRunId = randomUUID()
+    await seedRuntimeState(createRuntimeState(teamRunId, buildMember({ status: "running" })), config)
+    const handler = createTeamMemberStatusHandler(config, {
+      backgroundManager: {
+        findBySession: () => ({ status: "running", teamRunId }),
+        getFallbackRetryResult: () => Promise.resolve(false),
+        hasValidSessionOutput: async () => false,
+      },
+    })
+
+    // when
+    await handler({ event: { type: "session.idle", properties: { sessionID: "member-session" } } })
+
+    // then
+    const runtimeState = await loadRuntimeState(teamRunId, config)
+    expect(runtimeState.members[0]?.status).toBe("running")
+  })
+
+  test("allows a background-managed member to idle after valid output", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    const config = createConfig(baseDir)
+    const teamRunId = randomUUID()
+    await seedRuntimeState(createRuntimeState(teamRunId, buildMember({ status: "running" })), config)
+    const handler = createTeamMemberStatusHandler(config, {
+      backgroundManager: {
+        findBySession: () => ({ status: "running", teamRunId }),
+        hasValidSessionOutput: async () => true,
+      },
+    })
+
+    // when
+    await handler({ event: { type: "session.idle", properties: { sessionID: "member-session" } } })
+
+    // then
+    const runtimeState = await loadRuntimeState(teamRunId, config)
+    expect(runtimeState.members[0]?.status).toBe("idle")
+  })
+
   test("leaves an already-idle member untouched on a subsequent session.idle", async () => {
     // given
     const baseDir = await createTemporaryBaseDir()

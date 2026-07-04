@@ -24,7 +24,7 @@ export type StartWorkHookOutput = {
   readonly parts: Array<{ readonly type: string; readonly text?: string }>
 }
 
-export type SessionModelOverride = { readonly providerID: string; readonly modelID: string }
+export type SessionModelOverride = { readonly providerID: string; readonly modelID: string; readonly variant?: unknown }
 export type SessionModelSelection = {
   readonly model: SessionModelOverride
   readonly variant?: string

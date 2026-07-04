@@ -11,11 +11,33 @@ import { TeamModeConfigSchema } from "../../../config/schema/team-mode"
 import type { RuntimeState, TeamSpec } from "@oh-my-opencode/team-core/types"
 import { parseTeamCreateArgs } from "./lifecycle-inline-spec"
 
+type ToolExecutionResult = string | { output: string }
+type ToolSchemaNode = {
+  type?: string
+  description?: string
+  options?: ToolSchemaNode[]
+  shape?: Record<string, ToolSchemaNode>
+  element?: ToolSchemaNode
+  unwrap?: () => ToolSchemaNode
+}
+
 const runtimes = new Map<string, RuntimeState>()
 let nextTeamRunNumber = 1
 
 function clone<TValue>(value: TValue): TValue {
   return structuredClone(value)
+}
+
+function parseToolResult<TValue>(value: ToolExecutionResult): TValue {
+  return JSON.parse(typeof value === "string" ? value : value.output) as TValue
+}
+
+function requireInlineSpecSchema(node: ToolSchemaNode): ToolSchemaNode {
+  if (node.unwrap === undefined) {
+    throw new Error("inline_spec schema missing unwrap")
+  }
+
+  return node.unwrap()
 }
 
 function createToolContext(sessionID: string, agent = "test-agent"): ToolContext {
@@ -119,7 +141,7 @@ describe("createTeamCreateTool inline_spec normalization", () => {
     }
 
     // when
-    const result = JSON.parse(await teamCreateTool.execute({ inline_spec: inlineSpec }, createToolContext("lead-session")))
+    const result = parseToolResult<{ runtimeState: RuntimeState }>(await teamCreateTool.execute({ inline_spec: inlineSpec }, createToolContext("lead-session")))
     const firstCall = createTeamRunMock.mock.calls[0]
 
     // then
@@ -142,18 +164,24 @@ describe("createTeamCreateTool inline_spec normalization", () => {
     const teamCreateTool = createTeamCreateToolForTest(createTeamCreateTool, config)
 
     // when
-    const inlineSpecSchema = teamCreateTool.args.inline_spec.unwrap()
-    const inlineSpecObjectSchema = inlineSpecSchema.options.find((option) => option.type === "object")
+    const inlineSpecArg = teamCreateTool.args.inline_spec as unknown as ToolSchemaNode
+    const inlineSpecSchema = requireInlineSpecSchema(inlineSpecArg)
+    const inlineSpecObjectSchema = inlineSpecSchema.options?.find((option) => option.type === "object")
 
     // then
     expect(inlineSpecSchema.type).toBe("union")
-    expect(inlineSpecSchema.options.map((option) => option.type)).toEqual(["object", "string"])
-    expect(inlineSpecObjectSchema?.shape.name.type).toBe("string")
-    expect(inlineSpecObjectSchema?.shape.members.type).toBe("array")
-    expect(inlineSpecObjectSchema?.shape.members.element.type).toBe("object")
-    expect(inlineSpecObjectSchema?.shape.members.element.shape.category.type).toBe("optional")
-    expect(inlineSpecObjectSchema?.shape.members.element.shape.subagent_type.type).toBe("optional")
-    expect(teamCreateTool.args.inline_spec.description).toContain("members must be a flat array")
+    expect(inlineSpecSchema.options?.map((option) => option.type)).toEqual(["object", "string"])
+    expect(inlineSpecObjectSchema?.shape?.name?.type).toBe("string")
+    expect(inlineSpecObjectSchema?.shape?.members?.type).toBe("array")
+    expect(inlineSpecObjectSchema?.shape?.members?.element?.type).toBe("object")
+    expect(inlineSpecObjectSchema?.shape?.members?.element?.shape?.category?.type).toBe("optional")
+    expect(inlineSpecObjectSchema?.shape?.members?.element?.shape?.subagent_type?.type).toBe("optional")
+    expect(teamCreateTool.args).not.toHaveProperty("leadSessionId")
+    expect(inlineSpecArg.description).toContain("members must be a flat array")
+    expect(inlineSpecArg.description).toContain("Default shape:")
+    expect(inlineSpecArg.description).toContain("category: \"quick\"")
+    expect(inlineSpecArg.description).toContain("prompt: \"Analyze project structure.\"")
+    expect(inlineSpecArg.description).toContain("Omit unused optional keys")
   })
 
   test("accepts stringified inline_spec values from tool calling", async () => {
@@ -172,7 +200,7 @@ describe("createTeamCreateTool inline_spec normalization", () => {
     })
 
     // when
-    const result = JSON.parse(await teamCreateTool.execute({ inline_spec: inlineSpec }, createToolContext("lead-session")))
+    const result = parseToolResult<{ runtimeState: RuntimeState }>(await teamCreateTool.execute({ inline_spec: inlineSpec }, createToolContext("lead-session")))
 
     // then
     expect(result.runtimeState.members.map((member: { name: string }) => member.name)).toEqual(["lead", "quick-1", "deep-1", "deep-2"])
@@ -241,6 +269,8 @@ describe("createTeamCreateTool inline_spec normalization", () => {
 
     // then
     expect(errorMessage).toContain("team_create requires exactly one of teamName or inline_spec")
+    expect(errorMessage).toContain("Omit unused optional args and member keys")
+    expect(errorMessage).toContain("independent read-only searches")
     expect(errorMessage).toContain("team_create({ inline_spec: { name:")
   })
 
@@ -291,6 +321,46 @@ describe("createTeamCreateTool inline_spec normalization", () => {
         { name: "agent-3-quality-process-analyst", kind: "category", category: "quick" },
       ],
     })
+  })
+
+  test("drops empty optional member kind fields from inline_spec tool calls", async () => {
+    // given
+    const createTeamCreateTool = await loadCreateTeamCreateTool()
+    const config = createConfig()
+    const teamCreateTool = createTeamCreateToolForTest(createTeamCreateTool, config)
+    const inlineSpec = {
+      name: "langfuse implementation hyperplan",
+      members: [
+        {
+          name: "low friction skeptic",
+          kind: "",
+          category: "unspecified-low",
+          subagent_type: "",
+          prompt: "Analyze the plan from a minimal-change perspective.",
+        },
+        {
+          name: "architecture ultrabrain",
+          category: "ultrabrain",
+          subagent_type: "",
+          prompt: "Analyze architecture boundaries and reversibility.",
+        },
+      ],
+    }
+
+    // when
+    await teamCreateTool.execute({ inline_spec: inlineSpec, teamName: "" }, createToolContext("lead-session", "Sisyphus"))
+    const spec = createTeamRunMock.mock.calls[0]?.[0]
+
+    // then
+    expect(spec).toMatchObject({
+      name: "langfuse-implementation-hyperplan",
+      members: [
+        { name: "lead", kind: "subagent_type" },
+        { name: "low-friction-skeptic", kind: "category", category: "unspecified-low" },
+        { name: "architecture-ultrabrain", kind: "category", category: "ultrabrain" },
+      ],
+    })
+    expect(JSON.stringify(spec?.members)).not.toContain("subagent_type\":\"\"")
   })
 
   test("accepts legacy member permission fields in inline_spec", async () => {
@@ -383,7 +453,6 @@ describe("createTeamCreateTool inline_spec normalization", () => {
         teamAllowedPaths: [],
         sessionPermission: "",
       },
-      leadSessionId: "",
     }
 
     // when
@@ -452,14 +521,14 @@ describe("createTeamCreateTool inline_spec normalization", () => {
 })
 
 describe("parseTeamCreateArgs empty-string optional handling", () => {
-  test("treats empty-string teamName and leadSessionId as absent when inline_spec is provided", () => {
+  test("strips a legacy leadSessionId when inline_spec is provided", () => {
     // given the tool-calling host serializes omitted optionals as empty strings
     const inlineSpec = { name: "smoke-test-team", members: [{ name: "worker", category: "quick", prompt: "Do the assigned work." }] }
-    const args = parseTeamCreateArgs({ teamName: "", inline_spec: inlineSpec, leadSessionId: "" })
+    const args = parseTeamCreateArgs({ teamName: "", inline_spec: inlineSpec, leadSessionId: "stale-session" })
 
     // then inline_spec is accepted as the single provided option
     expect(args.teamName ?? undefined).toBeUndefined()
-    expect(args.leadSessionId ?? undefined).toBeUndefined()
+    expect(args).not.toHaveProperty("leadSessionId")
     expect(args.inline_spec).toEqual(inlineSpec)
   })
 

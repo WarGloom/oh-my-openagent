@@ -724,7 +724,7 @@ describe("createChatMessageHandler - /goal raw slash fallback", () => {
 
 })
 
-function createMockInput(agent?: string, model?: { providerID: string; modelID: string }) {
+function createMockInput(agent?: string, model?: { providerID: string; modelID: string; variant?: string }) {
   return {
     sessionID: "test-session",
     agent,
@@ -986,6 +986,34 @@ describe("createChatMessageHandler - TUI variant passthrough", () => {
     //#then
     expect(output.message["model"]).toBeUndefined()
     expect(getSessionModel("test-session")).toEqual(nextModel)
+  })
+
+  test("stores the message model variant instead of a stale top-level variant", async () => {
+    //#given
+    const args = createMockHandlerArgs({ shouldOverride: false })
+    const handler = createChatMessageHandler(args)
+    const input = createMockInput("Sisyphus-Junior", {
+      providerID: "github-copilot",
+      modelID: "claude-opus-4.8",
+      variant: "high",
+    })
+    const output = createMockOutput("xhigh")
+    output.message["model"] = {
+      providerID: "github-copilot",
+      modelID: "claude-opus-4.8",
+      variant: "high",
+    }
+
+    //#when
+    await handler(input, output)
+
+    //#then
+    expect(getStoredSessionModel("test-session")).toEqual({
+      providerID: "github-copilot",
+      modelID: "claude-opus-4.8",
+      variant: "high",
+      agent: "Sisyphus-Junior",
+    })
   })
 
   test("does not reuse a previous agent model when switching to another configured agent", async () => {

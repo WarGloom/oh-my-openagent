@@ -12,6 +12,8 @@ OFF by default. Enable via JSONC config.
 - Long-running multi-step refactors split across specialised agents.
 - Research + implementation pipelines that need shared task lists.
 
+Do not use team mode for independent one-off searches, read-only audits, or fact gathering where workers do not need shared state or peer messaging. Use parallel background `task(..., run_in_background=true, load_skills=[])` subagents for that. Team mode is for coordinated work with shared tasks, mailbox state, lifecycle closure, worktrees, or tmux visibility.
+
 ## Enable
 
 Add to user config `~/.config/opencode/oh-my-openagent.jsonc` or project config `.opencode/oh-my-openagent.jsonc`:
@@ -51,6 +53,22 @@ All fields live under `team_mode`:
 
 Team specs live under `~/.omo/teams/{name}/config.json` (user scope) or `<project>/.omo/teams/{name}/config.json` (project scope):
 
+For one-off inline `team_create({ inline_spec })` calls, prefer the runtime-safe category-member shorthand and omit unused optional keys:
+
+```json
+{
+  "name": "project-analysis-team",
+  "members": [
+    { "name": "structure-analyst", "category": "quick", "prompt": "Analyze project structure and report concrete files." },
+    { "name": "quality-analyst", "category": "quick", "prompt": "Analyze tests, CI/CD, build scripts, and conventions." }
+  ]
+}
+```
+
+Do not pass empty strings for unused fields such as `teamName`, `kind`, `category`, or `subagent_type`. Omit unused keys entirely. `team_create` always binds lead ownership to the calling session; callers cannot override the lead session ID.
+
+Declared team config files can use the full canonical discriminated member schema:
+
 ```json
 {
   "name": "ccapi-explorers",
@@ -71,6 +89,8 @@ When both scopes define the same team name, project scope wins.
 
 - **`kind: "subagent_type"`** — direct agent (atlas, sisyphus, sisyphus-junior, hephaestus). `prompt` optional.
 - **`kind: "category"`** — routed through `sisyphus-junior` with the chosen category model. `prompt` REQUIRED.
+
+Inline category shorthand `{ "name": "worker", "category": "quick", "prompt": "..." }` is preferred for ad-hoc teams. If you use canonical `kind`, make the fields match the kind and omit unrelated keys.
 
 ## Eligible agents
 
