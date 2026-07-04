@@ -534,9 +534,11 @@ OUTPUT FORMAT:
 
 ## Phase 2: Wait & Collect
 
-After launching all 5 agents in one turn, wait for completions in bounded
-cycles. Do not treat a timeout, ack-only reply, or empty child result as
-a PASS.
+After launching all 5 agents in one turn, use the harness-native completion
+flow. In OpenCode, **end your response**. Wait for the all-complete system notification, then collect each result via `background_output(task_id="bg_...")`.
+In Codex, wait for completions in bounded cycles via the Codex mapping above
+(`wait_agent`, then the child's substantive final result). Do not treat a
+timeout, ack-only reply, or empty child result as a PASS.
 
 As each completes, collect via the Codex mapping above (`multi_agent_v1.wait_agent`,
 then the child's substantive final result). Preserve completed lane

@@ -188,7 +188,7 @@ Agent tab cycling defaults to Sisyphus, Hephaestus, Prometheus, Atlas. Override 
 | `variant`         | string        | Model variant: `max`, `high`, `medium`, `low`, `xhigh`. Normalized to supported values |
 | `maxTokens`       | number        | Max response tokens                                    |
 | `thinking`        | object        | Anthropic extended thinking                            |
-| `reasoningEffort` | string        | OpenAI reasoning: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Normalized to supported values |
+| `reasoningEffort` | string        | OpenAI reasoning: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`. Normalized to supported values |
 | `textVerbosity`   | string        | Text verbosity: `low`, `medium`, `high`                |
 | `providerOptions` | object        | Provider-specific options                              |
 
@@ -677,19 +677,25 @@ Auto-switches to backup models on API errors.
     "max_fallback_attempts": 3,
     "cooldown_seconds": 60,
     "timeout_seconds": 30,
+    "first_progress_timeout_seconds": 30,
+    "stall_timeout_seconds": 600,
+    "hard_timeout_seconds": 1800,
     "notify_on_fallback": true
   }
 }
 ```
 
-| Option                  | Default             | Description                                                                                                                    |
-| ----------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `enabled`               | `false`             | Enable runtime fallback                                                                                                        |
-| `retry_on_errors`       | `[429,500,502,503,504]` | HTTP codes that trigger fallback. Also handles classified provider key errors.                                              |
-| `max_fallback_attempts` | `3`                 | Max fallback attempts per session (1–20)                                                                                       |
-| `cooldown_seconds`      | `60`                | Seconds before retrying a failed model                                                                                         |
-| `timeout_seconds`       | `30`                | Seconds before forcing next fallback. **Set to `0` to disable timeout-based escalation and `message.updated` provider retry signal detection.** Structured `session.status` retry events can still trigger fallback. |
-| `notify_on_fallback`    | `true`              | Toast notification on model switch                                                                                             |
+| Option                           | Default             | Description                                                                                                                                                          |
+| -------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`                        | `false`             | Enable runtime fallback                                                                                                                                              |
+| `retry_on_errors`                | `[429,500,502,503,504]` | HTTP codes that trigger fallback. Also handles classified provider key errors.                                                                                       |
+| `max_fallback_attempts`          | `3`                 | Max fallback attempts per session (1-20)                                                                                                                             |
+| `cooldown_seconds`               | `60`                | Seconds before retrying a failed model                                                                                                                               |
+| `timeout_seconds`                | `30`                | Legacy alias for `first_progress_timeout_seconds`. Set to `0` to disable timeout fallback and `message.updated` provider retry signal detection when newer fields are not configured; direct retryable errors and structured `session.status` retry events still fallback. |
+| `first_progress_timeout_seconds` | `30`                | Seconds to wait for first assistant/model progress before trying the next fallback model.                                                                            |
+| `stall_timeout_seconds`          | `600`               | Seconds to wait after assistant/model progress stops before trying the next fallback model. Tool progress is treated as unsafe to auto-replay.                       |
+| `hard_timeout_seconds`           | `1800`              | Absolute cap for one fallback attempt, independent of progress.                                                                                                      |
+| `notify_on_fallback`             | `true`              | Toast notification on model switch                                                                                                                                   |
 
 #### Speeding Up Fallback (Proxy APIs)
 
@@ -703,7 +709,8 @@ If you are using a proxy API provider, they may return different error codes (e.
     "retry_on_errors": [400, 401, 403, 404, 429, 500, 502, 503, 504],
     "max_fallback_attempts": 3,
     "cooldown_seconds": 15, // Shorter cooldown
-    "timeout_seconds": 10   // Detect hung proxy requests faster
+    "first_progress_timeout_seconds": 10, // Detect no initial response faster
+    "stall_timeout_seconds": 120 // Keep long thinking safe, but catch stalled streams
   }
 }
 ```

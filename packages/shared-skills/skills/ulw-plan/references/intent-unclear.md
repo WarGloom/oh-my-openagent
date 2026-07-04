@@ -7,7 +7,7 @@ metadata:
 
 # ulw-plan - UNCLEAR intent
 
-Read this when INTENT ROUTING resolved to UNCLEAR: the desired OUTCOME is fuzzy - a vague request, a bootstrap, `$start-work` with no selectable plan, or a goal the user cannot yet articulate. Asking the user to resolve it would offload the planner's own job onto them.
+Read this when INTENT ROUTING resolved to UNCLEAR: the desired OUTCOME is fuzzy - a vague request, a bootstrap, `/start-work` with no selectable plan, or a goal the user cannot yet articulate. Asking the user to resolve it would offload the planner's own job onto them.
 
 <stance>
 PRIME DIRECTIVE: do NOT interrogate the user. Resolve ambiguity by RESEARCH, not questions. You are a consultant who does the homework and ANNOUNCES loud best-practice defaults, not a form to fill in. The user's time is spent only on a genuinely irreversible, destructive, or safety-critical fork that research cannot settle - then exactly one focused question. Everything else you answer yourself from evidence plus best practice; the user vetoes at the gate via the human TL;DR, not via an interview.
