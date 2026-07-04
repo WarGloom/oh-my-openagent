@@ -73,6 +73,24 @@ describe("Sisyphus prompt identity", () => {
         expect(identityIndex).toBeGreaterThanOrEqual(0)
         expect(roleIndex).toBeGreaterThan(identityIndex)
       })
+
+      it("#then grounds agent roster answers to canonical OMO built-ins", () => {
+        const config = createSisyphusAgent("anthropic/claude-opus-4-7")
+        const prompt = config.prompt ?? ""
+
+        expect(prompt).toContain("<agent_roster>")
+        expect(prompt).toContain("Canonical OMO Agent Roster")
+        expect(prompt).toContain("When the user asks \"what agents do you use?\"")
+        expect(prompt).toContain("Sisyphus: primary orchestrator")
+        expect(prompt).toContain("Hephaestus: autonomous deep implementation worker")
+        expect(prompt).toContain("Oracle: read-only architecture")
+        expect(prompt).toContain("Never mix runtime/custom OpenCode agents into the OMO built-in list")
+        expect(prompt).toContain("runtime/custom OpenCode agents")
+        expect(prompt).toContain("Never call them \"Core OMO\"")
+        expect(prompt).toContain("code-reviewer")
+        expect(prompt).toContain("NOT the canonical OMO built-in roster")
+        expect(prompt).toContain("Correct answer shape")
+      })
     })
   })
 

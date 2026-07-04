@@ -204,6 +204,7 @@ task(category="quick", load_skills=[], run_in_background=false, prompt="...task 
 
 **Background management:**
 - Collect with background task IDs (`bg_...`): `background_output(task_id="bg_...")`
+- If no independent work remains, end the response and wait for the all-complete system reminder. Do not collect after partial reminders. Never use shell `sleep`, `timeout`, polling loops, or blocking commands to wait for background tasks.
 - Continue follow-ups with continuation task IDs (`ses_...`): `task(task_id="ses_...")`
 - Cancel DISPOSABLE background tasks individually before final answer: `background_cancel(taskId="bg_explore_xxx")`
 - **NEVER `background_cancel(all=true)`** — it kills tasks whose output you have not collected.

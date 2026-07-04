@@ -1,6 +1,6 @@
 import type { AgentConfig } from "@opencode-ai/sdk"
 import type { AgentMode, AgentPromptMetadata } from "./types"
-import { createAgentToolRestrictions } from "../shared/permission-compat"
+import { createAgentToolRestrictions, DENY_HEAVY_MCP_TOOLS } from "../shared/permission-compat"
 
 const MODE: AgentMode = "subagent"
 
@@ -26,8 +26,11 @@ export const EXPLORE_PROMPT_METADATA: AgentPromptMetadata = {
 
 export function createExploreAgent(model: string): AgentConfig {
   const restrictions = createAgentToolRestrictions(
-    ["write", "edit", "apply_patch", "task", "call_omo_agent"],
-    ["lsp_symbols", "lsp_goto_definition", "lsp_find_references", "lsp_diagnostics"],
+    [
+      "write", "edit", "apply_patch", "task", "call_omo_agent",
+      ...Object.keys(DENY_HEAVY_MCP_TOOLS),
+    ],
+    ["lsp_symbols", "lsp_goto_definition", "lsp_find_references", "lsp_diagnostics", "ast_grep_search"],
   )
 
   return {

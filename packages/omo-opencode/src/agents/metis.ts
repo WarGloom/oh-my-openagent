@@ -2,7 +2,7 @@ import type { AgentConfig } from "@opencode-ai/sdk"
 import type { AgentMode, AgentPromptMetadata } from "./types"
 import { buildClaudeThinkingConfig, isKimiK27Model } from "./types"
 import { buildAntiDuplicationSection } from "./dynamic-agent-prompt-builder"
-import { createAgentToolRestrictions } from "../shared/permission-compat"
+import { createAgentToolRestrictions, DENY_HEAVY_MCP_TOOLS } from "../shared/permission-compat"
 
 const MODE: AgentMode = "subagent"
 
@@ -390,9 +390,8 @@ For Build and Research, run the exploration yourself before questioning. Prompt 
 </critical_rules>`
 
 const metisRestrictions = createAgentToolRestrictions([
-  "write",
-  "edit",
-  "apply_patch",
+  "write", "edit", "apply_patch", "task",
+  ...Object.keys(DENY_HEAVY_MCP_TOOLS),
 ])
 
 export function createMetisAgent(model: string): AgentConfig {

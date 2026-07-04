@@ -138,6 +138,20 @@ describe("buildCategorySkillsDelegationGuide", () => {
     expect(result).toContain("`quick`")
     expect(result).toContain("Trivial tasks")
   })
+
+  it("#given categories #when building #then includes routine verification routing policy", () => {
+    //#given
+    const allSkills = [...builtinSkills]
+
+    //#when
+    const result = buildCategorySkillsDelegationGuide(categories, allSkills)
+
+    //#then
+    expect(result).toContain("Routine Verification Routing")
+    expect(result).toContain('category="quick"')
+    expect(result).toContain("must not make autonomous fixes")
+    expect(result).toContain("Never route UI/design, architecture, hard debugging")
+  })
 })
 
 describe("buildUltraworkSection", () => {
@@ -193,6 +207,9 @@ describe("buildParallelDelegationSection", () => {
     expect(result).toContain("run_in_background=true")
     expect(result).toContain("4 independent units")
     expect(result).toContain("NEVER implement directly")
+    expect(result).toContain("Verification-only test/typecheck/build/log-collection")
+    expect(result).toContain('category="quick"')
+    expect(result).toContain("must not make autonomous fixes")
   })
 
   it("#given non-Claude model with unspecified-high category #when building #then returns aggressive delegation section", () => {
@@ -235,7 +252,7 @@ describe("buildParallelDelegationSection", () => {
 })
 
 describe("buildNonClaudePlannerSection", () => {
-  it("#given non-Claude model #when building #then returns plan agent section", () => {
+  it("#given non-Claude model #when building #then returns OMO-native planner section", () => {
     //#given
     const model = "google/gemini-3.1-pro"
 
@@ -243,9 +260,12 @@ describe("buildNonClaudePlannerSection", () => {
     const result = buildNonClaudePlannerSection(model)
 
     //#then
-    expect(result).toContain("Plan Agent")
-    expect(result).toContain("task_id")
-    expect(result).toContain("Multi-step")
+    expect(result).toContain("OMO-Native Planner")
+    expect(result).toContain('subagent_type="metis"')
+    expect(result).toContain('subagent_type="momus"')
+    expect(result).toContain('subagent_type="oracle"')
+    expect(result).toContain("Prometheus")
+    expect(result).not.toContain('subagent_type="plan"')
   })
 
   it("#given Claude model #when building #then returns empty", () => {
@@ -259,7 +279,7 @@ describe("buildNonClaudePlannerSection", () => {
     expect(result).toBe("")
   })
 
-  it("#given GPT model #when building #then returns plan agent section", () => {
+  it("#given GPT model #when building #then returns OMO-native planner section", () => {
     //#given
     const model = "openai/gpt-5.4"
 
@@ -267,8 +287,9 @@ describe("buildNonClaudePlannerSection", () => {
     const result = buildNonClaudePlannerSection(model)
 
     //#then
-    expect(result).toContain("Plan Agent")
+    expect(result).toContain("OMO-Native Planner")
+    expect(result).toContain('subagent_type="metis"')
+    expect(result).not.toContain('subagent_type="plan"')
     expect(result).not.toBe("")
   })
 })
-
