@@ -1,8 +1,13 @@
 import type { PluginContext } from "./types"
+import { randomUUID } from "node:crypto"
 
 import { getMainSessionID } from "../features/claude-code-session-state"
 import { log, replaceToolArgs } from "../shared"
+import { stripInvisibleAgentCharacters } from "../shared/agent-display-names"
 import { resolveSessionAgent } from "./session-agent-resolver"
+import { isRalphLoopResumeArgument, parseRalphLoopArguments } from "../hooks/ralph-loop/command-arguments"
+import { ULTRAWORK_VERIFICATION_PROMISE } from "../hooks/ralph-loop/constants"
+import { readState, writeState } from "../hooks/ralph-loop/storage"
 import { stopContinuation } from "./stop-continuation"
 
 import type { CreatedHooks } from "../create-hooks"
@@ -24,6 +29,16 @@ function isPureSleepCommand(command: string): boolean {
     && commandLines.every((line) => /^sleep\s+\d+(?:\.\d+)?[smhd]?\s*$/i.test(line))
 }
 
+function getLoopCommandArguments(args: Record<string, unknown>, command: "ralph-loop" | "ulw-loop"): string {
+  const rawUserMessage = typeof args.user_message === "string" ? args.user_message.trim() : ""
+  if (rawUserMessage) {
+    return rawUserMessage
+  }
+
+  const rawName = typeof args.name === "string" ? args.name : ""
+  return rawName.replace(new RegExp(`^/?(${command})\\s*`, "i"), "")
+}
+
 export function createToolExecuteBeforeHandler(args: {
   ctx: PluginContext
   hooks: CreatedHooks
@@ -33,6 +48,26 @@ export function createToolExecuteBeforeHandler(args: {
   output: { args: Record<string, unknown> },
 ) => Promise<void> {
   const { ctx, hooks, backgroundManager } = args
+
+  function buildUltraworkOracleVerificationPrompt(prompt: string, originalTask: string, verificationAttemptId: string): string {
+    const verificationPrompt = [
+      "You are verifying the active ULTRAWORK loop result for this session.",
+      "",
+      "Original task:",
+      originalTask,
+      "",
+      "Review the work skeptically and critically.",
+      "Assume it may be incomplete, misleading, or subtly broken until the evidence proves otherwise.",
+      "Look for missing scope, weak verification, process violations, hidden regressions, and any reason the task should NOT be considered complete.",
+      "",
+      `If the work is fully complete, end your response with <promise>${ULTRAWORK_VERIFICATION_PROMISE}</promise>.`,
+      "If the work is not complete, explain the blocking issues clearly and DO NOT emit that promise.",
+      "",
+      `<ulw_verification_attempt_id>${verificationAttemptId}</ulw_verification_attempt_id>`,
+    ].join("\n")
+
+    return `${prompt ? `${prompt}\n\n` : ""}${verificationPrompt}`
+  }
 
   return async (input, output): Promise<void> => {
     // Strip mcp_ prefix from tool names — the model may emit mcp_background_output
@@ -68,6 +103,7 @@ export function createToolExecuteBeforeHandler(args: {
       }
     }
 
+    await hooks.runtimeFallback?.["tool.execute.before"]?.(input, output)
     await hooks.writeExistingFileGuard?.["tool.execute.before"]?.(input, output)
     await hooks.notepadWriteGuard?.["tool.execute.before"]?.(input, output)
     await hooks.questionLabelTruncator?.["tool.execute.before"]?.(input, output)
@@ -79,9 +115,10 @@ export function createToolExecuteBeforeHandler(args: {
     await hooks.directoryReadmeInjector?.["tool.execute.before"]?.(input, output)
     await hooks.rulesInjector?.["tool.execute.before"]?.(input, output)
     await hooks.tasksTodowriteDisabler?.["tool.execute.before"]?.(input, output)
-      await hooks.webfetchRedirectGuard?.["tool.execute.before"]?.(input, output)
-      await hooks.fsyncSkipWarning?.["tool.execute.before"]?.(input, output)
-      await hooks.prometheusMdOnly?.["tool.execute.before"]?.(input, output)
+    await hooks.serenaNavigationGuard?.["tool.execute.before"]?.(input, output)
+    await hooks.webfetchRedirectGuard?.["tool.execute.before"]?.(input, output)
+    await hooks.fsyncSkipWarning?.["tool.execute.before"]?.(input, output)
+    await hooks.prometheusMdOnly?.["tool.execute.before"]?.(input, output)
     await hooks.sisyphusJuniorNotepad?.["tool.execute.before"]?.(input, output)
     await hooks.atlasHook?.["tool.execute.before"]?.(input, output)
     await hooks.compactionTodoPreserver?.["tool.execute.before"]?.(input, output)
@@ -117,6 +154,75 @@ export function createToolExecuteBeforeHandler(args: {
         const resolvedAgent = await resolveSessionAgent(ctx.client, taskId)
         replaceToolArgs(output, { subagent_type: resolvedAgent ?? "continue" })
       }
+
+      const normalizedTaskSubagentType =
+        typeof output.args.subagent_type === "string" ? stripInvisibleAgentCharacters(output.args.subagent_type) : undefined
+      const prompt = typeof output.args.prompt === "string" ? output.args.prompt : ""
+      const loopState = typeof ctx.directory === "string" ? readState(ctx.directory) : null
+      const shouldInjectOracleVerification =
+        normalizedTaskSubagentType === "oracle"
+        && loopState?.active === true
+        && loopState.ultrawork === true
+        && loopState.verification_pending === true
+        && loopState.session_id === input.sessionID
+
+      if (shouldInjectOracleVerification) {
+        const verificationAttemptId = randomUUID()
+        log("[tool-execute-before] Injecting ULW oracle verification attempt", {
+          sessionID: input.sessionID,
+          callID: input.callID,
+          verificationAttemptId,
+          loopSessionID: loopState.session_id,
+        })
+        writeState(ctx.directory, {
+          ...loopState,
+          verification_attempt_id: verificationAttemptId,
+          verification_session_id: undefined,
+        })
+        replaceToolArgs(output, {
+          run_in_background: false,
+          prompt: buildUltraworkOracleVerificationPrompt(
+            prompt,
+            loopState.prompt,
+            verificationAttemptId,
+          ),
+        })
+      }
+    }
+
+    if (hooks.ralphLoop && input.tool === "skill") {
+      const rawName = typeof output.args.name === "string" ? output.args.name : undefined
+      const command = rawName?.replace(/^\//, "").toLowerCase()
+      const sessionID = input.sessionID || getMainSessionID()
+
+      if (command === "ralph-loop" && sessionID) {
+        const rawArgs = getLoopCommandArguments(output.args, "ralph-loop")
+        const parsedArguments = parseRalphLoopArguments(rawArgs)
+        const resumed = isRalphLoopResumeArgument(rawArgs)
+          && hooks.ralphLoop.resumeLoop?.(sessionID) === true
+        if (!resumed) {
+          hooks.ralphLoop.startLoop(sessionID, parsedArguments.prompt, {
+            maxIterations: parsedArguments.maxIterations,
+            completionPromise: parsedArguments.completionPromise,
+            strategy: parsedArguments.strategy,
+          })
+        }
+      } else if (command === "cancel-ralph" && sessionID) {
+        hooks.ralphLoop.cancelLoop(sessionID)
+      } else if (command === "ulw-loop" && sessionID) {
+        const rawArgs = getLoopCommandArguments(output.args, "ulw-loop")
+        const parsedArguments = parseRalphLoopArguments(rawArgs)
+        const resumed = isRalphLoopResumeArgument(rawArgs)
+          && hooks.ralphLoop.resumeLoop?.(sessionID) === true
+        if (!resumed) {
+          hooks.ralphLoop.startLoop(sessionID, parsedArguments.prompt, {
+            ultrawork: true,
+            maxIterations: parsedArguments.maxIterations,
+            completionPromise: parsedArguments.completionPromise,
+            strategy: parsedArguments.strategy,
+          })
+        }
+      }
     }
 
     if (input.tool === "skill") {
@@ -141,7 +247,7 @@ export function createToolExecuteBeforeHandler(args: {
 
       // Clear stop state when user explicitly resumes work via work-starting commands.
       // This ensures /stop-continuation persists until the user intentionally restarts.
-      const workStartingCommands = ["start-work"]
+      const workStartingCommands = ["start-work", "ralph-loop", "ulw-loop"]
       if (workStartingCommands.includes(command ?? "") && sessionID) {
         if (hooks.stopContinuationGuard?.isStopped(sessionID)) {
           hooks.stopContinuationGuard.clear(sessionID)

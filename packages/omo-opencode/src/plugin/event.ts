@@ -112,6 +112,7 @@ export function createEventHandler(args: {
       dedupWindowMs,
     });
     const syntheticIdle = normalizeSessionStatusToIdle(input) as EventInput | undefined;
+    let idleOnlyHooksDispatched = false;
 
     if (input.event.type === "session.idle") {
       const sessionID = getEventSessionID(input);
@@ -121,6 +122,8 @@ export function createEventHandler(args: {
         const emittedAt = recentSyntheticIdles.get(sessionID);
         if (emittedAt !== undefined && now - emittedAt < dedupWindowMs) recentSyntheticIdles.delete(sessionID);
       }
+      await dispatchIdleOnlyHooks(input);
+      idleOnlyHooksDispatched = true;
       if (sessionID) {
         const now = Date.now();
         recentRealIdles.set(sessionID, now);
@@ -172,7 +175,7 @@ export function createEventHandler(args: {
       if (sessionID) {
         await dispatchOpenClawSessionEvent({ pluginConfig, pluginContext, managers, rawEvent: event.type, sessionID });
       }
-      await dispatchIdleOnlyHooks(input);
+      if (!idleOnlyHooksDispatched) await dispatchIdleOnlyHooks(input);
       await Promise.resolve().then(() => managers.monitorManager?.handleEvent({
         type: "session.idle",
         sessionId: resolveSessionEventID(props) ?? "",

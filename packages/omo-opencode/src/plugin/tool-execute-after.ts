@@ -80,16 +80,18 @@ export function createToolExecuteAfterHandler(args: {
     input: ToolExecuteAfterInput,
     output: ToolExecuteAfterOutput | undefined,
   ): Promise<void> => {
-    if (!output) return
-
-    appendCodegraphInitGuidance(input, output, getPluginDirectory(ctx))
-
     const hookInput = {
       tool: input.tool,
       sessionID: input.sessionID,
       callID: input.callID ?? input.callId ?? input.call_id ?? "",
       ...(input.args === undefined ? {} : { args: input.args }),
     }
+
+    await hooks.runtimeFallback?.["tool.execute.after"]?.(hookInput, output)
+
+    if (!output) return
+
+    appendCodegraphInitGuidance(input, output, getPluginDirectory(ctx))
 
     const nativeSessionId = getMetadataString(output.metadata, ["sessionId", "sessionID", "session_id"])
     const stored = recoverToolMetadata(input.sessionID, input)
@@ -134,6 +136,7 @@ export function createToolExecuteAfterHandler(args: {
       await hooks.delegateTaskRetry?.["tool.execute.after"]?.(hookInput, output)
       await hooks.atlasHook?.["tool.execute.after"]?.(hookInput, output)
       await hooks.taskResumeInfo?.["tool.execute.after"]?.(hookInput, output)
+      await hooks.serenaNavigationGuard?.["tool.execute.after"]?.(hookInput, output)
       await hooks.readImageResizer?.["tool.execute.after"]?.(hookInput, output)
       await hooks.hashlineReadEnhancer?.["tool.execute.after"]?.(hookInput, output)
       await hooks.webfetchRedirectGuard?.["tool.execute.after"]?.(hookInput, output)

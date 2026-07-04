@@ -17,7 +17,7 @@ export type ChatMessageHandlerOutput = {
 export type ChatMessageInput = {
   readonly sessionID: string
   readonly agent?: string
-  readonly model?: { readonly providerID: string; readonly modelID: string }
+  readonly model?: { readonly providerID: string; readonly modelID: string; readonly variant?: string }
 }
 
 export type StartWorkHookOutput = {
@@ -25,6 +25,10 @@ export type StartWorkHookOutput = {
 }
 
 export type SessionModelOverride = { readonly providerID: string; readonly modelID: string }
+export type SessionModelSelection = {
+  readonly model: SessionModelOverride
+  readonly variant?: string
+}
 
 export type WorkStartingCommand = "start-work" | "ralph-loop" | "ulw-loop"
 

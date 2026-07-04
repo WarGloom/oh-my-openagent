@@ -17,6 +17,44 @@ function createMockGoal() {
 }
 
 describe("createCommandExecuteBeforeHandler", () => {
+  test("#given /stop-continuation #when command.execute.before runs #then continuation mechanisms stop", async () => {
+    // given
+    const stop = mock(() => {})
+    const cancelAllCountdowns = mock(() => {})
+    const clearGoal = mock(() => true)
+    const handler = createCommandExecuteBeforeHandler(unsafeTestValue({
+      directory: process.cwd(),
+      hooks: {
+        stopContinuationGuard: {
+          stop,
+        },
+        todoContinuationEnforcer: {
+          cancelAllCountdowns,
+        },
+        goal: {
+          clearGoal,
+        },
+      },
+    }))
+
+    // when
+    await handler(
+      {
+        command: "stop-continuation",
+        sessionID: "ses-loop",
+        arguments: "",
+      },
+      {
+        parts: [],
+      },
+    )
+
+    // then
+    expect(stop).toHaveBeenCalledWith("ses-loop")
+    expect(cancelAllCountdowns).toHaveBeenCalledTimes(1)
+    expect(clearGoal).toHaveBeenCalledWith("ses-loop")
+  })
+
   test("#given stopped session and /start-work #when command.execute.before runs #then clear is called", async () => {
     // given
     const clear = mock(() => {})

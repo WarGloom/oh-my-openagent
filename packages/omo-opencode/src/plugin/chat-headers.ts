@@ -117,7 +117,9 @@ async function isOmoInternalMessage(input: ChatHeadersInput, client: PluginConte
   return hasInternalMarker(client, input.sessionID, input.message.id)
 }
 
-export function createChatHeadersHandler(args: { ctx: PluginContext }): (input: unknown, output: unknown) => Promise<void> {
+export function createChatHeadersHandler(args: {
+  ctx: PluginContext
+}): (input: unknown, output: unknown) => Promise<void> {
   const { ctx } = args
 
   return async (input, output): Promise<void> => {

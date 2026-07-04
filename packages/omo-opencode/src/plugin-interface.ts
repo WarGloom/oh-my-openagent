@@ -50,14 +50,19 @@ export function createPluginInterface(args: {
       }
       const handler = createChatParamsHandler({
         client: ctx.client,
+        experimental: {
+          anthropicAdvisor: pluginConfig.experimental?.anthropic_advisor,
+        },
       })
       await handler(input, output)
     },
 
-    "chat.headers": createChatHeadersHandler({ ctx }),
+    "chat.headers": createChatHeadersHandler({
+      ctx,
+    }),
 
     "command.execute.before": createCommandExecuteBeforeHandler({
-      directory: ctx.directory,
+      ctx,
       hooks,
     }),
 
@@ -72,10 +77,11 @@ export function createPluginInterface(args: {
       hooks,
     }),
 
-    "experimental.chat.system.transform": createSystemTransformHandler(
-      pluginConfig.default_mode,
+    "experimental.chat.system.transform": createSystemTransformHandler({
+      ctx,
+      defaultMode: pluginConfig.default_mode,
       getUltraworkMessage,
-    ),
+    }),
 
     config: managers.configHandler,
 

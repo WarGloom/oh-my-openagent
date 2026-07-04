@@ -646,6 +646,41 @@ describe("discoverInstalledPlugins", () => {
       expect(discovered.plugins).toHaveLength(1)
       expect(discovered.plugins[0]?.name).toBe("enabled-plugin")
     })
+
+    it("#when an npm-prefixed plugin key is disabled via normalized override #then it is skipped", async () => {
+      //#given
+      const pluginsHome = process.env.CLAUDE_PLUGINS_HOME as string
+      const projectDirectory = createTemporaryDirectory("omo-enabled-normalized-")
+      const installPath = createInstallPath("omo-enabled-normalized-install-")
+      writeDatabase(pluginsHome, {
+        version: 2,
+        plugins: {
+          "npm:oh-my-claudecode@omc@1.0.0": [
+            {
+              scope: "project",
+              projectPath: projectDirectory,
+              installPath,
+              version: "1.0.0",
+              installedAt: "2026-03-25T00:00:00Z",
+              lastUpdated: "2026-03-25T00:00:00Z",
+            },
+          ],
+        },
+      })
+      process.chdir(projectDirectory)
+
+      //#when
+      const { discoverInstalledPlugins } = await import(`./discovery?t=${Date.now()}-enabled-normalized-off`)
+      const discovered = discoverInstalledPlugins({
+        pluginsHomeOverride: pluginsHome,
+        loadPluginManifestOverride: () => null,
+        enabledPluginsOverride: { "oh-my-claudecode@omc": false },
+      })
+
+      //#then
+      expect(discovered.errors).toHaveLength(0)
+      expect(discovered.plugins).toHaveLength(0)
+    })
   })
 
   describe("#given installed_plugins.json points to a stale version directory", () => {

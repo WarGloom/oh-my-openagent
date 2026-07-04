@@ -12,7 +12,7 @@ import { createStartWorkHook } from "../hooks/start-work"
 import { getAgentListDisplayName } from "../shared/agent-display-names"
 import { getOmoOpenCodeCacheDir, getOpenCodeCacheDir } from "../shared/data-path"
 import { OMO_INTERNAL_INITIATOR_MARKER } from "../shared/internal-initiator-marker"
-import { clearSessionModel, getSessionModel, setSessionModel } from "../shared/session-model-state"
+import { clearSessionModel, getSessionModel, getStoredSessionModel, setSessionModel } from "../shared/session-model-state"
 import { createChatMessageHandler } from "./chat-message"
 import type { PluginContext } from "./types"
 
@@ -854,6 +854,36 @@ describe("createChatMessageHandler - TUI variant passthrough", () => {
     expect(getSessionModel("test-session")).toEqual({ providerID: "openai", modelID: "gpt-5.4" })
   })
 
+  test("reuses the stored main-session variant when an internal wake sends no variant", async () => {
+    //#given
+    setMainSession("test-session")
+    setSessionModel("test-session", {
+      providerID: "anthropic",
+      modelID: "claude-opus-4-8",
+      variant: "max",
+    })
+    const args = createMockHandlerArgs({ shouldOverride: false })
+    const handler = createChatMessageHandler(args)
+    const input = createMockInput("prometheus")
+    const output = createMockOutput()
+
+    //#when
+    await handler(input, output)
+
+    //#then
+    expect(output.message["model"]).toEqual({
+      providerID: "anthropic",
+      modelID: "claude-opus-4-8",
+    })
+    expect(output.message["variant"]).toBe("max")
+    expect(getStoredSessionModel("test-session")).toEqual({
+      providerID: "anthropic",
+      modelID: "claude-opus-4-8",
+      variant: "max",
+      agent: "prometheus",
+    })
+  })
+
   test("does not reuse a stored model for the first message of a session", async () => {
     //#given
     setMainSession("test-session")
@@ -891,10 +921,10 @@ describe("createChatMessageHandler - TUI variant passthrough", () => {
     expect(getSessionModel("subagent-session")).toBeUndefined()
   })
 
-  test("does not override explicit agent model overrides with stored session model", async () => {
+  test("reuses the stored main-session model over explicit agent model overrides", async () => {
     //#given
     setMainSession("test-session")
-    setSessionModel("test-session", { providerID: "openai", modelID: "gpt-5.4" })
+    setSessionModel("test-session", { providerID: "openai", modelID: "gpt-5.4" }, "sisyphus")
     const args = createMockHandlerArgs({
       shouldOverride: false,
       pluginConfig: {
@@ -911,14 +941,14 @@ describe("createChatMessageHandler - TUI variant passthrough", () => {
     await handler(input, output)
 
     //#then
-    expect(output.message["model"]).toBeUndefined()
+    expect(output.message["model"]).toEqual({ providerID: "openai", modelID: "gpt-5.4" })
     expect(getSessionModel("test-session")).toEqual({ providerID: "openai", modelID: "gpt-5.4" })
   })
 
-  test("treats prefixed list-display agent names as explicit model overrides", async () => {
+  test("reuses the stored main-session model with prefixed list-display agent names", async () => {
     //#given
     setMainSession("test-session")
-    setSessionModel("test-session", { providerID: "openai", modelID: "gpt-5.4" })
+    setSessionModel("test-session", { providerID: "openai", modelID: "gpt-5.4" }, "prometheus")
     const args = createMockHandlerArgs({
       shouldOverride: false,
       pluginConfig: {
@@ -935,7 +965,7 @@ describe("createChatMessageHandler - TUI variant passthrough", () => {
     await handler(input, output)
 
     //#then
-    expect(output.message["model"]).toBeUndefined()
+    expect(output.message["model"]).toEqual({ providerID: "openai", modelID: "gpt-5.4" })
     expect(getSessionModel("test-session")).toEqual({ providerID: "openai", modelID: "gpt-5.4" })
     expect(getSessionAgent("test-session")).toBe("Prometheus - Plan Builder")
   })
@@ -956,6 +986,34 @@ describe("createChatMessageHandler - TUI variant passthrough", () => {
     //#then
     expect(output.message["model"]).toBeUndefined()
     expect(getSessionModel("test-session")).toEqual(nextModel)
+  })
+
+  test("does not reuse a previous agent model when switching to another configured agent", async () => {
+    //#given
+    setMainSession("test-session")
+    setSessionModel("test-session", { providerID: "anthropic", modelID: "claude-opus-4-7" }, "sisyphus")
+    const args = createMockHandlerArgs({
+      shouldOverride: false,
+      pluginConfig: {
+        agents: {
+          hephaestus: { model: "openai/gpt-5.5" },
+        },
+      },
+    })
+    const handler = createChatMessageHandler(args)
+    const input = createMockInput("hephaestus")
+    const output = createMockOutput()
+
+    //#when
+    await handler(input, output)
+
+    //#then
+    expect(output.message["model"]).toBeUndefined()
+    expect(getStoredSessionModel("test-session")).toEqual({
+      providerID: "anthropic",
+      modelID: "claude-opus-4-7",
+      agent: "sisyphus",
+    })
   })
 
   test("strips legacy ZWSP-prefixed agent names from persisted prompt body session state (GH-3259)", async () => {

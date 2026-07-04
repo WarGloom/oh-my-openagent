@@ -8,12 +8,29 @@ import {
 
 function createPluginComponentsResult(): PluginComponentsResult {
   return {
-    commands: { "demo:command": { name: "demo:command", description: "demo", template: "demo" } },
-    skills: { "demo:skill": { name: "demo:skill", description: "skill", template: "skill" } },
+    commands: {
+      "daplug:run-prompt": {
+        name: "daplug:run-prompt",
+        description: "Run prompt from daplug",
+        template: "Execute daplug prompt flow.",
+      },
+      "daplug:templated": {
+        name: "daplug:templated",
+        description: "Templated prompt from daplug",
+        template: "Echo $ARGUMENTS and ${user_message}.",
+      },
+    },
+    skills: {
+      "daplug:plugin-plan": {
+        name: "daplug:plugin-plan",
+        description: "Plan work from daplug skill",
+        template: "Build a plan from plugin skill context.",
+      },
+    },
     agents: { "demo:agent": { description: "agent", mode: "subagent", prompt: "demo" } },
     mcpServers: { "demo:mcp": { type: "local", command: ["demo"] } },
     hooksConfigs: [{ hooks: {} }],
-    plugins: [{ name: "demo", version: "1.0.0", scope: "user", installPath: "/tmp/demo", pluginKey: "demo@test" }],
+    plugins: [{ name: "daplug", version: "1.0.0", scope: "user", installPath: "/tmp/demo", pluginKey: "daplug@1.0.0" }],
     errors: [],
   }
 }
@@ -22,6 +39,8 @@ describe("loadAllPluginComponents", () => {
   const originalEnv = { ...process.env }
 
   beforeEach(() => {
+    mock.restore()
+    clearPluginComponentsCache()
     delete process.env.OPENCODE_DISABLE_CLAUDE_CODE
     delete process.env.OPENCODE_DISABLE_CLAUDE_CODE_PLUGINS
   })
@@ -37,7 +56,6 @@ describe("loadAllPluginComponents", () => {
       process.env.OPENCODE_DISABLE_CLAUDE_CODE = "true"
 
       // when
-      const { loadAllPluginComponents } = await import("./loader")
       const result: PluginComponentsResult = await loadAllPluginComponents()
 
       // then
@@ -57,7 +75,6 @@ describe("loadAllPluginComponents", () => {
       process.env.OPENCODE_DISABLE_CLAUDE_CODE = "1"
 
       // when
-      const { loadAllPluginComponents } = await import("./loader")
       const result: PluginComponentsResult = await loadAllPluginComponents()
 
       // then
@@ -72,7 +89,6 @@ describe("loadAllPluginComponents", () => {
       process.env.OPENCODE_DISABLE_CLAUDE_CODE_PLUGINS = "true"
 
       // when
-      const { loadAllPluginComponents } = await import("./loader")
       const result: PluginComponentsResult = await loadAllPluginComponents()
 
       // then
@@ -87,7 +103,6 @@ describe("loadAllPluginComponents", () => {
       process.env.OPENCODE_DISABLE_CLAUDE_CODE_PLUGINS = "1"
 
       // when
-      const { loadAllPluginComponents } = await import("./loader")
       const result: PluginComponentsResult = await loadAllPluginComponents()
 
       // then
@@ -103,7 +118,6 @@ describe("loadAllPluginComponents", () => {
       delete process.env.OPENCODE_DISABLE_CLAUDE_CODE_PLUGINS
 
       // when
-      const { loadAllPluginComponents } = await import("./loader")
       const result: PluginComponentsResult = await loadAllPluginComponents()
 
       // then — should attempt to load (may find 0 plugins, but shouldn't early-return)
@@ -119,7 +133,6 @@ describe("loadAllPluginComponents", () => {
       process.env.OPENCODE_DISABLE_CLAUDE_CODE = "yes"
 
       // when
-      const { loadAllPluginComponents } = await import("./loader")
       const result: PluginComponentsResult = await loadAllPluginComponents()
 
       // then — "yes" is not "true" or "1", should not skip
@@ -292,11 +305,11 @@ describe("loadAllPluginComponents", () => {
         loadPluginHooksConfigs,
       }
       const firstResult = await loadAllPluginComponentsWithDeps(undefined, deps)
-      firstResult.commands["demo:command"]!.description = "mutated"
+      firstResult.commands["daplug:run-prompt"]!.description = "mutated"
       const secondResult = await loadAllPluginComponentsWithDeps(undefined, deps)
 
       // then
-      expect(secondResult.commands["demo:command"]!.description).toBe("demo")
+      expect(secondResult.commands["daplug:run-prompt"]!.description).toBe("Run prompt from daplug")
       expect(discoverInstalledPlugins).toHaveBeenCalledTimes(1)
     })
   })
