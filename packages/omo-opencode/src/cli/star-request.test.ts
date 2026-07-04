@@ -27,6 +27,20 @@ describe("star-request", () => {
     expect(results).toEqual([{ repository: "code-yeongyu/oh-my-openagent", ok: true }])
   })
 
+  test("stars only the OpenCode repository for senpi platform", async () => {
+    // given
+    const starred: string[] = []
+
+    // when
+    const results = await starGitHubRepositories("senpi", async (repository) => {
+      starred.push(repository)
+    })
+
+    // then
+    expect(starred).toEqual(["code-yeongyu/oh-my-openagent"])
+    expect(results).toEqual([{ repository: "code-yeongyu/oh-my-openagent", ok: true }])
+  })
+
   test("stars both repositories for codex platform (lazycodex is built on oh-my-openagent)", async () => {
     // given
     const starred: string[] = []
@@ -50,20 +64,6 @@ describe("star-request", () => {
 
     // when
     const results = await starGitHubRepositories("both", async (repository) => {
-      starred.push(repository)
-    })
-
-    // then
-    expect(starred).toEqual([...STAR_REPOSITORIES])
-    expect(results).toEqual(STAR_REPOSITORIES.map((repository) => ({ repository, ok: true })))
-  })
-
-  test("stars the default repositories for senpi platform without adding a new repo", async () => {
-    // given
-    const starred: string[] = []
-
-    // when
-    const results = await starGitHubRepositories("senpi", async (repository) => {
       starred.push(repository)
     })
 

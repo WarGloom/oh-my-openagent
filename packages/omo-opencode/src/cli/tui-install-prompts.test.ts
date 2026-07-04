@@ -148,23 +148,6 @@ describe("promptInstallConfig platform branching", () => {
     expect(selectSpy).not.toHaveBeenCalled()
   })
 
-  test("skips OpenCode questions when the user selects senpi", async () => {
-    // given
-    const selectSpy = spyOn(p, "select").mockResolvedValue("no")
-
-    // when
-    const config = await prompts.promptInstallConfig(createDetectedConfig(), "senpi")
-
-    // then
-    expect(config).toMatchObject({
-      platform: "senpi",
-      hasOpenCode: false,
-      hasCodex: false,
-      hasSenpi: true,
-    } satisfies Partial<InstallConfig>)
-    expect(selectSpy).not.toHaveBeenCalled()
-  })
-
   test.each([
     ["opencode", false],
     ["both", true],

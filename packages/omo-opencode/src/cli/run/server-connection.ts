@@ -4,6 +4,7 @@ import type { ServerConnection } from "./types"
 import { injectServerAuthIntoClient } from "../../shared/opencode-server-auth"
 import { getAvailableServerPort, isPortAvailable, DEFAULT_SERVER_PORT } from "../../shared/port-utils"
 import { withWorkingOpencodePath } from "./opencode-binary-resolver"
+import { logRunTrace, traceRunStep } from "./run-debug"
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]", "0.0.0.0"])
 
@@ -74,12 +75,15 @@ async function startServer<TClient>(
   deps: ServerConnectionDeps<TClient>,
 ): Promise<{ client: TClient, cleanup: () => void }> {
   const { signal, port } = options
-  const { client, server } = await deps.withWorkingOpencodePath(() =>
-    deps.createOpencode({ signal, port, hostname: "127.0.0.1" }),
+  const { client, server } = await traceRunStep("createOpencode server", async () =>
+    deps.withWorkingOpencodePath(() =>
+      deps.createOpencode({ signal, port, hostname: "127.0.0.1" }),
+    ),
   )
 
   deps.injectServerAuthIntoClient(client)
   console.log(pc.dim("Server listening at"), pc.cyan(server.url))
+  logRunTrace(`Server started via SDK on port ${port}`)
   return { client, cleanup: () => server.close() }
 }
 
@@ -90,6 +94,7 @@ export async function createServerConnectionWithDeps<TClient>(
   const { port, attach, signal } = options
 
   if (attach !== undefined) {
+    logRunTrace(`attaching to explicit server ${attach}`)
     console.log(pc.dim("Attaching to existing server at"), pc.cyan(attach))
     const client = deps.createOpencodeClient({ baseUrl: attach })
     if (isLoopbackAttachUrl(attach)) {
@@ -106,6 +111,7 @@ export async function createServerConnectionWithDeps<TClient>(
     const available = await deps.isPortAvailable(port, "127.0.0.1")
 
     if (available) {
+      logRunTrace(`attempting server start on requested port ${port}`)
       console.log(pc.dim("Starting server on port"), pc.cyan(port.toString()))
       try {
         return await startServer({ signal, port }, deps)
@@ -119,6 +125,7 @@ export async function createServerConnectionWithDeps<TClient>(
           throw error
         }
 
+        logRunTrace(`requested port ${port} became occupied before startup completed; attaching`) 
         console.log(pc.dim("Port"), pc.cyan(port.toString()), pc.dim("became occupied, attaching to existing server"))
         const client = deps.createOpencodeClient({ baseUrl: `http://127.0.0.1:${port}` })
         deps.injectServerAuthIntoClient(client)
@@ -126,6 +133,7 @@ export async function createServerConnectionWithDeps<TClient>(
       }
     }
 
+    logRunTrace(`requested port ${port} was already occupied; attaching`) 
     console.log(pc.dim("Port"), pc.cyan(port.toString()), pc.dim("is occupied, attaching to existing server"))
     const client = deps.createOpencodeClient({ baseUrl: `http://127.0.0.1:${port}` })
     deps.injectServerAuthIntoClient(client)
@@ -148,6 +156,7 @@ export async function createServerConnectionWithDeps<TClient>(
       throw error
     }
 
+    logRunTrace(`port range exhausted; attaching to default port ${DEFAULT_SERVER_PORT}`)
     console.log(pc.dim("Port range exhausted, attaching to existing server on"), pc.cyan(DEFAULT_SERVER_PORT.toString()))
     const client = deps.createOpencodeClient({ baseUrl: `http://127.0.0.1:${DEFAULT_SERVER_PORT}` })
     deps.injectServerAuthIntoClient(client)
@@ -155,8 +164,10 @@ export async function createServerConnectionWithDeps<TClient>(
   }
 
   if (wasAutoSelected) {
+    logRunTrace(`auto-selected port ${selectedPort}`)
     console.log(pc.dim("Auto-selected port"), pc.cyan(selectedPort.toString()))
   } else {
+    logRunTrace(`using requested/default port ${selectedPort}`)
     console.log(pc.dim("Starting server on port"), pc.cyan(selectedPort.toString()))
   }
 
@@ -168,6 +179,7 @@ export async function createServerConnectionWithDeps<TClient>(
     }
 
     const { port: retryPort } = await deps.getAvailableServerPort(selectedPort + 1, "127.0.0.1")
+    logRunTrace(`retrying server start on port ${retryPort}`)
     console.log(pc.dim("Retrying server start on port"), pc.cyan(retryPort.toString()))
     return await startServer({ signal, port: retryPort }, deps)
   }
