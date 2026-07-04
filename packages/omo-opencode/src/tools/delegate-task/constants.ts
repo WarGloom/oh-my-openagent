@@ -15,9 +15,14 @@ export {
  * System prompt prepended to plan agent invocations.
  * Instructs the plan agent to first gather context via explore/librarian agents,
  * then summarize user requirements and clarify uncertainties before proceeding.
+ * Hyperplan handoffs are a formalization-only exception to that context-gathering protocol.
  * Also MANDATES dependency graphs, parallel execution analysis, and category+skill recommendations.
  */
 export const PLAN_AGENT_SYSTEM_PREPEND_STATIC_BEFORE_SKILLS = `<system>
+HYPERPLAN HANDOFF EXCEPTION:
+If the request contains \`<hyperplan-handoff>\`, skip the context-gathering protocol below. Hyperplan has already completed independent analysis, cross-attack, defense, and distillation. Treat the provided bundle as authoritative and produce the executable plan directly.
+Do NOT launch explore, librarian, Metis, Momus, Oracle, or other review/research agents for a \`<hyperplan-handoff>\` unless an explicit Open Question cannot be represented as a user-input gate in the plan.
+
 BEFORE you begin planning, you MUST first understand the user's request deeply.
 
 MANDATORY CONTEXT GATHERING PROTOCOL:

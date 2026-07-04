@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 declare const require: (name: string) => any
+const { afterEach, beforeEach, describe, expect, test } = require("bun:test")
 import { __setTimingConfig, __resetTimingConfig } from "./timing"
 
 function createMockCtx(aborted = false) {
@@ -493,38 +493,198 @@ describe("pollSyncSession", () => {
       expect(result).toBe("Poll inactivity timeout reached after 50ms without active OpenCode status for session ses_timeout")
       expect(abortCount).toBe(1)
     })
+
+    test("aborts active session when message progress stalls", async () => {
+      // given: OpenCode reports busy but messages do not change
+      const { pollSyncSession } = require("./sync-session-poller")
+
+      let abortCount = 0
+      let messageCallCount = 0
+      const mockClient = {
+        session: {
+          abort: async () => {
+            abortCount++
+          },
+          messages: async () => {
+            messageCallCount++
+            return {
+              data: [
+                { info: { id: "msg_001", role: "user", time: { created: 1000 } } },
+                {
+                  info: { id: "msg_002", role: "assistant", time: { created: 2000 } },
+                  parts: [],
+                },
+              ],
+            }
+          },
+          status: async () => ({ data: { "ses_stalled": { type: "busy" } } }),
+        },
+      }
+
+      // when: active no-progress budget is exhausted
+      const result = await pollSyncSession(createMockCtx(), mockClient, {
+        sessionID: "ses_stalled",
+        agentToUse: "test-agent",
+        toastManager: null,
+        taskId: undefined,
+        activeNoProgressTimeoutMs: 50,
+      }, 5000)
+
+      // then: aborts the stalled child session
+      expect(result).toBe("Poll no-progress timeout reached after 50ms without message or part progress for active session ses_stalled")
+      expect(abortCount).toBe(1)
+      expect(messageCallCount).toBeGreaterThan(1)
+    })
+
+    test("returns provider retry status immediately instead of waiting for no-progress timeout", async () => {
+      // given: OpenCode reports provider quota retry with a far-future reset window
+      const { pollSyncSession } = require("./sync-session-poller")
+
+      let abortCount = 0
+      let messageCallCount = 0
+      let statusCallCount = 0
+      const retryMessage =
+        "Claude Code returned an error result: You've hit your limit · resets 5:40pm (Asia/Jerusalem)\n" +
+        "Subprocess stderr: Warning: Custom betas are only available for API key users. Ignoring provided betas."
+      const mockClient = {
+        session: {
+          abort: async () => {
+            abortCount++
+          },
+          messages: async () => {
+            messageCallCount++
+            return {
+              data: [
+                { info: { id: "msg_001", role: "user", time: { created: 1000 } } },
+                {
+                  info: { id: "msg_002", role: "assistant", time: { created: 2000 } },
+                  parts: [],
+                },
+              ],
+            }
+          },
+          status: async () => {
+            statusCallCount++
+            return {
+              data: {
+                "ses_quota_retry": {
+                  type: "retry",
+                  attempt: 6,
+                  next: 1780310335848,
+                  message: retryMessage,
+                },
+              },
+            }
+          },
+        },
+      }
+
+      // when: polling the delegated session
+      const result = await pollSyncSession(createMockCtx(), mockClient, {
+        sessionID: "ses_quota_retry",
+        agentToUse: "test-agent",
+        toastManager: null,
+        taskId: undefined,
+        activeNoProgressTimeoutMs: 5_000,
+      }, 5_000)
+
+      // then: fails fast so the parent can retry/fallback instead of hanging
+      expect(result).toContain("Subagent entered retry status")
+      expect(result).toContain("You've hit your limit")
+      expect(abortCount).toBe(1)
+      expect(statusCallCount).toBe(1)
+      expect(messageCallCount).toBe(1)
+    })
+
+    test("returns subscription quota retry status immediately for fallback handling", async () => {
+      // given: OpenCode reports provider subscription exhaustion as retry status
+      const { pollSyncSession } = require("./sync-session-poller")
+
+      let abortCount = 0
+      let messageCallCount = 0
+      let statusCallCount = 0
+      const retryMessage = "Subscription quota exceeded. You can continue using free models."
+      const mockClient = {
+        session: {
+          abort: async () => {
+            abortCount++
+          },
+          messages: async () => {
+            messageCallCount++
+            return {
+              data: [
+                { info: { id: "msg_001", role: "user", time: { created: 1000 } } },
+                {
+                  info: { id: "msg_002", role: "assistant", time: { created: 2000 } },
+                  parts: [],
+                },
+              ],
+            }
+          },
+          status: async () => {
+            statusCallCount++
+            return {
+              data: {
+                "ses_subscription_quota_retry": {
+                  type: "retry",
+                  attempt: 3,
+                  next: 1780310335848,
+                  message: retryMessage,
+                },
+              },
+            }
+          },
+        },
+      }
+
+      // when: polling the delegated session
+      const result = await pollSyncSession(createMockCtx(), mockClient, {
+        sessionID: "ses_subscription_quota_retry",
+        agentToUse: "test-agent",
+        toastManager: null,
+        taskId: undefined,
+        activeNoProgressTimeoutMs: 50,
+      }, 5_000)
+
+      // then: fails fast so sync-task can retry via the provider-exhaustion fallback policy
+      expect(result).toContain("Subagent entered retry status")
+      expect(result).toContain("Subscription quota exceeded")
+      expect(abortCount).toBe(1)
+      expect(statusCallCount).toBe(1)
+      expect(messageCallCount).toBe(1)
+    })
   })
 
   describe("non-idle session status", () => {
-    test("skips message check when session is not idle", async () => {
-      // given: session is running (not idle)
+    test("checks messages while session is active and completes after idle", async () => {
+      // given: session is active before it becomes idle
       const { pollSyncSession } = require("./sync-session-poller")
 
       let statusCallCount = 0
       let messageCallCount = 0
-       const mockClient = {
-         session: {
-           messages: async () => {
-             messageCallCount++
-             return {
-               data: [
-                 { info: { id: "msg_001", role: "user", time: { created: 1000 } } },
-                 {
-                   info: { id: "msg_002", role: "assistant", time: { created: 2000 }, finish: "end_turn" },
-                   parts: [{ type: "text", text: "Done" }],
-                 },
-               ],
-             }
-           },
-           status: async () => {
-             statusCallCount++
-             if (statusCallCount <= 2) {
-               return { data: { "ses_busy": { type: "running" } } }
-             }
-             return { data: { "ses_busy": { type: "idle" } } }
-           },
-         },
-       }
+      const mockClient = {
+        session: {
+          messages: async () => {
+            messageCallCount++
+            return {
+              data: [
+                { info: { id: "msg_001", role: "user", time: { created: 1000 } } },
+                {
+                  info: { id: "msg_002", role: "assistant", time: { created: 2000 }, finish: "end_turn" },
+                  parts: [{ type: "text", text: "Done" }],
+                },
+              ],
+            }
+          },
+          status: async () => {
+            statusCallCount++
+            if (statusCallCount <= 2) {
+              return { data: { "ses_busy": { type: "running" } } }
+            }
+            return { data: { "ses_busy": { type: "idle" } } }
+          },
+        },
+      }
 
       // when: calling pollSyncSession
       const result = await pollSyncSession(createMockCtx(), mockClient, {
@@ -534,9 +694,124 @@ describe("pollSyncSession", () => {
         taskId: undefined,
       })
 
-      // then: waits for idle before checking messages
+      // then: waits for idle before using terminal messages
       expect(result).toBeNull()
       expect(statusCallCount).toBeGreaterThanOrEqual(3)
+      expect(messageCallCount).toBeGreaterThanOrEqual(3)
+    })
+
+    test("keeps polling active session while message parts progress", async () => {
+      // given: OpenCode reports busy but assistant text keeps growing
+      const { pollSyncSession } = require("./sync-session-poller")
+
+      let abortCount = 0
+      let statusCallCount = 0
+      let messageCallCount = 0
+      const mockClient = {
+        session: {
+          abort: async () => {
+            abortCount++
+          },
+          messages: async () => {
+            messageCallCount++
+            const text = `chunk ${messageCallCount}`
+            return {
+              data: [
+                { info: { id: "msg_001", role: "user", time: { created: 1000 } } },
+                {
+                  info: {
+                    id: "msg_002",
+                    role: "assistant",
+                    time: { created: 2000 },
+                    finish: statusCallCount >= 5 ? "end_turn" : undefined,
+                  },
+                  parts: [{ type: "text", text }],
+                },
+              ],
+            }
+          },
+          status: async () => {
+            statusCallCount++
+            if (statusCallCount < 5) {
+              return { data: { "ses_progress": { type: "busy" } } }
+            }
+            return { data: { "ses_progress": { type: "idle" } } }
+          },
+        },
+      }
+
+      // when: progress arrives before the no-progress budget expires
+      const result = await pollSyncSession(createMockCtx(), mockClient, {
+        sessionID: "ses_progress",
+        agentToUse: "test-agent",
+        toastManager: null,
+        taskId: undefined,
+        activeNoProgressTimeoutMs: 50,
+      }, 5000)
+
+      // then: the active session is not aborted
+      expect(result).toBeNull()
+      expect(abortCount).toBe(0)
+      expect(statusCallCount).toBe(5)
+      expect(messageCallCount).toBe(5)
+    })
+
+    test("keeps polling active session while a tool part is running without output deltas", async () => {
+      // given: OpenCode reports busy while a long-running tool call has not emitted output yet
+      const { pollSyncSession } = require("./sync-session-poller")
+
+      let abortCount = 0
+      let statusCallCount = 0
+      let messageCallCount = 0
+      const mockClient = {
+        session: {
+          abort: async () => {
+            abortCount++
+          },
+          messages: async () => {
+            messageCallCount++
+            const running = statusCallCount < 5
+            return {
+              data: [
+                { info: { id: "msg_001", role: "user", time: { created: 1000 } } },
+                {
+                  info: {
+                    id: "msg_002",
+                    role: "assistant",
+                    time: { created: 2000 },
+                    finish: running ? undefined : "end_turn",
+                  },
+                  parts: running
+                    ? [{ type: "tool", tool: "bash", state: { status: "running", input: {}, title: "bun test" } }]
+                    : [{ type: "text", text: "Done" }],
+                },
+              ],
+            }
+          },
+          status: async () => {
+            statusCallCount++
+            if (statusCallCount < 5) {
+              return { data: { "ses_running_tool": { type: "busy" } } }
+            }
+            return { data: { "ses_running_tool": { type: "idle" } } }
+          },
+        },
+      }
+
+      // when: the active no-progress budget is shorter than the long tool run
+      const result = await pollSyncSession(createMockCtx(), mockClient, {
+        sessionID: "ses_running_tool",
+        agentToUse: "test-agent",
+        toastManager: null,
+        taskId: undefined,
+        activeNoProgressTimeoutMs: 50,
+      }, 5000)
+
+      // then: the active session is not aborted while the tool is still running
+      expect(result).toBeNull()
+      expect(abortCount).toBe(0)
+      expect(statusCallCount).toBe(5)
+      expect(messageCallCount).toBe(5)
     })
   })
 

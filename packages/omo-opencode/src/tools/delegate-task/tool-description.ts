@@ -1,5 +1,6 @@
 import type { AvailableCategory, AvailableSkill } from "../../agents/dynamic-agent-prompt-builder"
 import { mergeCategories } from "../../shared/merge-categories"
+import { formatAvailableAgentTypesSection } from "./builtin-subagent-types"
 import { CATEGORY_DESCRIPTIONS } from "./constants"
 import type { DelegateTaskToolOptions } from "./types"
 
@@ -75,8 +76,10 @@ export function createDelegateTaskPresentation(options: DelegateTaskToolOptions)
   - Task failed/incomplete → \`task(task_id="ses_...", prompt="fix: [specific issue]")\`
   - Need follow-up on previous result → \`task(task_id="ses_...", prompt="Also: [question]")\`
   - Multi-turn conversation with same agent → always \`task(task_id="ses_...")\` instead of new task
+  
+  Prompts MUST be in English.
 
-  Prompts MUST be in English.`
+${formatAvailableAgentTypesSection()}`
 
   return {
     availableCategories,

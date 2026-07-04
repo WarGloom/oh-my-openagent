@@ -50,6 +50,43 @@ function isUnexpectedEofError(error: unknown): boolean {
   return lowered.includes("unexpected eof") || lowered.includes("json parse error")
 }
 
+const ACTIVE_PROMPT_TIMEOUT_STATUSES = new Set(["busy", "retry", "running"])
+const PROMPT_TIMEOUT_PATTERN = /^prompt timed out after \d+ms$/u
+
+function isPromptTimeoutError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return PROMPT_TIMEOUT_PATTERN.test(message.trim())
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null ? value as Record<string, unknown> : null
+}
+
+function getSessionStatusType(statusResult: unknown, sessionID: string): string | undefined {
+  const statusRecord = asRecord(statusResult)
+  const statusData = asRecord(statusRecord?.data) ?? statusRecord
+  const sessionStatus = asRecord(statusData?.[sessionID])
+  const type = sessionStatus?.type
+  return typeof type === "string" ? type : undefined
+}
+
+function hasSessionMessages(messagesResult: unknown): boolean {
+  const messageRecord = asRecord(messagesResult)
+  const messagesData = messageRecord?.data ?? messagesResult
+  return Array.isArray(messagesData) && messagesData.length > 0
+}
+
+async function hasSessionStarted(client: OpencodeClient, sessionID: string): Promise<boolean> {
+  const statusResult = await client.session.status().catch(() => null)
+  const statusType = getSessionStatusType(statusResult, sessionID)
+  if (statusType !== undefined && ACTIVE_PROMPT_TIMEOUT_STATUSES.has(statusType)) {
+    return true
+  }
+
+  const messagesResult = await client.session.messages({ path: { id: sessionID } }).catch(() => null)
+  return hasSessionMessages(messagesResult)
+}
+
 export function buildSyncPromptTools(
   agentToUse: string,
   permission?: Record<string, "ask" | "allow" | "deny">,
@@ -122,6 +159,10 @@ export async function sendSyncPrompt(
     })
   } catch (promptError) {
     if (isOracleAgent(input.agentToUse) && isUnexpectedEofError(promptError)) {
+      return null
+    }
+
+    if (isPromptTimeoutError(promptError) && await hasSessionStarted(client, input.sessionID)) {
       return null
     }
 

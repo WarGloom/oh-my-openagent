@@ -1,3 +1,6 @@
+// Required for Bun's CommonJS-style module isolation in these tests.
+declare const require: (name: string) => any
+
 const {
   describe: bunDescribe,
   test: bunTest,
@@ -535,5 +538,95 @@ bunDescribe("sendSyncPrompt", () => {
     //#then
     bunExpect(result).toContain("prompt skipped by gate")
     bunExpect(promptWithModelSuggestionRetry).toHaveBeenCalledTimes(1)
+  })
+
+  bunTest("#given sync prompt times out after child starts #when sending prompt #then polling continues instead of returning timeout", async () => {
+    //#given
+    const { sendSyncPrompt } = require("./sync-prompt-sender")
+
+    const promptSyncWithModelSuggestionRetry = bunMock(async () => {
+      throw new Error("prompt timed out after 120000ms")
+    })
+    const removeTask = bunMock(() => {})
+    const mockClient = {
+      session: {
+        status: async () => ({ data: { "test-session": { type: "busy" } } }),
+        messages: async () => ({ data: [] }),
+      },
+    }
+
+    const input = {
+      sessionID: "test-session",
+      agentToUse: "oracle",
+      args: {
+        description: "test task",
+        prompt: "test prompt",
+        run_in_background: false,
+        load_skills: [],
+      },
+      systemContent: undefined,
+      categoryModel: undefined,
+      toastManager: { removeTask },
+      taskId: "sync_test",
+    }
+
+    //#when
+    const result = await sendSyncPrompt(
+      mockClient,
+      input,
+      {
+        promptSyncWithModelSuggestionRetry,
+      },
+    )
+
+    //#then
+    bunExpect(result).toBeNull()
+    bunExpect(removeTask).not.toHaveBeenCalled()
+    bunExpect(promptSyncWithModelSuggestionRetry).toHaveBeenCalledTimes(1)
+  })
+
+  bunTest("#given sync prompt times out before child starts #when sending prompt #then timeout remains fatal", async () => {
+    //#given
+    const { sendSyncPrompt } = require("./sync-prompt-sender")
+
+    const promptSyncWithModelSuggestionRetry = bunMock(async () => {
+      throw new Error("prompt timed out after 120000ms")
+    })
+    const removeTask = bunMock(() => {})
+    const mockClient = {
+      session: {
+        status: async () => ({ data: { "test-session": { type: "idle" } } }),
+        messages: async () => ({ data: [] }),
+      },
+    }
+
+    const input = {
+      sessionID: "test-session",
+      agentToUse: "oracle",
+      args: {
+        description: "test task",
+        prompt: "test prompt",
+        run_in_background: false,
+        load_skills: [],
+      },
+      systemContent: undefined,
+      categoryModel: undefined,
+      toastManager: { removeTask },
+      taskId: "sync_test",
+    }
+
+    //#when
+    const result = await sendSyncPrompt(
+      mockClient,
+      input,
+      {
+        promptSyncWithModelSuggestionRetry,
+      },
+    )
+
+    //#then
+    bunExpect(result).toContain("prompt timed out after 120000ms")
+    bunExpect(removeTask).toHaveBeenCalledWith("sync_test")
+    bunExpect(promptSyncWithModelSuggestionRetry).toHaveBeenCalledTimes(1)
   })
 })

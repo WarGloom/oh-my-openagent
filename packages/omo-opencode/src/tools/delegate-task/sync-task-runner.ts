@@ -1,5 +1,4 @@
 import type { TaskToastManager } from "../../features/task-toast-manager/manager"
-import type { ModelFallbackInfo } from "../../features/task-toast-manager/types"
 import type { ModelFallbackState } from "../../hooks/model-fallback/hook"
 import type { FallbackEntry } from "../../shared/model-requirements"
 import { shouldRetryError } from "../../shared/model-error-classifier"
@@ -27,36 +26,16 @@ type SyncTaskRunnerInput = {
   readonly syncPollTimeoutMs: number | undefined
   readonly systemContent: string | undefined
   readonly toastManager: TaskToastManager | undefined
-  readonly modelInfo: ModelFallbackInfo | undefined
-  readonly registerSyncSession: (newSessionID: string) => Promise<void>
+  readonly registerSyncSession: (
+    newSessionID: string,
+    currentModel?: DelegatedModelConfig,
+    notifySessionCreated?: boolean,
+  ) => Promise<void>
   readonly publishSyncMetadata: (
     currentSessionID: string,
     currentModel: DelegatedModelConfig | undefined,
     spawnDepth: number,
   ) => Promise<void>
-  readonly cleanupRetrySession: (currentSessionID: string) => void
-  readonly setSyncSessionID: (currentSessionID: string) => void
-}
-
-function addRetryTaskToast(input: {
-  readonly args: DelegateTaskArgs
-  readonly agentToUse: string
-  readonly sessionID: string
-  readonly taskId: string
-  readonly toastManager: TaskToastManager | undefined
-  readonly modelInfo: ModelFallbackInfo | undefined
-}): void {
-  if (!input.toastManager) return
-  input.toastManager.addTask({
-    id: input.taskId,
-    sessionID: input.sessionID,
-    description: input.args.description,
-    agent: input.agentToUse,
-    isBackground: false,
-    category: input.args.category,
-    skills: input.args.load_skills,
-    modelInfo: input.modelInfo,
-  })
 }
 
 function shouldRetryPollErrorWithFallback(pollError: string, deps: SyncTaskDeps): boolean {
@@ -79,11 +58,8 @@ export async function runSyncTaskLoop(input: SyncTaskRunnerInput): Promise<strin
     syncPollTimeoutMs,
     systemContent,
     toastManager,
-    modelInfo,
     registerSyncSession,
     publishSyncMetadata,
-    cleanupRetrySession,
-    setSyncSessionID,
   } = input
   const { client, directory, sisyphusAgentConfig } = executorCtx
   const hasActiveChildBackgroundTasks = executorCtx.manager?.hasActiveChildTasks?.bind(executorCtx.manager)
@@ -100,8 +76,31 @@ export async function runSyncTaskLoop(input: SyncTaskRunnerInput): Promise<strin
       }
     : undefined
   let activeSessionID = input.sessionID
+  let anchorMessageCount: number | undefined
+  let fallbackPromptPending = false
+
+  const prepareFallbackPrompt = async (fallbackModel: DelegatedModelConfig): Promise<string | null> => {
+    await registerSyncSession(activeSessionID, fallbackModel, false)
+    const anchorResult = await deps.getSyncMessageCount?.(client, activeSessionID)
+    if (!anchorResult) {
+      return `Unable to safely retry fallback because the session message anchor is unavailable.\n\nSession ID: ${activeSessionID}`
+    }
+    if (!anchorResult.ok) {
+      return anchorResult.error
+    }
+    anchorMessageCount = anchorResult.count
+    return null
+  }
 
   while (true) {
+    if (fallbackPromptPending && effectiveCategoryModel) {
+      const anchorError = await prepareFallbackPrompt(effectiveCategoryModel)
+      if (anchorError) {
+        return anchorError
+      }
+      fallbackPromptPending = false
+    }
+
     let promptError = await deps.sendSyncPrompt(client, {
       sessionID: activeSessionID,
       agentToUse,
@@ -120,6 +119,10 @@ export async function runSyncTaskLoop(input: SyncTaskRunnerInput): Promise<strin
         categoryModel: effectiveCategoryModel,
         fallbackChain,
         sendPrompt: async (fallbackModel) => {
+          const anchorError = await prepareFallbackPrompt(fallbackModel)
+          if (anchorError) {
+            return anchorError
+          }
           return deps.sendSyncPrompt(client, {
             sessionID: activeSessionID,
             agentToUse,
@@ -148,12 +151,13 @@ export async function runSyncTaskLoop(input: SyncTaskRunnerInput): Promise<strin
       agentToUse,
       toastManager,
       taskId,
+      anchorMessageCount,
       hasActiveChildBackgroundTasks,
       hasPendingParentWake,
     }, syncPollTimeoutMs)
     if (pollError) {
       if (shouldAttemptPollErrorRecovery(pollError)) {
-        const recoveredResult = await deps.fetchSyncResult(client, activeSessionID, undefined, {
+        const recoveredResult = await deps.fetchSyncResult(client, activeSessionID, anchorMessageCount, {
           strictAbortRecovery: true,
           deliverableTag,
         })
@@ -177,36 +181,13 @@ export async function runSyncTaskLoop(input: SyncTaskRunnerInput): Promise<strin
         return pollError
       }
 
-      cleanupRetrySession(activeSessionID)
-
-      const retrySessionResult = await deps.createSyncSession(client, {
-        parentSessionID: parentContext.sessionID,
-        agentToUse,
-        description: args.description,
-        defaultDirectory: directory,
-        categoryModel: nextFallbackModel,
-      })
-      if (!retrySessionResult.ok) {
-        return retrySessionResult.error
-      }
-
-      activeSessionID = retrySessionResult.sessionID
-      setSyncSessionID(activeSessionID)
       effectiveCategoryModel = nextFallbackModel
-      await registerSyncSession(activeSessionID)
-      addRetryTaskToast({
-        args,
-        agentToUse,
-        sessionID: activeSessionID,
-        taskId,
-        toastManager,
-        modelInfo,
-      })
       await publishSyncMetadata(activeSessionID, effectiveCategoryModel, spawnDepth)
+      fallbackPromptPending = true
       continue
     }
 
-    const result = await deps.fetchSyncResult(client, activeSessionID, undefined, { deliverableTag })
+    const result = await deps.fetchSyncResult(client, activeSessionID, anchorMessageCount, { deliverableTag })
     if (!result.ok) {
       return result.error
     }

@@ -3,6 +3,7 @@ import { getAgentConfigKey } from "../../shared/agent-display-names"
 import { isCoordinatorAgent, COORDINATOR_AGENT_NAMES, isPlanFamily } from "./constants"
 import { SISYPHUS_JUNIOR_AGENT } from "./sisyphus-junior-agent"
 import { sanitizeSubagentType } from "./subagent-discovery"
+import { getDisabledDirectSubagentGuardHint } from "./builtin-subagent-types"
 import type { ResolveSubagentExecutionOptions, SubagentRequestPreflight } from "./subagent-resolution-types"
 
 function buildSisyphusJuniorError(categoryExamples: string): string {
@@ -30,6 +31,18 @@ export function validateSubagentRequest(
 
   const agentName = sanitizeSubagentType(args.subagent_type)
   const agentConfigKey = getAgentConfigKey(agentName)
+  const disabledDirectSubagentGuardHint = getDisabledDirectSubagentGuardHint(agentName)
+
+  if (disabledDirectSubagentGuardHint !== undefined) {
+    return {
+      kind: "invalid",
+      result: {
+        agentToUse: "",
+        categoryModel: undefined,
+        error: `Cannot use subagent_type="${agentName}" directly. ${disabledDirectSubagentGuardHint}`,
+      },
+    }
+  }
 
   if (!options.allowSisyphusJuniorDirect && agentConfigKey === getAgentConfigKey(SISYPHUS_JUNIOR_AGENT)) {
     return {
@@ -61,7 +74,7 @@ Create the work plan directly - that's your job as the planning agent.`,
       result: {
         agentToUse: "",
         categoryModel: undefined,
-        error: `Cannot delegate to coordinator agent "${agentName}" via task(). Coordinator agents (${COORDINATOR_AGENT_NAMES.join(", ")}) own the orchestration loop and must not be used as subagent targets — doing so creates duplicate coordinators and conflicting team state. Select a worker agent (e.g., sisyphus-junior via category, hephaestus, oracle) instead.`,
+        error: `Cannot delegate to coordinator agent "${agentName}" via task(). Coordinator agents (${COORDINATOR_AGENT_NAMES.join(", ")}) own the orchestration loop and must not be used as subagent targets because doing so creates duplicate coordinators and conflicting team state. Select a worker agent instead (for example, use category="deep" for deep-worker tasks or subagent_type="oracle" for consultation).`,
       },
     }
   }

@@ -1,5 +1,6 @@
 import type { DelegateTaskArgs, ToolContextWithMetadata, DelegatedModelConfig } from "./types"
 import type { ExecutorContext, ParentContext, SessionMessage } from "./executor-types"
+import type { FallbackEntry } from "../../shared/model-requirements"
 import { DEFAULT_SYNC_POLL_TIMEOUT_MS, getTimingConfig } from "./timing"
 import { buildTaskPrompt } from "./prompt-builder"
 import { cancelUnstableAgentTask } from "./cancel-unstable-agent-task"
@@ -21,7 +22,8 @@ export async function executeUnstableAgentTask(
   agentToUse: string,
   categoryModel: DelegatedModelConfig | undefined,
   systemContent: string | undefined,
-  actualModel: string | undefined
+  actualModel: string | undefined,
+  fallbackChain?: FallbackEntry[],
 ): Promise<string> {
   const { manager, client, syncPollTimeoutMs, sisyphusAgentConfig } = executorCtx
   let cleanupReason: string | undefined
@@ -41,6 +43,7 @@ export async function executeUnstableAgentTask(
       parentAgent: parentContext.agent,
       parentTools: getSessionTools(parentContext.sessionID),
       model: categoryModel,
+      fallbackChain,
       skills: args.load_skills.length > 0 ? args.load_skills : undefined,
       skillContent: systemContent,
       category: args.category,

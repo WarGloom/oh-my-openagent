@@ -10,7 +10,9 @@ import { parseModelString } from "../../shared/model-string-parser"
 import { CATEGORY_MODEL_REQUIREMENTS } from "../../shared/model-requirements"
 import { normalizeFallbackModels, flattenToFallbackModelStrings } from "../../shared/model-resolver"
 import { buildFallbackChainFromModels, findMostSpecificFallbackEntry } from "../../shared/fallback-chain-from-models"
+import { getAgentConfigKey } from "../../shared/agent-display-names"
 import { CONFIG_BASENAME } from "../../shared/plugin-identity"
+import { ROUTINE_VERIFICATION_ROUTING_POLICY } from "../../shared/routine-verification-routing-policy"
 import { getAvailableModelsForDelegateTask } from "./available-models"
 import { resolveModelForDelegateTask } from "./model-selection"
 import type { DelegatedModelConfig } from "./types"
@@ -22,15 +24,59 @@ function resolveCategoryPromptAppendForModel(
   staticPromptAppend: string,
   userPromptAppend: string | undefined,
 ): string | undefined {
+  const joinPromptSections = (sections: Array<string | undefined>): string =>
+    sections
+      .map((section) => section?.trim())
+      .filter((section): section is string => section !== undefined && section.length > 0)
+      .join("\n\n")
+
   const dynamicResolver = CATEGORY_PROMPT_APPEND_RESOLVERS[categoryName]
   if (!dynamicResolver) {
-    return staticPromptAppend || undefined
+    return joinPromptSections([
+      staticPromptAppend,
+      ROUTINE_VERIFICATION_ROUTING_POLICY,
+    ])
   }
   const dynamicBase = dynamicResolver(actualModel)
-  if (!userPromptAppend) {
-    return dynamicBase || undefined
+  return joinPromptSections([
+    dynamicBase,
+    userPromptAppend,
+    ROUTINE_VERIFICATION_ROUTING_POLICY,
+  ])
+}
+
+function fallbackEntryKey(entry: FallbackEntry): string {
+  return `${entry.providers.map((provider) => provider.toLowerCase()).sort().join(",")}/${entry.model.toLowerCase()}`
+}
+
+function resolveSisyphusJuniorOverride(agentOverrides: ExecutorContext["agentOverrides"]) {
+  return agentOverrides?.["sisyphus-junior"]
+    ?? Object.entries(agentOverrides ?? {}).find(([key]) => getAgentConfigKey(key) === "sisyphus-junior")?.[1]
+}
+
+function mergeConfiguredAndRequiredFallbackChains(
+  configuredFallbackChain: FallbackEntry[] | undefined,
+  requiredFallbackChain: FallbackEntry[] | undefined,
+): FallbackEntry[] | undefined {
+  if (!configuredFallbackChain || configuredFallbackChain.length === 0) {
+    return requiredFallbackChain
   }
-  return dynamicBase ? `${dynamicBase}\n\n${userPromptAppend}` : userPromptAppend
+  if (!requiredFallbackChain || requiredFallbackChain.length === 0) {
+    return configuredFallbackChain
+  }
+
+  const seen = new Set<string>()
+  const merged: FallbackEntry[] = []
+  for (const entry of [...configuredFallbackChain, ...requiredFallbackChain]) {
+    const key = fallbackEntryKey(entry)
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    merged.push(entry)
+  }
+
+  return merged
 }
 
 export interface CategoryResolutionResult {
@@ -64,7 +110,7 @@ export async function resolveCategoryExecution(
   inheritedModel: string | undefined,
   systemDefaultModel: string | undefined
 ): Promise<CategoryResolutionResult> {
-  const { client, userCategories, sisyphusJuniorModel } = executorCtx
+  const { client, userCategories, sisyphusJuniorModel, agentOverrides } = executorCtx
 
   const categoryName = args.category!
   const enabledCategories = mergeCategories(userCategories)
@@ -102,16 +148,19 @@ Available categories: ${allCategoryNames}`)
   }
 
   const requirement = CATEGORY_MODEL_REQUIREMENTS[args.category!]
+  const overrideModel = sisyphusJuniorModel
+  const explicitCategoryModel = userCategories?.[args.category!]?.model
+  const sisyphusJuniorFallbackModels = overrideModel && !explicitCategoryModel
+    ? resolveSisyphusJuniorOverride(agentOverrides)?.fallback_models
+    : undefined
   const normalizedConfiguredFallbackModels = normalizeFallbackModels(resolved.config.fallback_models)
+  const normalizedSisyphusJuniorFallbackModels = normalizeFallbackModels(sisyphusJuniorFallbackModels)
   let actualModel: string | undefined
   let modelInfo: ModelFallbackInfo | undefined
   let categoryModel: DelegatedModelConfig | undefined
   let isModelResolutionSkipped = false
   let fallbackEntry: FallbackEntry | undefined
   let matchedFallback = false
-
-  const overrideModel = sisyphusJuniorModel
-  const explicitCategoryModel = userCategories?.[args.category!]?.model
 
   if (!requirement) {
     // Precedence: explicit category model > sisyphus-junior default > category resolved model
@@ -220,9 +269,23 @@ Available categories: ${categoryNames.join(", ")}`)
   const defaultProviderID = categoryModel?.providerID
     ?? parseModelString(actualModel ?? "")?.providerID
     ?? "opencode"
-  const configuredFallbackChain = buildFallbackChainFromModels(
+  const categoryConfiguredFallbackChain = buildFallbackChainFromModels(
     normalizedConfiguredFallbackModels,
     defaultProviderID,
+  )
+  const sisyphusJuniorConfiguredFallbackChain = buildFallbackChainFromModels(
+    normalizedSisyphusJuniorFallbackModels,
+    defaultProviderID,
+  )
+  const configuredFallbackChain = mergeConfiguredAndRequiredFallbackChains(
+    categoryConfiguredFallbackChain,
+    sisyphusJuniorConfiguredFallbackChain,
+  )
+  const runtimeFallbackChain = mergeConfiguredAndRequiredFallbackChains(
+    configuredFallbackChain,
+    (isModelResolutionSkipped || explicitCategoryModel || overrideModel) && !configuredFallbackChain
+      ? undefined
+      : requirement?.fallbackChain,
   )
 
   // Only promote fallback-only settings when resolution actually selected a fallback model.
@@ -256,6 +319,6 @@ Available categories: ${categoryNames.join(", ")}`)
     actualModel,
     isUnstableAgent,
     // Don't use hardcoded fallback chain when resolution was skipped (cold cache)
-    fallbackChain: configuredFallbackChain ?? ((isModelResolutionSkipped || explicitCategoryModel || overrideModel) ? undefined : requirement?.fallbackChain),
+    fallbackChain: runtimeFallbackChain,
   }
 }
