@@ -174,9 +174,10 @@ describe("Senpi compatibility test script", () => {
 
     // #when
     const senpiJob = sliceWorkflowSection(workflow, "  senpi-compatibility:", "  lazycodex-published-smoke:")
-    const needsReferences = workflow.match(/needs: \[[^\]]*senpi-compatibility[^\]]*\]/g) ?? []
 
     // #then
+    expect(senpiJob).toContain("strategy:")
+    expect(senpiJob).toContain("fail-fast: false")
     expect(senpiJob).toContain("os: [ubuntu-latest, macos-latest, windows-latest]")
     expect(senpiJob).toContain('node-version: "24"')
     expect(senpiJob).toContain('bun-version: "1.3.12"')
@@ -186,6 +187,8 @@ describe("Senpi compatibility test script", () => {
     expect(senpiJob).toContain("tsgo --noEmit -p packages/omo-senpi/tsconfig.json")
     expect(senpiJob).toContain("bun test packages/omo-senpi")
     expect(senpiJob).not.toContain("senpi install")
-    expect(needsReferences.length, "senpi-compatibility must be included in both downstream needs lists").toBeGreaterThanOrEqual(2)
+    expect(senpiJob, "senpi-compatibility must remain a required CI job, not best-effort").not.toContain(
+      "continue-on-error: true",
+    )
   })
 })

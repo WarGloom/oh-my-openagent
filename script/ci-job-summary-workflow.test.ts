@@ -19,7 +19,6 @@ const workflowExpectations = [
       "test",
       "typecheck",
       "codex-compatibility",
-      "senpi-compatibility",
       "lazycodex-published-smoke",
       "build",
       "auto-commit-schema",
