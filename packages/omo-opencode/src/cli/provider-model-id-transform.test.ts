@@ -167,6 +167,19 @@ describe("transformModelForProvider", () => {
   })
 
   describe("anthropic provider", () => {
+    test("does not convert claude-haiku-4-5 into a GitHub Copilot-style dotted alias", () => {
+      // #given anthropic provider and claude-haiku-4-5 model
+      const provider = "anthropic"
+      const model = "claude-haiku-4-5"
+
+      // #when transformModelForProvider is called
+      const result = transformModelForProvider(provider, model)
+
+      // #then Anthropic must keep its native hyphenated model ID
+      expect(result).toBe("claude-haiku-4-5")
+      expect(result).not.toBe("claude-haiku-4.5")
+    })
+
     test("preserves hyphenated claude-opus-4-7 for config output (regression: installer must not write dotted IDs)", () => {
       // #given anthropic provider and claude-opus-4-7 model
       const provider = "anthropic"
@@ -340,7 +353,7 @@ describe("transformModelForProvider", () => {
     })
   })
 
-  test("uses separate display and runtime transform implementations", () => {
+  test("preserves direct Anthropic model IDs in display and runtime transforms", () => {
     // #given the display transform (used by the installer) and the runtime transform
     const cliResult = transformModelForProvider("anthropic", "claude-opus-4-7")
     const runtimeResult = transformRuntimeModelForProvider("anthropic", "claude-opus-4-7")
@@ -352,7 +365,7 @@ describe("transformModelForProvider", () => {
     ] as const
 
     // #when both are called with the same anthropic claude input
-    // #then both preserve hyphenated form for direct Anthropic calls
+    // #then direct Anthropic calls preserve configured model IDs
     expect(transformModelForProvider).not.toBe(transformRuntimeModelForProvider)
     expect(cliResult).toBe("claude-opus-4-7")
     expect(runtimeResult).toBe("claude-opus-4-7")

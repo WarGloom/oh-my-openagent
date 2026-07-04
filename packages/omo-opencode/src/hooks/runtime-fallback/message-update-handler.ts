@@ -8,20 +8,24 @@ import { getFallbackModelsForSession } from "./fallback-models"
 import { resolveFallbackBootstrapModel } from "./fallback-bootstrap-model"
 import { dispatchFallbackRetry } from "./fallback-retry-dispatcher"
 import { hasVisibleAssistantResponse } from "./visible-assistant-response"
+import { stringifyRuntimeFallbackModel } from "./model-input"
 import { subagentSessions } from "../../features/claude-code-session-state"
+import { isAbortError } from "../../shared/is-abort-error"
 import { resolveMessageEventSessionID } from "../../shared/event-session-id"
+import { modelIdentity } from "./model-identity"
+import { hasTimeoutDrivenFallbackEnabled } from "./timeout-config"
 import { normalizeModelToCanonicalString } from "./normalize-model"
 
 export { hasVisibleAssistantResponse } from "./visible-assistant-response"
 
 export function createMessageUpdateHandler(deps: HookDeps, helpers: AutoRetryHelpers) {
-  const { ctx, config, pluginConfig, sessionStates, sessionLastAccess, sessionRetryInFlight, sessionAwaitingFallbackResult, sessionStatusRetryKeys } = deps
+  const { ctx, config, pluginConfig, sessionStates, sessionLastAccess, sessionRetryInFlight, sessionAwaitingFallbackResult, sessionFallbackAbortInFlight, sessionStatusRetryKeys } = deps
   const checkVisibleResponse = hasVisibleAssistantResponse(extractAutoRetrySignal)
 
   return async (props: Record<string, unknown> | undefined) => {
     const info = props?.info as Record<string, unknown> | undefined
     const sessionID = resolveMessageEventSessionID(props)
-    const timeoutEnabled = config.timeout_seconds > 0
+    const timeoutEnabled = hasTimeoutDrivenFallbackEnabled(config)
     const eventParts = props?.parts as Array<{ type?: string; text?: string }> | undefined
     const infoParts = info?.parts as Array<{ type?: string; text?: string }> | undefined
     const parts = eventParts && eventParts.length > 0 ? eventParts : infoParts
@@ -36,11 +40,11 @@ export function createMessageUpdateHandler(deps: HookDeps, helpers: AutoRetryHel
       : undefined
     const retrySignal = retrySignalResult?.signal ?? retrySignalFromParts
     const errorContentResult = containsErrorContent(parts)
-    const error = info?.error ?? 
+    const error = info?.error ??
       (retrySignal && timeoutEnabled ? { name: "ProviderRateLimitError", message: retrySignal } : undefined) ??
       (errorContentResult.hasError ? { name: "MessageContentError", message: errorContentResult.errorMessage || "Message contains error content" } : undefined)
     const role = info?.role as string | undefined
-    const model = normalizeModelToCanonicalString(info?.model)
+    const model = normalizeModelToCanonicalString(info?.model) ?? stringifyRuntimeFallbackModel(info?.model)
 
     if (sessionID && role === "assistant" && !error) {
       if (!sessionAwaitingFallbackResult.has(sessionID)) {
@@ -49,7 +53,8 @@ export function createMessageUpdateHandler(deps: HookDeps, helpers: AutoRetryHel
 
       const hasVisible = await checkVisibleResponse(ctx, sessionID, info)
       if (!hasVisible) {
-        log(`[${HOOK_NAME}] Assistant update observed without visible final response; keeping fallback timeout`, {
+        const refreshed = helpers.refreshSessionFallbackTimeout(sessionID, "message.updated.progress")
+        log(`[${HOOK_NAME}] Assistant update observed without visible final response; ${refreshed ? "refreshed" : "kept"} fallback timeout`, {
           sessionID,
           model,
         })
@@ -57,8 +62,9 @@ export function createMessageUpdateHandler(deps: HookDeps, helpers: AutoRetryHel
       }
 
       sessionAwaitingFallbackResult.delete(sessionID)
+      sessionFallbackAbortInFlight.delete(sessionID)
       sessionStatusRetryKeys.delete(sessionID)
-      helpers.clearSessionFallbackTimeout(sessionID)
+      helpers.clearSessionFallbackState(sessionID)
       let state = sessionStates.get(sessionID)
       if (state?.pendingFallbackModel) {
         state.pendingFallbackModel = undefined
@@ -71,12 +77,19 @@ export function createMessageUpdateHandler(deps: HookDeps, helpers: AutoRetryHel
     if (sessionID && role === "assistant" && error) {
       let state = sessionStates.get(sessionID)
       const pendingFallbackModel = state?.pendingFallbackModel
+      const pendingFallbackIdentity = modelIdentity(pendingFallbackModel)
+      const modelIdentityValue = modelIdentity(model)
       const wasAwaitingFallbackResult = sessionAwaitingFallbackResult.has(sessionID)
+      if ((sessionFallbackAbortInFlight.has(sessionID) || wasAwaitingFallbackResult) && !retrySignal && isAbortError(error)) {
+        log(`[${HOOK_NAME}] message.updated matched fallback abort; preserving retry state`, { sessionID, model })
+        return
+      }
+
       if (
         wasAwaitingFallbackResult &&
         pendingFallbackModel &&
         !retrySignal &&
-        model !== pendingFallbackModel
+        (!pendingFallbackIdentity || !modelIdentityValue || modelIdentityValue !== pendingFallbackIdentity)
       ) {
         log(`[${HOOK_NAME}] message.updated fallback skipped - awaiting fallback result`, {
           sessionID,
@@ -125,6 +138,15 @@ export function createMessageUpdateHandler(deps: HookDeps, helpers: AutoRetryHel
           errorName: extractErrorName(error),
           errorType: classifyErrorType(error),
         })
+        sessionRetryInFlight.delete(sessionID)
+        sessionAwaitingFallbackResult.delete(sessionID)
+        sessionFallbackAbortInFlight.delete(sessionID)
+        sessionStatusRetryKeys.delete(sessionID)
+        helpers.clearSessionFallbackTimeout(sessionID)
+        if (state) {
+          state.pendingFallbackModel = undefined
+          state.pendingFallbackPromptMayHaveBeenAccepted = false
+        }
         return
       }
 
@@ -133,6 +155,7 @@ export function createMessageUpdateHandler(deps: HookDeps, helpers: AutoRetryHel
       const fallbackModels = getFallbackModelsForSession(sessionID, resolvedAgent, pluginConfig)
 
       if (fallbackModels.length === 0) {
+        sessionFallbackAbortInFlight.delete(sessionID)
         if (
           subagentSessions.has(sessionID) &&
           classifyErrorType(error) === "quota_exceeded"

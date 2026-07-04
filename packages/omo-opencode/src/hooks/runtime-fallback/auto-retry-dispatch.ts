@@ -20,21 +20,37 @@ export function createAutoRetryDispatcher(
 ) {
   const {
     ctx,
+    config,
+    options,
     sessionStates,
     sessionRetryInFlight,
     sessionAwaitingFallbackResult,
     internallyAbortedSessions,
+    sessionFallbackAbortInFlight = new Set<string>(),
     pluginConfig,
   } = deps
+  const isPositiveNumber = (value: unknown): value is number => typeof value === "number" && value > 0
+  const fallbackTimeoutsEnabled =
+    isPositiveNumber(options?.session_timeout_ms) ||
+    isPositiveNumber(config.timeout_seconds) ||
+    isPositiveNumber(config.first_progress_timeout_seconds) ||
+    isPositiveNumber(config.stall_timeout_seconds) ||
+    isPositiveNumber(config.hard_timeout_seconds)
 
   return async (
     sessionID: string,
     newModel: string,
     resolvedAgent: string | undefined,
     source: string,
+    callbacks?: {
+      onPromptFailedBeforeAccept?: () => void
+      onPromptNotAccepted?: () => void
+      onPromptAccepted?: () => Promise<void> | void
+    },
   ): Promise<AutoRetryDispatchOutcome> => {
     if (sessionRetryInFlight.has(sessionID)) {
       log(`[${HOOK_NAME}] Retry already in flight, skipping (${source})`, { sessionID })
+      callbacks?.onPromptNotAccepted?.()
       return { accepted: false, status: "blocked", reason: "retry already in flight" }
     }
 
@@ -47,23 +63,53 @@ export function createAutoRetryDispatcher(
     } : undefined)
     if (!retryModelPayload) {
       log(`[${HOOK_NAME}] Invalid model format (missing provider prefix): ${newModel}`)
+      callbacks?.onPromptFailedBeforeAccept?.()
       const state = sessionStates.get(sessionID)
-      if (state?.pendingFallbackModel) {
+      if (!callbacks && state?.pendingFallbackModel) {
         state.pendingFallbackModel = undefined
       }
-      if (state) {
+      if (!callbacks && state) {
         state.pendingFallbackPromptMayHaveBeenAccepted = false
       }
+      sessionFallbackAbortInFlight.delete(sessionID)
       return { accepted: false, status: "invalid-model", reason: "missing provider prefix" }
     }
 
     const hadAwaitingFallbackResult = sessionAwaitingFallbackResult.has(sessionID)
+    const shouldBypassPromptStateChecks = source === "session.status" && !hadAwaitingFallbackResult
     const previousPendingFallbackModel = sessionStates.get(sessionID)?.pendingFallbackModel
     const previousPendingFallbackPromptMayHaveBeenAccepted = sessionStates.get(sessionID)?.pendingFallbackPromptMayHaveBeenAccepted
     sessionRetryInFlight.add(sessionID)
     let retryDispatched = false
     let retryMayHaveBeenAccepted = false
     let acceptedStatus: AutoRetryDispatchOutcome["status"] = "dispatched"
+    let fallbackStateRestored = false
+    let fallbackTimeoutScheduled = false
+    const scheduleFallbackTimeoutIfEnabled = (agent: string | undefined): void => {
+      if (!fallbackTimeoutsEnabled) {
+        return
+      }
+      fallbackTimeoutScheduled = true
+      scheduleSessionFallbackTimeout(sessionID, agent)
+    }
+    const restorePromptFailedBeforeAccept = () => {
+      if (callbacks?.onPromptFailedBeforeAccept) {
+        callbacks.onPromptFailedBeforeAccept()
+        fallbackStateRestored = true
+      }
+    }
+    const restorePromptNotAccepted = () => {
+      if (callbacks?.onPromptNotAccepted) {
+        callbacks.onPromptNotAccepted()
+        fallbackStateRestored = true
+      }
+    }
+    const restorePromptFailedIfNeeded = () => {
+      if (!retryDispatched && !retryMayHaveBeenAccepted && !fallbackStateRestored) {
+        restorePromptFailedBeforeAccept()
+      }
+    }
+
     try {
       const messagesResp = await ctx.client.session.messages({
         path: { id: sessionID },
@@ -100,7 +146,7 @@ export function createAutoRetryDispatcher(
       const launchAgent = resolveRegisteredAgentName(retryAgent)
       if (!hadAwaitingFallbackResult) {
         sessionAwaitingFallbackResult.add(sessionID)
-        scheduleSessionFallbackTimeout(sessionID, retryAgent)
+        scheduleFallbackTimeoutIfEnabled(retryAgent)
       }
 
       const retryPromptInput = {
@@ -126,6 +172,7 @@ export function createAutoRetryDispatcher(
         settleMs: 0,
         ...(queueBehavior ? { queueBehavior } : {}),
         ...(wasInternallyAborted ? { checkToolState: false } : {}),
+        ...(shouldBypassPromptStateChecks ? { checkStatus: false, checkToolState: false } : {}),
         input: retryPromptInput,
       })
 
@@ -146,9 +193,10 @@ export function createAutoRetryDispatcher(
           })
           return { accepted: true, status: "possibly-accepted" }
         }
+        restorePromptFailedBeforeAccept()
         throw promptResult.error
       }
-      if (promptResult.status === "reserved") {
+      if (promptResult.status === "reserved" || promptResult.status === "active") {
         // Session still has an active reservation from the cancelled stream.
         // Retry with linear backoff until the reservation is released.
         const MAX_RESERVED_RETRIES = 6
@@ -166,7 +214,7 @@ export function createAutoRetryDispatcher(
             `runtime-fallback:${source}:reserved-retry-${attempt + 1}`,
             "defer",
           )
-          if (reservedResult.status !== "reserved") break
+          if (reservedResult.status !== "reserved" && reservedResult.status !== "active") break
         }
         if (reservedResult.status === "failed") {
           if (isAmbiguousPostDispatchPromptFailure(reservedResult)) {
@@ -180,6 +228,7 @@ export function createAutoRetryDispatcher(
           throw reservedResult.error
         }
         if (!isInternalPromptDispatchAccepted(reservedResult)) {
+          restorePromptNotAccepted()
           log(`[${HOOK_NAME}] Auto-retry skipped by promptAsync gate after reserved retries (${source})`, {
             sessionID,
             status: reservedResult.status,
@@ -188,6 +237,7 @@ export function createAutoRetryDispatcher(
         }
         acceptedStatus = "queued"
       } else if (!isInternalPromptDispatchAccepted(promptResult)) {
+        restorePromptNotAccepted()
         log(`[${HOOK_NAME}] Auto-retry skipped by promptAsync gate (${source})`, {
           sessionID,
           status: promptResult.status,
@@ -196,15 +246,17 @@ export function createAutoRetryDispatcher(
       }
       sessionAwaitingFallbackResult.add(sessionID)
       if (hadAwaitingFallbackResult) {
-        scheduleSessionFallbackTimeout(sessionID, retryAgent)
+        scheduleFallbackTimeoutIfEnabled(retryAgent)
       }
       const state = sessionStates.get(sessionID)
       if (state) {
         state.pendingFallbackPromptMayHaveBeenAccepted = false
       }
       retryDispatched = true
+      await callbacks?.onPromptAccepted?.()
       return { accepted: true, status: acceptedStatus }
     } catch (retryError) {
+      restorePromptFailedIfNeeded()
       if (!(retryError instanceof Error)) {
         log(`[${HOOK_NAME}] Auto-retry failed (${source})`, { sessionID, error: String(retryError) })
         return { accepted: false, status: "failed", reason: String(retryError) }
@@ -220,14 +272,17 @@ export function createAutoRetryDispatcher(
         }
       }
       if (!retryDispatched && !retryMayHaveBeenAccepted) {
+        sessionFallbackAbortInFlight.delete(sessionID)
         if (hadAwaitingFallbackResult) {
           sessionAwaitingFallbackResult.add(sessionID)
         } else {
           sessionAwaitingFallbackResult.delete(sessionID)
-          clearSessionFallbackTimeout(sessionID)
+          if (fallbackTimeoutScheduled) {
+            clearSessionFallbackTimeout(sessionID)
+          }
         }
         const state = sessionStates.get(sessionID)
-        if (state) {
+        if (state && !fallbackStateRestored) {
           if (hadAwaitingFallbackResult) {
             state.pendingFallbackModel = previousPendingFallbackModel
             state.pendingFallbackPromptMayHaveBeenAccepted = previousPendingFallbackPromptMayHaveBeenAccepted

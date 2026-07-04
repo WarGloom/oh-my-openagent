@@ -56,6 +56,20 @@ describe("provider model ID transforms", () => {
 		}
 	})
 
+	test("normalizes dotted Anthropic aliases back to native hyphenated IDs", () => {
+		// #given an Anthropic model ID accidentally normalized into Copilot-style dotted form
+		const provider = "anthropic"
+		const model = "claude-haiku-4.5"
+
+		// #when both model-core transform variants are called
+		const apiResult = transformModelForProvider(provider, model)
+		const displayResult = transformModelForProviderDisplay(provider, model)
+
+		// #then Anthropic keeps its native hyphenated model ID
+		expect(apiResult).toBe("claude-haiku-4-5")
+		expect(displayResult).toBe("claude-haiku-4-5")
+	})
+
 	test("produces identical results for non-Anthropic providers", () => {
 		// #given non-Anthropic provider/model pairs
 		const scenarios = [

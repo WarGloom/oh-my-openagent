@@ -1,5 +1,4 @@
-declare const require: (name: string) => any
-const { describe, expect, test, beforeEach, afterEach, mock, spyOn } = require("bun:test")
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import * as connectedProvidersCache from "./connected-providers-cache"
 
 let readConnectedProvidersCacheSpy: ReturnType<typeof spyOn> | undefined
@@ -175,6 +174,45 @@ describe("model-error-classifier", () => {
   test("treats provider usage limit reached message as retryable fallback signal", () => {
     //#given
     const error = { message: "usage limit has been reached for your account" }
+
+    //#when
+    const result = shouldRetryError(error)
+
+    //#then
+    expect(result).toBe(true)
+  })
+
+  test("treats hit-your-limit reset message with retrying countdown as retryable", () => {
+    //#given
+    const error = {
+      message: "You've hit your limit · resets 4pm (Asia/Jerusalem) [retrying in 3m 18s attempt #8]",
+    }
+
+    //#when
+    const result = shouldRetryError(error)
+
+    //#then
+    expect(result).toBe(true)
+  })
+
+  test("treats hit-your-limit reset message without retrying countdown as retryable", () => {
+    //#given
+    const error = {
+      message: "Claude Code returned an error result: You've hit your limit · resets 6pm (Asia/Jerusalem)",
+    }
+
+    //#when
+    const result = shouldRetryError(error)
+
+    //#then
+    expect(result).toBe(true)
+  })
+
+  test("treats usage-limit reset message with retrying countdown as retryable", () => {
+    //#given
+    const error = {
+      message: "The usage limit has been reached for your account [retrying in 27s attempt #6]",
+    }
 
     //#when
     const result = shouldRetryError(error)
@@ -454,6 +492,39 @@ describe("model-error-classifier", () => {
     const error = {
       name: undefined,
       message: "An error occurred while processing your request. Please try again later.",
+    }
+
+    //#when
+    const result = shouldRetryError(error)
+
+    //#then
+    expect(result).toBe(true)
+  })
+
+  test("treats context-window overflow errors as retryable fallback signals", () => {
+    //#given
+    const errors = [
+      {
+        name: "ContextOverflowError",
+        message: "Input exceeds context window of this model",
+      },
+      {
+        name: "ContextLengthError",
+        message: "context_length_exceeded: prompt is too long for this model",
+      },
+    ]
+
+    //#when
+    const results = errors.map((error) => shouldRetryError(error))
+
+    //#then
+    expect(results).toEqual([true, true])
+  })
+
+  test("treats sanitized provider authorization failures as retryable", () => {
+    //#given
+    const error = {
+      message: "Authentication or provider authorization failed.",
     }
 
     //#when

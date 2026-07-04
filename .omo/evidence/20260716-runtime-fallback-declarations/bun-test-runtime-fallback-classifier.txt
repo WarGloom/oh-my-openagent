@@ -1,0 +1,17 @@
+$ bun test packages/model-core/src/runtime-fallback-error-classifier.test.ts
+bun test v1.3.14 (0d9b296a)
+
+packages/model-core/src/runtime-fallback-error-classifier.test.ts:
+(pass) runtime fallback error classifier > classifies representative Anthropic provider payloads without adapter state
+(pass) runtime fallback error classifier > preserves malformed provider payload classification behavior
+(pass) runtime fallback error classifier > honors retryable AI SDK signals only for safe status codes
+(pass) runtime fallback error classifier > treats free usage exceeded messages as retryable runtime fallback errors
+(pass) runtime fallback error classifier > leaves OpenCode context overflow to native compaction
+(pass) runtime fallback error classifier > extracts provider auto-retry signals from status summary or details
+(pass) runtime fallback error classifier > extracts provider reset-window auto-retry signals
+(pass) runtime fallback error classifier > extracts provider session-limit reset-window auto-retry signals
+
+8 pass
+0 fail
+29 expect() calls
+Ran 8 tests across 1 file.

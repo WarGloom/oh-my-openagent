@@ -1,0 +1,9 @@
+$ TMPDIR=.tmp/qa bash .agents/skills/opencode-qa/scripts/lib/common.sh --self-check
+PASS: dependencies present (opencode sqlite3 curl jq tmux)
+PASS: oqa_db_path resolved the live database path
+PASS: oqa_sql_escape quotes single quotes
+PASS: oqa_free_port returned a loopback port
+PASS: isolated XDG sandbox auto-removed on exit
+PASS: isolated HOME points inside sandbox
+PASS: isolated HOME preserves HOME-based opencode shim
+PASS: common.sh self-check

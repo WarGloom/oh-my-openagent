@@ -7,31 +7,18 @@ import * as connectedProvidersCache from "./connected-providers-cache"
  * These errors halt execution and should trigger fallback retry.
  */
 const RETRYABLE_ERROR_NAMES = new Set([
-  "providermodelnotfounderror",
-  "ratelimiterror",
-  "modelunavailableerror",
-  "providerconnectionerror",
-  "authenticationerror",
+  "providermodelnotfounderror", "ratelimiterror", "modelunavailableerror", "providerconnectionerror",
+  "authenticationerror", "contextoverflowerror", "contextlengtherror",
 ])
 
-const STOP_ERROR_NAMES = new Set([
-  "quotaexceedederror",
-  "insufficientcreditserror",
-  "freeusagelimiterror",
-])
+const STOP_ERROR_NAMES = new Set(["quotaexceedederror", "insufficientcreditserror", "freeusagelimiterror"])
 
 /**
  * Error names that should NOT trigger retry.
  * These errors are typically user-induced or fixable without switching models.
  */
 const NON_RETRYABLE_ERROR_NAMES = new Set([
-  "messageabortederror",
-  "permissiondeniederror",
-  "contextlengtherror",
-  "timeouterror",
-  "validationerror",
-  "syntaxerror",
-  "usererror",
+  "messageabortederror", "permissiondeniederror", "timeouterror", "validationerror", "syntaxerror", "usererror",
 ])
 
 /**
@@ -59,6 +46,12 @@ const RETRYABLE_MESSAGE_PATTERNS = [
   "model_not_supported",
   "model not supported",
   "model is not supported",
+  "context_length_exceeded",
+  "context length exceeded",
+  "context overflow",
+  "input exceeds context window",
+  "exceeds the context window",
+  "prompt is too long",
   "connection error",
   "network error",
   "timeout",
@@ -78,6 +71,8 @@ const RETRYABLE_MESSAGE_PATTERNS = [
   "529",
   "selected provider is forbidden",
   "provider is forbidden",
+  "authentication or provider authorization failed",
+  "provider authorization failed",
   // Chinese retryable patterns (Zhipu, etc.)
   "频率限制",           // "rate limit"
   "请求过于频繁",       // "too many requests"
@@ -126,6 +121,14 @@ const AUTO_RETRY_GATE_PATTERNS = [
   "rate limit",
   "cooling down",
   "credentials for model",
+  "hit your limit",
+  "usage limit",
+  "limit reached",
+]
+
+const PROVIDER_LIMIT_RESET_PATTERNS = [
+  "hit your limit",
+  "reached your limit",
 ]
 
 function hasProviderAutoRetrySignal(message: string): boolean {
@@ -133,6 +136,13 @@ function hasProviderAutoRetrySignal(message: string): boolean {
     return false
   }
   return AUTO_RETRY_GATE_PATTERNS.some((pattern) => message.includes(pattern))
+}
+
+function hasProviderResetWindowSignal(message: string): boolean {
+  if (!message.includes("resets")) {
+    return false
+  }
+  return PROVIDER_LIMIT_RESET_PATTERNS.some((pattern) => message.includes(pattern))
 }
 
 export interface ErrorInfo {
@@ -165,13 +175,18 @@ export function isRetryableModelError(error: ErrorInfo): boolean {
 
   // Check message patterns for unknown errors
   const msg = error.message?.toLowerCase() ?? ""
+  const hasAutoRetrySignal = hasProviderAutoRetrySignal(msg)
+  const hasResetWindowSignal = hasProviderResetWindowSignal(msg)
 
-  // STOP patterns take precedence over retryable patterns
-  if (STOP_MESSAGE_PATTERNS.some((pattern) => msg.includes(pattern))) {
+  if (
+    STOP_MESSAGE_PATTERNS.some((pattern) => msg.includes(pattern)) &&
+    !hasAutoRetrySignal &&
+    !hasResetWindowSignal
+  ) {
     return false
   }
 
-  if (hasProviderAutoRetrySignal(msg)) {
+  if (hasAutoRetrySignal || hasResetWindowSignal) {
     return true
   }
 

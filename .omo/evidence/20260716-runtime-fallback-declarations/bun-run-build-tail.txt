@@ -1,0 +1,19 @@
+$ TMPDIR=.tmp/qa bun run build
+$ bun run script/build.ts
+build:materialize
+build:git-bash-mcp
+build:tui
+build:omo-schema
+build:codex-install
+build:cli
+build:cli-node
+build:schema
+build:index
+build:node-require-shim
+build:shared-skills-assets
+build:lsp-tools-mcp
+build:lsp-daemon
+build:senpi-plugin
+build:codex-plugin
+build:declarations
+build: all steps completed

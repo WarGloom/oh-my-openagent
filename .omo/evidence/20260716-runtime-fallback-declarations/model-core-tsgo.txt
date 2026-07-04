@@ -1,0 +1,2 @@
+$ bun x tsgo --noEmit -p packages/model-core/tsconfig.json
+exit 0; no diagnostics

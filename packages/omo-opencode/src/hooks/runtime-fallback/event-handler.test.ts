@@ -1,8 +1,10 @@
-import { describe, expect, it } from "bun:test"
+import { afterEach, describe, expect, it } from "bun:test"
 import type { HookDeps, RuntimeFallbackPluginInput } from "./types"
 import type { AutoRetryHelpers } from "./auto-retry"
 import { createFallbackState } from "./fallback-state"
 import { createEventHandler } from "./event-handler"
+import { SessionCategoryRegistry } from "../../shared/session-category-registry"
+import { subagentSessions, _resetForTesting as resetClaudeCodeSessionState } from "../../features/claude-code-session-state"
 
 function createContext(): RuntimeFallbackPluginInput {
   return {
@@ -29,16 +31,31 @@ function createDeps(): HookDeps {
       max_fallback_attempts: 3,
       cooldown_seconds: 60,
       timeout_seconds: 30,
+      first_progress_timeout_seconds: 30,
+      stall_timeout_seconds: 600,
+      hard_timeout_seconds: 1800,
       notify_on_fallback: false,
       restore_primary_after_cooldown: false,
     },
     options: undefined,
-    pluginConfig: {},
+    pluginConfig: {
+      git_master: {
+        commit_footer: true,
+        include_co_authored_by: true,
+        git_env_prefix: "GIT_MASTER=1",
+      },
+    },
     sessionStates: new Map(),
     sessionLastAccess: new Map(),
     sessionRetryInFlight: new Set(),
     sessionAwaitingFallbackResult: new Set(),
+    sessionFallbackAbortInFlight: new Set(),
     sessionFallbackTimeouts: new Map(),
+    sessionFallbackHardTimeouts: new Map(),
+    sessionFallbackTimeoutAgents: new Map(),
+    sessionFallbackTimeoutKinds: new Map(),
+    sessionFallbackProgressObserved: new Set(),
+    sessionFallbackUnsafeToReplay: new Set(),
     sessionStatusRetryKeys: new Map(),
     internallyAbortedSessions: new Set(),
   }
@@ -53,7 +70,15 @@ function createHelpers(deps: HookDeps, abortCalls: string[], clearCalls: string[
       clearCalls.push(sessionID)
       deps.sessionFallbackTimeouts.delete(sessionID)
     },
+    clearSessionFallbackState: (sessionID: string) => {
+      clearCalls.push(sessionID)
+      deps.sessionFallbackTimeouts.delete(sessionID)
+      deps.sessionFallbackHardTimeouts.delete(sessionID)
+      deps.sessionFallbackUnsafeToReplay.delete(sessionID)
+      deps.internallyAbortedSessions.delete(sessionID)
+    },
     scheduleSessionFallbackTimeout: () => {},
+    refreshSessionFallbackTimeout: () => false,
     autoRetryWithFallback: async () => {},
     resolveAgentForSessionFromContext: async () => undefined,
     cleanupStaleSessions: () => {},
@@ -61,6 +86,56 @@ function createHelpers(deps: HookDeps, abortCalls: string[], clearCalls: string[
 }
 
 describe("createEventHandler", () => {
+  afterEach(() => {
+    SessionCategoryRegistry.clear()
+    resetClaudeCodeSessionState()
+  })
+
+  it("#given a background-owned subagent session #when session.error is retryable #then runtime fallback skips in-place retry", async () => {
+    // given
+    const sessionID = "session-error-background-owned"
+    SessionCategoryRegistry.register(sessionID, "test")
+    subagentSessions.add(sessionID)
+    const deps = createDeps()
+    deps.pluginConfig = {
+      git_master: {
+        commit_footer: true,
+        include_co_authored_by: true,
+        git_env_prefix: "GIT_MASTER=1",
+      },
+      categories: {
+        test: {
+          fallback_models: ["openai/gpt-5.4", "google/gemini-2.5-pro"],
+        },
+      },
+    }
+    const abortCalls: string[] = []
+    const clearCalls: string[] = []
+    const retryCalls: Array<{ sessionID: string; model: string; source: string }> = []
+    const helpers = createHelpers(deps, abortCalls, clearCalls)
+    helpers.autoRetryWithFallback = async (retrySessionID: string, newModel: string, _resolvedAgent, source: string) => {
+      retryCalls.push({ sessionID: retrySessionID, model: newModel, source })
+    }
+    deps.sessionStates.set(sessionID, createFallbackState("github-copilot/claude-haiku-4.5"))
+    const handler = createEventHandler(deps, helpers)
+
+    // when
+    await handler({
+      event: {
+        type: "session.error",
+        properties: {
+          sessionID,
+          error: { statusCode: 429, message: "All credentials for model claude-haiku-4.5 are cooling down" },
+        },
+      },
+    })
+
+    // then
+    expect(abortCalls).toEqual([])
+    expect(clearCalls).toEqual([])
+    expect(retryCalls).toEqual([])
+  })
+
   it("#given a session retry dedupe key #when session.stop fires #then the retry dedupe key is cleared", async () => {
     // given
     const sessionID = "session-stop"
@@ -81,6 +156,51 @@ describe("createEventHandler", () => {
     expect(deps.sessionStatusRetryKeys.has(sessionID)).toBe(false)
     expect(clearCalls).toEqual([sessionID])
     expect(abortCalls).toEqual([sessionID])
+  })
+
+  it("#given tool progress marked the current turn unsafe #when a new user message arrives #then unsafe replay state is cleared", async () => {
+    // given
+    const sessionID = "session-new-user-clears-unsafe"
+    const deps = createDeps()
+    deps.sessionFallbackUnsafeToReplay.add(sessionID)
+    const abortCalls: string[] = []
+    const clearCalls: string[] = []
+    const handler = createEventHandler(deps, createHelpers(deps, abortCalls, clearCalls))
+
+    // when
+    await handler({
+      event: {
+        type: "message.updated",
+        properties: { info: { sessionID, role: "user" } },
+      },
+    })
+
+    // then
+    expect(deps.sessionFallbackUnsafeToReplay.has(sessionID)).toBe(false)
+  })
+
+  it("#given session.created carries object model #when handled #then fallback state stores model string", async () => {
+    const sessionID = "session-created-object-model"
+    const deps = createDeps()
+    const abortCalls: string[] = []
+    const clearCalls: string[] = []
+    const handler = createEventHandler(deps, createHelpers(deps, abortCalls, clearCalls))
+
+    await handler({
+      event: {
+        type: "session.created",
+        properties: {
+          info: {
+            id: sessionID,
+            model: { providerID: "openai", modelID: "gpt-5.5" },
+          },
+        },
+      },
+    })
+
+    const state = deps.sessionStates.get(sessionID)
+    expect(state?.originalModel).toBe("openai/gpt-5.5")
+    expect(state?.currentModel).toBe("openai/gpt-5.5")
   })
 
   it("#given a session retry dedupe key without a pending fallback result #when session.idle fires #then the retry dedupe key is cleared", async () => {
@@ -104,10 +224,10 @@ describe("createEventHandler", () => {
     expect(deps.sessionStatusRetryKeys.has(sessionID)).toBe(false)
     expect(clearCalls).toEqual([sessionID])
     expect(abortCalls).toEqual([])
-    expect(state.pendingFallbackModel).toBe(undefined)
+    expect(state.pendingFallbackModel).toBeUndefined()
   })
 
-  it("#given a cancelled session #when session.error receives an abort error #then fallback retry state is reset", async () => {
+  it("#given an active fallback retry #when session.error receives an abort error #then fallback retry state is preserved", async () => {
     const sessionID = "session-cancelled"
     const deps = createDeps()
     const abortCalls: string[] = []
@@ -126,15 +246,110 @@ describe("createEventHandler", () => {
 
     await handler({ event: { type: "session.error", properties: { sessionID, error: { name: "AbortError" } } } })
 
-    const resetState = deps.sessionStates.get(sessionID)
-    expect(resetState?.originalModel).toBe("google/gemini-2.5-pro")
-    expect(resetState?.currentModel).toBe("google/gemini-2.5-pro")
-    expect(resetState?.fallbackIndex).toBe(-1)
-    expect(resetState?.attemptCount).toBe(0)
-    expect(resetState?.pendingFallbackModel).toBe(undefined)
-    expect(resetState?.failedModels.size).toBe(0)
-    expect(deps.sessionRetryInFlight.has(sessionID)).toBe(false)
+    const preservedState = deps.sessionStates.get(sessionID)
+    expect(preservedState?.originalModel).toBe("google/gemini-2.5-pro")
+    expect(preservedState?.currentModel).toBe("openai/gpt-5.4")
+    expect(preservedState?.fallbackIndex).toBe(1)
+    expect(preservedState?.attemptCount).toBe(2)
+    expect(preservedState?.pendingFallbackModel).toBe("openai/gpt-5.4")
+    expect(preservedState?.failedModels.size).toBe(1)
+    expect(deps.sessionRetryInFlight.has(sessionID)).toBe(true)
+    expect(deps.sessionAwaitingFallbackResult.has(sessionID)).toBe(true)
+    expect(deps.sessionStatusRetryKeys.has(sessionID)).toBe(true)
+    expect(clearCalls).toEqual([])
+    expect(abortCalls).toEqual([])
+  })
+
+  it("#given fallback abort before idle #when next retryable error fires #then fallback advances from the cleared active attempt", async () => {
+    const sessionID = "session-fallback-abort-advance"
+    const deps = createDeps()
+    deps.pluginConfig = {
+      git_master: {
+        commit_footer: true,
+        include_co_authored_by: true,
+        git_env_prefix: "GIT_MASTER=1",
+      },
+      categories: {
+        test: {
+          fallback_models: [
+            "anthropic/claude-opus-4-7(max)",
+            "github-copilot/claude-opus-4.6(max)",
+            "openai/gpt-5.4",
+          ],
+        },
+      },
+    }
+    SessionCategoryRegistry.register(sessionID, "test")
+
+    const abortCalls: string[] = []
+    const clearCalls: string[] = []
+    const retriedModels: string[] = []
+    const helpers = createHelpers(deps, abortCalls, clearCalls)
+    helpers.autoRetryWithFallback = async (retrySessionID: string, newModel: string) => {
+      retriedModels.push(newModel)
+      deps.sessionRetryInFlight.add(retrySessionID)
+      deps.sessionAwaitingFallbackResult.add(retrySessionID)
+      deps.sessionFallbackTimeouts.set(retrySessionID, 1)
+    }
+    const handler = createEventHandler(deps, helpers)
+
+    await handler({
+      event: {
+        type: "session.created",
+        properties: { info: { id: sessionID, model: "google/gemini-2.5-pro" } },
+      },
+    })
+    await handler({ event: { type: "session.error", properties: { sessionID, error: { statusCode: 429 } } } })
+
+    expect(retriedModels).toEqual(["anthropic/claude-opus-4-7(max)"])
+
+    await handler({ event: { type: "session.error", properties: { sessionID, error: { name: "AbortError" } } } })
+    deps.sessionRetryInFlight.delete(sessionID)
+
+    await handler({ event: { type: "session.idle", properties: { sessionID } } })
+
+    const preservedState = deps.sessionStates.get(sessionID)
+    expect(preservedState?.currentModel).toBe("anthropic/claude-opus-4-7(max)")
+    expect(preservedState?.fallbackIndex).toBe(0)
+    expect(preservedState?.pendingFallbackModel).toBeUndefined()
     expect(deps.sessionAwaitingFallbackResult.has(sessionID)).toBe(false)
+
+    await handler({ event: { type: "session.error", properties: { sessionID, model: "anthropic/claude-opus-4-7(max)", error: { statusCode: 429 } } } })
+
+    expect(retriedModels).toEqual([
+      "anthropic/claude-opus-4-7(max)",
+      "github-copilot/claude-opus-4.6(max)",
+    ])
+    expect(deps.sessionStates.get(sessionID)?.fallbackIndex).toBe(1)
+    expect(clearCalls).toEqual([sessionID, sessionID, sessionID])
+    expect(abortCalls).toEqual([])
+  })
+
+  it("#given fallback-owned abort before retry dispatch #when abort error and idle fire #then idle clears active retry state", async () => {
+    const sessionID = "session-fallback-abort-in-flight"
+    const deps = createDeps()
+    const abortCalls: string[] = []
+    const clearCalls: string[] = []
+    const state = createFallbackState("openai/gpt-5.5")
+    state.currentModel = "anthropic/claude-opus-4-7(max)"
+    state.fallbackIndex = 0
+    state.attemptCount = 1
+    state.pendingFallbackModel = "anthropic/claude-opus-4-7(max)"
+    state.failedModels.set("openai/gpt-5.5", Date.now())
+    deps.sessionStates.set(sessionID, state)
+    deps.sessionFallbackAbortInFlight.add(sessionID)
+    deps.sessionStatusRetryKeys.set(sessionID, "1:claude limit")
+    const handler = createEventHandler(deps, createHelpers(deps, abortCalls, clearCalls))
+
+    await handler({ event: { type: "session.error", properties: { sessionID, error: { name: "MessageAbortedError" } } } })
+    await handler({ event: { type: "session.idle", properties: { sessionID } } })
+
+    const preservedState = deps.sessionStates.get(sessionID)
+    expect(preservedState?.currentModel).toBe("anthropic/claude-opus-4-7(max)")
+    expect(preservedState?.fallbackIndex).toBe(0)
+    expect(preservedState?.attemptCount).toBe(1)
+    expect(preservedState?.pendingFallbackModel).toBeUndefined()
+    expect(deps.sessionFallbackAbortInFlight.has(sessionID)).toBe(false)
     expect(deps.sessionStatusRetryKeys.has(sessionID)).toBe(false)
     expect(clearCalls).toEqual([sessionID])
     expect(abortCalls).toEqual([])

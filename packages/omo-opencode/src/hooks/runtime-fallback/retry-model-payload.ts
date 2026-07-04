@@ -1,4 +1,5 @@
 import { parseModelString } from "../../shared/model-string-parser"
+import { transformModelForProvider } from "../../shared/provider-model-id-transform"
 
 export function buildRetryModelPayload(
   model: string,
@@ -11,11 +12,12 @@ export function buildRetryModelPayload(
 
   const variant = parsedModel.variant ?? agentSettings?.variant
   const reasoningEffort = agentSettings?.reasoningEffort
+  const modelID = transformModelForProvider(parsedModel.providerID, parsedModel.modelID)
 
   const payload: { model: { providerID: string; modelID: string }; variant?: string; reasoningEffort?: string } = {
     model: {
       providerID: parsedModel.providerID,
-      modelID: parsedModel.modelID,
+      modelID,
     },
   }
 
