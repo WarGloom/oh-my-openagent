@@ -62,7 +62,7 @@ export function createPluginInterface(args: {
     }),
 
     "command.execute.before": createCommandExecuteBeforeHandler({
-      ctx,
+      directory: ctx.directory,
       hooks,
     }),
 

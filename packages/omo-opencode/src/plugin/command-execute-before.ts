@@ -10,15 +10,15 @@ type CommandExecuteBeforeInput = {
 }
 
 type CommandExecuteBeforeOutput = {
-  parts: Array&lt;{ type: string; text?: string; [key: string]: unknown }&gt;
-  message?: Record&lt;string, unknown&gt;
+  parts: Array<{ type: string; text?: string; [key: string]: unknown }>
+  message?: Record<string, unknown>
 }
 
 const NATIVE_LOOP_TRIGGERED_FLAG = "__omoNativeLoopTriggered"
 
 function hasPartsOutput(value: unknown): value is CommandExecuteBeforeOutput {
   if (typeof value !== "object" || value === null) return false
-  const record = value as Record&lt;string, unknown&gt;
+  const record = value as Record<string, unknown>
   const parts = record["parts"]
   return Array.isArray(parts)
 }
@@ -29,10 +29,10 @@ export function createCommandExecuteBeforeHandler(args: {
 }): (
   input: CommandExecuteBeforeInput,
   output: CommandExecuteBeforeOutput,
-) =&gt; Promise&lt;void&gt; {
+) => Promise<void> {
   const { directory, hooks } = args
 
-  return async (input, output): Promise&lt;void&gt; =&gt; {
+  return async (input, output): Promise<void> => {
     await hooks.autoSlashCommand?.["command.execute.before"]?.(input, output)
 
     const normalizedCommand = input.command.toLowerCase()
