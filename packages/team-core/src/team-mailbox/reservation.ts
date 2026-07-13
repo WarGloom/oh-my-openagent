@@ -6,17 +6,31 @@ import type { TeamModeConfig } from "../config"
 import { getInboxDir, resolveBaseDir } from "../team-registry/paths"
 
 export interface DeliveryReservation {
-  reservedPath: string
-  inboxPath: string
-  processedPath: string
-  processedDir: string
+  readonly reservedPath: string
+  readonly inboxPath: string
+  readonly processedPath: string
+  readonly processedDir: string
+}
+
+export type DeliveryReservationState = "inbox" | "reserved" | "processed" | "missing"
+
+export type StaleDeliveryReservation = {
+  readonly messageId: string
+  readonly reservation: DeliveryReservation
+}
+
+type StaleReservationDiscoveryInput = {
+  readonly teamRunId: string
+  readonly recipientName: string
+  readonly config: TeamModeConfig
+  readonly staleTtlMs: number
 }
 
 const RESERVED_PREFIX = ".delivering-"
 const RESERVED_SUFFIX = ".json"
 
 function isMissingPathError(error: unknown): boolean {
-  return error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT"
+  return error instanceof Error && "code" in error && error.code === "ENOENT"
 }
 
 function buildReservation(inboxDir: string, messageId: string): DeliveryReservation {
@@ -25,6 +39,30 @@ function buildReservation(inboxDir: string, messageId: string): DeliveryReservat
   const processedDir = path.join(inboxDir, "processed")
   const processedPath = path.join(processedDir, `${messageId}.json`)
   return { reservedPath, inboxPath, processedPath, processedDir }
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await stat(filePath)
+    return true
+  } catch (error) {
+    if (isMissingPathError(error)) return false
+    throw error
+  }
+}
+
+export async function inspectDeliveryReservationState(
+  teamRunId: string,
+  recipientName: string,
+  messageId: string,
+  config: TeamModeConfig,
+): Promise<DeliveryReservationState> {
+  const inboxDir = getInboxDir(resolveBaseDir(config), teamRunId, recipientName)
+  const reservation = buildReservation(inboxDir, messageId)
+  if (await pathExists(reservation.reservedPath)) return "reserved"
+  if (await pathExists(reservation.inboxPath)) return "inbox"
+  if (await pathExists(reservation.processedPath)) return "processed"
+  return "missing"
 }
 
 export async function reserveMessageForDelivery(
@@ -63,16 +101,12 @@ export async function releaseDeliveryReservation(reservation: DeliveryReservatio
   await rename(reservation.reservedPath, reservation.inboxPath)
 }
 
-export async function reclaimStaleReservations(
-  teamRunId: string,
-  recipientName: string,
-  config: TeamModeConfig,
-  staleTtlMs: number,
-): Promise<string[]> {
-  const inboxDir = getInboxDir(resolveBaseDir(config), teamRunId, recipientName)
-  const cutoff = Date.now() - staleTtlMs
-  const reclaimedIds: string[] = []
-
+export async function discoverStaleDeliveryReservations(
+  input: StaleReservationDiscoveryInput,
+): Promise<StaleDeliveryReservation[]> {
+  const inboxDir = getInboxDir(resolveBaseDir(input.config), input.teamRunId, input.recipientName)
+  const cutoff = Date.now() - input.staleTtlMs
+  const staleReservations: StaleDeliveryReservation[] = []
   let entries: Dirent[]
   try {
     entries = await readdir(inboxDir, { withFileTypes: true })
@@ -90,13 +124,34 @@ export async function reclaimStaleReservations(
     if (fileStat.mtimeMs > cutoff) continue
 
     const messageId = entry.name.slice(RESERVED_PREFIX.length, -RESERVED_SUFFIX.length)
-    const restoredPath = path.join(inboxDir, `${messageId}.json`)
+    staleReservations.push({
+      messageId,
+      reservation: buildReservation(inboxDir, messageId),
+    })
+  }
 
+  return staleReservations
+}
+
+export async function reclaimStaleReservations(
+  teamRunId: string,
+  recipientName: string,
+  config: TeamModeConfig,
+  staleTtlMs: number,
+): Promise<string[]> {
+  const staleReservations = await discoverStaleDeliveryReservations({
+    teamRunId,
+    recipientName,
+    config,
+    staleTtlMs,
+  })
+  const reclaimedIds: string[] = []
+
+  for (const staleReservation of staleReservations) {
     try {
-      await rename(filePath, restoredPath)
-      reclaimedIds.push(messageId)
-    } catch (error) {
-      error instanceof Error
+      await releaseDeliveryReservation(staleReservation.reservation)
+      reclaimedIds.push(staleReservation.messageId)
+    } catch {
       continue
     }
   }

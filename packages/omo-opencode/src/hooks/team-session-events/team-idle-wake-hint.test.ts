@@ -15,6 +15,7 @@ import {
   registerTeamSession,
 } from "../../features/team-mode/team-session-registry"
 import { getInboxDir, resolveBaseDir } from "../../features/team-mode/team-registry/paths"
+import * as stateStoreModule from "../../features/team-mode/team-state-store/store"
 import { loadRuntimeState, saveRuntimeState } from "../../features/team-mode/team-state-store/store"
 import type { RuntimeState } from "../../features/team-mode/types"
 import { SessionCategoryRegistry } from "../../shared/session-category-registry"
@@ -343,6 +344,102 @@ describe("createTeamIdleWakeHint", () => {
     expect(promptAsyncSpy).toHaveBeenCalledTimes(1)
   })
 
+  test("#given session A resolves before durable member replacement B #when A reaches wake routing #then it does not prompt stale session A", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    const config = createConfig(baseDir)
+    const teamRunId = randomUUID()
+    const sessionA = "member-session-a"
+    const sessionB = "member-session-b"
+    const initialRuntimeState = createRuntimeState(teamRunId)
+    const initialWorker = initialRuntimeState.members[0]
+    if (initialWorker === undefined) {
+      throw new Error("worker member missing from initial fixture")
+    }
+    initialWorker.sessionId = sessionA
+    await seedRuntimeState(initialRuntimeState, config)
+    await seedUnreadMessage(teamRunId, config, randomUUID(), "replacement wake hint", 100)
+    registerTeamSession(sessionA, { teamRunId, memberName: "worker", role: "member" })
+
+    const replacementRuntimeState: RuntimeState = {
+      ...initialRuntimeState,
+      members: initialRuntimeState.members.map((member) => (
+        member.name === "worker" ? { ...member, sessionId: sessionB } : member
+      )),
+    }
+    const originalLoadRuntimeState = stateStoreModule.loadRuntimeState
+    let loadCount = 0
+    const loadRuntimeStateSpy = spyOn(stateStoreModule, "loadRuntimeState").mockImplementation(async (runId, runtimeConfig) => {
+      loadCount += 1
+      if (loadCount === 2) {
+        await saveRuntimeState(replacementRuntimeState, runtimeConfig)
+      }
+      return originalLoadRuntimeState(runId, runtimeConfig)
+    })
+    const promptAsyncSpy = mock(async (_input: WakeHintPromptInput) => ({}))
+    const handler = createTeamIdleWakeHint({
+      directory: "/tmp/project",
+      client: { session: { promptAsync: promptAsyncSpy } },
+    }, config, immediatePromptGateOptions)
+
+    // when
+    await handler({
+      event: {
+        type: "session.idle",
+        properties: { sessionID: sessionA },
+      },
+    })
+    loadRuntimeStateSpy.mockRestore()
+
+    // then
+    expect(promptAsyncSpy).not.toHaveBeenCalled()
+    expect((await loadRuntimeState(teamRunId, config)).members[0]?.sessionId).toBe(sessionB)
+  })
+
+  test("#given replacement B becomes durable during A dispatch #when B later idles with the same unread batch #then A suppression does not hide B wake", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    const config = createConfig(baseDir)
+    const teamRunId = randomUUID()
+    const sessionA = "member-session-a"
+    const sessionB = "member-session-b"
+    const initialRuntimeState = createRuntimeState(teamRunId)
+    const initialWorker = initialRuntimeState.members[0]
+    if (initialWorker === undefined) {
+      throw new Error("worker member missing from initial fixture")
+    }
+    initialWorker.sessionId = sessionA
+    await seedRuntimeState(initialRuntimeState, config)
+    await seedUnreadMessage(teamRunId, config, randomUUID(), "shared unread batch", 100)
+    registerTeamSession(sessionA, { teamRunId, memberName: "worker", role: "member" })
+
+    const promptedSessionIds: string[] = []
+    const promptAsyncSpy = mock(async (input: WakeHintPromptInput) => {
+      promptedSessionIds.push(input.path.id)
+      if (input.path.id === sessionA) {
+        await saveRuntimeState({
+          ...initialRuntimeState,
+          members: initialRuntimeState.members.map((member) => (
+            member.name === "worker" ? { ...member, sessionId: sessionB } : member
+          )),
+        }, config)
+        registerTeamSession(sessionB, { teamRunId, memberName: "worker", role: "member" })
+      }
+      return {}
+    })
+    const handler = createTeamIdleWakeHint({
+      directory: "/tmp/project",
+      client: { session: { promptAsync: promptAsyncSpy } },
+    }, config, immediatePromptGateOptions)
+
+    // when
+    await handler({ event: { type: "session.idle", properties: { sessionID: sessionA } } })
+    await handler({ event: { type: "session.idle", properties: { sessionID: sessionB } } })
+
+    // then
+    expect(promptedSessionIds).toEqual([sessionA, sessionB])
+  })
+
   test("pins the recipient's resolved subagent_type and model on the wake-hint promptAsync", async () => {
     // given
     const baseDir = await createTemporaryBaseDir()
@@ -543,7 +640,7 @@ describe("createTeamIdleWakeHint", () => {
     expect(processedEntries.sort()).toEqual(messageIds.map((messageId) => `${messageId}.json`).sort())
   })
 
-  test("acks pending reserved live-delivery messages on idle", async () => {
+  test("#given a reserved live-delivery claim present in history #when the member idles #then it archives the claim", async () => {
     // given
     const baseDir = await createTemporaryBaseDir()
     const config = createConfig(baseDir)
@@ -554,7 +651,12 @@ describe("createTeamIdleWakeHint", () => {
 
     const handler = createTeamIdleWakeHint({
       directory: "/tmp/project",
-      client: { session: { promptAsync: mock(async (_input: WakeHintPromptInput) => ({})) } },
+      client: {
+        session: {
+          promptAsync: mock(async (_input: WakeHintPromptInput) => ({})),
+          messages: async () => ({ data: [{ text: `<peer_message messageId="${messageId}">live delivery body</peer_message>` }] }),
+        },
+      },
     }, config)
 
     // when
@@ -685,7 +787,12 @@ describe("createTeamIdleWakeHint", () => {
     })
     const handler = createTeamIdleWakeHint({
       directory: "/tmp/project",
-      client: { session: { promptAsync: promptAsyncSpy } },
+      client: {
+        session: {
+          promptAsync: promptAsyncSpy,
+          messages: async () => ({ data: [{ text: `<peer_message messageId="${pendingMessageId}">already live delivered</peer_message>` }] }),
+        },
+      },
     }, config)
 
     // when

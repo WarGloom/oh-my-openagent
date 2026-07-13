@@ -1,13 +1,11 @@
 /// <reference types="bun-types" />
 
-// Regression test for the team-mailbox pending live-delivery data-loss bug:
-// the idle-wake-hint handler used to ack every pendingInjectedMessageId purely
-// because the session went idle, with no check that the message actually reached
-// the recipient's context. A wake accepted-but-not-processed was silently moved
-// to processed/ and lost. The fix verifies session.messages history and requeues
-// unconfirmed messages back to the inbox instead.
+// Regression coverage for two durable claim origins. Normal `<id>.json` files are
+// synthetic transform claims and archive after settled idle without persisted
+// history proof. Reserved `.delivering-<id>.json` live claims require history
+// proof; unconfirmed or unverifiable reservations return to the unread inbox.
 
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test"
 import { randomUUID } from "node:crypto"
 import { mkdtemp, mkdir, readdir, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -15,8 +13,9 @@ import path from "node:path"
 
 import { TeamModeConfigSchema } from "../../config/schema/team-mode"
 import type { TeamModeConfig } from "../../config/schema/team-mode"
+import * as ackModule from "../../features/team-mode/team-mailbox/ack"
 import { sendMessage } from "../../features/team-mode/team-mailbox/send"
-import { saveRuntimeState } from "../../features/team-mode/team-state-store/store"
+import { loadRuntimeState, saveRuntimeState } from "../../features/team-mode/team-state-store/store"
 import type { RuntimeState } from "../../features/team-mode/types"
 import { getInboxDir, resolveBaseDir } from "../../features/team-mode/team-registry/paths"
 import { releaseAllPromptAsyncReservationsForTesting } from "../shared/prompt-async-gate"
@@ -39,7 +38,7 @@ function makeConfig(baseDir: string): TeamModeConfig {
   return TeamModeConfigSchema.parse({ base_dir: baseDir, enabled: true })
 }
 
-function runtimeWithPending(teamRunId: string, messageId: string): RuntimeState {
+function runtimeWithPending(teamRunId: string, messageIds: readonly string[]): RuntimeState {
   return {
     version: 1,
     teamRunId,
@@ -54,7 +53,7 @@ function runtimeWithPending(teamRunId: string, messageId: string): RuntimeState 
         sessionId: "member-session",
         agentType: "general-purpose",
         status: "idle",
-        pendingInjectedMessageIds: [messageId],
+        pendingInjectedMessageIds: [...messageIds],
       },
     ],
     shutdownRequests: [],
@@ -82,17 +81,78 @@ async function seedPendingReserved(
   )
 }
 
+async function seedPendingSynthetic(
+  teamRunId: string,
+  config: TeamModeConfig,
+  messageId: string,
+  body: string,
+): Promise<void> {
+  await sendMessage(
+    { version: 1, messageId, from: "lead", to: "worker", kind: "message", body, timestamp: 100 },
+    teamRunId,
+    config,
+    { isLead: true, activeMembers: ["worker"] },
+  )
+}
+
+async function readDirectoryIfPresent(directoryPath: string): Promise<string[]> {
+  try {
+    return await readdir(directoryPath)
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return []
+    }
+    throw error
+  }
+}
+
 const idleStatus = () => async () => ({ data: { "member-session": { type: "idle" } } })
 const noopPromptAsync = async () => ({})
 
 describe("team idle-wake-hint pending live-delivery verification", () => {
-  test("unconfirmed pending message (absent from session history) is requeued to inbox, not acked/lost", async () => {
+  test("#given a normal synthetic pending claim absent from persisted history #when settled idle fires twice concurrently #then it is archived exactly once without a wake", async () => {
+    // given
     const baseDir = await makeBaseDir()
     const config = makeConfig(baseDir)
     const teamRunId = randomUUID()
     const messageId = randomUUID()
     await mkdir(path.join(baseDir, "runtime", teamRunId), { recursive: true })
-    await saveRuntimeState(runtimeWithPending(teamRunId, messageId), config)
+    await saveRuntimeState(runtimeWithPending(teamRunId, [messageId]), config)
+    await seedPendingSynthetic(teamRunId, config, messageId, "TRANSIENT SYNTHETIC CLAIM")
+    const ackSpy = spyOn(ackModule, "ackMessages")
+    const promptAsyncSpy = mock(async () => ({}))
+    const handler = createTeamIdleWakeHint({
+      directory: "/tmp/project",
+      client: {
+        session: {
+          promptAsync: promptAsyncSpy,
+          status: idleStatus(),
+          messages: async () => ({ data: [] }),
+        },
+      },
+    }, config, { idleSettleMs: 0 })
+    const idleEvent = { event: { type: "session.idle", properties: { sessionID: "member-session" } } }
+
+    // when
+    await Promise.all([handler(idleEvent), handler(idleEvent)])
+
+    // then
+    expect(ackSpy).toHaveBeenCalledTimes(1)
+    expect(ackSpy).toHaveBeenCalledWith(teamRunId, "worker", [messageId], config)
+    expect(promptAsyncSpy).not.toHaveBeenCalled()
+    const inboxDir = getInboxDir(resolveBaseDir(config), teamRunId, "worker")
+    expect(await readDirectoryIfPresent(path.join(inboxDir, "processed"))).toEqual([`${messageId}.json`])
+    expect((await loadRuntimeState(teamRunId, config)).members[0]?.pendingInjectedMessageIds).toEqual([])
+  })
+
+  test("#given an unconfirmed reserved pending claim absent from session history #when the member settles idle #then it is requeued without loss", async () => {
+    // given
+    const baseDir = await makeBaseDir()
+    const config = makeConfig(baseDir)
+    const teamRunId = randomUUID()
+    const messageId = randomUUID()
+    await mkdir(path.join(baseDir, "runtime", teamRunId), { recursive: true })
+    await saveRuntimeState(runtimeWithPending(teamRunId, [messageId]), config)
     await seedPendingReserved(teamRunId, config, messageId, "ROUND 2 CRITIQUE")
 
     const handler = createTeamIdleWakeHint(
@@ -110,25 +170,27 @@ describe("team idle-wake-hint pending live-delivery verification", () => {
       { idleSettleMs: 0 },
     )
 
+    // when
     await handler({ event: { type: "session.idle", properties: { sessionID: "member-session" } } })
 
+    // then
     const inboxDir = getInboxDir(resolveBaseDir(config), teamRunId, "worker")
     const inbox = await readdir(inboxDir)
-    const processed = await readdir(path.join(inboxDir, "processed")).catch(() => [] as string[])
+    const processed = await readDirectoryIfPresent(path.join(inboxDir, "processed"))
 
-    // requeued as a normal unread file (recoverable by poll-inject), NOT lost to processed/
     expect(inbox.includes(`${messageId}.json`)).toBe(true)
     expect(inbox.includes(`.delivering-${messageId}.json`)).toBe(false)
     expect(processed.includes(`${messageId}.json`)).toBe(false)
   })
 
-  test("confirmed pending message (envelope present in session history) is acked to processed/", async () => {
+  test("#given a confirmed reserved pending claim present in session history #when the member settles idle #then it is archived", async () => {
+    // given
     const baseDir = await makeBaseDir()
     const config = makeConfig(baseDir)
     const teamRunId = randomUUID()
     const messageId = randomUUID()
     await mkdir(path.join(baseDir, "runtime", teamRunId), { recursive: true })
-    await saveRuntimeState(runtimeWithPending(teamRunId, messageId), config)
+    await saveRuntimeState(runtimeWithPending(teamRunId, [messageId]), config)
     await seedPendingReserved(teamRunId, config, messageId, "ROUND 2 CRITIQUE")
 
     const handler = createTeamIdleWakeHint(
@@ -158,11 +220,13 @@ describe("team idle-wake-hint pending live-delivery verification", () => {
       { idleSettleMs: 0 },
     )
 
+    // when
     await handler({ event: { type: "session.idle", properties: { sessionID: "member-session" } } })
 
+    // then
     const inboxDir = getInboxDir(resolveBaseDir(config), teamRunId, "worker")
     const inbox = await readdir(inboxDir)
-    const processed = await readdir(path.join(inboxDir, "processed")).catch(() => [] as string[])
+    const processed = await readDirectoryIfPresent(path.join(inboxDir, "processed"))
 
     expect(processed.includes(`${messageId}.json`)).toBe(true)
     expect(inbox.includes(`${messageId}.json`)).toBe(false)

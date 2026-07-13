@@ -1,18 +1,20 @@
 import type { TeamModeConfig } from "../../config/schema/team-mode"
-import { findResolvedMemberSession } from "../../features/team-mode/member-session-resolution"
+import {
+  findResolvedMemberSession,
+  type ResolvedMemberSession,
+} from "../../features/team-mode/member-session-resolution"
 import {
   applyMemberSessionRouting,
   buildMemberPromptBody,
 } from "../../features/team-mode/member-session-routing"
-import { ackMessages } from "../../features/team-mode/team-mailbox/ack"
 import { listUnreadMessages } from "../../features/team-mode/team-mailbox/inbox"
-import { loadRuntimeState, transitionRuntimeState } from "../../features/team-mode/team-state-store/store"
-import { findDeliveredMessageIds, requeuePendingLiveDeliveries } from "../../features/team-mode/team-mailbox/pending-delivery-recovery"
+import { loadRuntimeState } from "../../features/team-mode/team-state-store/store"
 import { resolveSessionEventID } from "../../shared/event-session-id"
 import { isAmbiguousPostDispatchPromptFailure } from "../../shared/prompt-failure-classifier"
 import { log } from "../../shared/logger"
 import { isSessionActive, settleAfterSessionIdle } from "../../shared/session-idle-settle"
 import { dispatchInternalPrompt, isInternalPromptDispatchAccepted } from "../shared/prompt-async-gate"
+import { settleIdleClaims, type IdleClaimSettlement } from "./pending-claim-settlement"
 
 type PromptAsyncInput = {
   path: { id: string }
@@ -52,47 +54,8 @@ function buildWakeHint(unreadCount: number): string {
   return `You have ${unreadCount} new team messages. They will be injected on your next turn.`
 }
 
-function buildWakeHintBatchKey(teamRunId: string, memberName: string, messageIds: string[]): string {
-  return `${teamRunId}:${memberName}:${messageIds.toSorted().join(",")}`
-}
-
-async function claimPendingMessageAcks(
-  teamRunId: string,
-  memberName: string,
-  messageIds: readonly string[],
-  config: TeamModeConfig,
-): Promise<string[]> {
-  if (messageIds.length === 0) return []
-
-  let claimedMessageIds: string[] = []
-  const candidateMessageIds = new Set(messageIds)
-  await transitionRuntimeState(teamRunId, (currentRuntimeState) => {
-    const currentMember = currentRuntimeState.members.find((member) => member.name === memberName)
-    if (currentMember === undefined) {
-      claimedMessageIds = []
-      return currentRuntimeState
-    }
-
-    claimedMessageIds = currentMember.pendingInjectedMessageIds.filter((messageId) => candidateMessageIds.has(messageId))
-    if (claimedMessageIds.length === 0) {
-      return currentRuntimeState
-    }
-
-    const claimedMessageIdSet = new Set(claimedMessageIds)
-    return {
-      ...currentRuntimeState,
-      members: currentRuntimeState.members.map((member) => (
-        member.name === memberName
-          ? {
-            ...member,
-            pendingInjectedMessageIds: member.pendingInjectedMessageIds.filter((messageId) => !claimedMessageIdSet.has(messageId)),
-          }
-          : member
-      )),
-    }
-  }, config)
-
-  return claimedMessageIds
+function buildWakeHintBatchKey(sessionID: string, runtimeMember: ResolvedMemberSession, messageIds: string[]): string {
+  return `${runtimeMember.teamRunId}:${runtimeMember.memberName}:${sessionID}:${messageIds.toSorted().join(",")}`
 }
 
 export function createTeamIdleWakeHint(ctx: TeamIdleWakeHintContext, config: TeamModeConfig, options?: TeamIdleWakeHintOptions): HookImpl {
@@ -117,6 +80,12 @@ export function createTeamIdleWakeHint(ctx: TeamIdleWakeHintContext, config: Tea
       }
 
       const pendingInjectedMessageIds = [...memberEntry.pendingInjectedMessageIds]
+      let claimSettlement: IdleClaimSettlement = {
+        kind: "settled",
+        ackedCount: 0,
+        requeuedCount: 0,
+        unresolvedCount: 0,
+      }
       if (pendingInjectedMessageIds.length > 0) {
         if (typeof ctx.client.session.status === "function") {
           await settleAfterSessionIdle(options?.idleSettleMs ?? 0)
@@ -132,31 +101,23 @@ export function createTeamIdleWakeHint(ctx: TeamIdleWakeHintContext, config: Tea
           }
         }
 
-        const claimedMessageIds = await claimPendingMessageAcks(
-          runtimeState.teamRunId,
-          memberEntry.name,
-          pendingInjectedMessageIds,
+        claimSettlement = await settleIdleClaims({
+          teamRunId: runtimeState.teamRunId,
+          memberName: memberEntry.name,
+          sessionID,
           config,
-        )
-        if (claimedMessageIds.length > 0) {
-          const deliveredMessageIds = typeof ctx.client.session.messages === "function"
-            ? await findDeliveredMessageIds(ctx.client, sessionID, claimedMessageIds)
-            : new Set(claimedMessageIds)
-          const ackedMessageIds = claimedMessageIds.filter((messageId) => deliveredMessageIds.has(messageId))
-          const requeuedMessageIds = claimedMessageIds.filter((messageId) => !deliveredMessageIds.has(messageId))
-          if (ackedMessageIds.length > 0) {
-            await ackMessages(runtimeState.teamRunId, memberEntry.name, ackedMessageIds, config)
-          }
-          if (requeuedMessageIds.length > 0) {
-            await requeuePendingLiveDeliveries(runtimeState.teamRunId, memberEntry.name, requeuedMessageIds, config)
-          }
+          client: ctx.client,
+        })
+        if (claimSettlement.kind === "stale-session") return
+        if (claimSettlement.ackedCount + claimSettlement.requeuedCount + claimSettlement.unresolvedCount > 0) {
           log("team idle handled pending live delivery ack", {
             event: "team-mode-idle-pending-ack",
             teamRunId: runtimeState.teamRunId,
             memberName: memberEntry.name,
             sessionID,
-            ackedCount: ackedMessageIds.length,
-            requeuedCount: requeuedMessageIds.length,
+            ackedCount: claimSettlement.ackedCount,
+            requeuedCount: claimSettlement.requeuedCount,
+            unresolvedCount: claimSettlement.unresolvedCount,
           })
         }
       }
@@ -164,6 +125,12 @@ export function createTeamIdleWakeHint(ctx: TeamIdleWakeHintContext, config: Tea
       const latestRuntimeState = await loadRuntimeState(runtimeMember.teamRunId, config)
       const latestMemberEntry = latestRuntimeState.members.find((member) => member.name === runtimeMember.memberName)
       if (!latestMemberEntry) {
+        return
+      }
+      const spawnRaceStillPending = runtimeMember.sessionId === undefined && latestMemberEntry.sessionId === undefined
+      if (!spawnRaceStillPending && (
+        runtimeMember.sessionId !== sessionID || latestMemberEntry.sessionId !== sessionID
+      )) {
         return
       }
       if (
@@ -188,7 +155,8 @@ export function createTeamIdleWakeHint(ctx: TeamIdleWakeHintContext, config: Tea
           teamRunId: latestRuntimeState.teamRunId,
           memberName: latestMemberEntry.name,
           sessionID,
-          ackedCount: pendingInjectedMessageIds.length,
+          ackedCount: claimSettlement.ackedCount,
+          requeuedCount: claimSettlement.requeuedCount,
         })
         return
       }
@@ -206,8 +174,8 @@ export function createTeamIdleWakeHint(ctx: TeamIdleWakeHintContext, config: Tea
 
       const now = Date.now()
       const wakeHintBatchKey = buildWakeHintBatchKey(
-        latestRuntimeState.teamRunId,
-        latestMemberEntry.name,
+        sessionID,
+        runtimeMember,
         unreadMessages.map((message) => message.messageId),
       )
       const suppressedUntil = recentWakeHintBatches.get(wakeHintBatchKey)
@@ -262,7 +230,8 @@ export function createTeamIdleWakeHint(ctx: TeamIdleWakeHintContext, config: Tea
         memberName: latestMemberEntry.name,
         sessionID,
         unreadCount: unreadMessages.length,
-        ackedCount: pendingInjectedMessageIds.length,
+        ackedCount: claimSettlement.ackedCount,
+        requeuedCount: claimSettlement.requeuedCount,
       })
     } catch (error) {
       log("team idle wake hint failed", {

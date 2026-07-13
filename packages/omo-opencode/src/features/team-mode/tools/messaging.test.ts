@@ -513,7 +513,12 @@ describe("createTeamSendMessageTool", () => {
 
     const wakeHint = createTeamIdleWakeHint({
       directory: resolveBaseDir(fixture.config),
-      client,
+      client: {
+        session: {
+          ...client.session,
+          status: async () => ({ data: { [fixture.memberTwoSessionId]: { type: "busy" } } }),
+        },
+      },
     }, fixture.config, { idleSettleMs: 0 })
 
     // when
@@ -1016,6 +1021,7 @@ describe("createTeamSendMessageTool", () => {
             fixture.teamRunId,
             fixture.config,
             "turn-race",
+            { resolvedSessionID: fixture.memberTwoSessionId, insertContent: () => {} },
           )
           return staleIdleSnapshot
         }

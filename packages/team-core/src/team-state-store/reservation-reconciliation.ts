@@ -2,12 +2,19 @@ import { isRecord } from "@oh-my-opencode/utils"
 import type { TeamModeConfig } from "../config"
 import { log } from "../logger"
 import type { TeamSessionContext } from "../session-client"
-import { ackMessages } from "../team-mailbox/ack"
-import { reclaimStaleReservations } from "../team-mailbox/reservation"
+import { withInboxConsumerLease } from "../team-mailbox/consumer-lease"
+import {
+  commitDeliveryReservation,
+  discoverStaleDeliveryReservations,
+  inspectDeliveryReservationState,
+  releaseDeliveryReservation,
+} from "../team-mailbox/reservation"
 import type { RuntimeStateMember } from "../types"
 import { transitionRuntimeState } from "./store"
 
+const CONSUMER_LEASE_STALE_MS = 300_000
 
+type ReservationReconciliationDeps = { readonly transitionRuntimeState?: typeof transitionRuntimeState }
 
 function getMessagesData(response: unknown): unknown[] {
   if (isRecord(response) && Array.isArray(response.data)) {
@@ -61,48 +68,65 @@ async function findAcceptedReclaimedMessageIds(
   }
 }
 
-async function reconcileReclaimedReservations(
-  ctx: TeamSessionContext,
-  teamRunId: string,
-  member: RuntimeStateMember,
-  reclaimedMessageIds: readonly string[],
-  config: TeamModeConfig,
-): Promise<void> {
-  if (reclaimedMessageIds.length === 0) {
-    return
-  }
-
-  const acceptedMessageIds = await findAcceptedReclaimedMessageIds(ctx, member, reclaimedMessageIds)
-  if (acceptedMessageIds.length > 0) {
-    await ackMessages(teamRunId, member.name, acceptedMessageIds, config)
-  }
-
-  const reclaimedMessageIdSet = new Set(reclaimedMessageIds)
-  await transitionRuntimeState(teamRunId, (currentRuntimeState) => ({
-    ...currentRuntimeState,
-    members: currentRuntimeState.members.map((currentMember) => (
-      currentMember.name === member.name
-        ? {
-          ...currentMember,
-          pendingInjectedMessageIds: currentMember.pendingInjectedMessageIds.filter((messageId) => !reclaimedMessageIdSet.has(messageId)),
-        }
-        : currentMember
-    )),
-  }), config)
-}
-
 export async function reconcileStaleReservationsForMember(
   ctx: TeamSessionContext,
   teamRunId: string,
   member: RuntimeStateMember,
   config: TeamModeConfig,
   staleReservationTtlMs: number,
+  deps: ReservationReconciliationDeps = {},
 ): Promise<void> {
-  const reclaimedMessageIds = await reclaimStaleReservations(
+  await withInboxConsumerLease(
     teamRunId,
     member.name,
     config,
-    staleReservationTtlMs,
+    async () => {
+      const staleReservations = await discoverStaleDeliveryReservations({
+        teamRunId,
+        recipientName: member.name,
+        config,
+        staleTtlMs: staleReservationTtlMs,
+      })
+      const normalPendingMessageIds: string[] = []
+      for (const messageId of member.pendingInjectedMessageIds) {
+        const state = await inspectDeliveryReservationState(teamRunId, member.name, messageId, config)
+        if (state === "inbox") normalPendingMessageIds.push(messageId)
+      }
+      if (staleReservations.length === 0 && normalPendingMessageIds.length === 0) return
+
+      const messageIds = staleReservations.map(({ messageId }) => messageId)
+      const acceptedMessageIds = new Set(await findAcceptedReclaimedMessageIds(ctx, member, messageIds))
+      const recoveredMessageIds = new Set([...messageIds, ...normalPendingMessageIds])
+      let stateWasUpdated = false
+      await (deps.transitionRuntimeState ?? transitionRuntimeState)(
+        teamRunId,
+        (runtimeState) => {
+          const currentMember = runtimeState.members.find(({ name }) => name === member.name)
+          if (currentMember === undefined || currentMember.sessionId !== member.sessionId) return runtimeState
+          stateWasUpdated = true
+          return {
+            ...runtimeState,
+            members: runtimeState.members.map((candidate) => {
+              if (candidate.name !== member.name) return candidate
+              const { lastInjectedTurnMarker: _turnMarker, ...memberWithoutTurnMarker } = candidate
+              return {
+                ...memberWithoutTurnMarker,
+                pendingInjectedMessageIds: candidate.pendingInjectedMessageIds.filter(
+                  (messageId) => !recoveredMessageIds.has(messageId),
+                ),
+              }
+            }),
+          }
+        },
+        config,
+      )
+      if (!stateWasUpdated) return
+
+      for (const { messageId, reservation } of staleReservations) {
+        if (acceptedMessageIds.has(messageId)) await commitDeliveryReservation(reservation)
+        else await releaseDeliveryReservation(reservation)
+      }
+    },
+    { staleAfterMs: CONSUMER_LEASE_STALE_MS },
   )
-  await reconcileReclaimedReservations(ctx, teamRunId, member, reclaimedMessageIds, config)
 }

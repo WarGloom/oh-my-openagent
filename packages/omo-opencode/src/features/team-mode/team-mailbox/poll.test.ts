@@ -11,8 +11,19 @@ import { createRuntimeState, loadRuntimeState } from "../team-state-store/store"
 import type { TeamSpec } from "../types"
 import { sendMessage } from "./send"
 
-const { pollAndBuildInjection } = await import("./poll")
+const { pollAndBuildInjection: claimInjection } = await import("./poll")
 const { getInboxDir, resolveBaseDir } = await import("../team-registry/paths")
+
+function pollAndBuildInjection(
+  sessionID: string,
+  memberName: string,
+  teamRunId: string,
+  config: ReturnType<typeof createConfig>,
+  turnMarker: string,
+  claim: Parameters<typeof claimInjection>[5] = { resolvedSessionID: undefined, insertContent: () => {} },
+) {
+  return claimInjection(sessionID, memberName, teamRunId, config, turnMarker, claim)
+}
 
 function createConfig(baseDir: string) {
   return TeamModeConfigSchema.parse({ base_dir: baseDir })
