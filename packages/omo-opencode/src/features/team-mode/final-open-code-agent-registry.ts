@@ -2,7 +2,7 @@ import path from "node:path"
 
 import { z } from "zod"
 
-import { normalizeSDKResponse } from "../../shared"
+import { getAgentToolRestrictions, normalizeSDKResponse } from "../../shared"
 import type { DelegatedModelConfig } from "../../shared/model-resolution-types"
 
 const EMPTY_AGENT_REGISTRY: readonly unknown[] = []
@@ -95,24 +95,25 @@ function wildcardMatches(value: string, pattern: string): boolean {
   return new RegExp(`^${escapedPattern}$`, flags).test(normalizedValue)
 }
 
-function hasUnconditionalFinalAllow(
+function hasUnconditionalFinalAction(
   agent: FinalOpenCodeAgent,
   tool: string,
+  expectedAction: "allow" | "deny",
 ): boolean {
-  let hasUnconditionalAllow = false
+  let hasUnconditionalAction = false
   for (const rule of agent.permission) {
     if (!wildcardMatches(tool, rule.permission)) {
       continue
     }
-    if (rule.action === "allow" && rule.pattern === "*") {
-      hasUnconditionalAllow = true
+    if (rule.pattern === "*") {
+      hasUnconditionalAction = rule.action === expectedAction
       continue
     }
-    if (hasUnconditionalAllow && rule.action !== "allow") {
-      return false
+    if (hasUnconditionalAction && rule.action !== expectedAction) {
+      hasUnconditionalAction = false
     }
   }
-  return hasUnconditionalAllow
+  return hasUnconditionalAction
 }
 
 function findExactAgent(registry: readonly unknown[], name: string): FinalOpenCodeAgent | undefined {
@@ -155,9 +156,23 @@ export async function resolveFinalProjectAgent(
     )
   }
   for (const tool of REQUIRED_TEAM_TOOLS) {
-    if (!hasUnconditionalFinalAllow(agent, tool)) {
+    if (!hasUnconditionalFinalAction(agent, tool, "allow")) {
       throw new ProjectAgentResolutionError(
         `Project agent '${agent.name}' must unconditionally allow ${tool} in its final permission rules.`,
+      )
+    }
+  }
+  const launchToolPermissions = {
+    task: false,
+    call_omo_agent: true,
+    question: false,
+    ...getAgentToolRestrictions(agent.name, { includeTeamToolDenylist: false }),
+  }
+  for (const [tool, allowed] of Object.entries(launchToolPermissions)) {
+    const expectedAction = allowed ? "allow" : "deny"
+    if (!hasUnconditionalFinalAction(agent, tool, expectedAction)) {
+      throw new ProjectAgentResolutionError(
+        `Project agent '${agent.name}' must already agree with the launch permission '${tool}: ${allowed}' in its final permission rules.`,
       )
     }
   }

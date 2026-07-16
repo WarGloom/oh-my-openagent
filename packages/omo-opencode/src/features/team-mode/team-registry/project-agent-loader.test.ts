@@ -100,6 +100,53 @@ describe("OpenCode team-registry loader", () => {
     )
   })
 
+  test("team_create rejects an explicit leadSessionId whose fetched session directory differs from the invocation directory", async () => {
+    // given: the tool context runs in /project, but the explicit leadSessionId's session lives in a different directory,
+    // so the project-agent registry validation (keyed on the invocation directory) would validate against the wrong project
+    const sessionGet = mock(async () => ({ data: { directory: "/some/other/project" } }))
+    const clientWithCrossDirSession = {
+      ...mockClient,
+      session: { get: sessionGet },
+    } as typeof mockClient
+    const loadProjectAgentSpec = mock(async () => ({
+      ...createSpec(),
+      members: [
+        ...createSpec().members,
+        {
+          kind: "subagent_type" as const,
+          name: "project-worker",
+          subagent_type: "repository-reviewer",
+          backendType: "in-process" as const,
+          isActive: true,
+        },
+      ],
+    }))
+    const tool = createTeamCreateTool(
+      config,
+      clientWithCrossDirSession,
+      backgroundManager,
+      undefined,
+      undefined,
+      {
+        createTeamRun: createTeamRunMock,
+        loadTeamSpec: loadProjectAgentSpec,
+        listActiveTeams: listActiveTeamsMock,
+        loadRuntimeState: loadRuntimeStateMock,
+      },
+    )
+
+    // when: the caller supplies an explicit cross-directory leadSessionId (context directory is /project)
+    const result = tool.execute(
+      { teamName: "alpha-team", leadSessionId: "cross-dir-session" },
+      createToolContext("caller-session"),
+    )
+
+    // then: the mismatch must be rejected before any team creation
+    await expect(result).rejects.toThrow("directory")
+    expect(sessionGet).toHaveBeenCalledTimes(1)
+    expect(createTeamRunMock).not.toHaveBeenCalled()
+  })
+
   test("team_list explicitly defers declared project-agent validation to runtime", async () => {
     // given
     const loadDeclaredSpec = mock(async () => createSpec())

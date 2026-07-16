@@ -22,7 +22,7 @@ mock.module("./resolve-member-dependencies", () => ({
 
 const { resolveMember, TeamMemberResolutionError } = await import("./resolve-member?resolve-member-test")
 
-const TEAM_TOOLS = ["team_send_message", "team_task_list", "team_task_get", "team_task_update", "team_status"] as const
+const TEAM_TOOLS = ["team_send_message", "team_task_list", "team_task_get", "team_task_update", "team_status", "call_omo_agent"] as const
 
 type ContextFixture = Readonly<{ context: ExecutorContext; appAgents: ReturnType<typeof mock>; configGet: ReturnType<typeof mock>; sessionGet: ReturnType<typeof mock> }>
 
@@ -35,7 +35,7 @@ function createExecutorContext(directory = "/tmp/team-mode-test"): ExecutorConte
 }
 
 function createPermissionRules(): PermissionRuleset {
-  return TEAM_TOOLS.map((permission) => ({ permission, pattern: "*", action: "allow" }))
+  return [...TEAM_TOOLS.map((permission) => ({ permission, pattern: "*", action: "allow" as const })), { permission: "task", pattern: "*", action: "deny" }, { permission: "question", pattern: "*", action: "deny" }]
 }
 
 function createFinalAgent(overrides: Partial<Agent> = {}): Agent {
@@ -233,7 +233,7 @@ describe("resolveMember", () => {
     // given
     const fixture = createProvenRegistryContext({
       data: [createFinalAgent({
-        permission: [{ permission: "team_*", pattern: "*", action: "allow" }],
+        permission: [{ permission: "team_*", pattern: "*", action: "allow" }, { permission: "call_omo_agent", pattern: "*", action: "allow" }, { permission: "task", pattern: "*", action: "deny" }, { permission: "question", pattern: "*", action: "deny" }],
       })],
     })
 
@@ -253,6 +253,27 @@ describe("resolveMember", () => {
     })
     expect(resolveSubagentExecutionMock).not.toHaveBeenCalled()
     expect(buildSystemContentMock).not.toHaveBeenCalled()
+  })
+
+  test("uses the last matching permission rule when later project rules override a global wildcard", async () => {
+    // given
+    const projectRules = createPermissionRules()
+    const fixture = createProvenRegistryContext({
+      data: [createFinalAgent({
+        permission: [
+          { permission: "*", pattern: "*", action: "allow" },
+          ...projectRules,
+          { permission: "*", pattern: "*", action: "allow" },
+          ...projectRules,
+        ],
+      })],
+    })
+
+    // when
+    const result = resolveMember(createProjectMember(), fixture.context, "deep, quick", "lead")
+
+    // then
+    await expect(result).resolves.toMatchObject({ agentToUse: "project-worker" })
   })
 
   test.each([
@@ -294,14 +315,35 @@ describe("resolveMember", () => {
     const fixture = createProvenRegistryContext({ data: [createFinalAgent()] })
 
     // when
-    const result = resolveMember(
-      createProjectMember("project-lead"),
-      fixture.context,
-      "deep, quick",
-      "project-lead",
-    )
+    const result = resolveMember(createProjectMember("project-lead"), fixture.context, "deep, quick", "project-lead")
 
     // then
     await expect(result).rejects.toThrow("Project-defined agents cannot be team leads")
+  })
+
+  test.each(["constructor", "toString", "__proto__"])("routes an inherited Object.prototype subagent_type '%s' to the project-agent path, not the builtin registry",
+    async (inheritedName) => {
+      // given: a subagent_type that only exists on Object.prototype, never as an own registry key
+      const member = { backendType: "in-process", isActive: true, kind: "subagent_type", name: "worker", subagent_type: inheritedName } satisfies Member
+
+      // when: no provenance is registered for this directory, so the project path must reject
+      const result = resolveMember(member, createExecutorContext(), "deep, quick")
+
+      // then: it must be treated as an unproven project agent, not silently resolved via the prototype chain
+      await expect(result).rejects.toBeInstanceOf(TeamMemberResolutionError)
+      await expect(result).rejects.toThrow("has no config-time provenance")
+      expect(resolveSubagentExecutionMock).not.toHaveBeenCalled()
+    })
+
+  test("rejects a proven project agent whose final permission rules disagree with the launcher permission overlay", async () => {
+    // given: an agent that satisfies every REQUIRED_TEAM_TOOL but leaves call_omo_agent denied,
+    // so the BackgroundManager launch overlay ({ call_omo_agent: true, ... }) would flip an effective permission
+    const fixture = createProvenRegistryContext({ data: [createFinalAgent({ permission: [...createPermissionRules(), { permission: "call_omo_agent", pattern: "*", action: "deny" as const }] })] })
+
+    // when
+    const result = resolveMember(createProjectMember(), fixture.context, "deep, quick", "lead")
+
+    // then
+    await expect(result).rejects.toThrow("must already agree with the launch permission")
   })
 })

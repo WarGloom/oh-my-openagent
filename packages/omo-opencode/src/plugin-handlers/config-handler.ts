@@ -5,6 +5,7 @@ import {
   replaceProjectAgentProvenance,
 } from "../features/team-mode/final-open-code-agent-registry";
 import { setAdditionalAllowedMcpEnvVars } from "../features/claude-code-mcp-loader";
+import { loadOpencodeProjectAgents } from "../features/claude-code-agent-loader";
 import type { ModelCacheState } from "../plugin-state";
 import { log } from "../shared";
 import { applyAgentConfig } from "./agent-config-handler";
@@ -69,12 +70,37 @@ function cloneAgentConfig(agents: Record<string, unknown>): Record<string, unkno
   return cloneConfigValue(agents) as Record<string, unknown>
 }
 
-function createAgentConfigCacheKey(config: Record<string, unknown>): string {
+function canonicalizeConfigValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(canonicalizeConfigValue)
+  }
+
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+        .map(([key, entry]) => [key, canonicalizeConfigValue(entry)]),
+    )
+  }
+
+  return value
+}
+
+function createProjectAgentSourceSignature(directory: string): string {
+  const projectAgents = loadOpencodeProjectAgents(directory)
+  return JSON.stringify(canonicalizeConfigValue(projectAgents)) ?? "{}"
+}
+
+function createAgentConfigCacheKey(
+  config: Record<string, unknown>,
+  projectAgentSourceSignature: string,
+): string {
   return JSON.stringify({
     agent: config.agent,
     default_agent: config.default_agent,
     model: config.model,
     skills: config.skills,
+    project_agent_source: projectAgentSourceSignature,
   })
 }
 
@@ -112,7 +138,8 @@ export function createConfigHandler(deps: ConfigHandlerDeps) {
 
     applyHookConfig({ pluginComponents });
 
-    const agentCacheKey = createAgentConfigCacheKey(config);
+    const projectAgentSourceSignature = createProjectAgentSourceSignature(ctx.directory);
+    const agentCacheKey = createAgentConfigCacheKey(config, projectAgentSourceSignature);
     let agentResult: Record<string, unknown>;
     if (!pluginComponentsLoadFailed && agentConfigSnapshot?.cacheKey === agentCacheKey) {
       config.agent = cloneAgentConfig(agentConfigSnapshot.agents);

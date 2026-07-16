@@ -1,108 +1,146 @@
 {
   "passed": true,
-  "assertionCount": 15,
+  "assertionCount": 29,
   "assertions": {
-    "exactSourceManifestHas15Files": true,
+    "exactSourceManifestHas12Files": true,
+    "sourceManifestMatchesCurrentUncommittedSourceTree": true,
+    "evidenceSourceManifestHasReadmeAndBothScripts": true,
+    "evidenceArtifactSetRemainsExactlySevenFiles": true,
     "hostSessionCountUnchanged": true,
     "acceptedRunExitedSuccessfully": true,
+    "acceptedHasExactEventAndProviderRequestCounts": true,
     "acceptedTeamCreateCompleted": true,
     "acceptedFinalIdentityExact": true,
     "acceptedFinalModelVariantExact": true,
     "acceptedChildUsedProjectPromptAndModel": true,
     "acceptedChildHasRequiredTeamTools": true,
-    "acceptedChildHasNoWriteOrQuestionTools": true,
+    "acceptedChildCanCallOmoAgent": true,
+    "acceptedChildHonorsAllLauncherDenies": true,
     "acceptedSourcePresentForAuthoritativeRegistry": true,
     "acceptedChildSessionCreated": true,
-    "rejectedRunExitedSuccessfully": true,
-    "rejectedTeamCreateFailedForExactProvenanceReason": true,
-    "rejectedCreatedNoChildRequestOrSession": true,
-    "providersStoppedAndSandboxesRemoved": true
+    "allRejectedRunsExitedSuccessfully": true,
+    "allRejectedRunsHaveExactEventAndProviderRequestCounts": true,
+    "rejectedInlineSpecsAreDistinctAndExact": true,
+    "rejected-source-shadowExactErrorClassAndMessage": true,
+    "rejected-permissionExactErrorClassAndMessage": true,
+    "rejected-project-leadExactErrorClassAndMessage": true,
+    "rejected-prototype-leadExactErrorClassAndMessage": true,
+    "allRejectedRunsCreatedNoChildProviderRequestOrSession": true,
+    "allProjectAgentSourcesRemainPresentAfterRuns": true,
+    "combinedRejectedStreamHas24ScenarioTaggedEvents": true,
+    "providerEvidenceHas16MetadataOnlyRequests": true,
+    "providersStoppedAndSandboxesRemoved": true,
+    "allPersistedOutputsRemainSanitized": true
   },
-  "gitHead": "8d80b19271feb17ff0c8a85be5eb61dfeb53a0cb",
+  "gitHead": "ee3eda6938facb73ad6cfeed32b95ad6cf37e2fd",
   "gitStatusShort": [
-    "M .omo/evidence/20260716-minimal-project-agent-members/opencode-run-accepted.jsonl",
+    " M .omo/evidence/20260716-minimal-project-agent-members/README.md",
+    " M .omo/evidence/20260716-minimal-project-agent-members/fake-provider.mjs",
+    " M .omo/evidence/20260716-minimal-project-agent-members/opencode-run-accepted.jsonl",
     " M .omo/evidence/20260716-minimal-project-agent-members/opencode-run-rejected.jsonl",
+    " M .omo/evidence/20260716-minimal-project-agent-members/provider-requests.jsonl",
     " M .omo/evidence/20260716-minimal-project-agent-members/qa-result.json",
-    " M packages/omo-opencode/src/plugin-handlers/project-agent-provenance-cache.test.ts"
+    " M .omo/evidence/20260716-minimal-project-agent-members/run-qa.mjs",
+    " M docs/guide/team-mode.md",
+    " M packages/omo-opencode/src/features/team-mode/final-open-code-agent-registry.ts",
+    " M packages/omo-opencode/src/features/team-mode/team-registry/project-agent-loader.test.ts",
+    " M packages/omo-opencode/src/features/team-mode/team-runtime/resolve-member.test.ts",
+    " M packages/omo-opencode/src/features/team-mode/team-runtime/resolve-member.ts",
+    " M packages/omo-opencode/src/features/team-mode/tools/lifecycle-create-tool.ts",
+    " M packages/omo-opencode/src/features/team-mode/tools/lifecycle-inline-project-agent.test.ts",
+    " M packages/omo-opencode/src/plugin-handlers/agent-config-handler.ts",
+    " M packages/omo-opencode/src/plugin-handlers/config-handler.ts",
+    " M packages/omo-opencode/src/plugin-handlers/project-agent-provenance-cache.test.ts",
+    " M packages/team-core/src/team-registry/validator-options.test.ts",
+    " M packages/team-core/src/team-registry/validator.ts"
   ],
   "sourceManifest": [
     {
       "file": "docs/guide/team-mode.md",
-      "sha256": "4b113b81a5873aa580fd7bdd24577f760b96a9054c08ba653cc3c8bd13a6224d"
+      "sha256": "5aa3af8214567a61a517a133c2ce4ad0ce720b0570e3057b67649a894cb4e49d"
     },
     {
       "file": "packages/omo-opencode/src/features/team-mode/final-open-code-agent-registry.ts",
-      "sha256": "f626182def0598e33990415f9337444f9e05347116c527102e8cdc46aee89ed7"
+      "sha256": "a60af335e8673d86cdf549477ac2f797fa9982e790ff177a1c0bc83c75132f11"
     },
     {
       "file": "packages/omo-opencode/src/features/team-mode/team-registry/project-agent-loader.test.ts",
-      "sha256": "5059ab69065b0139f2d81ef53c642aab9a5a1b6fbbaaa379b237fa8ae581c230"
+      "sha256": "3484844adced89fce0060af748b42b1d2e202fe1647b1d39240462740f7c2942"
     },
     {
       "file": "packages/omo-opencode/src/features/team-mode/team-runtime/resolve-member.test.ts",
-      "sha256": "df1c39cf874f550a10109a91a4cc656c3f907b5d509a40fd493c7ae531fe2c1b"
+      "sha256": "66442f029cbc7e082fec2cc063dd84d9448c081ab557480e80eff0da289090a9"
     },
     {
       "file": "packages/omo-opencode/src/features/team-mode/team-runtime/resolve-member.ts",
-      "sha256": "5172b5f2ed12f03b374b516fa3a026f15cc29372bd53b651820aedbeb39656ec"
+      "sha256": "5b8efca9d388ea2c8248c4a85c3a6f22f0edbfb1db3e952cf7eb73c7c183732d"
     },
     {
       "file": "packages/omo-opencode/src/features/team-mode/tools/lifecycle-create-tool.ts",
-      "sha256": "21847f720b3bbd368c6204cac7b48269486abb7ba0219c8f02240aeb66b8ec0b"
+      "sha256": "8fca28debafd27be740693bd3d08a19eb9ec0bf2204aa1ea859b0a69589c8efa"
     },
     {
       "file": "packages/omo-opencode/src/features/team-mode/tools/lifecycle-inline-project-agent.test.ts",
-      "sha256": "f23915ce791aceefec21b84e152f31045130f8f83ad674c85149b9ff43d2e8ab"
-    },
-    {
-      "file": "packages/omo-opencode/src/features/team-mode/tools/lifecycle-inline-spec.ts",
-      "sha256": "6518f12c7c3913f589ffae1c8bf37fb6840d4253b116a3b1a27f424640eda3a6"
-    },
-    {
-      "file": "packages/omo-opencode/src/features/team-mode/tools/query.ts",
-      "sha256": "dcae028646863b0ac642c41cc848f2e9d468f53232225a0b399753b8f6954a53"
+      "sha256": "fa8ff5778730a99cd9b190c295d3378c7865ba71bdad36da9a1f7350cf95c6dc"
     },
     {
       "file": "packages/omo-opencode/src/plugin-handlers/agent-config-handler.ts",
-      "sha256": "7e318217a07355b5cffe91c6bf2baa012a3940519aba01a286f58a26873af182"
+      "sha256": "d649aa09faf54254ff5356a3ad0eac04a140976c9cb016252e9ec05751cfaf43"
     },
     {
       "file": "packages/omo-opencode/src/plugin-handlers/config-handler.ts",
-      "sha256": "9bca8a286d90f19205bdc96b4c2048dcaaf785823eea54bef6a96b8c58f6efa3"
+      "sha256": "50cc5842814879eec75f5c4755a563745956ce41977e00096635329be62bd619"
     },
     {
       "file": "packages/omo-opencode/src/plugin-handlers/project-agent-provenance-cache.test.ts",
-      "sha256": "6f41c6a80cf52f347a4ceb2376b44b298ab3faff967c756d1b5bf7199a221850"
-    },
-    {
-      "file": "packages/team-core/src/team-registry/loader.ts",
-      "sha256": "1f95ffa056ddfa87be40f8bb68675869a63fadea12560aef258d5f410f8fd8d5"
+      "sha256": "1f664bb002e397d2961a1573701e7967700f9d9ff0bab59c33d9647ade439136"
     },
     {
       "file": "packages/team-core/src/team-registry/validator-options.test.ts",
-      "sha256": "24a75c02bd2c268b6fbfd73598522d6a685dba63a77b221bcd1bc9207f0c4b69"
+      "sha256": "fdee7dd4ccec0b819efc77a4e6d11f7267e93868a6687add175ad2bd40fb9a42"
     },
     {
       "file": "packages/team-core/src/team-registry/validator.ts",
-      "sha256": "41a9617964c70e73b9da25181178718d2df1a15fa86ff2100d4107ae687f348d"
+      "sha256": "cb4140bdf53800ca77cbde3f835b369dce8457c2affb8113e309edd05cce87dc"
+    }
+  ],
+  "evidenceSourceManifest": [
+    {
+      "file": ".omo/evidence/20260716-minimal-project-agent-members/README.md",
+      "sha256": "89e616800e3147d80444548a083ba6e829ac1e3d708984e12e725ad3ff47e790"
+    },
+    {
+      "file": ".omo/evidence/20260716-minimal-project-agent-members/fake-provider.mjs",
+      "sha256": "ca0bf42f4487d57384b9d502c6562cbe5d6fda0aff87948c3598a9ea45d8ef9c"
+    },
+    {
+      "file": ".omo/evidence/20260716-minimal-project-agent-members/run-qa.mjs",
+      "sha256": "f3f1753acdfaca0c23771fbc530d9d3848484f198819936592228f0232471e1a"
     }
   ],
   "hostIsolation": {
-    "sessionCountBefore": 3996,
-    "sessionCountAfter": 3996,
+    "sessionCountBefore": 4044,
+    "sessionCountAfter": 4044,
     "unchanged": true
   },
   "scenarios": {
     "accepted": {
       "scenario": "accepted",
       "exitCode": 0,
+      "eventCount": 6,
+      "providerRequestCount": 4,
       "stderrSummary": {
         "bytes": 0,
         "nonEmptyLines": 0
       },
       "teamCreateStatus": "completed",
       "teamCreateError": null,
-      "teamCreateHasProvenanceError": false,
+      "teamCreateErrorClass": null,
+      "inlineSpec": {
+        "name": "qa-project-agent-team-accepted",
+        "leadAgentId": "lead",
+        "leadSubagentType": "sisyphus"
+      },
       "reviewer": {
         "name": "reviewer",
         "subagent_type": "repository-reviewer",
@@ -173,29 +211,121 @@
       "childSessionCount": 1,
       "projectAgentPresentBeforeTeamCreateResponse": true,
       "projectAgentExistsAfterRun": true,
+      "outputsSanitized": true,
       "providerStopped": true,
       "sandboxRemoved": true
     },
     "rejected": {
-      "scenario": "rejected",
-      "exitCode": 0,
-      "stderrSummary": {
-        "bytes": 0,
-        "nonEmptyLines": 0
+      "rejected-source-shadow": {
+        "scenario": "rejected-source-shadow",
+        "exitCode": 0,
+        "eventCount": 6,
+        "providerRequestCount": 3,
+        "stderrSummary": {
+          "bytes": 0,
+          "nonEmptyLines": 0
+        },
+        "teamCreateStatus": "error",
+        "teamCreateError": "Failed to create team run 'qa-project-agent-team-rejected-source-shadow': Failed to resolve member 'reviewer': Project agent 'repository-reviewer' has no config-time provenance for this exact directory.",
+        "teamCreateErrorClass": "TeamRunCreateError",
+        "inlineSpec": {
+          "name": "qa-project-agent-team-rejected-source-shadow",
+          "leadAgentId": "lead",
+          "leadSubagentType": "sisyphus"
+        },
+        "reviewer": null,
+        "childRequest": null,
+        "childRequestCount": 0,
+        "childSessionCount": 0,
+        "projectAgentPresentBeforeTeamCreateResponse": false,
+        "projectAgentExistsAfterRun": true,
+        "outputsSanitized": true,
+        "providerStopped": true,
+        "sandboxRemoved": true
       },
-      "teamCreateStatus": "error",
-      "teamCreateError": "Failed to create team run 'qa-project-agent-team': Failed to resolve member 'reviewer': Project agent 'repository-reviewer' has no config-time provenance for this exact directory.",
-      "teamCreateHasProvenanceError": true,
-      "reviewer": null,
-      "childRequest": null,
-      "childRequestCount": 0,
-      "childSessionCount": 0,
-      "projectAgentPresentBeforeTeamCreateResponse": false,
-      "projectAgentExistsAfterRun": true,
-      "providerStopped": true,
-      "sandboxRemoved": true
+      "rejected-permission": {
+        "scenario": "rejected-permission",
+        "exitCode": 0,
+        "eventCount": 6,
+        "providerRequestCount": 3,
+        "stderrSummary": {
+          "bytes": 0,
+          "nonEmptyLines": 0
+        },
+        "teamCreateStatus": "error",
+        "teamCreateError": "Failed to create team run 'qa-project-agent-team-rejected-permission': Failed to resolve member 'reviewer': Project agent 'repository-reviewer' must already agree with the launch permission 'call_omo_agent: true' in its final permission rules.",
+        "teamCreateErrorClass": "TeamRunCreateError",
+        "inlineSpec": {
+          "name": "qa-project-agent-team-rejected-permission",
+          "leadAgentId": "lead",
+          "leadSubagentType": "sisyphus"
+        },
+        "reviewer": null,
+        "childRequest": null,
+        "childRequestCount": 0,
+        "childSessionCount": 0,
+        "projectAgentPresentBeforeTeamCreateResponse": false,
+        "projectAgentExistsAfterRun": true,
+        "outputsSanitized": true,
+        "providerStopped": true,
+        "sandboxRemoved": true
+      },
+      "rejected-project-lead": {
+        "scenario": "rejected-project-lead",
+        "exitCode": 0,
+        "eventCount": 6,
+        "providerRequestCount": 3,
+        "stderrSummary": {
+          "bytes": 0,
+          "nonEmptyLines": 0
+        },
+        "teamCreateStatus": "error",
+        "teamCreateError": "Project-defined agent 'repository-reviewer' cannot be a team lead.",
+        "teamCreateErrorClass": "Error",
+        "inlineSpec": {
+          "name": "qa-rejected-project-lead",
+          "leadAgentId": "reviewer",
+          "leadSubagentType": "repository-reviewer"
+        },
+        "reviewer": null,
+        "childRequest": null,
+        "childRequestCount": 0,
+        "childSessionCount": 0,
+        "projectAgentPresentBeforeTeamCreateResponse": false,
+        "projectAgentExistsAfterRun": true,
+        "outputsSanitized": true,
+        "providerStopped": true,
+        "sandboxRemoved": true
+      },
+      "rejected-prototype-lead": {
+        "scenario": "rejected-prototype-lead",
+        "exitCode": 0,
+        "eventCount": 6,
+        "providerRequestCount": 3,
+        "stderrSummary": {
+          "bytes": 0,
+          "nonEmptyLines": 0
+        },
+        "teamCreateStatus": "error",
+        "teamCreateError": "Project-defined agent 'constructor' cannot be a team lead.",
+        "teamCreateErrorClass": "Error",
+        "inlineSpec": {
+          "name": "qa-rejected-prototype-lead",
+          "leadAgentId": "prototype-lead",
+          "leadSubagentType": "constructor"
+        },
+        "reviewer": null,
+        "childRequest": null,
+        "childRequestCount": 0,
+        "childSessionCount": 0,
+        "projectAgentPresentBeforeTeamCreateResponse": false,
+        "projectAgentExistsAfterRun": true,
+        "outputsSanitized": true,
+        "providerStopped": true,
+        "sandboxRemoved": true
+      }
     }
   },
   "failure": null,
-  "sanitization": "Provider evidence contains metadata only; OpenCode JSONL replaces sandbox and repository roots; stderr is summarized by byte and line counts."
+  "sanitization": "Provider evidence contains allowlisted metadata fields only; OpenCode JSONL replaces sandbox and repository roots; stderr is summarized by byte and line counts; raw request bodies, headers, tokens, credentials, environment values, host database rows, and temporary paths are not retained."
 }

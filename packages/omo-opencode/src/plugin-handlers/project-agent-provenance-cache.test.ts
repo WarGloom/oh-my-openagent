@@ -150,7 +150,7 @@ describe("project agent provenance snapshots", () => {
     // when
     await createHandler(directory)({
       model: "openai/gpt-5.4-mini",
-      agent: { "project-worker": { mode: "subagent" } },
+      agent: {},
     })
 
     // then
@@ -190,16 +190,16 @@ describe("project agent provenance snapshots", () => {
       "project-worker": { mode: "subagent" },
     })
     const handler = createHandler(directory)
-    const hostAgent = { "project-worker": { mode: "subagent" } }
-    await handler({ model: "openai/gpt-5.4-mini", agent: hostAgent })
+    const incomingAgent = {}
+    await handler({ model: "openai/gpt-5.4-mini", agent: incomingAgent })
     replaceProjectAgentProvenance(directory, [])
 
     // when
-    await handler({ model: "openai/gpt-5.4-mini", agent: hostAgent })
+    await handler({ model: "openai/gpt-5.4-mini", agent: incomingAgent })
 
     // then
     expect(hasProjectAgentProvenance(directory, "project-worker")).toBe(true)
-    expect(unsafeTestValue(agentLoader.loadOpencodeProjectAgents).mock.calls).toHaveLength(1)
+    expect(unsafeTestValue(agentLoader.loadOpencodeProjectAgents).mock.calls).toHaveLength(3)
   })
 
   test("replaces stale provenance with an empty cold-path snapshot", async () => {
@@ -209,12 +209,12 @@ describe("project agent provenance snapshots", () => {
       "project-worker": { mode: "subagent" },
     })
     const handler = createHandler(directory)
-    const hostAgent = { "project-worker": { mode: "subagent" } }
-    await handler({ model: "openai/gpt-5.4-mini", agent: hostAgent })
+    const incomingAgent = {}
+    await handler({ model: "openai/gpt-5.4-mini", agent: incomingAgent })
     unsafeTestValue(agentLoader.loadOpencodeProjectAgents).mockReturnValue({})
 
     // when
-    await handler({ model: "openai/gpt-5.5", agent: hostAgent })
+    await handler({ model: "openai/gpt-5.5", agent: incomingAgent })
 
     // then
     expect(hasProjectAgentProvenance(directory, "project-worker")).toBe(false)
@@ -223,19 +223,98 @@ describe("project agent provenance snapshots", () => {
   test("clears stale provenance when a cold agent config refresh fails", async () => {
     // given
     const directory = "/tmp/provenance-failed-refresh"
-    const hostAgent = { "project-worker": { mode: "subagent" } }
-    unsafeTestValue(agentLoader.loadOpencodeProjectAgents).mockReturnValue(hostAgent)
+    const projectAgent = { "project-worker": { mode: "subagent" } }
+    unsafeTestValue(agentLoader.loadOpencodeProjectAgents).mockReturnValue(projectAgent)
     const handler = createHandler(directory)
-    await handler({ model: "openai/gpt-5.4-mini", agent: hostAgent })
+    await handler({ model: "openai/gpt-5.4-mini", agent: {} })
     unsafeTestValue(agents.createBuiltinAgents).mockRejectedValueOnce(
       new Error("cold agent refresh failed"),
     )
 
     // when
-    const refresh = handler({ model: "openai/gpt-5.5", agent: hostAgent })
+    const refresh = handler({ model: "openai/gpt-5.5", agent: {} })
 
     // then
     await expect(refresh).rejects.toThrow("cold agent refresh failed")
     expect(hasProjectAgentProvenance(directory, "project-worker")).toBe(false)
+  })
+
+  test("retains provenance when incoming config.agent contains the same project-file agent", async () => {
+    // given
+    const directory = "/tmp/provenance-host-project-agent"
+    unsafeTestValue(agentLoader.loadOpencodeProjectAgents).mockReturnValue({
+      "project-worker": { mode: "subagent", description: "project candidate" },
+    })
+
+    // when
+    await createHandler(directory)({
+      model: "openai/gpt-5.4-mini",
+      agent: { "project-worker": { prompt: "project candidate", mode: "subagent" } },
+    })
+
+    // then
+    expect(hasProjectAgentProvenance(directory, "project-worker")).toBe(true)
+  })
+
+  test("does not attribute provenance to a project name that collides with a protected built-in", async () => {
+    // given: a project source declares the protected built-in display name; assembly filters the
+    //        project candidate out via filterProtectedAgentOverrides while the built-in survives
+    //        under that same runtime display key
+    const directory = "/tmp/provenance-protected-collision"
+    unsafeTestValue(agents.createBuiltinAgents).mockResolvedValue({
+      "Sisyphus - ultraworker": { name: "Sisyphus - ultraworker", prompt: "test", mode: "primary" },
+    })
+    unsafeTestValue(agentLoader.loadOpencodeProjectAgents).mockReturnValue({
+      sisyphus: { mode: "subagent", description: "project override of a protected agent" },
+    })
+
+    // when: the incoming config carries no sisyphus, so only the built-in supplies the final key
+    await createHandler(directory)({ model: "openai/gpt-5.4-mini", agent: {} })
+
+    // then: the surviving final agent is the protected built-in, not the filtered project candidate
+    expect(hasProjectAgentProvenance(directory, "Sisyphus - ultraworker")).toBe(false)
+  })
+
+  test("invalidates the agent config cache when project-source content changes under the same key", async () => {
+    // given: byte-identical incoming config across both calls; only the project-source loader result changes
+    const directory = "/tmp/provenance-content-signature"
+    const handler = createHandler(directory)
+    const incoming = { model: "openai/gpt-5.4-mini", agent: {} }
+    unsafeTestValue(agentLoader.loadOpencodeProjectAgents).mockReturnValue({
+      "worker-one": { mode: "subagent" },
+    })
+    await handler({ ...incoming })
+    unsafeTestValue(agentLoader.loadOpencodeProjectAgents).mockReturnValue({})
+
+    // when: same model/agent/skills cache key, but the project source now yields no agent
+    await handler({ ...incoming })
+
+    // then: the cache must have re-run the project loader and dropped the stale provenance
+    expect(hasProjectAgentProvenance(directory, "worker-one")).toBe(false)
+    expect(unsafeTestValue(agentLoader.loadOpencodeProjectAgents).mock.calls).toHaveLength(4)
+  })
+
+  test("keeps the agent config cache valid when project-source object key order changes", async () => {
+    // given: equivalent project definitions with different insertion order
+    const directory = "/tmp/provenance-deterministic-signature"
+    const handler = createHandler(directory)
+    const firstDefinition = {
+      "project-worker": { mode: "subagent", options: { alpha: true, beta: false } },
+    }
+    const reorderedDefinition = {
+      "project-worker": { options: { beta: false, alpha: true }, mode: "subagent" },
+    }
+    unsafeTestValue(agentLoader.loadOpencodeProjectAgents)
+      .mockReturnValueOnce(firstDefinition)
+      .mockReturnValueOnce(firstDefinition)
+      .mockReturnValueOnce(reorderedDefinition)
+    await handler({ model: "openai/gpt-5.4-mini", agent: {} })
+
+    // when
+    await handler({ model: "openai/gpt-5.4-mini", agent: {} })
+
+    // then: the second call performs only the required signature load and reuses the snapshot
+    expect(unsafeTestValue(agentLoader.loadOpencodeProjectAgents).mock.calls).toHaveLength(3)
+    expect(unsafeTestValue(agents.createBuiltinAgents).mock.calls).toHaveLength(1)
   })
 })

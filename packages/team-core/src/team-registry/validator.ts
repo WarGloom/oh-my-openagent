@@ -97,7 +97,9 @@ export function validateMemberEligibility(member: Member, options: ValidateSpecO
     return
   }
 
-  const eligibility = AGENT_ELIGIBILITY_REGISTRY[member.subagent_type]
+  const eligibility = Object.hasOwn(AGENT_ELIGIBILITY_REGISTRY, member.subagent_type)
+    ? AGENT_ELIGIBILITY_REGISTRY[member.subagent_type]
+    : undefined
   if (!eligibility) {
     if (options.allowUnknownSubagentTypes === true) {
       return

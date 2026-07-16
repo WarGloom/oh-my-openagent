@@ -66,4 +66,18 @@ describe("ValidateSpecOptions", () => {
     // then
     expect(act).toThrow("Agent 'oracle' is read-only")
   })
+
+  test.each(["constructor", "toString", "hasOwnProperty", "__proto__"])(
+    "rejects inherited Object.prototype name '%s' as an unknown subagent type by default",
+    (inheritedName) => {
+      // given: a name that lives on Object.prototype, not as an own key of the registry
+      const spec = createSpec(inheritedName)
+
+      // when
+      const act = () => validateSpec(spec)
+
+      // then: it must be treated as unknown, not silently accepted via the prototype chain
+      expect(act).toThrow(`Unknown subagent_type '${inheritedName}'.`)
+    },
+  )
 })

@@ -97,7 +97,7 @@ export async function resolveMember(
       }
     }
 
-    if (AGENT_ELIGIBILITY_REGISTRY[member.subagent_type] === undefined) {
+    if (!Object.hasOwn(AGENT_ELIGIBILITY_REGISTRY, member.subagent_type)) {
       if (member.name === parentAgent) {
         throw new Error("Project-defined agents cannot be team leads.")
       }

@@ -5,8 +5,17 @@ const scenario = process.env.QA_SCENARIO
 const logPath = process.env.QA_PROVIDER_LOG
 const portPath = process.env.QA_PROVIDER_PORT_FILE
 const projectAgentPath = process.env.QA_PROJECT_AGENT_FILE
-if (!scenario || !logPath || !portPath || !projectAgentPath) throw new Error("missing QA provider configuration")
-if (scenario !== "accepted" && scenario !== "rejected") throw new Error(`invalid QA scenario: ${scenario}`)
+const providerMode = process.env.QA_FAKE_PROVIDER_MODE === "server"
+if (!scenario || !projectAgentPath) throw new Error("missing QA scenario configuration")
+if (providerMode && (!logPath || !portPath)) throw new Error("missing QA provider configuration")
+const supportedScenarios = new Set([
+  "accepted",
+  "rejected-source-shadow",
+  "rejected-permission",
+  "rejected-project-lead",
+  "rejected-prototype-lead",
+])
+if (!supportedScenarios.has(scenario)) throw new Error(`invalid QA scenario: ${scenario}`)
 
 let callCount = 0
 let parentToolCallIssued = false
@@ -46,24 +55,56 @@ function textEvents(id, text, model) {
   ]
 }
 
-function toolCallEvents(id, model) {
-  const itemId = `fc_${id}`
-  const callId = `team_create_${id}`
-  const argumentsJson = JSON.stringify({
-    inline_spec: {
-      name: "qa-project-agent-team",
-      leadAgentId: "lead",
+function inlineSpec() {
+  if (scenario === "rejected-project-lead") {
+    return {
+      name: "qa-rejected-project-lead",
+      leadAgentId: "reviewer",
       members: [
-        { kind: "subagent_type", name: "lead", subagent_type: "sisyphus" },
         {
           kind: "subagent_type",
           name: "reviewer",
           subagent_type: "repository-reviewer",
-          prompt: "QA_CHILD_TASK_MARKER: complete the assigned review.",
+          prompt: "QA_CHILD_TASK_MARKER: project lead must be rejected.",
+        },
+        { kind: "subagent_type", name: "worker", subagent_type: "sisyphus" },
+      ],
+    }
+  }
+  if (scenario === "rejected-prototype-lead") {
+    return {
+      name: "qa-rejected-prototype-lead",
+      leadAgentId: "prototype-lead",
+      members: [
+        { kind: "subagent_type", name: "prototype-lead", subagent_type: "constructor" },
+        {
+          kind: "subagent_type",
+          name: "reviewer",
+          subagent_type: "repository-reviewer",
+          prompt: "QA_CHILD_TASK_MARKER: inherited prototype lead must be rejected.",
         },
       ],
-    },
-  })
+    }
+  }
+  return {
+    name: `qa-project-agent-team-${scenario}`,
+    leadAgentId: "lead",
+    members: [
+      { kind: "subagent_type", name: "lead", subagent_type: "sisyphus" },
+      {
+        kind: "subagent_type",
+        name: "reviewer",
+        subagent_type: "repository-reviewer",
+        prompt: `QA_CHILD_TASK_MARKER: ${scenario} project-agent review.`,
+      },
+    ],
+  }
+}
+
+function toolCallEvents(id, model) {
+  const itemId = `fc_${id}`
+  const callId = `team_create_${id}`
+  const argumentsJson = JSON.stringify({ inline_spec: inlineSpec() })
   return [
     responseCreated(id, model),
     { type: "response.output_item.added", output_index: 0, item: { type: "function_call", id: itemId, call_id: callId, name: "team_create", arguments: "" } },
@@ -149,19 +190,21 @@ async function handleRequest(request, response) {
   sendEvents(response, textEvents(callCount, branch === "title" ? "project agent QA" : "QA_DEFAULT", model))
 }
 
-const server = http.createServer((request, response) => {
-  void handleRequest(request, response).catch(() => {
-    if (!response.headersSent) response.writeHead(500, { "content-type": "application/json" })
-    response.end(JSON.stringify({ error: "local QA provider failure" }))
+if (providerMode) {
+  const server = http.createServer((request, response) => {
+    void handleRequest(request, response).catch(() => {
+      if (!response.headersSent) response.writeHead(500, { "content-type": "application/json" })
+      response.end(JSON.stringify({ error: "local QA provider failure" }))
+    })
   })
-})
 
-server.listen(0, "127.0.0.1", () => {
-  const address = server.address()
-  if (!address || typeof address === "string") throw new Error("fake provider did not bind a TCP port")
-  writeFileSync(portPath, String(address.port))
-})
+  server.listen(0, "127.0.0.1", () => {
+    const address = server.address()
+    if (!address || typeof address === "string") throw new Error("fake provider did not bind a TCP port")
+    writeFileSync(portPath, String(address.port))
+  })
 
-for (const signal of ["SIGINT", "SIGTERM"]) {
-  process.on(signal, () => server.close(() => process.exit(0)))
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    process.on(signal, () => server.close(() => process.exit(0)))
+  }
 }
