@@ -7,7 +7,7 @@ import { join } from "node:path"
 
 import type { TuiSlotPlugin } from "@opencode-ai/plugin/tui"
 
-import tuiModule, { handleTuiPollError, materializeReactive, navigateToTeamSession } from "./tui"
+import tuiModule, { currentTeamSessionId, handleTuiPollError, materializeReactive, navigateToTeamSession } from "./tui"
 
 type SolidNode = {
   readonly tag: string
@@ -23,6 +23,12 @@ type SidebarApiForTest = {
   }
   readonly theme: {
     readonly current: Record<string, unknown>
+  }
+  readonly route: {
+    readonly current: {
+      readonly name: string
+      readonly params?: Record<string, unknown>
+    }
   }
   readonly slots: {
     readonly register: (registration: TuiSlotPlugin) => string
@@ -67,6 +73,7 @@ describe("TUI sidebar polling", () => {
     const api = {
       state: { path: { directory: tempDir } },
       theme: { current: {} },
+      route: { current: { name: "home" } },
       slots: {
         register: (nextRegistration: TuiSlotPlugin): string => {
           calls.push("register")
@@ -140,6 +147,21 @@ describe("TUI sidebar polling", () => {
 
     // then
     expect(navigations).toEqual([{ name: "session", params: { sessionID: "ses-member" } }])
+  })
+
+  it("#given home and session routes #when selecting Team cache scope #then only session routes provide a cache key", () => {
+    // given
+    const routes = [
+      { current: { name: "home" as const } },
+      { current: { name: "session" as const, params: { sessionID: "ses-member" } } },
+      { current: { name: "settings", params: {} } },
+    ]
+
+    // when
+    const sessionIds = routes.map((route) => currentTeamSessionId(route))
+
+    // then
+    expect(sessionIds).toEqual([null, "ses-member", null])
   })
 })
 

@@ -6,8 +6,8 @@ import { deriveAgents, deriveConfig, deriveJobBoard, deriveLoop, deriveRoster, d
 import type { ViewNode } from "./features/tui-sidebar/element-helpers"
 import { readMirror } from "./features/tui-sidebar/mirror-io"
 import { buildViewNodes } from "./features/tui-sidebar/render-view"
-import type { RosterRow } from "./features/tui-sidebar/state-types"
-import type { SidebarView } from "./features/tui-sidebar/state-types"
+import { TeamSessionCache } from "./features/tui-sidebar/team-session-cache"
+import type { RosterRow, SidebarView } from "./features/tui-sidebar/state-types"
 import { log } from "./shared/logger"
 
 type SolidRuntime<Node> = {
@@ -97,18 +97,32 @@ async function loadRosterRows(directory: string): Promise<readonly RosterRow[]> 
   return resolver(directory)
 }
 
-async function readView(directory: string): Promise<SidebarView> {
+async function readView(directory: string, sessionId: string | null, teamCache: TeamSessionCache): Promise<SidebarView> {
   const validation = await loadPluginValidation(directory)
   const mirror = readMirror(directory)
   const roster = await loadRosterRows(directory)
+  const freshTeams = deriveTeams(mirror)
+  teamCache.update(freshTeams)
   return computeView({
     config: deriveConfig(validation),
     roster: deriveRoster(roster),
     agents: deriveAgents(mirror),
     jobs: deriveJobBoard(mirror),
     loop: deriveLoop(mirror),
-    teams: deriveTeams(mirror),
+    teams: teamCache.forSession(sessionId),
   })
+}
+
+export function currentTeamSessionId(route: Pick<TuiPluginApi["route"], "current">): string | null {
+  const current = route.current
+  switch (current.name) {
+    case "home":
+      return null
+    case "session":
+      return typeof current.params?.sessionID === "string" ? current.params.sessionID : null
+    default:
+      return null
+  }
 }
 
 export function navigateToTeamSession(
@@ -143,7 +157,9 @@ const module: TuiPluginModule = {
     }
 
     const { createSignal } = await import("solid-js")
-    const [currentView, setCurrentView] = createSignal(await readView(directory))
+    const teamCache = new TeamSessionCache()
+    const initialView = await readView(directory, currentTeamSessionId(api.route), teamCache)
+    const [currentView, setCurrentView] = createSignal(initialView)
     const [teamCollapsed, setTeamCollapsed] = createSignal(false)
     let currentKey = viewKey(currentView())
     let disposed = false
@@ -177,7 +193,7 @@ const module: TuiPluginModule = {
       }
       inFlight = true
       try {
-        const nextView = await readView(directory)
+        const nextView = await readView(directory, currentTeamSessionId(api.route), teamCache)
         const nextKey = viewKey(nextView)
         if (nextKey !== currentKey) {
           setCurrentView(nextView)
