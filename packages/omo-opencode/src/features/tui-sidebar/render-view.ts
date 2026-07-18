@@ -5,7 +5,6 @@ import { assertNever } from "./state-types"
 import { teamLines, teamNodes } from "./team-section"
 import type { TeamSectionInteraction } from "./team-section"
 import type {
-  AgentsState,
   ConfigBanner,
   JobBoardState,
   LoopState,
@@ -31,7 +30,6 @@ export function buildViewNodes(view: SidebarView, theme: ThemeLike, teamInteract
         box({ flexDirection: "column", gap: 1 }, [
           ...configBannerNodes(view.configBanner, theme),
           ...loopNodes(view.loop, theme),
-          ...agentNodes(view.agents, theme),
           ...jobNodes(view.jobs, theme),
           ...teamNodes(view.teams, theme, teamInteraction),
         ]),
@@ -55,7 +53,6 @@ function linesForView(view: SidebarView): string[] {
       return [
         ...configBannerLines(view.configBanner),
         ...loopLines(view.loop),
-        ...agentLines(view.agents),
         ...jobLines(view.jobs),
         ...teamLines(view.teams),
       ]
@@ -124,34 +121,6 @@ function loopLines(loop: LoopState): string[] {
       ]
     default:
       return assertNever(loop)
-  }
-}
-
-function agentNodes(agents: AgentsState, theme: ThemeLike): ViewNode[] {
-  switch (agents.kind) {
-    case "none":
-      return []
-    case "list":
-      return [
-        section(
-          "Agents",
-          theme,
-          agents.agents.map((agent) => text({ fg: theme.text }, `${truncate(agent.name)} ${agent.status}`)),
-        ),
-      ]
-    default:
-      return assertNever(agents)
-  }
-}
-
-function agentLines(agents: AgentsState): string[] {
-  switch (agents.kind) {
-    case "none":
-      return []
-    case "list":
-      return ["Agents", ...agents.agents.map((agent) => `${agent.name} ${agent.status}`)]
-    default:
-      return assertNever(agents)
   }
 }
 

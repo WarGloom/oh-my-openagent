@@ -1,10 +1,9 @@
 import type { MouseEvent } from "@opentui/core"
 
-import { LABEL_MAX } from "./constants"
 import { box, text } from "./element-helpers"
 import type { ViewNode } from "./element-helpers"
 import { assertNever } from "./state-types"
-import type { TeamMemberRow, TeamsState } from "./state-types"
+import type { TeamMemberRow, TeamRow, TeamsState } from "./state-types"
 
 type ThemeLike = {
   readonly error?: unknown
@@ -33,10 +32,8 @@ export function teamNodes(
       return []
     case "list":
       return [
-        box({ borderStyle: "single", borderColor: theme.borderSubtle, flexDirection: "column", padding: 1 }, [
-          teamHeader(teams, theme, interaction),
-          ...(interaction?.collapsed ? [] : teams.teams.flatMap((team) => team.members.map((member) => teamMemberNode(team.name, member, theme, interaction)))),
-        ]),
+        teamHeader(teams, theme, interaction),
+        ...(interaction?.collapsed ? [] : orderedTeams(teams).flatMap((team) => orderedMembers(team).map((member) => teamMemberNode(team.name, member, theme, interaction)))),
       ]
     default:
       return assertNever(teams)
@@ -50,7 +47,7 @@ export function teamLines(teams: TeamsState): string[] {
     case "list":
       return [
         `Team (${memberCount(teams)})`,
-        ...teams.teams.flatMap((team) => team.members.map((member) => teamMemberLine(team.name, member))),
+        ...orderedTeams(teams).flatMap((team) => orderedMembers(team).map((member) => `• ${teamMemberLine(team.name, member)}`)),
       ]
     default:
       return assertNever(teams)
@@ -60,7 +57,7 @@ export function teamLines(teams: TeamsState): string[] {
 function teamHeader(teams: Extract<TeamsState, { readonly kind: "list" }>, theme: ThemeLike, interaction?: TeamSectionInteraction): ViewNode {
   return box(
     interaction === undefined ? {} : { onMouseDown: interaction.onToggle },
-    [text({ fg: theme.info }, `Team (${memberCount(teams)}) ${interaction?.collapsed ? ">" : "v"}`)],
+    [text({ fg: theme.text }, `Team (${memberCount(teams)}) ${interaction?.collapsed ? "▶" : "▼"}`)],
   )
 }
 
@@ -70,21 +67,25 @@ function teamMemberNode(
   theme: ThemeLike,
   interaction?: TeamSectionInteraction,
 ): ViewNode {
-  const content = teamMemberLine(teamName, member)
   const sessionId = member.sessionId
-  if (sessionId === null || interaction === undefined) {
-    return text({ fg: memberStatusColor(member, theme) }, content)
-  }
-
-  return box(
-    {
+  return box({
+    flexDirection: "row",
+    flexWrap: "nowrap",
+    gap: 1,
+    height: 1,
+    overflow: "hidden",
+    ...(sessionId === null || interaction === undefined ? {} : {
       onMouseDown: (event: MouseEvent): void => {
         event.stopPropagation()
         interaction.onNavigateSession(sessionId)
       },
-    },
-    [text({ fg: memberStatusColor(member, theme) }, content)],
-  )
+    }),
+  }, [
+    text({ fg: memberStatusColor(member, theme) }, "•"),
+    text({ fg: theme.text, flexShrink: 0, wrapMode: "none" }, member.name),
+    text({ fg: theme.textMuted, flexGrow: 1, flexShrink: 1, overflow: "hidden", truncate: true, wrapMode: "none" }, `${memberContext(teamName, member)} · `),
+    text({ fg: theme.textMuted, flexShrink: 0, wrapMode: "none" }, memberStatusLabel(member)),
+  ])
 }
 
 function memberCount(teams: Extract<TeamsState, { readonly kind: "list" }>): number {
@@ -92,8 +93,19 @@ function memberCount(teams: Extract<TeamsState, { readonly kind: "list" }>): num
 }
 
 function teamMemberLine(teamName: string, member: TeamMemberRow): string {
-  const currentWork = member.work === null ? "" : ` ${member.work}`
-  return truncate(`${teamName}/${member.name} ${member.status}${currentWork}`)
+  return `${member.name} ${memberContext(teamName, member)} · ${memberStatusLabel(member)}`
+}
+
+function memberContext(teamName: string, member: TeamMemberRow): string {
+  return member.work ?? teamName
+}
+
+function orderedTeams(teams: Extract<TeamsState, { readonly kind: "list" }>): readonly TeamRow[] {
+  return [...teams.teams].toSorted((left, right) => left.name.localeCompare(right.name))
+}
+
+function orderedMembers(team: TeamRow): readonly TeamMemberRow[] {
+  return [...team.members].toSorted((left, right) => left.name.localeCompare(right.name))
 }
 
 function memberStatusColor(member: TeamMemberRow, theme: ThemeLike): unknown {
@@ -113,6 +125,21 @@ function memberStatusColor(member: TeamMemberRow, theme: ThemeLike): unknown {
   }
 }
 
-function truncate(value: string): string {
-  return value.length <= LABEL_MAX ? value : `${value.slice(0, LABEL_MAX - 3)}...`
+function memberStatusLabel(member: TeamMemberRow): string {
+  switch (member.status) {
+    case "running":
+      return "Running"
+    case "errored":
+      return "Errored"
+    case "pending":
+      return "Pending"
+    case "idle":
+      return "Idle"
+    case "completed":
+      return "Completed"
+    case "shutdown_approved":
+      return "Shutdown Approved"
+    default:
+      return assertNever(member.status)
+  }
 }
