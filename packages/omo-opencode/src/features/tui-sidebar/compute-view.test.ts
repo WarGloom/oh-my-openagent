@@ -166,14 +166,14 @@ describe("tui sidebar computeView", () => {
       loop: idleLoop,
       teams: {
         kind: "list" as const,
-        teams: [{ name: "sidebar-team", members: [{ name: "idle-member", status: "idle" as const, work: "Reviewing sidebar", sessionId: "ses-member" }] }],
+        teams: [{ name: "sidebar-team", leadSessionId: "ses-member", members: [{ name: "idle-member", status: "idle" as const, work: "Reviewing sidebar", sessionId: "ses-member" }] }],
       },
     }
     const secondSections = {
       ...firstSections,
       teams: {
         kind: "list" as const,
-        teams: [{ name: "sidebar-team", members: [{ name: "idle-member", status: "idle" as const, work: "Testing sidebar", sessionId: "ses-member" }] }],
+        teams: [{ name: "sidebar-team", leadSessionId: "ses-member", members: [{ name: "idle-member", status: "idle" as const, work: "Testing sidebar", sessionId: "ses-member" }] }],
       },
     }
 
@@ -184,6 +184,45 @@ describe("tui sidebar computeView", () => {
     // then
     expect(firstView).toMatchObject({ kind: "active", teams: firstSections.teams })
     expect(viewKey(secondView)).not.toBe(viewKey(firstView))
+  })
+
+  it("#given Team rows with different lead session identities #when computing keys #then the key changes", () => {
+    // given
+    const base = {
+      config: validConfig,
+      roster,
+      agents: idleAgents,
+      jobs: idleJobs,
+      loop: idleLoop,
+    }
+    const firstView = computeView({
+      ...base,
+      teams: {
+        kind: "list",
+        teams: [{
+          name: "sidebar-team",
+          leadSessionId: "ses-first-lead",
+          members: [{ name: "member", status: "idle", work: null, sessionId: "ses-member" }],
+        }],
+      },
+    })
+    const secondView = computeView({
+      ...base,
+      teams: {
+        kind: "list",
+        teams: [{
+          name: "sidebar-team",
+          leadSessionId: "ses-second-lead",
+          members: [{ name: "member", status: "idle", work: null, sessionId: "ses-member" }],
+        }],
+      },
+    })
+
+    // when
+    const keys = [viewKey(firstView), viewKey(secondView)]
+
+    // then
+    expect(keys[1]).not.toBe(keys[0])
   })
 
   it("#given equivalent views built with different literal key order #when computing keys #then viewKey is stable", () => {

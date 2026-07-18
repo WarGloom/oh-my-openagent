@@ -209,6 +209,7 @@ describe("tui sidebar section derivers", () => {
     const teams: readonly TeamRow[] = [
       {
         name: "sidebar-team",
+        leadSessionId: null,
         members: [
           { name: "running", status: "running", work: "Implementing sidebar", sessionId: "ses-running" },
           { name: "idle", status: "idle", work: null, sessionId: null },

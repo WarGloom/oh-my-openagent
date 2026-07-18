@@ -116,6 +116,7 @@ function teamsKeyParts(teams: TeamsState): readonly unknown[] {
         "list",
         teams.teams.map((team) => [
           team.name,
+          team.leadSessionId,
           team.members.map((member) => [member.name, member.status, member.work, member.sessionId]),
         ]),
       ]
