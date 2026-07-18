@@ -8,7 +8,6 @@ import type {
   ConfigBanner,
   JobBoardState,
   LoopState,
-  RosterState,
   SidebarView,
 } from "./state-types"
 
@@ -37,7 +36,7 @@ export function buildViewNodes(view: SidebarView, theme: ThemeLike, teamInteract
     case "broken":
       return brokenNodes(view.messages, theme)
     case "idle":
-      return idleNodes(view.roster, theme)
+      return []
     default:
       return assertNever(view)
   }
@@ -59,7 +58,7 @@ function linesForView(view: SidebarView): string[] {
     case "broken":
       return ["config invalid - run doctor", ...view.messages]
     case "idle":
-      return rosterLines(view.roster)
+      return []
     default:
       return assertNever(view)
   }
@@ -164,21 +163,6 @@ function brokenNodes(messages: readonly string[], theme: ThemeLike): ViewNode[] 
       ...messages.map((message) => text({ fg: theme.textMuted }, truncate(message))),
     ]),
   ]
-}
-
-function idleNodes(roster: RosterState, theme: ThemeLike): ViewNode[] {
-  return [section("Models", theme, rosterLines(roster).map((line) => text({ fg: theme.text }, line)))]
-}
-
-function rosterLines(roster: RosterState): string[] {
-  switch (roster.kind) {
-    case "empty":
-      return ["No configured models"]
-    case "rows":
-      return roster.rows.map((row) => `${row.label} ${row.model}`)
-    default:
-      return assertNever(roster)
-  }
 }
 
 function section(title: string, theme: ThemeLike, children: readonly ViewNode[]): ViewNode {

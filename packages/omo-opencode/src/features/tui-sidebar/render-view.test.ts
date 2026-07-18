@@ -99,7 +99,7 @@ describe("tui sidebar renderView", () => {
     expect(description).toContain("agents.sisyphus.model")
   })
 
-  it("#given idle roster #when rendering #then it lists configured model rows", () => {
+  it("#given idle view #when rendering #then it produces no OMO content", () => {
     // given
     const view: SidebarView = {
       kind: "idle",
@@ -111,8 +111,7 @@ describe("tui sidebar renderView", () => {
     const nodes = buildViewNodes(view, theme)
 
     // then
-    expect(description).toContain("sisyphus")
-    expect(description).toContain("gpt-5.5")
-    expect(nodes[0]?.kind).toBe("box")
+    expect(description).toBe("")
+    expect(nodes).toEqual([])
   })
 })
