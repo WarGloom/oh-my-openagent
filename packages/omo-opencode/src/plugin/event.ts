@@ -4,6 +4,7 @@ import type { CreatedHooks } from "../create-hooks";
 import type { Managers } from "../create-managers";
 import type { PluginContext } from "./types";
 
+import { isActiveSessionStatus } from "../features/background-agent/session-status-classifier";
 import { getMainSessionID, subagentSessions, syncSubagentSessions } from "../features/claude-code-session-state";
 import { invalidateContextWindowUsageCache } from "../shared/dynamic-truncator";
 import { resolveSessionEventID } from "../shared/event-session-id";
@@ -210,6 +211,13 @@ export function createEventHandler(args: {
     if (event.type === "session.status") {
       const sessionID = resolveSessionEventID(props);
       const status = props?.status as { type?: string; attempt?: number; message?: string; next?: number } | undefined;
+      if (
+        teamHandlers.teamMemberStatusHandler
+        && status?.type
+        && isActiveSessionStatus(status.type)
+      ) {
+        await runEventHookSafely("teamMemberStatusHandler", teamHandlers.teamMemberStatusHandler, input);
+      }
       if (sessionID) {
         try {
           if (await modelFallbackHandler.handleSessionStatus({ sessionID, status })) return;
