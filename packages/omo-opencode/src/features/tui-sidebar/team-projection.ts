@@ -49,6 +49,7 @@ export async function buildTeamsProjection(input: BuildTeamsProjectionInput): Pr
       const tasks = await input.runtimeProvider.listTasks(runtime.teamRunId)
       return {
         name: runtime.teamName,
+        leadSessionId: runtime.leadSessionId ?? null,
         members: runtime.members.map((member) => toTeamMemberRow(member, tasks, sessionsById)),
       }
     }),

@@ -81,6 +81,28 @@ describe("TuiRuntimeSnapshotSchema", () => {
     expect(parsed).toMatchObject({ teams: [] })
   })
 
+  it("#given a Team row from a mirror written before lead session identity #when parsed #then it defaults leadSessionId to null", () => {
+    // given
+    const legacyTeamSnapshot = {
+      version: MIRROR_SCHEMA_VERSION,
+      projectDir: "/tmp/project",
+      updatedAt: 1,
+      activeAgents: [],
+      jobBoard: [],
+      loop: null,
+      teams: [{
+        name: "legacy-team",
+        members: [],
+      }],
+    }
+
+    // when
+    const parsed = parseSnapshot(legacyTeamSnapshot)
+
+    // then
+    expect(parsed?.teams).toEqual([{ name: "legacy-team", leadSessionId: null, members: [] }])
+  })
+
   it("#given a snapshot without projectDir #when parsed #then it returns null", () => {
     // given
     const raw = {

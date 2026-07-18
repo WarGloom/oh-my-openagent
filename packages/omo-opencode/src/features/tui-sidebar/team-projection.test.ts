@@ -124,6 +124,7 @@ describe("team sidebar projection", () => {
     expect(teams).toEqual([
       {
         name: "current-team",
+        leadSessionId: "ses-current-lead",
         members: [
           { name: "lead", status: "running", work: "Reviewing current work", sessionId: "ses-current-lead" },
           { name: "idle-member", status: "idle", work: null, sessionId: "ses-other-member" },

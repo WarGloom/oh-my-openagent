@@ -51,6 +51,7 @@ const TeamMemberRowSchema = z.object({
 
 const TeamRowSchema = z.object({
   name: z.string(),
+  leadSessionId: z.string().min(1).nullable().default(null),
   members: z.array(TeamMemberRowSchema),
 })
 

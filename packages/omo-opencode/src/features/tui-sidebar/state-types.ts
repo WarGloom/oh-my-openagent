@@ -26,6 +26,7 @@ export type TeamMemberRow = {
 
 export type TeamRow = {
   readonly name: string
+  readonly leadSessionId: string | null
   readonly members: readonly TeamMemberRow[]
 }
 

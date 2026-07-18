@@ -91,6 +91,7 @@ describe("buildTuiRuntimeSnapshot Team projection", () => {
     // then
     expect(ownerMatched).toBe(true)
     expect(snapshot.teams).toHaveLength(1)
+    expect(snapshot.teams[0]?.leadSessionId).toBe(sessionID)
   })
 
   it("#given Team mode is disabled #when building a snapshot #then session and runtime providers are not scanned", async () => {
