@@ -207,8 +207,9 @@ export async function createTeamRun(
             continue
           }
           const resolvedMember = await resolveMember(member, ctx, categoryExamples, spec.leadAgentId)
+          const memberGoal = member.prompt?.replace(/\s+/g, " ").trim()
           const task = await bgMgr.launch({
-            description: `Create team member ${spec.name}/${member.name}`,
+            description: memberGoal ? `${member.name}: ${memberGoal}` : member.name,
             prompt: buildMemberPrompt(spec, member, runtimeState.teamRunId, config, resource.worktreePath),
             agent: resolvedMember.agentToUse,
             parentSessionId: leadSessionId,

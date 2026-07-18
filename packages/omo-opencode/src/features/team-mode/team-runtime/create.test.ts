@@ -442,7 +442,14 @@ describe("createTeamRun", () => {
       leadAgentId: "lead",
       members: [
         { kind: "subagent_type", name: "lead", subagent_type: "sisyphus", backendType: "in-process", isActive: true },
-        { kind: "category", name: "member-1", category: "quick", prompt: "prompt-1", backendType: "in-process", isActive: true },
+        {
+          kind: "category",
+          name: "member-1",
+          category: "quick",
+          prompt: "Normalize\n\n this\tmember goal",
+          backendType: "in-process",
+          isActive: true,
+        },
       ],
     }
 
@@ -459,7 +466,7 @@ describe("createTeamRun", () => {
 
     // then
     expect(launchMock).toHaveBeenCalledTimes(1)
-    expect(launchMock.mock.calls[0]?.[0]).toMatchObject({ description: "Create team member alpha-team/member-1" })
+    expect(launchMock.mock.calls[0]?.[0]).toMatchObject({ description: "member-1: Normalize this member goal" })
     expect(resolveMemberMock).toHaveBeenCalledTimes(1)
     expect(resolveMemberMock.mock.calls[0]?.[0]).toMatchObject({ name: "member-1" })
     expect(runtimeState.members.map((member) => ({ name: member.name, sessionId: member.sessionId }))).toEqual([
@@ -523,7 +530,7 @@ describe("createTeamRun", () => {
       leadAgentId: "captain",
       members: [
         { kind: "subagent_type", name: "captain", subagent_type: "atlas", backendType: "in-process", isActive: true },
-        { kind: "category", name: "member-1", category: "quick", prompt: "prompt-1", backendType: "in-process", isActive: true },
+        { kind: "subagent_type", name: "member-1", subagent_type: "sisyphus", backendType: "in-process", isActive: true },
       ],
     }
 
@@ -540,9 +547,7 @@ describe("createTeamRun", () => {
 
     // then
     expect(launchMock).toHaveBeenCalledTimes(1)
-    expect(launchMock.mock.calls.map(([input]) => input.description)).toEqual([
-      "Create team member alpha-team/member-1",
-    ])
+    expect(launchMock.mock.calls.map(([input]) => input.description)).toEqual(["member-1"])
     expect(runtimeState.members.map((member) => ({ name: member.name, sessionId: member.sessionId }))).toEqual([
       { name: "captain", sessionId: "lead-session" },
       { name: "member-1", sessionId: "member-1-agent-session-1" },
