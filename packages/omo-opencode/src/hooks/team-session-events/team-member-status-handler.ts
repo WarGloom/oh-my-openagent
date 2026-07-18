@@ -1,4 +1,5 @@
 import type { TeamModeConfig } from "../../config/schema/team-mode"
+import { isActiveSessionStatus } from "../../features/background-agent/session-status-classifier"
 import type { BackgroundTask } from "../../features/background-agent/types"
 import { findResolvedMemberSession } from "../../features/team-mode/member-session-resolution"
 import { loadRuntimeState, transitionRuntimeState } from "../../features/team-mode/team-state-store/store"
@@ -22,6 +23,14 @@ type TeamMemberStatusHandlerDeps = {
 
 const IDLE_TRANSITION_SOURCE_STATUSES: ReadonlySet<MemberStatus> = new Set(["running"])
 const COMPLETED_TRANSITION_SOURCE_STATUSES: ReadonlySet<MemberStatus> = new Set(["running", "idle", "pending"])
+const ACTIVE_TRANSITION_SOURCE_STATUSES: ReadonlySet<MemberStatus> = new Set(["pending", "idle"])
+
+function getSessionStatusType(properties: unknown): string | undefined {
+  if (typeof properties !== "object" || properties === null || !("status" in properties)) return undefined
+  const status = properties.status
+  if (typeof status !== "object" || status === null || !("type" in status)) return undefined
+  return typeof status.type === "string" ? status.type : undefined
+}
 
 function getSessionIDFromIdleEvent(properties: unknown): string | undefined {
   return resolveSessionEventID(properties)
@@ -102,6 +111,24 @@ export function createTeamMemberStatusHandler(
   deps: TeamMemberStatusHandlerDeps = {},
 ): HookImpl {
   return async ({ event }: HookInput): Promise<void> => {
+    if (event.type === "session.status") {
+      const sessionID = resolveSessionEventID(event.properties)
+      const statusType = getSessionStatusType(event.properties)
+      if (!sessionID || !statusType || !isActiveSessionStatus(statusType)) return
+      try {
+        const runtimeMember = await findResolvedMemberSession(sessionID, config, "team member status handler")
+        if (runtimeMember === null) return
+        await transitionMemberStatus(runtimeMember, ACTIVE_TRANSITION_SOURCE_STATUSES, "running", config, sessionID, "running")
+      } catch (error) {
+        log("team member status handler failed on session.status", {
+          event: "team-mode-member-status-handler-error",
+          sessionID,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+      return
+    }
+
     if (event.type === "session.idle") {
       const sessionID = getSessionIDFromIdleEvent(event.properties)
       if (!sessionID) return
