@@ -10,6 +10,18 @@ export class TeamSessionCache {
       case "none":
         return
       case "list":
+        const currentTeamNames = new Set(teams.teams.map((team) => team.name))
+        for (const [teamName, sessionIds] of this.#sessionIdsByTeam) {
+          if (currentTeamNames.has(teamName)) {
+            continue
+          }
+
+          for (const sessionId of sessionIds) {
+            this.removeTeamFromSession(sessionId, teamName)
+          }
+          this.#sessionIdsByTeam.delete(teamName)
+        }
+
         for (const team of teams.teams) {
           this.replaceTeam(team)
         }

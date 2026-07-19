@@ -1,3 +1,5 @@
+/// <reference types="bun-types" />
+
 import { describe, expect, it } from "bun:test"
 
 import { TeamSessionCache } from "./team-session-cache"
@@ -71,6 +73,25 @@ describe("Team session cache", () => {
 
     // then
     expect(cache.forSession("ses-alpha-lead")).toEqual(list([alphaTeam]))
+  })
+
+  it("#given a cached Team #when a replacement Team uses the same lead route session #then the route renders only the replacement", () => {
+    // given
+    const cache = new TeamSessionCache()
+    const replacementTeam: TeamRow = {
+      ...betaTeam,
+      name: "replacement-team",
+      leadSessionId: "ses-alpha-lead",
+      members: [{ ...betaTeam.members[0], sessionId: "ses-alpha-lead" }],
+    }
+    cache.update(list([alphaTeam]))
+
+    // when
+    cache.update(list([replacementTeam]))
+
+    // then
+    expect(cache.forSession("ses-alpha-lead")).toEqual(list([replacementTeam]))
+    expect(cache.forSession("ses-alpha-member")).toEqual({ kind: "none" })
   })
 
   it("#given a cached Team member #when a newer Team update removes that member #then its session no longer receives the Team", () => {
