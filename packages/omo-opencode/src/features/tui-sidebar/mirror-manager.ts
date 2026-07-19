@@ -1,6 +1,7 @@
 import { HEARTBEAT_MS, WRITE_DEBOUNCE_MS } from "./constants"
 import { log } from "../../shared/logger"
 import { writeMirror } from "./mirror-io"
+import { writeSessionJobsMirror } from "./session-jobs-mirror"
 import { buildTuiRuntimeSnapshot } from "./snapshot-builder"
 import type {
   BuildTuiRuntimeSnapshotInput,
@@ -10,6 +11,8 @@ import type {
   TuiMirrorClient,
 } from "./snapshot-builder"
 import type { TuiRuntimeSnapshot } from "./snapshot-schema"
+import type { JobRow } from "./state-types"
+import type { BackgroundTaskSnapshot } from "../background-agent/types"
 import type { TeamModeConfig } from "@oh-my-opencode/team-core/config"
 
 export type TuiStateMirrorInput = {
@@ -37,8 +40,13 @@ export class TuiStateMirror {
     this.reportFlushError = input.reportFlushError ?? ((error) => log("[tui-sidebar] mirror flush failed", { error }))
   }
 
-  buildSnapshot(): Promise<TuiRuntimeSnapshot> {
-    return buildTuiRuntimeSnapshot(this.snapshotInput)
+  buildSnapshot(
+    tasks: readonly BackgroundTaskSnapshot[] = this.snapshotInput.backgroundManager.getTasksSnapshot(),
+  ): Promise<TuiRuntimeSnapshot> {
+    return buildTuiRuntimeSnapshot({
+      ...this.snapshotInput,
+      backgroundManager: { getTasksSnapshot: () => tasks },
+    })
   }
 
   flush(): Promise<void> {
@@ -122,11 +130,28 @@ export class TuiStateMirror {
 
   private async writeSnapshotNoThrow(): Promise<void> {
     try {
-      const snapshot = await this.buildSnapshot()
+      const tasks = this.snapshotInput.backgroundManager.getTasksSnapshot()
+      const snapshot = await this.buildSnapshot(tasks)
       if (this.stopped) {
         return
       }
       writeMirror(this.snapshotInput.projectDir, snapshot)
+      const jobsByParentSession = new Map<string, JobRow[]>()
+      for (const [index, job] of snapshot.jobBoard.entries()) {
+        const parentSessionId = tasks[index]?.parentSessionId
+        if (parentSessionId === undefined) {
+          continue
+        }
+        const sessionJobs = jobsByParentSession.get(parentSessionId)
+        if (sessionJobs) {
+          sessionJobs.push(job)
+        } else {
+          jobsByParentSession.set(parentSessionId, [job])
+        }
+      }
+      for (const [parentSessionId, jobs] of jobsByParentSession) {
+        writeSessionJobsMirror(this.snapshotInput.projectDir, parentSessionId, jobs, snapshot.updatedAt)
+      }
     } catch (error) {
       if (error instanceof Error) {
         this.reportFlushError(error)
