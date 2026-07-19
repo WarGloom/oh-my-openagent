@@ -1,4 +1,5 @@
 import { MAX_AGENTS, MAX_JOBS } from "./constants"
+import { readSessionJobsMirror } from "./session-jobs-mirror"
 import type { TuiRuntimeSnapshot } from "./snapshot-schema"
 import type {
   AgentsState,
@@ -55,13 +56,29 @@ export function deriveAgents(snap: TuiRuntimeSnapshot | null): AgentsState {
 }
 
 export function deriveJobBoard(snap: TuiRuntimeSnapshot | null): JobBoardState {
-  if (!snap || snap.jobBoard.length === 0) {
+  return deriveJobs(snap?.jobBoard ?? null)
+}
+
+export function deriveCurrentSessionJobs(
+  projectDir: string,
+  sessionId: string | null,
+  now: number = Date.now(),
+): JobBoardState {
+  if (sessionId === null) {
+    return { kind: "none" }
+  }
+
+  return deriveJobs(readSessionJobsMirror(projectDir, sessionId, now))
+}
+
+function deriveJobs(jobs: readonly JobRow[] | null): JobBoardState {
+  if (!jobs || jobs.length === 0) {
     return { kind: "none" }
   }
 
   return {
     kind: "list",
-    jobs: [...snap.jobBoard].sort(compareJobs).slice(0, MAX_JOBS),
+    jobs: [...jobs].sort(compareJobs).slice(0, MAX_JOBS),
   }
 }
 
