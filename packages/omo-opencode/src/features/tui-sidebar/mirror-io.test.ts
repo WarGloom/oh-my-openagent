@@ -23,14 +23,6 @@ function snapshotFor(projectDir: string, updatedAt: number): TuiRuntimeSnapshot 
     projectDir: resolve(projectDir),
     updatedAt,
     activeAgents: [{ name: "sisyphus", status: "running" }],
-    jobBoard: [
-      {
-        title: "Index repository",
-        status: "running",
-        toolCalls: 2,
-        lastTool: "grep",
-      },
-    ],
     loop: null,
     teams: [],
   }
@@ -128,7 +120,7 @@ describe("tui-sidebar mirror IPC", () => {
   it("#given a version mismatch #when reading #then it returns null", () => {
     // given
     const projectDir = makeTempDir("version")
-    writeRawMirror(projectDir, { ...snapshotFor(projectDir, Date.now()), version: 2 })
+    writeRawMirror(projectDir, { ...snapshotFor(projectDir, Date.now()), version: 1 })
 
     // when
     const snapshot = readMirror(projectDir)

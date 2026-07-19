@@ -55,10 +55,6 @@ export function deriveAgents(snap: TuiRuntimeSnapshot | null): AgentsState {
   }
 }
 
-export function deriveJobBoard(snap: TuiRuntimeSnapshot | null): JobBoardState {
-  return deriveJobs(snap?.jobBoard ?? null)
-}
-
 export function deriveCurrentSessionJobs(
   projectDir: string,
   sessionId: string | null,

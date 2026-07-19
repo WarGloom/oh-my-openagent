@@ -7,7 +7,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { computeView, viewKey } from "./compute-view"
-import { deriveAgents, deriveConfig, deriveCurrentSessionJobs, deriveJobBoard, deriveLoop, deriveRoster, deriveTeams } from "./derivers"
+import { deriveAgents, deriveConfig, deriveCurrentSessionJobs, deriveLoop, deriveRoster, deriveTeams } from "./derivers"
 import { MAX_AGENTS, MAX_JOBS, MIRROR_SCHEMA_VERSION, STALE_MS } from "./constants"
 import { canonicalProjectDir, mirrorStorageDir } from "./mirror-path"
 import { writeSessionJobsMirror } from "./session-jobs-mirror"
@@ -27,7 +27,6 @@ const liveLoop: LoopLive = {
 
 function snapshot(input: {
   readonly activeAgents?: readonly AgentRow[]
-  readonly jobBoard?: readonly JobRow[]
   readonly loop?: LoopLive | null
   readonly teams?: readonly TeamRow[]
 }): TuiRuntimeSnapshot {
@@ -36,7 +35,6 @@ function snapshot(input: {
     projectDir: "/tmp/project",
     updatedAt: 1,
     activeAgents: [...(input.activeAgents ?? [])],
-    jobBoard: [...(input.jobBoard ?? [])],
     loop: input.loop ?? null,
     teams: [...(input.teams ?? [])],
   }
@@ -58,18 +56,6 @@ function descendingAgentRows(count: number): readonly AgentRow[] {
     return {
       name: `agent-${String(ordinal).padStart(2, "0")}`,
       status: ordinal % 2 === 0 ? "running" : "busy",
-    }
-  })
-}
-
-function descendingJobRows(count: number): readonly JobRow[] {
-  return Array.from({ length: count }, (_, index) => {
-    const ordinal = count - index - 1
-    return {
-      title: `job-${String(ordinal).padStart(2, "0")}`,
-      status: "running",
-      toolCalls: ordinal,
-      lastTool: null,
     }
   })
 }
@@ -170,43 +156,6 @@ describe("tui sidebar section derivers", () => {
       expect(state.agents).toHaveLength(MAX_AGENTS)
       expect(state.agents.map((agent) => agent.name)).toEqual(
         Array.from({ length: MAX_AGENTS }, (_, index) => `agent-${String(index).padStart(2, "0")}`),
-      )
-    }
-  })
-
-  it("#given no runtime snapshot or no jobs #when deriving job board #then it returns none", () => {
-    // given
-    const emptySnapshot = snapshot({})
-
-    // when
-    const nullState = deriveJobBoard(null)
-    const emptyState = deriveJobBoard(emptySnapshot)
-
-    // then
-    expect(nullState).toEqual({ kind: "none" })
-    expect(emptyState).toEqual({ kind: "none" })
-  })
-
-  it("#given jobs with multiple statuses #when deriving job board #then it sorts by status priority then title and caps rows", () => {
-    // given
-    const runningJobs = descendingJobRows(MAX_JOBS + 2)
-    const jobs: readonly JobRow[] = [
-      { title: "z-complete", status: "completed", toolCalls: null, lastTool: null },
-      { title: "b-pending", status: "pending", toolCalls: null, lastTool: null },
-      { title: "a-pending", status: "pending", toolCalls: null, lastTool: null },
-      { title: "a-error", status: "error", toolCalls: null, lastTool: null },
-      ...runningJobs,
-    ]
-
-    // when
-    const state = deriveJobBoard(snapshot({ jobBoard: jobs }))
-
-    // then
-    expect(state.kind).toBe("list")
-    if (state.kind === "list") {
-      expect(state.jobs).toHaveLength(MAX_JOBS)
-      expect(state.jobs.map((job) => `${job.status}:${job.title}`)).toEqual(
-        Array.from({ length: MAX_JOBS }, (_, index) => `running:job-${String(index).padStart(2, "0")}`),
       )
     }
   })

@@ -1,7 +1,9 @@
+/// <reference types="bun-types" />
+
 import { describe, expect, it } from "bun:test"
 
 import { MIRROR_SCHEMA_VERSION } from "./constants"
-import { parseSnapshot, TuiRuntimeSnapshotSchema } from "./snapshot-schema"
+import { parseSnapshot } from "./snapshot-schema"
 import type { TuiRuntimeSnapshot } from "./snapshot-schema"
 
 describe("TuiRuntimeSnapshotSchema", () => {
@@ -14,14 +16,6 @@ describe("TuiRuntimeSnapshotSchema", () => {
       activeAgents: [
         { name: "sisyphus", status: "running" },
         { name: "atlas", status: "retry" },
-      ],
-      jobBoard: [
-        {
-          title: "Index repository",
-          status: "running",
-          toolCalls: 3,
-          lastTool: "grep",
-        },
       ],
       loop: {
         kind: "live",
@@ -38,21 +32,18 @@ describe("TuiRuntimeSnapshotSchema", () => {
 
     // when
     const parsed = parseSnapshot(snapshot)
-    const schemaParsed = TuiRuntimeSnapshotSchema.parse(snapshot)
 
     // then
     expect(parsed).toEqual(snapshot)
-    expect(schemaParsed).toEqual(snapshot)
   })
 
   it("#given a version mismatch #when parsed #then it returns null", () => {
     // given
     const raw = {
-      version: 2,
+      version: 0,
       projectDir: "/tmp/project",
       updatedAt: 1,
       activeAgents: [],
-      jobBoard: [],
       loop: null,
     }
 
@@ -63,14 +54,42 @@ describe("TuiRuntimeSnapshotSchema", () => {
     expect(parsed).toBeNull()
   })
 
-  it("#given a v1 mirror without teams #when parsed #then it supplies the additive empty teams projection", () => {
+  it("#given a legacy global v1 mirror and a current v2 mirror #when parsed #then v1 is rejected and v2 round-trips", () => {
+    // given
+    const legacyV1 = {
+      version: 1,
+      projectDir: "/tmp/project",
+      updatedAt: 1,
+      activeAgents: [],
+      jobBoard: [{ title: "stale global job", status: "running", toolCalls: 1, lastTool: "grep" }],
+      loop: null,
+      teams: [],
+    }
+    const currentV2: TuiRuntimeSnapshot = {
+      version: 2 as const,
+      projectDir: "/tmp/project",
+      updatedAt: 1,
+      activeAgents: [],
+      loop: null,
+      teams: [],
+    }
+
+    // when
+    const legacyParsed = parseSnapshot(legacyV1)
+    const currentParsed = parseSnapshot(currentV2)
+
+    // then
+    expect(legacyParsed).toBeNull()
+    expect(currentParsed).toEqual(currentV2)
+  })
+
+  it("#given a v2 mirror without teams #when parsed #then it supplies the additive empty teams projection", () => {
     // given
     const legacySnapshot = {
       version: MIRROR_SCHEMA_VERSION,
       projectDir: "/tmp/project",
       updatedAt: 1,
       activeAgents: [],
-      jobBoard: [],
       loop: null,
     }
 
@@ -88,7 +107,6 @@ describe("TuiRuntimeSnapshotSchema", () => {
       projectDir: "/tmp/project",
       updatedAt: 1,
       activeAgents: [],
-      jobBoard: [],
       loop: null,
       teams: [{
         name: "legacy-team",
@@ -109,7 +127,6 @@ describe("TuiRuntimeSnapshotSchema", () => {
       version: MIRROR_SCHEMA_VERSION,
       updatedAt: 1,
       activeAgents: [],
-      jobBoard: [],
       loop: null,
     }
 

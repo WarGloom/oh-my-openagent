@@ -5,15 +5,11 @@ import { RuntimeStateSchema } from "@oh-my-opencode/team-core/types"
 
 import { buildTuiRuntimeSnapshot } from "./snapshot-builder"
 import type { TeamRuntimeProvider } from "./team-projection"
-import type { TuiBackgroundSnapshotProvider, TuiMirrorClient } from "./snapshot-builder"
+import type { TuiMirrorClient } from "./snapshot-builder"
 
 const TEAM_RUN_ID = "11111111-1111-4111-8111-111111111111"
 const enabledTeamMode = TeamModeConfigSchema.parse({ enabled: true })
 const disabledTeamMode = TeamModeConfigSchema.parse({ enabled: false })
-const idleBackgroundManager: TuiBackgroundSnapshotProvider = {
-  getTasksSnapshot: () => [],
-}
-
 function runtimeProvider(sessionID: string, calls?: string[]): TeamRuntimeProvider {
   return {
     listActiveTeams: async () => {
@@ -83,7 +79,6 @@ describe("buildTuiRuntimeSnapshot Team projection", () => {
     const snapshot = await buildTuiRuntimeSnapshot({
       projectDir,
       client: { session },
-      backgroundManager: idleBackgroundManager,
       teamModeConfig: enabledTeamMode,
       teamRuntimeProvider: runtimeProvider(sessionID),
     })
@@ -106,7 +101,6 @@ describe("buildTuiRuntimeSnapshot Team projection", () => {
     const snapshot = await buildTuiRuntimeSnapshot({
       projectDir: "/tmp/omo-sidebar-disabled",
       client,
-      backgroundManager: idleBackgroundManager,
       teamModeConfig: disabledTeamMode,
       teamRuntimeProvider: runtimeProvider("ses-disabled", calls),
     })
@@ -135,7 +129,6 @@ describe("buildTuiRuntimeSnapshot Team projection", () => {
     const snapshot = await buildTuiRuntimeSnapshot({
       projectDir,
       client,
-      backgroundManager: idleBackgroundManager,
       teamModeConfig: enabledTeamMode,
       teamRuntimeProvider: runtimeProvider(relevantSessionID),
     })

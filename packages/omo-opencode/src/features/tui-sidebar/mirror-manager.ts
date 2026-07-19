@@ -4,16 +4,18 @@ import { writeMirror } from "./mirror-io"
 import { writeSessionJobsMirror } from "./session-jobs-mirror"
 import { buildTuiRuntimeSnapshot } from "./snapshot-builder"
 import type {
-  BuildTuiRuntimeSnapshotInput,
   SessionAgentResolver,
   SessionStatusMap,
-  TuiBackgroundSnapshotProvider,
   TuiMirrorClient,
 } from "./snapshot-builder"
 import type { TuiRuntimeSnapshot } from "./snapshot-schema"
 import type { JobRow } from "./state-types"
 import type { BackgroundTaskSnapshot } from "../background-agent/types"
 import type { TeamModeConfig } from "@oh-my-opencode/team-core/config"
+
+type TuiBackgroundSnapshotProvider = {
+  readonly getTasksSnapshot: () => readonly BackgroundTaskSnapshot[]
+}
 
 export type TuiStateMirrorInput = {
   readonly client: TuiMirrorClient
@@ -26,7 +28,7 @@ export type TuiStateMirrorInput = {
 }
 
 export class TuiStateMirror {
-  private readonly snapshotInput: BuildTuiRuntimeSnapshotInput
+  private readonly snapshotInput: TuiStateMirrorInput
   private readonly reportFlushError: (error: Error) => void
   private heartbeatID: ReturnType<typeof setInterval> | null = null
   private debounceID: ReturnType<typeof setTimeout> | null = null
@@ -40,13 +42,8 @@ export class TuiStateMirror {
     this.reportFlushError = input.reportFlushError ?? ((error) => log("[tui-sidebar] mirror flush failed", { error }))
   }
 
-  buildSnapshot(
-    tasks: readonly BackgroundTaskSnapshot[] = this.snapshotInput.backgroundManager.getTasksSnapshot(),
-  ): Promise<TuiRuntimeSnapshot> {
-    return buildTuiRuntimeSnapshot({
-      ...this.snapshotInput,
-      backgroundManager: { getTasksSnapshot: () => tasks },
-    })
+  buildSnapshot(): Promise<TuiRuntimeSnapshot> {
+    return buildTuiRuntimeSnapshot(this.snapshotInput)
   }
 
   flush(): Promise<void> {
@@ -131,17 +128,15 @@ export class TuiStateMirror {
   private async writeSnapshotNoThrow(): Promise<void> {
     try {
       const tasks = this.snapshotInput.backgroundManager.getTasksSnapshot()
-      const snapshot = await this.buildSnapshot(tasks)
+      const snapshot = await this.buildSnapshot()
       if (this.stopped) {
         return
       }
       writeMirror(this.snapshotInput.projectDir, snapshot)
       const jobsByParentSession = new Map<string, JobRow[]>()
-      for (const [index, job] of snapshot.jobBoard.entries()) {
-        const parentSessionId = tasks[index]?.parentSessionId
-        if (parentSessionId === undefined) {
-          continue
-        }
+      for (const task of tasks) {
+        const parentSessionId = task.parentSessionId
+        const job = toJobRow(task)
         const sessionJobs = jobsByParentSession.get(parentSessionId)
         if (sessionJobs) {
           sessionJobs.push(job)
@@ -159,5 +154,14 @@ export class TuiStateMirror {
       }
       throw error
     }
+  }
+}
+
+function toJobRow(task: BackgroundTaskSnapshot): JobRow {
+  return {
+    title: task.title || `${task.agent} background task`,
+    status: task.status,
+    toolCalls: task.toolCalls,
+    lastTool: task.lastTool,
   }
 }

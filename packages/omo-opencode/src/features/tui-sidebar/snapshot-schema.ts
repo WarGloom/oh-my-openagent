@@ -2,7 +2,6 @@ import { z } from "zod"
 
 import { MIRROR_SCHEMA_VERSION } from "./constants"
 import type { AgentStatus, LoopLive, TeamMemberStatus, TeamRow } from "./state-types"
-import type { BackgroundTaskStatus } from "../background-agent/types"
 
 const AGENT_STATUS_VALUES = [
   "busy",
@@ -12,25 +11,9 @@ const AGENT_STATUS_VALUES = [
   "retry",
 ] as const satisfies readonly AgentStatus[]
 
-const BACKGROUND_TASK_STATUS_VALUES = [
-  "pending",
-  "running",
-  "completed",
-  "error",
-  "cancelled",
-  "interrupt",
-] as const satisfies readonly BackgroundTaskStatus[]
-
 const AgentRowSchema = z.object({
   name: z.string(),
   status: z.enum(AGENT_STATUS_VALUES),
-})
-
-const JobRowSchema = z.object({
-  title: z.string(),
-  status: z.enum(BACKGROUND_TASK_STATUS_VALUES),
-  toolCalls: z.number().int().nonnegative().nullable(),
-  lastTool: z.string().nullable(),
 })
 
 const TEAM_MEMBER_STATUS_VALUES = [
@@ -71,7 +54,6 @@ export const TuiRuntimeSnapshotSchema = z.object({
   projectDir: z.string(),
   updatedAt: z.number(),
   activeAgents: z.array(AgentRowSchema),
-  jobBoard: z.array(JobRowSchema),
   loop: LoopLiveSchema.nullable(),
   teams: z.array(TeamRowSchema).default([]),
 })
