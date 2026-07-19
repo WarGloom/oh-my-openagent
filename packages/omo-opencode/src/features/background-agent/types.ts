@@ -114,6 +114,7 @@ export interface BackgroundTaskSnapshot {
   readonly toolCalls: number | null
   readonly lastTool: string | null
   readonly agent: string
+  readonly parentSessionId: string
 }
 
 export interface LaunchInput {

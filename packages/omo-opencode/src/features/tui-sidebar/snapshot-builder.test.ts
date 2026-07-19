@@ -1,3 +1,5 @@
+/// <reference types="bun-types" />
+
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -128,6 +130,7 @@ describe("buildTuiRuntimeSnapshot", () => {
           toolCalls: 3,
           lastTool: "grep",
           agent: "sisyphus",
+          parentSessionId: "ses-main",
         },
       ]),
       sessionAgentResolver: resolveTestSessionAgent,
@@ -192,6 +195,7 @@ describe("buildTuiRuntimeSnapshot", () => {
           toolCalls: 1,
           lastTool: "read",
           agent: "atlas",
+          parentSessionId: "ses-main",
         },
       ]),
       sessionAgentResolver: resolveTestSessionAgent,

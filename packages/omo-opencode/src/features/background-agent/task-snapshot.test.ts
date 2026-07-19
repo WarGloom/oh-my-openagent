@@ -1,3 +1,5 @@
+/// <reference types="bun-types" />
+
 import { describe, expect, test } from "bun:test"
 import { toBackgroundTaskSnapshots } from "./task-snapshot"
 import type { BackgroundTask, BackgroundTaskSnapshot, BackgroundTaskStatus } from "./types"
@@ -55,7 +57,7 @@ describe("toBackgroundTaskSnapshots", () => {
     const snapshots = toBackgroundTaskSnapshots(tasks)
 
     //#then
-    expect(snapshots.map((snapshot) => snapshot.status)).toEqual(ALL_BACKGROUND_TASK_STATUSES)
+    expect(snapshots.map((snapshot) => snapshot.status)).toEqual([...ALL_BACKGROUND_TASK_STATUSES])
   })
 
   test("returns frozen plain snapshots detached from task references", () => {
@@ -79,6 +81,7 @@ describe("toBackgroundTaskSnapshots", () => {
       toolCalls: null,
       lastTool: null,
       agent: "atlas",
+      parentSessionId: "other-parent-session",
     })
 
     //#then
@@ -88,6 +91,7 @@ describe("toBackgroundTaskSnapshots", () => {
       toolCalls: 3,
       lastTool: "grep",
       agent: "sisyphus",
+      parentSessionId: "parent-session",
     })
     expect(Object.getPrototypeOf(first)).toBe(Object.prototype)
     expect(Object.isFrozen(first)).toBe(true)
@@ -100,6 +104,7 @@ describe("toBackgroundTaskSnapshots", () => {
       toolCalls: 3,
       lastTool: "grep",
       agent: "sisyphus",
+      parentSessionId: "parent-session",
     }])
   })
 
@@ -122,7 +127,50 @@ describe("toBackgroundTaskSnapshots", () => {
       toolCalls: null,
       lastTool: null,
       agent: "atlas",
+      parentSessionId: "parent-session",
     })
     expect(JSON.stringify(snapshots)).not.toContain("SECRET_TOKEN")
+  })
+
+  test("preserves parentSessionId and keeps snapshots isolated across different parent sessions", () => {
+    //#given
+    const taskA = createTask({
+      id: "task-a",
+      parentSessionId: "session-a",
+    })
+    const taskB = createTask({
+      id: "task-b",
+      parentSessionId: "session-b",
+    })
+
+    //#when
+    const snapshots = toBackgroundTaskSnapshots([taskA, taskB])
+
+    //#then
+    expect(snapshots.map((snapshot) => snapshot.parentSessionId)).toEqual(["session-a", "session-b"])
+    expect(Object.isFrozen(snapshots[0])).toBe(true)
+    expect(Object.isFrozen(snapshots[1])).toBe(true)
+    expect(snapshots[0]).not.toBe(snapshots[1])
+  })
+
+  test("snapshot shape excludes prompt, result, message, and child sessionId", () => {
+    //#given
+    const task = createTask({
+      sessionId: "child-session",
+      result: "the answer",
+    })
+
+    //#when
+    const snapshot = firstSnapshot(toBackgroundTaskSnapshots([task]))
+
+    //#then
+    expect(Object.keys(snapshot).sort()).toEqual([
+      "agent",
+      "lastTool",
+      "parentSessionId",
+      "status",
+      "title",
+      "toolCalls",
+    ])
   })
 })
