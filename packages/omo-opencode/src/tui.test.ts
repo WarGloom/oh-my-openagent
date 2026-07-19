@@ -7,7 +7,13 @@ import { join } from "node:path"
 
 import type { TuiSlotPlugin } from "@opencode-ai/plugin/tui"
 
-import tuiModule, { currentTeamSessionId, handleTuiPollError, materializeReactive, navigateToTeamSession } from "./tui"
+import { MIRROR_SCHEMA_VERSION } from "./features/tui-sidebar/constants"
+import { viewKey } from "./features/tui-sidebar/compute-view"
+import { writeMirror } from "./features/tui-sidebar/mirror-io"
+import { describeView } from "./features/tui-sidebar/render-view"
+import { TeamSessionCache } from "./features/tui-sidebar/team-session-cache"
+import type { TuiRuntimeSnapshot } from "./features/tui-sidebar/snapshot-schema"
+import tuiModule, { currentTeamSessionId, handleTuiPollError, materializeReactive, navigateToTeamSession, readView } from "./tui"
 
 type SolidNode = {
   readonly tag: string
@@ -39,6 +45,31 @@ type SidebarApiForTest = {
   readonly lifecycle: {
     readonly signal: AbortSignal
     readonly onDispose: (dispose: () => void) => () => void
+  }
+}
+
+function snapshotWithJobs(tempDir: string, jobBoard: TuiRuntimeSnapshot["jobBoard"], withActivity = true): TuiRuntimeSnapshot {
+  return {
+    version: MIRROR_SCHEMA_VERSION,
+    projectDir: tempDir,
+    updatedAt: Date.now(),
+    activeAgents: [],
+    jobBoard,
+    loop: withActivity ? {
+      kind: "live",
+      goalsDone: 1,
+      goalsTotal: 2,
+      pass: 3,
+      fail: 0,
+      pending: 1,
+      blocked: 0,
+      activeGoal: "keep ULW visible",
+    } : null,
+    teams: withActivity ? [{
+      name: "stable-session-team",
+      leadSessionId: "ses-team",
+      members: [{ name: "teammate", status: "running", work: "keep Team visible", sessionId: "ses-team" }],
+    }] : [],
   }
 }
 
@@ -162,6 +193,79 @@ describe("TUI sidebar polling", () => {
 
     // then
     expect(sessionIds).toEqual([null, "ses-member", null])
+  })
+
+  it("#given stable ULW and Team mirror state #when deriving the sidebar view #then their rendered output is characterized", async () => {
+    // given
+    writeMirror(tempDir, snapshotWithJobs(tempDir, []))
+
+    // when
+    const view = await readView(tempDir, "ses-team", new TeamSessionCache())
+    const description = describeView(view)
+
+    // then
+    expect(view.kind).toBe("active")
+    expect(description).toContain("ULW")
+    expect(description).toContain("Team (1)")
+  })
+
+  it("#given alternating global Job Board mirrors #when deriving poll-equivalent views #then Jobs do not alter the rendered view or key", async () => {
+    // given
+    const jobBoards = [
+      [],
+      [{ title: "hidden-first-task", status: "running", toolCalls: 1, lastTool: "grep" }],
+      [],
+      [{ title: "hidden-second-task", status: "pending", toolCalls: 0, lastTool: null }],
+    ] satisfies readonly TuiRuntimeSnapshot["jobBoard"][]
+    const teamCache = new TeamSessionCache()
+    const derivations: Array<{ readonly description: string; readonly key: string; readonly view: Awaited<ReturnType<typeof readView>> }> = []
+
+    // when
+    for (const jobBoard of jobBoards) {
+      writeMirror(tempDir, snapshotWithJobs(tempDir, jobBoard))
+      const view = await readView(tempDir, "ses-team", teamCache)
+      derivations.push({ view, key: viewKey(view), description: describeView(view) })
+    }
+
+    // then
+    const baseline = derivations[0]
+    if (baseline === undefined) {
+      throw new Error("expected a baseline derivation")
+    }
+    for (const derivation of derivations) {
+      expect(derivation.view).toEqual(baseline.view)
+      expect(derivation.key).toBe(baseline.key)
+      expect(derivation.description).toBe(baseline.description)
+      expect(derivation.description).not.toContain("Jobs")
+      expect(derivation.description).not.toContain("hidden-first-task")
+      expect(derivation.description).not.toContain("hidden-second-task")
+    }
+  })
+
+  it("#given only alternating Job Board mirrors #when deriving views #then Jobs cannot activate the sidebar", async () => {
+    // given
+    const jobBoards = [
+      [{ title: "hidden-only-job", status: "running", toolCalls: 1, lastTool: "grep" }],
+      [],
+      [{ title: "hidden-replaced-job", status: "pending", toolCalls: 0, lastTool: null }],
+    ] satisfies readonly TuiRuntimeSnapshot["jobBoard"][]
+    let idleKey: string | null = null
+
+    // when
+    for (const jobBoard of jobBoards) {
+      writeMirror(tempDir, snapshotWithJobs(tempDir, jobBoard, false))
+      const view = await readView(tempDir, null, new TeamSessionCache())
+      const key = viewKey(view)
+
+      // then
+      expect(view.kind).toBe("idle")
+      expect(describeView(view)).toBe("")
+      if (idleKey === null) {
+        idleKey = key
+      } else {
+        expect(key).toBe(idleKey)
+      }
+    }
   })
 })
 

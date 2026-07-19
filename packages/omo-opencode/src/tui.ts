@@ -2,7 +2,7 @@ import type { TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
 
 import { computeView, viewKey } from "./features/tui-sidebar/compute-view"
 import { POLL_INTERVAL_MS } from "./features/tui-sidebar/constants"
-import { deriveAgents, deriveConfig, deriveJobBoard, deriveLoop, deriveRoster, deriveTeams } from "./features/tui-sidebar/derivers"
+import { deriveAgents, deriveConfig, deriveLoop, deriveRoster, deriveTeams } from "./features/tui-sidebar/derivers"
 import type { ViewNode } from "./features/tui-sidebar/element-helpers"
 import { readMirror } from "./features/tui-sidebar/mirror-io"
 import { buildViewNodes } from "./features/tui-sidebar/render-view"
@@ -97,7 +97,7 @@ async function loadRosterRows(directory: string): Promise<readonly RosterRow[]> 
   return resolver(directory)
 }
 
-async function readView(directory: string, sessionId: string | null, teamCache: TeamSessionCache): Promise<SidebarView> {
+export async function readView(directory: string, sessionId: string | null, teamCache: TeamSessionCache): Promise<SidebarView> {
   const validation = await loadPluginValidation(directory)
   const mirror = readMirror(directory)
   const roster = await loadRosterRows(directory)
@@ -107,7 +107,7 @@ async function readView(directory: string, sessionId: string | null, teamCache: 
     config: deriveConfig(validation),
     roster: deriveRoster(roster),
     agents: deriveAgents(mirror),
-    jobs: deriveJobBoard(mirror),
+    jobs: { kind: "none" },
     loop: deriveLoop(mirror),
     teams: teamCache.forSession(sessionId),
   })
