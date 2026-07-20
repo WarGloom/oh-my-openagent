@@ -83,9 +83,15 @@ export function handleSessionIdleBackgroundEvent(args: {
           log("[background-agent] Session.idle but no output yet and no failure handler is registered, waiting:", task.id)
           return
         }
-        case "incomplete-latest-assistant":
+        case "incomplete-latest-assistant": {
+          const retried = await tryFallbackForNoOutputIdle?.(task, "session.idle incomplete-latest-assistant")
+          if (retried) {
+            log("[background-agent] Session.idle incomplete-latest-assistant fallback retry started:", task.id)
+            return
+          }
           log("[background-agent] Session.idle with incomplete latest assistant turn, waiting:", task.id)
           return
+        }
         default: {
           const exhaustive: never = sessionOutput
           return exhaustive

@@ -313,11 +313,12 @@ describe("handleSessionIdleBackgroundEvent", () => {
       expect(tryCompleteTask).not.toHaveBeenCalled()
     })
 
-    it("#when latest assistant turn is incomplete #then should not fallback or complete task", async () => {
+    it("#when latest assistant turn is incomplete and fallback succeeds #then should invoke fallback and not fail or complete task", async () => {
       //#given
       const task = createRunningTask()
       const tryCompleteTask = mock(() => Promise.resolve(true))
       const tryFallbackForNoOutputIdle = mock(() => Promise.resolve(true))
+      const failNoOutputIdle = mock(() => Promise.resolve())
 
       //#when
       handleSessionIdleBackgroundEvent({
@@ -328,13 +329,44 @@ describe("handleSessionIdleBackgroundEvent", () => {
         checkSessionTodos: () => Promise.resolve(false),
         tryCompleteTask,
         tryFallbackForNoOutputIdle,
+        failNoOutputIdle,
         emitIdleEvent: () => {},
       })
 
       //#then
       await new Promise((resolve) => setTimeout(resolve, 10))
-      expect(tryFallbackForNoOutputIdle).not.toHaveBeenCalled()
+      expect(tryFallbackForNoOutputIdle).toHaveBeenCalledWith(task, "session.idle incomplete-latest-assistant")
+      expect(failNoOutputIdle).not.toHaveBeenCalled()
       expect(tryCompleteTask).not.toHaveBeenCalled()
+      expect(task.status).toBe("running")
+    })
+
+    it("#when latest assistant turn is incomplete and fallback returns false #then should wait without failing or completing task", async () => {
+      //#given
+      const task = createRunningTask()
+      const tryCompleteTask = mock(() => Promise.resolve(true))
+      const tryFallbackForNoOutputIdle = mock(() => Promise.resolve(false))
+      const failNoOutputIdle = mock(() => Promise.resolve())
+
+      //#when
+      handleSessionIdleBackgroundEvent({
+        properties: { sessionID: task.sessionId },
+        findBySession: () => task,
+        idleDeferralTimers: new Map(),
+        classifySessionOutput: () => Promise.resolve("incomplete-latest-assistant"),
+        checkSessionTodos: () => Promise.resolve(false),
+        tryCompleteTask,
+        tryFallbackForNoOutputIdle,
+        failNoOutputIdle,
+        emitIdleEvent: () => {},
+      })
+
+      //#then
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      expect(tryFallbackForNoOutputIdle).toHaveBeenCalledWith(task, "session.idle incomplete-latest-assistant")
+      expect(failNoOutputIdle).not.toHaveBeenCalled()
+      expect(tryCompleteTask).not.toHaveBeenCalled()
+      expect(task.status).toBe("running")
     })
 
     it("#when task has incomplete todos #then should not complete task", async () => {

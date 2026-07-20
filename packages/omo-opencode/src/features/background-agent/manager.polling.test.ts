@@ -646,7 +646,7 @@ describe("BackgroundManager pollRunningTasks", () => {
       await manager.shutdown()
     })
 
-    test("#when idle task has latest incomplete assistant turn with tool evidence #then waits without fallback", async () => {
+    test("#when idle task has latest incomplete assistant turn with tool evidence #then retries through fallback", async () => {
       for (const latestFinish of ["unknown", "tool-calls"] as const) {
         //#given
         const sessionID = `ses-idle-incomplete-latest-tool-${latestFinish}`
@@ -681,18 +681,96 @@ describe("BackgroundManager pollRunningTasks", () => {
         await poll.call(manager)
 
         //#then
-        expect(promptAsync).not.toHaveBeenCalled()
+        expect(promptAsync).toHaveBeenCalled()
         expect(task.status).toBe("running")
         expect(task.sessionId).toBe(sessionID)
         expect(task.model).toEqual({
           providerID: "provider-a",
-          modelID: "original-model",
+          modelID: "fallback-model-1",
+          variant: undefined,
         })
-        expect(task.attemptCount).toBe(0)
-        expect(onSessionCreated).not.toHaveBeenCalled()
+        expect(task.attemptCount).toBe(1)
+        expect(onSessionCreated).toHaveBeenCalledWith(sessionID, {
+          providerID: "provider-a",
+          modelID: "fallback-model-1",
+          variant: undefined,
+        })
 
         await manager.shutdown()
       }
+    })
+
+    test("#when idle task has incomplete latest assistant turn with tool evidence but no fallback is available #then waits without failing the task", async () => {
+      //#given
+      const sessionID = "ses-idle-incomplete-latest-tool-no-fallback"
+      const promptAsync = mock(async () => ({}))
+      const manager = createManagerWithClient({
+        status: async () => ({ data: { [sessionID]: { type: "idle" } } }),
+        messages: async () => ({
+          data: [{
+            info: { role: "user", id: "msg-1" },
+            parts: [{ type: "text", text: "go" }],
+          }, {
+            info: { role: "assistant", finish: "tool-calls", id: "msg-2" },
+            parts: [{ type: "tool" }],
+          }],
+        }),
+        promptAsync,
+      })
+      const task = createRunningTask(sessionID)
+      injectTask(manager, task)
+
+      //#when
+      const poll = manager["pollRunningTasks"]
+      await poll.call(manager)
+      await manager.shutdown()
+
+      //#then
+      expect(task.status).toBe("running")
+      expect(task.error).toBeUndefined()
+      expect(promptAsync).not.toHaveBeenCalled()
+    })
+
+    test("#when session is busy with an incomplete tool-calls turn #then never classifies output or triggers fallback", async () => {
+      //#given a long-running tool keeps the session busy (isActiveSessionStatus short-circuits before classification)
+      const sessionID = "ses-busy-incomplete-long-running-tool"
+      const promptAsync = mock(async () => ({}))
+      const messages = mock(async () => ({
+        data: [{
+          info: { role: "user", id: "msg-1" },
+          parts: [{ type: "text", text: "go" }],
+        }, {
+          info: { role: "assistant", finish: "tool-calls", id: "msg-2" },
+          parts: [{ type: "tool" }],
+        }],
+      }))
+      const manager = createManagerWithClient({
+        status: async () => ({ data: { [sessionID]: { type: "busy" } } }),
+        messages,
+        promptAsync,
+      })
+      const task = createRunningTask(sessionID, {
+        model: { providerID: "provider-a", modelID: "original-model" },
+        concurrencyKey: "provider-a/original-model",
+        concurrencyGroup: "provider-a/original-model",
+        fallbackChain: [{ model: "fallback-model-1", providers: ["provider-a"], variant: undefined }],
+        teamRunId: "team-run-1",
+        attemptCount: 0,
+      })
+      injectTask(manager, task)
+
+      //#when
+      const poll = manager["pollRunningTasks"]
+      await poll.call(manager)
+      manager.shutdown()
+
+      //#then
+      expect(messages).not.toHaveBeenCalled()
+      expect(promptAsync).not.toHaveBeenCalled()
+      expect(task.status).toBe("running")
+      expect(task.error).toBeUndefined()
+      expect(task.model).toEqual({ providerID: "provider-a", modelID: "original-model" })
+      expect(task.attemptCount).toBe(0)
     })
 
     test("#when idle task has no valid output and no fallback is available #then fails the task", async () => {

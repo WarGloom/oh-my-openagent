@@ -3489,6 +3489,13 @@ The task is retrying on a fallback model after a retryable failure.
 
                 task.consecutiveMissedPolls = 0
               }
+              if (sessionStatus?.type === "idle" || (sessionStatus && isTerminalSessionStatus(sessionStatus.type))) {
+                const retried = await this.tryNoOutputIdleFallback(task, `polling:session.${sessionStatus.type} incomplete-latest-assistant`)
+                if (retried) {
+                  log("[background-agent] Polling incomplete-latest-assistant fallback retry started:", task.id)
+                  continue
+                }
+              }
               log("[background-agent] Polling found incomplete latest assistant turn, waiting:", task.id)
               continue
             }
