@@ -1,0 +1,3 @@
+=== plugin load + session.idle signals ===
+session.idle_events=2
+"type":"session.idle"

@@ -1,0 +1,242 @@
+data: {"id":"evt_f7f2f7867001rYnPIFJwxbiKMt","type":"server.connected","properties":{}}
+
+data: {"id":"evt_f7f2f788a001LL6jV1SSV2p4Xk","type":"session.created","properties":{"sessionID":"ses_080d08776ffeME1wGgCkhD3IxU","info":{"id":"ses_080d08776ffeME1wGgCkhD3IxU","slug":"shiny-pixel","version":"1.18.3-dev","projectID":"global","directory":"/tmp/omo-qa-idle.lwv2Kz/work","path":"tmp/omo-qa-idle.lwv2Kz/work","title":"New session - 2026-07-20T11:00:45.321Z","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1784545245321,"updated":1784545245321}}}}
+
+data: {"id":"evt_f7f2f7904001Q66U7uY67b0Lrk","type":"session.updated","properties":{"sessionID":"ses_080d08776ffeME1wGgCkhD3IxU","info":{"id":"ses_080d08776ffeME1wGgCkhD3IxU","slug":"shiny-pixel","projectID":"global","directory":"/tmp/omo-qa-idle.lwv2Kz/work","path":"tmp/omo-qa-idle.lwv2Kz/work","title":"New session - 2026-07-20T11:00:45.321Z","agent":"Sisyphus - ultraworker","model":{"id":"gpt-4o-mini","providerID":"openai","variant":"default"},"version":"1.18.3-dev","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1784545245321,"updated":1784545245442}}}}
+
+data: {"id":"evt_f7f2f7be1001Wn2Ci9nFZN1kJq","type":"tui.toast.show","properties":{"title":"⚠️ Provider Cache Missing","message":"Model filtering disabled. RESTART OpenCode to enable full functionality.","variant":"warning","duration":6000}}
+
+data: {"id":"evt_f7f2f7a9d001YGqU95JYXUbyRd","type":"message.updated","properties":{"sessionID":"ses_080d08776ffeME1wGgCkhD3IxU","info":{"id":"msg_f7f2f79020018zZtDG2OyufoaR","role":"user","sessionID":"ses_080d08776ffeME1wGgCkhD3IxU","time":{"created":1784545245442},"agent":"Sisyphus - ultraworker","model":{"providerID":"openai","modelID":"gpt-4o-mini"}}}}
+
+data: {"id":"evt_f7f2f7c1d001FnATsYSXEMQpRk","type":"message.part.updated","properties":{"sessionID":"ses_080d08776ffeME1wGgCkhD3IxU","part":{"type":"text","text":"Reply with exactly the word DONE and nothing else.","messageID":"msg_f7f2f79020018zZtDG2OyufoaR","sessionID":"ses_080d08776ffeME1wGgCkhD3IxU","id":"prt_f7f2f790a0012NWswTqptyI0mV"},"time":1784545246237}}
+
+data: {"id":"evt_f7f2f7c210010Bvp84d90Jmyw1","type":"session.updated","properties":{"sessionID":"ses_080d08776ffeME1wGgCkhD3IxU","info":{"id":"ses_080d08776ffeME1wGgCkhD3IxU","slug":"shiny-pixel","projectID":"global","directory":"/tmp/omo-qa-idle.lwv2Kz/work","path":"tmp/omo-qa-idle.lwv2Kz/work","title":"New session - 2026-07-20T11:00:45.321Z","agent":"Sisyphus - ultraworker","model":{"id":"gpt-4o-mini","providerID":"openai","variant":"default"},"version":"1.18.3-dev","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1784545245321,"updated":1784545246241}}}}
+
+data: {"id":"evt_f7f2f7c2800149cPHKrTGMNS6j","type":"session.status","properties":{"sessionID":"ses_080d08776ffeME1wGgCkhD3IxU","status":{"type":"busy"}}}
+
+data: {"id":"evt_f7f2f7c2d001U3uuCbaFJmKR9b","type":"message.updated","properties":{"sessionID":"ses_080d08776ffeME1wGgCkhD3IxU","info":{"id":"msg_f7f2f7c2d001bemayGMkCi33IC","parentID":"msg_f7f2f79020018zZtDG2OyufoaR","role":"assistant","mode":"Sisyphus - ultraworker","agent":"Sisyphus - ultraworker","path":{"cwd":"/tmp/omo-qa-idle.lwv2Kz/work","root":"/"},"cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"modelID":"gpt-4o-mini","providerID":"openai","time":{"created":1784545246253},"sessionID":"ses_080d08776ffeME1wGgCkhD3IxU"}}}
+
+data: {"id":"evt_f7f2f8e2b001llcpM6Hxipbp79","type":"tui.toast.show","properties":{"title":"· OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f8e93001MfejabtWleDmhk","type":"tui.toast.show","properties":{"title":"• OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f8efa001xwEeXdOzNnEgWM","type":"tui.toast.show","properties":{"title":"● OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f8f61001tPDpH7oKVTVVmu","type":"tui.toast.show","properties":{"title":"○ OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f8fc8001LT72RHSYutqGZ0","type":"tui.toast.show","properties":{"title":"◌ OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f9038001q5xjUW2ClOst7c","type":"tui.toast.show","properties":{"title":"◦ OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f90a0001sjWhR6hOprGl0q","type":"tui.toast.show","properties":{"title":"  OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f9107001yOZvL1sdXvGAUv","type":"tui.toast.show","properties":{"title":"· OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f91750011XvhzHSMNq8rgO","type":"tui.toast.show","properties":{"title":"• OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f91dc0011b4I5Jx2hKWQlU","type":"tui.toast.show","properties":{"title":"● OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f9244001xddR6CXPq5V3TB","type":"tui.toast.show","properties":{"title":"○ OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f92b20019I6Vmyl1sKrYPI","type":"tui.toast.show","properties":{"title":"◌ OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f932c001hNeWRVrt2XDEsU","type":"tui.toast.show","properties":{"title":"◦ OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f9394001bTn02wbQiKUvyx","type":"tui.toast.show","properties":{"title":"  OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f9405001y2YEaQEVt3yQ0V","type":"tui.toast.show","properties":{"title":"· OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f9477001Ioydt5QFr4ZK0j","type":"tui.toast.show","properties":{"title":"• OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f94e6001B8PeR6w6CWtCMK","type":"tui.toast.show","properties":{"title":"● OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f954d001i0ih9Zy4ReOU1e","type":"tui.toast.show","properties":{"title":"○ OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f95b4001hFlM2c02XY3ZIO","type":"tui.toast.show","properties":{"title":"◌ OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f961a001UmKF1aAymBrF7t","type":"tui.toast.show","properties":{"title":"◦ OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f968b001cTl6T9H4e7XgPH","type":"tui.toast.show","properties":{"title":"  OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f96f90012mY0DoTM0bUvQ5","type":"tui.toast.show","properties":{"title":"· OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f9760001gjaNizpAkMvi4b","type":"tui.toast.show","properties":{"title":"• OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f97d0001w7Nj8a87aG6VA3","type":"tui.toast.show","properties":{"title":"● OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f9837001fFMhzX6mWJ3s1O","type":"tui.toast.show","properties":{"title":"○ OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f989e001M3j0NSJOgHXjaX","type":"tui.toast.show","properties":{"title":"◌ OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f98cf001rKNR5oY6p6N6r9","type":"session.updated","properties":{"sessionID":"ses_080d08776ffeME1wGgCkhD3IxU","info":{"id":"ses_080d08776ffeME1wGgCkhD3IxU","slug":"shiny-pixel","projectID":"global","directory":"/tmp/omo-qa-idle.lwv2Kz/work","path":"tmp/omo-qa-idle.lwv2Kz/work","title":"New session - 2026-07-20T11:00:45.321Z","agent":"Sisyphus - ultraworker","model":{"id":"gpt-4o-mini","providerID":"openai","variant":"default"},"version":"1.18.3-dev","summary":{"additions":0,"deletions":0,"files":0},"cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1784545245321,"updated":1784545253582}}}}
+
+data: {"id":"evt_f7f2f98d2001zQYq2D8xhO0pGJ","type":"session.diff","properties":{"sessionID":"ses_080d08776ffeME1wGgCkhD3IxU","diff":[]}}
+
+data: {"id":"evt_f7f2f98d3001a7ngCfBvo8eBw6","type":"message.updated","properties":{"sessionID":"ses_080d08776ffeME1wGgCkhD3IxU","info":{"role":"user","time":{"created":1784545245442},"agent":"Sisyphus - ultraworker","model":{"providerID":"openai","modelID":"gpt-4o-mini"},"id":"msg_f7f2f79020018zZtDG2OyufoaR","sessionID":"ses_080d08776ffeME1wGgCkhD3IxU","summary":{"diffs":[]}}}}
+
+data: {"id":"evt_f7f2f990f001MROdaWAT1mgG7w","type":"tui.toast.show","properties":{"title":"◦ OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f9980001QsaW2GW2RM9712","type":"plugin.added","properties":{"id":"core/config-reference"}}
+
+data: {"id":"evt_f7f2f9981001MMoN3CZ7McAtxE","type":"plugin.added","properties":{"id":"agent"}}
+
+data: {"id":"evt_f7f2f9982001CWOiYAJproGr4E","type":"plugin.added","properties":{"id":"command"}}
+
+data: {"id":"evt_f7f2f99830014j3YdkkJdlMmD2","type":"plugin.added","properties":{"id":"skill"}}
+
+data: {"id":"evt_f7f2f9986001n1wlJgGR72JX7K","type":"plugin.added","properties":{"id":"models-dev"}}
+
+data: {"id":"evt_f7f2f9987001N11YBwVbvWtSC7","type":"plugin.added","properties":{"id":"config-agent"}}
+
+data: {"id":"evt_f7f2f9988001Lvf8mB4bNHsT1n","type":"plugin.added","properties":{"id":"config-command"}}
+
+data: {"id":"evt_f7f2f9989001rZrmtlV4VR9mN0","type":"plugin.added","properties":{"id":"config-skill"}}
+
+data: {"id":"evt_f7f2f998a001j00RZwe6KSYuJH","type":"plugin.added","properties":{"id":"alibaba"}}
+
+data: {"id":"evt_f7f2f998c001ZlMcwjCCO9rUk4","type":"plugin.added","properties":{"id":"amazon-bedrock"}}
+
+data: {"id":"evt_f7f2f998d001gqohCEI89KH8OF","type":"plugin.added","properties":{"id":"anthropic"}}
+
+data: {"id":"evt_f7f2f998e00198AkxXszWyo2AT","type":"plugin.added","properties":{"id":"azure-cognitive-services"}}
+
+data: {"id":"evt_f7f2f99a8001nEFSZzln09Cj22","type":"plugin.added","properties":{"id":"azure"}}
+
+data: {"id":"evt_f7f2f99a900134mh2WzOCAwkCR","type":"plugin.added","properties":{"id":"cerebras"}}
+
+data: {"id":"evt_f7f2f99a9002J9BX21LGOr9Cpw","type":"plugin.added","properties":{"id":"cloudflare-ai-gateway"}}
+
+data: {"id":"evt_f7f2f99aa001ds90GXeTXPPZlu","type":"plugin.added","properties":{"id":"cloudflare-workers-ai"}}
+
+data: {"id":"evt_f7f2f99aa002dI0VLa82aEdcir","type":"plugin.added","properties":{"id":"cohere"}}
+
+data: {"id":"evt_f7f2f99ab001cGeOBxqFfNxX87","type":"plugin.added","properties":{"id":"deepinfra"}}
+
+data: {"id":"evt_f7f2f99ab002sn92JsgkLSym9v","type":"plugin.added","properties":{"id":"gateway"}}
+
+data: {"id":"evt_f7f2f99ac001ck9PgnOe7ISW2o","type":"plugin.added","properties":{"id":"github-copilot"}}
+
+data: {"id":"evt_f7f2f99ac002Pm1z04ant9gNtE","type":"plugin.added","properties":{"id":"gitlab"}}
+
+data: {"id":"evt_f7f2f99ad001dyV7KqfEZzB8eg","type":"plugin.added","properties":{"id":"google"}}
+
+data: {"id":"evt_f7f2f99ad002XOx6IyFGZbbiHH","type":"plugin.added","properties":{"id":"google-vertex-anthropic"}}
+
+data: {"id":"evt_f7f2f99ae001b3p3TMwlad34oh","type":"plugin.added","properties":{"id":"google-vertex"}}
+
+data: {"id":"evt_f7f2f99c7001YhtTeQ762S0ug8","type":"plugin.added","properties":{"id":"groq"}}
+
+data: {"id":"evt_f7f2f99c8001n7HuiA26syxykY","type":"plugin.added","properties":{"id":"kilo"}}
+
+data: {"id":"evt_f7f2f99c80029GyFLKOhs5z0ex","type":"plugin.added","properties":{"id":"llmgateway"}}
+
+data: {"id":"evt_f7f2f99c9001a4feaYWsyw4m59","type":"plugin.added","properties":{"id":"mistral"}}
+
+data: {"id":"evt_f7f2f99c9002UkxupEmDvBTWtS","type":"plugin.added","properties":{"id":"nvidia"}}
+
+data: {"id":"evt_f7f2f99cb001tI27GsX3Cs7FTv","type":"plugin.added","properties":{"id":"opencode"}}
+
+data: {"id":"evt_f7f2f99cc001PzSAFB8WJyo2ly","type":"plugin.added","properties":{"id":"snowflake-cortex"}}
+
+data: {"id":"evt_f7f2f99cc002FzNYuX6zx9y8fm","type":"plugin.added","properties":{"id":"openai-compatible"}}
+
+data: {"id":"evt_f7f2f99cd001SgEMEHnCuzfeUt","type":"plugin.added","properties":{"id":"openai"}}
+
+data: {"id":"evt_f7f2f99cd002Ks1uCJp7s1z1VO","type":"plugin.added","properties":{"id":"openrouter"}}
+
+data: {"id":"evt_f7f2f99cd003tNMe2Jo4MqLRU8","type":"plugin.added","properties":{"id":"perplexity"}}
+
+data: {"id":"evt_f7f2f99ce001MIwhho8FcsiDVL","type":"plugin.added","properties":{"id":"sap-ai-core"}}
+
+data: {"id":"evt_f7f2f99d0001EczRI4lKIGB9Wi","type":"tui.toast.show","properties":{"title":"  OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f9a29001iQD9M6o0a3Umop","type":"catalog.updated","properties":{}}
+
+data: {"id":"evt_f7f2f99ce002cn83qUwBUmoCci","type":"plugin.added","properties":{"id":"togetherai"}}
+
+data: {"id":"evt_f7f2f9a2a001BAT2iHWsEoUyvq","type":"plugin.added","properties":{"id":"vercel"}}
+
+data: {"id":"evt_f7f2f9a2b001EA33gVE620s0OS","type":"plugin.added","properties":{"id":"venice"}}
+
+data: {"id":"evt_f7f2f9a2b0029rFaPNx4T47daC","type":"plugin.added","properties":{"id":"xai"}}
+
+data: {"id":"evt_f7f2f9a2c001eELJ6bB0XfUArn","type":"plugin.added","properties":{"id":"zenmux"}}
+
+data: {"id":"evt_f7f2f9a2c002x6Q004za59q0Ha","type":"plugin.added","properties":{"id":"dynamic-provider"}}
+
+data: {"id":"evt_f7f2f9a2e0014mSVGf3MsfbrpX","type":"plugin.added","properties":{"id":"config-plugin"}}
+
+data: {"id":"evt_f7f2f9a2f001LhUVIcK5avyVTn","type":"plugin.added","properties":{"id":"config-provider"}}
+
+data: {"id":"evt_f7f2f9a30001H2YgQiVN11jxHH","type":"plugin.added","properties":{"id":"variant"}}
+
+data: {"id":"evt_f7f2f9a3100153CZABpsrynd18","type":"reference.updated","properties":{}}
+
+data: {"id":"evt_f7f2f9a4d0017Ou1vBCANA1rxL","type":"integration.updated","properties":{}}
+
+data: {"id":"evt_f7f2f9a8e001HIa5baQ45g3F1f","type":"catalog.updated","properties":{}}
+
+data: {"id":"evt_f7f2f9aa6001k85ZCEvB33beFp","type":"tui.toast.show","properties":{"title":"· OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f9ab8001BptQUaK1WLPj8r","type":"session.status","properties":{"sessionID":"ses_080d08776ffeME1wGgCkhD3IxU","status":{"type":"busy"}}}
+
+data: {"id":"evt_f7f2f9b15001lFwRFwKA2K7OGF","type":"tui.toast.show","properties":{"title":"• OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f9b7c001rGc1s3kBPJJbGg","type":"tui.toast.show","properties":{"title":"● OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f9bec001N7FA1Nv91TKJ2W","type":"tui.toast.show","properties":{"title":"○ OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f9c4e0011SlEE9GJZsoyux","type":"session.error","properties":{"sessionID":"ses_080d08776ffeME1wGgCkhD3IxU","error":{"name":"APIError","data":{"message":"Invalid schema for function 'codebase-memory-mcp_check_index_coverage': schema must have type 'object' and not have 'oneOf'/'anyOf'/'allOf'/'enum'/'const'/'not' at the top level.","statusCode":400,"isRetryable":false,"responseHeaders":{"access-control-expose-headers":"X-Request-ID, CF-Ray, CF-Ray","alt-svc":"h3=\":443\"; ma=86400","cf-cache-status":"DYNAMIC","cf-ray":"a1e176fe3b43c222-TLV","connection":"keep-alive","content-length":"333","content-type":"application/json","date":"Mon, 20 Jul 2026 11:00:54 GMT","openai-organization":"user-cgkjoustj9o3zxob5fqg6spk","openai-processing-ms":"85","openai-project":"proj_iiTYEEM0XSb9j5uL1Bqsvztz","openai-version":"2020-10-01","server":"cloudflare","strict-transport-security":"max-age=31536000; includeSubDomains; preload","x-content-type-options":"nosniff","x-request-id":"req_2a08dae2413a48e28a9043e1c1da2cd2","set-cookie":"__cf_bm=PcvQdBKtMTnRIPFCGPQ3LrTA6bk.wwgv2qDveyV_M2E-1784545254.111977-1.0.1.1-WZnYlAM250FmoeFPADwuNXZLjLTHEZ5iRSWx9ECV2UPwDjXqyhoMXwdPkWjVxKswd.PVsg9P1HyVlcdtNTXwKBnwndMeJzmYxVzD.CgqaiSHe4Nq1HlO1z2de7xWs5Yc; HttpOnly; SameSite=None; Secure; Path=/; Domain=api.openai.com; Expires=Mon, 20 Jul 2026 11:30:54 GMT"},"responseBody":"{\n  \"error\": {\n    \"message\": \"Invalid schema for function 'codebase-memory-mcp_check_index_coverage': schema must have type 'object' and not have 'oneOf'/'anyOf'/'allOf'/'enum'/'const'/'not' at the top level.\",\n    \"type\": \"invalid_request_error\",\n    \"param\": \"tools[32].parameters\",\n    \"code\": \"invalid_function_parameters\"\n  }\n}","metadata":{"url":"https://api.openai.com/v1/responses"}}}}}
+
+data: {"id":"evt_f7f2f9c4f001Tx78177BbJunfN","type":"session.status","properties":{"sessionID":"ses_080d08776ffeME1wGgCkhD3IxU","status":{"type":"idle"}}}
+
+data: {"id":"evt_f7f2f9c4f002pHLwROAq0O5Zu6","type":"session.idle","properties":{"sessionID":"ses_080d08776ffeME1wGgCkhD3IxU"}}
+
+data: {"id":"evt_f7f2f9c50001c5fzZpHgpcmGYV","type":"message.updated","properties":{"sessionID":"ses_080d08776ffeME1wGgCkhD3IxU","info":{"id":"msg_f7f2f7c2d001bemayGMkCi33IC","parentID":"msg_f7f2f79020018zZtDG2OyufoaR","role":"assistant","mode":"Sisyphus - ultraworker","agent":"Sisyphus - ultraworker","path":{"cwd":"/tmp/omo-qa-idle.lwv2Kz/work","root":"/"},"cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"modelID":"gpt-4o-mini","providerID":"openai","time":{"created":1784545246253,"completed":1784545254480},"sessionID":"ses_080d08776ffeME1wGgCkhD3IxU","error":{"name":"APIError","data":{"message":"Invalid schema for function 'codebase-memory-mcp_check_index_coverage': schema must have type 'object' and not have 'oneOf'/'anyOf'/'allOf'/'enum'/'const'/'not' at the top level.","statusCode":400,"isRetryable":false,"responseHeaders":{"access-control-expose-headers":"X-Request-ID, CF-Ray, CF-Ray","alt-svc":"h3=\":443\"; ma=86400","cf-cache-status":"DYNAMIC","cf-ray":"a1e176fe3b43c222-TLV","connection":"keep-alive","content-length":"333","content-type":"application/json","date":"Mon, 20 Jul 2026 11:00:54 GMT","openai-organization":"user-cgkjoustj9o3zxob5fqg6spk","openai-processing-ms":"85","openai-project":"proj_iiTYEEM0XSb9j5uL1Bqsvztz","openai-version":"2020-10-01","server":"cloudflare","strict-transport-security":"max-age=31536000; includeSubDomains; preload","x-content-type-options":"nosniff","x-request-id":"req_2a08dae2413a48e28a9043e1c1da2cd2","set-cookie":"__cf_bm=PcvQdBKtMTnRIPFCGPQ3LrTA6bk.wwgv2qDveyV_M2E-1784545254.111977-1.0.1.1-WZnYlAM250FmoeFPADwuNXZLjLTHEZ5iRSWx9ECV2UPwDjXqyhoMXwdPkWjVxKswd.PVsg9P1HyVlcdtNTXwKBnwndMeJzmYxVzD.CgqaiSHe4Nq1HlO1z2de7xWs5Yc; HttpOnly; SameSite=None; Secure; Path=/; Domain=api.openai.com; Expires=Mon, 20 Jul 2026 11:30:54 GMT"},"responseBody":"{\n  \"error\": {\n    \"message\": \"Invalid schema for function 'codebase-memory-mcp_check_index_coverage': schema must have type 'object' and not have 'oneOf'/'anyOf'/'allOf'/'enum'/'const'/'not' at the top level.\",\n    \"type\": \"invalid_request_error\",\n    \"param\": \"tools[32].parameters\",\n    \"code\": \"invalid_function_parameters\"\n  }\n}","metadata":{"url":"https://api.openai.com/v1/responses"}}}}}}
+
+data: {"id":"evt_f7f2f9c58001h1e4r7p5Ok6rj7","type":"session.status","properties":{"sessionID":"ses_080d08776ffeME1wGgCkhD3IxU","status":{"type":"idle"}}}
+
+data: {"id":"evt_f7f2f9c580025D1vEfd257FWmo","type":"session.idle","properties":{"sessionID":"ses_080d08776ffeME1wGgCkhD3IxU"}}
+
+data: {"id":"evt_f7f2f9c64001SVwKI7A5bzIbCy","type":"tui.toast.show","properties":{"title":"◌ OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f9cd8001x5ZoZeqziSrBIW","type":"tui.toast.show","properties":{"title":"◦ OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f9d45001yDnNgWX66ZgUSa","type":"tui.toast.show","properties":{"title":"  OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f9db1001bl1Zu5Zc7uDVNg","type":"tui.toast.show","properties":{"title":"· OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f9e2600134jZ0nHoFyObM8","type":"tui.toast.show","properties":{"title":"• OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f9e8c001yA2N6cSTq8Ryki","type":"tui.toast.show","properties":{"title":"● OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f9ef4001tUyatIwxnwQLhy","type":"tui.toast.show","properties":{"title":"○ OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f9f5b0017gFhnKzvcM6ZbY","type":"tui.toast.show","properties":{"title":"◌ OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2f9fbc001fUE3ROhcmsdXIz","type":"server.heartbeat","properties":{}}
+
+data: {"id":"evt_f7f2f9fc8001cXEWVnft4TtFXg","type":"tui.toast.show","properties":{"title":"◦ OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2fa0380017j3Tm8NtTaNm61","type":"tui.toast.show","properties":{"title":"  OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2fa09e001OFV9bHRw6uRVqV","type":"tui.toast.show","properties":{"title":"· OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2fa10d001Zi3TwTfsc1CGDO","type":"tui.toast.show","properties":{"title":"• OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2fa17400129I0oAgXj9bnTX","type":"tui.toast.show","properties":{"title":"● OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2fa1dc001EMe6kMQDOGyDdr","type":"tui.toast.show","properties":{"title":"○ OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2fa249001mTYZuifYJPeGAN","type":"tui.toast.show","properties":{"title":"◌ OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2fa2b9001AAum3d9twcigH2","type":"tui.toast.show","properties":{"title":"◦ OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2fa330001cGM5MQYMrwefQM","type":"tui.toast.show","properties":{"title":"  OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2fa3a0001oQKTRUrHfJAcOh","type":"tui.toast.show","properties":{"title":"· OhMyOpenCode 4.19.0","message":"Sisyphus on steroids is steering OpenCode.","variant":"info","duration":150}}
+
+data: {"id":"evt_f7f2fc6e1001w2Iqyen8do4HNi","type":"server.heartbeat","properties":{}}
+
+data: {"id":"evt_f7f2fedf2001meVdQpVIBN2lJj","type":"server.heartbeat","properties":{}}
+

@@ -1,0 +1,5 @@
+host_db_sessions_before=3147
+sandbox_root=/tmp/omo-qa-idle.lwv2Kz
+isolated_db=/tmp/omo-qa-idle.lwv2Kz/data/opencode/opencode.db
+driven_session=ses_080d08776ffeME1wGgCkhD3IxU
+host_db_sessions_after=3147
