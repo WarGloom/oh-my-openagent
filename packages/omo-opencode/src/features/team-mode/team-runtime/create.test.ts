@@ -207,6 +207,59 @@ describe("createTeamRun", () => {
     ])
   })
 
+  test("updates member session and model when background fallback creates a retry session", async () => {
+    // given
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-runtime-fallback-session-"))
+    temporaryDirectories.push(baseDir)
+    const task = { id: "task-1", status: "pending" } as BackgroundTask
+    let resolveSessionAvailable = () => {}
+    const sessionAvailable = new Promise<void>((resolve) => {
+      resolveSessionAvailable = resolve
+    })
+    const { manager } = createManager(
+      baseDir,
+      async (input) => {
+        task.parentSessionId = input.parentSessionId
+        task.parentMessageId = input.parentMessageId
+        task.description = input.description
+        task.prompt = input.prompt
+        task.agent = input.agent
+        task.status = "pending"
+        queueMicrotask(async () => {
+          await input.onSessionCreated?.("session-fallback", {
+            providerID: "anthropic",
+            modelID: "claude-opus-4-8",
+            variant: "max",
+          })
+          task.sessionId = "session-fallback"
+          task.status = "running"
+          resolveSessionAvailable()
+        })
+        return task
+      },
+      () => task,
+    )
+    const config = createConfig(baseDir)
+
+    // when
+    const runtimeState = await createTeamRun(createSpec(1), "lead-session", createContext(baseDir, manager), config, manager)
+    await sessionAvailable
+    const updatedRuntimeState = await loadRuntimeState(runtimeState.teamRunId, config)
+
+    // then
+    expect(updatedRuntimeState.members[0]?.sessionId).toBe("session-fallback")
+    expect(updatedRuntimeState.members[0]?.model).toEqual({
+      providerID: "anthropic",
+      modelID: "claude-opus-4-8",
+      variant: "max",
+    })
+    expect(lookupTeamSession("session-fallback")).toEqual({
+      teamRunId: runtimeState.teamRunId,
+      memberName: "member-1",
+      role: "lead",
+    })
+  })
+
   test("member prompt only documents member-safe communication tools", async () => {
     // given
     const baseDir = await mkdtemp(path.join(tmpdir(), "team-runtime-member-prompt-"))
@@ -388,7 +441,14 @@ describe("createTeamRun", () => {
       leadAgentId: "lead",
       members: [
         { kind: "subagent_type", name: "lead", subagent_type: "sisyphus", backendType: "in-process", isActive: true },
-        { kind: "category", name: "member-1", category: "quick", prompt: "prompt-1", backendType: "in-process", isActive: true },
+        {
+          kind: "category",
+          name: "member-1",
+          category: "quick",
+          prompt: "Normalize\n\n this\tmember goal",
+          backendType: "in-process",
+          isActive: true,
+        },
       ],
     }
 
@@ -405,7 +465,7 @@ describe("createTeamRun", () => {
 
     // then
     expect(launchMock).toHaveBeenCalledTimes(1)
-    expect(launchMock.mock.calls[0]?.[0]).toMatchObject({ description: "Create team member alpha-team/member-1" })
+    expect(launchMock.mock.calls[0]?.[0]).toMatchObject({ description: "member-1: Normalize this member goal" })
     expect(resolveMemberMock).toHaveBeenCalledTimes(1)
     expect(resolveMemberMock.mock.calls[0]?.[0]).toMatchObject({ name: "member-1" })
     expect(runtimeState.members.map((member) => ({ name: member.name, sessionId: member.sessionId }))).toEqual([
@@ -469,7 +529,7 @@ describe("createTeamRun", () => {
       leadAgentId: "captain",
       members: [
         { kind: "subagent_type", name: "captain", subagent_type: "atlas", backendType: "in-process", isActive: true },
-        { kind: "category", name: "member-1", category: "quick", prompt: "prompt-1", backendType: "in-process", isActive: true },
+        { kind: "subagent_type", name: "member-1", subagent_type: "sisyphus", backendType: "in-process", isActive: true },
       ],
     }
 
@@ -486,9 +546,7 @@ describe("createTeamRun", () => {
 
     // then
     expect(launchMock).toHaveBeenCalledTimes(1)
-    expect(launchMock.mock.calls.map(([input]) => input.description)).toEqual([
-      "Create team member alpha-team/member-1",
-    ])
+    expect(launchMock.mock.calls.map(([input]) => input.description)).toEqual(["member-1"])
     expect(runtimeState.members.map((member) => ({ name: member.name, sessionId: member.sessionId }))).toEqual([
       { name: "captain", sessionId: "lead-session" },
       { name: "member-1", sessionId: "member-1-agent-session-1" },

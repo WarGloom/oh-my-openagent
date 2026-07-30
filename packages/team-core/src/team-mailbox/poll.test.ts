@@ -7,12 +7,23 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 
 import { TeamModeConfigSchema } from "../config"
-import { createRuntimeState, loadRuntimeState } from "../team-state-store/store"
+import { createRuntimeState, loadRuntimeState, transitionRuntimeState } from "../team-state-store/store"
 import type { TeamSpec } from "../types"
 import { sendMessage } from "./send"
 
-const { pollAndBuildInjection } = await import("./poll")
+const { pollAndBuildInjection: claimInjection } = await import("./poll")
 const { getInboxDir, resolveBaseDir } = await import("../team-registry/paths")
+
+function pollAndBuildInjection(
+  sessionID: string,
+  memberName: string,
+  teamRunId: string,
+  config: ReturnType<typeof createConfig>,
+  turnMarker: string,
+  claim: Parameters<typeof claimInjection>[5] = { resolvedSessionID: undefined, insertContent: () => {} },
+) {
+  return claimInjection(sessionID, memberName, teamRunId, config, turnMarker, claim)
+}
 
 function createConfig(baseDir: string) {
   return TeamModeConfigSchema.parse({ base_dir: baseDir })
@@ -221,5 +232,79 @@ describe("pollAndBuildInjection", () => {
     expect(result.content).toContain("fresh message")
     expect(result.content).not.toContain("already injected")
     expect(member?.pendingInjectedMessageIds).toEqual([pendingMessageId, newMessageId])
+  })
+
+  test("#given output insertion throws #when a normal inbox claim is attempted #then the file stays unread and no pending claim is persisted", async () => {
+    // given
+    const { teamRunId, config } = await setupRuntime(["m1"])
+    const messageId = randomUUID()
+    const insertionFailure = new Error("injected output insertion failure")
+    await sendMessage({
+      version: 1,
+      messageId,
+      from: "lead",
+      to: "m1",
+      kind: "message",
+      body: "retry after interrupted insertion",
+      timestamp: 100,
+    }, teamRunId, config, { isLead: true, activeMembers: ["m1"] })
+
+    // when
+    let observedFailure: unknown
+    try {
+      await pollAndBuildInjection("session-1", "m1", teamRunId, config, "turn-interrupted", {
+        resolvedSessionID: undefined,
+        insertContent: () => {
+          throw insertionFailure
+        },
+      })
+    } catch (error) {
+      if (!(error instanceof Error)) throw error
+      observedFailure = error
+    }
+
+    // then
+    expect(observedFailure).toBe(insertionFailure)
+    const member = (await loadRuntimeState(teamRunId, config)).members.find(({ name }) => name === "m1")
+    expect(member?.pendingInjectedMessageIds).toEqual([])
+    expect(await readdir(getInboxDir(resolveBaseDir(config), teamRunId, "m1"))).toContain(`${messageId}.json`)
+  })
+
+  test("#given session A resolved before the member changes to B #when A polls with its snapshot #then it stays stale without insertion or pending state", async () => {
+    // given
+    const { teamRunId, config } = await setupRuntime(["m1"])
+    const messageId = randomUUID()
+    await sendMessage({
+      version: 1,
+      messageId,
+      from: "lead",
+      to: "m1",
+      kind: "message",
+      body: "must not reach replaced session",
+      timestamp: 100,
+    }, teamRunId, config, { isLead: true, activeMembers: ["m1"] })
+    await transitionRuntimeState(teamRunId, (runtimeState) => ({
+      ...runtimeState,
+      members: runtimeState.members.map((member) =>
+        member.name === "m1" ? { ...member, sessionId: "session-B" } : member,
+      ),
+    }), config)
+    let insertionCount = 0
+
+    // when
+    const result = await pollAndBuildInjection("session-A", "m1", teamRunId, config, "turn-stale", {
+      resolvedSessionID: "session-A",
+      insertContent: () => {
+        insertionCount += 1
+      },
+    })
+
+    // then
+    expect(result).toEqual({ injected: false, messageIds: [], reason: "stale session" })
+    expect(insertionCount).toBe(0)
+    const member = (await loadRuntimeState(teamRunId, config)).members.find(({ name }) => name === "m1")
+    expect(member?.sessionId).toBe("session-B")
+    expect(member?.pendingInjectedMessageIds).toEqual([])
+    expect(await readdir(getInboxDir(resolveBaseDir(config), teamRunId, "m1"))).toContain(`${messageId}.json`)
   })
 })

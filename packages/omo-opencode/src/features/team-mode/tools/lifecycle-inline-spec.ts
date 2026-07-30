@@ -6,7 +6,13 @@ import { normalizeTeamSpecInput } from "@oh-my-opencode/team-core/team-registry/
 import { validateSpec } from "@oh-my-opencode/team-core/team-registry/validator"
 import { TeamSpecSchema, type TeamSpec } from "@oh-my-opencode/team-core/types"
 
-export const TEAM_CREATE_USAGE = "team_create requires exactly one of teamName or inline_spec. Use team_create({ teamName: \"existing-team\" }) or team_create({ inline_spec: { name: \"team-name\", members: [{ name: \"worker\", category: \"quick\", prompt: \"Do the assigned work.\" }] } })."
+export const TEAM_CREATE_USAGE = "team_create requires exactly one of teamName or inline_spec. Omit unused optional args and member keys instead of passing empty strings. Use team_create({ teamName: \"existing-team\" }) or team_create({ inline_spec: { name: \"project-analysis-team\", members: [{ name: \"structure-analyst\", category: \"quick\", prompt: \"Analyze project structure.\" }] } }). For independent read-only searches, use flat members with category prompts."
+
+function emptyStringToUndefined(value: unknown): unknown {
+  return typeof value === "string" && value.trim().length === 0 ? undefined : value
+}
+
+const OptionalNonEmptyStringSchema = z.preprocess(emptyStringToUndefined, z.string().min(1).nullish())
 
 function omitEmptyStringArgs(rawArgs: unknown): unknown {
   if (typeof rawArgs !== "object" || rawArgs === null || Array.isArray(rawArgs)) {
@@ -17,9 +23,8 @@ function omitEmptyStringArgs(rawArgs: unknown): unknown {
 }
 
 export const TeamCreateArgsSchema = z.preprocess(omitEmptyStringArgs, z.object({
-  teamName: z.string().min(1).nullish(),
-  inline_spec: z.unknown().nullish(),
-  leadSessionId: z.string().nullish(),
+  teamName: OptionalNonEmptyStringSchema,
+  inline_spec: z.preprocess(emptyStringToUndefined, z.unknown().nullish()),
 }).superRefine((value, ctx) => {
   const optionCount = Number(value.teamName != null) + Number(value.inline_spec != null)
   if (optionCount !== 1) {
@@ -84,6 +89,6 @@ export function parseInlineTeamSpec(
   }
 
   const parsedSpec = parsedSpecResult.data
-  validateSpec(parsedSpec)
+  validateSpec(parsedSpec, { allowUnknownSubagentTypes: true })
   return parsedSpec
 }

@@ -14,10 +14,12 @@ import {
 } from "../shared/background-output-consumption";
 import { resetMessageCursor } from "../shared";
 import { clearSessionModel, setSessionModel } from "../shared/session-model-state";
+import type { SessionModelWithVariant } from "../shared/session-model-state";
 import { clearSessionPromptParams } from "../shared/session-prompt-params-state";
 import { deleteSessionTools } from "../shared/session-tools-store";
 import { dispatchOpenClawEvent } from "../openclaw/runtime-dispatch";
 import { resolveMessageEventSessionID, resolveSessionEventID } from "../shared/event-session-id";
+import { isRecord } from "../shared/record-type-guard";
 import type { OhMyOpenCodeConfig } from "../config";
 import type { Managers } from "../create-managers";
 import type { FirstMessageVariantGate, PluginEventContext } from "./event-types";
@@ -162,6 +164,24 @@ export function handleMessageRemovedEvent(props?: Record<string, unknown>): void
   restoreBackgroundOutputConsumption(sessionID, messageID);
 }
 
+function getStringField(record: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function resolveMessageModel(info: Record<string, unknown> | undefined): SessionModelWithVariant | undefined {
+  const nestedModel = isRecord(info?.model) ? info.model : undefined;
+  const providerID = getStringField(nestedModel, "providerID") ?? getStringField(info, "providerID");
+  const modelID = getStringField(nestedModel, "modelID") ?? getStringField(info, "modelID");
+  const variant = getStringField(nestedModel, "variant") ?? getStringField(info, "variant");
+
+  if (!providerID || !modelID) {
+    return undefined;
+  }
+
+  return { providerID, modelID, ...(variant ? { variant } : {}) };
+}
+
 export function handleMessageUpdatedSessionState(args: {
   props?: Record<string, unknown>;
   noteSessionModel: (sessionID: string, model: { providerID: string; modelID: string }) => void;
@@ -181,11 +201,13 @@ export function handleMessageUpdatedSessionState(args: {
     if (agent && !isCompactionMessage) {
       updateSessionAgent(sessionID, agent);
     }
-    const providerID = info?.providerID as string | undefined;
-    const modelID = info?.modelID as string | undefined;
-    if (providerID && modelID && !isCompactionMessage) {
-      args.noteSessionModel(sessionID, { providerID, modelID });
-      setSessionModel(sessionID, { providerID, modelID });
+    const messageModel = resolveMessageModel(info);
+    if (messageModel && !isCompactionMessage) {
+      args.noteSessionModel(sessionID, {
+        providerID: messageModel.providerID,
+        modelID: messageModel.modelID,
+      });
+      setSessionModel(sessionID, messageModel, agent);
     }
   }
 

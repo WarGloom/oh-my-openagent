@@ -15,6 +15,7 @@ import {
   registerTeamSession,
 } from "../../features/team-mode/team-session-registry"
 import { getInboxDir, resolveBaseDir } from "../../features/team-mode/team-registry/paths"
+import * as stateStoreModule from "../../features/team-mode/team-state-store/store"
 import { loadRuntimeState, saveRuntimeState } from "../../features/team-mode/team-state-store/store"
 import type { RuntimeState } from "../../features/team-mode/types"
 import { SessionCategoryRegistry } from "../../shared/session-category-registry"
@@ -263,14 +264,16 @@ describe("createTeamIdleWakeHint", () => {
     expect(promptAsyncSpy).toHaveBeenCalledTimes(1)
   })
 
-  test("sends a trigger-only wake hint when new unread mail exists", async () => {
+  test("sends a payload-carrying wake when new unread mail exists", async () => {
     // given
     const baseDir = await createTemporaryBaseDir()
     const config = createConfig(baseDir)
     const teamRunId = randomUUID()
     await seedRuntimeState(createRuntimeState(teamRunId), config)
-    await seedUnreadMessage(teamRunId, config, randomUUID(), "first message body", 100)
-    await seedUnreadMessage(teamRunId, config, randomUUID(), "second message body", 200)
+    const firstMessageId = randomUUID()
+    const secondMessageId = randomUUID()
+    await seedUnreadMessage(teamRunId, config, firstMessageId, "first message body", 100)
+    await seedUnreadMessage(teamRunId, config, secondMessageId, "second message body", 200)
 
     const promptInputs: Array<WakeHintPromptInput> = []
     const promptAsyncSpy = mock(async (input: WakeHintPromptInput) => {
@@ -297,8 +300,10 @@ describe("createTeamIdleWakeHint", () => {
       throw new Error("expected wake hint prompt input")
     }
     expect(promptInput.path).toEqual({ id: "member-session" })
-    expect(promptInput.body.parts[0]?.text).not.toContain("first message body")
-    expect(promptInput.body.parts[0]?.text).not.toContain("second message body")
+    expect(promptInput.body.parts[0]?.text).toContain(`messageId="${firstMessageId}"`)
+    expect(promptInput.body.parts[0]?.text).toContain("first message body")
+    expect(promptInput.body.parts[0]?.text).toContain(`messageId="${secondMessageId}"`)
+    expect(promptInput.body.parts[0]?.text).toContain("second message body")
   })
 
   test("#given stale idle event but member session is busy #when wake hint checks status #then it does not start an overlapping reply", async () => {
@@ -372,6 +377,102 @@ describe("createTeamIdleWakeHint", () => {
     // then
     expect(released).toBe(true)
     expect(promptAsyncSpy).toHaveBeenCalledTimes(1)
+  })
+
+  test("#given session A resolves before durable member replacement B #when A reaches wake routing #then it does not prompt stale session A", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    const config = createConfig(baseDir)
+    const teamRunId = randomUUID()
+    const sessionA = "member-session-a"
+    const sessionB = "member-session-b"
+    const initialRuntimeState = createRuntimeState(teamRunId)
+    const initialWorker = initialRuntimeState.members[0]
+    if (initialWorker === undefined) {
+      throw new Error("worker member missing from initial fixture")
+    }
+    initialWorker.sessionId = sessionA
+    await seedRuntimeState(initialRuntimeState, config)
+    await seedUnreadMessage(teamRunId, config, randomUUID(), "replacement wake hint", 100)
+    registerTeamSession(sessionA, { teamRunId, memberName: "worker", role: "member" })
+
+    const replacementRuntimeState: RuntimeState = {
+      ...initialRuntimeState,
+      members: initialRuntimeState.members.map((member) => (
+        member.name === "worker" ? { ...member, sessionId: sessionB } : member
+      )),
+    }
+    const originalLoadRuntimeState = stateStoreModule.loadRuntimeState
+    let loadCount = 0
+    const loadRuntimeStateSpy = spyOn(stateStoreModule, "loadRuntimeState").mockImplementation(async (runId, runtimeConfig) => {
+      loadCount += 1
+      if (loadCount === 2) {
+        await saveRuntimeState(replacementRuntimeState, runtimeConfig)
+      }
+      return originalLoadRuntimeState(runId, runtimeConfig)
+    })
+    const promptAsyncSpy = mock(async (_input: WakeHintPromptInput) => ({}))
+    const handler = createTeamIdleWakeHint({
+      directory: "/tmp/project",
+      client: { session: { promptAsync: promptAsyncSpy } },
+    }, config, immediatePromptGateOptions)
+
+    // when
+    await handler({
+      event: {
+        type: "session.idle",
+        properties: { sessionID: sessionA },
+      },
+    })
+    loadRuntimeStateSpy.mockRestore()
+
+    // then
+    expect(promptAsyncSpy).not.toHaveBeenCalled()
+    expect((await loadRuntimeState(teamRunId, config)).members[0]?.sessionId).toBe(sessionB)
+  })
+
+  test("#given replacement B becomes durable during A dispatch #when B later idles with the same unread batch #then A suppression does not hide B wake", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    const config = createConfig(baseDir)
+    const teamRunId = randomUUID()
+    const sessionA = "member-session-a"
+    const sessionB = "member-session-b"
+    const initialRuntimeState = createRuntimeState(teamRunId)
+    const initialWorker = initialRuntimeState.members[0]
+    if (initialWorker === undefined) {
+      throw new Error("worker member missing from initial fixture")
+    }
+    initialWorker.sessionId = sessionA
+    await seedRuntimeState(initialRuntimeState, config)
+    await seedUnreadMessage(teamRunId, config, randomUUID(), "shared unread batch", 100)
+    registerTeamSession(sessionA, { teamRunId, memberName: "worker", role: "member" })
+
+    const promptedSessionIds: string[] = []
+    const promptAsyncSpy = mock(async (input: WakeHintPromptInput) => {
+      promptedSessionIds.push(input.path.id)
+      if (input.path.id === sessionA) {
+        await saveRuntimeState({
+          ...initialRuntimeState,
+          members: initialRuntimeState.members.map((member) => (
+            member.name === "worker" ? { ...member, sessionId: sessionB } : member
+          )),
+        }, config)
+        registerTeamSession(sessionB, { teamRunId, memberName: "worker", role: "member" })
+      }
+      return {}
+    })
+    const handler = createTeamIdleWakeHint({
+      directory: "/tmp/project",
+      client: { session: { promptAsync: promptAsyncSpy } },
+    }, config, immediatePromptGateOptions)
+
+    // when
+    await handler({ event: { type: "session.idle", properties: { sessionID: sessionA } } })
+    await handler({ event: { type: "session.idle", properties: { sessionID: sessionB } } })
+
+    // then
+    expect(promptedSessionIds).toEqual([sessionA, sessionB])
   })
 
   test("pins the recipient's resolved subagent_type and model on the wake-hint promptAsync", async () => {
@@ -522,7 +623,7 @@ describe("createTeamIdleWakeHint", () => {
     expect(promptInput.body.variant).toBeUndefined()
   })
 
-  test("acks pending messages on idle, moves files to processed, and clears pending ids", async () => {
+  test("clears transform-only pending claims before reserving them for a durable wake", async () => {
     // given
     const baseDir = await createTemporaryBaseDir()
     const config = createConfig(baseDir)
@@ -560,23 +661,17 @@ describe("createTeamIdleWakeHint", () => {
     })
 
     // then
-    expect(ackSpy).toHaveBeenCalledTimes(1)
-    expect(ackSpy).toHaveBeenCalledWith(teamRunId, "worker", messageIds, config)
-    expect(promptAsyncSpy).not.toHaveBeenCalled()
+    expect(ackSpy).not.toHaveBeenCalled()
+    expect(promptAsyncSpy).toHaveBeenCalledTimes(1)
 
     const runtimeState = await loadRuntimeState(teamRunId, config)
-    expect(runtimeState.members[0]?.pendingInjectedMessageIds).toEqual([])
+    expect(runtimeState.members[0]?.pendingInjectedMessageIds).toEqual(messageIds)
 
     const inboxEntries = await readdir(getInboxDir(resolveBaseDir(config), teamRunId, "worker"))
-    expect(inboxEntries).toContain("processed")
+    expect([...inboxEntries].sort()).toEqual(messageIds.map((messageId) => `.delivering-${messageId}.json`).sort())
+  })
 
-    const processedEntries = await readdir(path.join(getInboxDir(resolveBaseDir(config), teamRunId, "worker"), "processed"))
-    expect(processedEntries.sort()).toEqual(messageIds.map((messageId) => `${messageId}.json`).sort())
-    // Loaded Windows runners push this past the 5s default; the waits stay event-driven
-    // (~60ms locally), so only the ceiling moves.
-  }, 30_000)
-
-  test("acks pending reserved live-delivery messages on idle", async () => {
+  test("#given a reserved live-delivery claim present in history #when the member idles #then it archives the claim", async () => {
     // given
     const baseDir = await createTemporaryBaseDir()
     const config = createConfig(baseDir)
@@ -587,7 +682,12 @@ describe("createTeamIdleWakeHint", () => {
 
     const handler = createTeamIdleWakeHint({
       directory: "/tmp/project",
-      client: { session: { promptAsync: mock(async (_input: WakeHintPromptInput) => ({})) } },
+      client: {
+        session: {
+          promptAsync: mock(async (_input: WakeHintPromptInput) => ({})),
+          messages: async () => ({ data: [{ text: `<peer_message messageId="${messageId}">live delivery body</peer_message>` }] }),
+        },
+      },
     }, config)
 
     // when
@@ -733,7 +833,12 @@ describe("createTeamIdleWakeHint", () => {
     })
     const handler = createTeamIdleWakeHint({
       directory: "/tmp/project",
-      client: { session: { promptAsync: promptAsyncSpy } },
+      client: {
+        session: {
+          promptAsync: promptAsyncSpy,
+          messages: async () => ({ data: [{ text: `<peer_message messageId="${pendingMessageId}">already live delivered</peer_message>` }] }),
+        },
+      },
     }, config)
 
     // when
@@ -746,18 +851,20 @@ describe("createTeamIdleWakeHint", () => {
 
     // then
     expect(promptAsyncSpy).toHaveBeenCalledTimes(1)
+    expect(promptInputs[0]?.body.parts[0]?.text).toContain(`messageId="${unreadMessageId}"`)
+    expect(promptInputs[0]?.body.parts[0]?.text).toContain("waiting in inbox")
 
     const runtimeState = await loadRuntimeState(teamRunId, config)
-    expect(runtimeState.members[0]?.pendingInjectedMessageIds).toEqual([])
+    expect(runtimeState.members[0]?.pendingInjectedMessageIds).toEqual([unreadMessageId])
 
     const inboxDir = getInboxDir(resolveBaseDir(config), teamRunId, "worker")
     const processedEntries = await readdir(path.join(inboxDir, "processed"))
     expect(processedEntries).toContain(`${pendingMessageId}.json`)
     const inboxEntries = await readdir(inboxDir)
-    expect(inboxEntries).toContain(`${unreadMessageId}.json`)
+    expect(inboxEntries).toContain(`.delivering-${unreadMessageId}.json`)
   })
 
-  test("acks pending lead messages on idle without sending a wake hint", async () => {
+  test("moves transform-only lead claims into a durable payload wake", async () => {
     // given
     const baseDir = await createTemporaryBaseDir()
     const config = createConfig(baseDir)
@@ -783,19 +890,15 @@ describe("createTeamIdleWakeHint", () => {
     })
 
     // then
-    expect(ackSpy).toHaveBeenCalledTimes(1)
-    expect(ackSpy).toHaveBeenCalledWith(teamRunId, "lead", messageIds, config)
-    expect(promptAsyncSpy).not.toHaveBeenCalled()
+    expect(ackSpy).not.toHaveBeenCalled()
+    expect(promptAsyncSpy).toHaveBeenCalledTimes(1)
 
     const runtimeState = await loadRuntimeState(teamRunId, config)
-    expect(runtimeState.members[0]?.pendingInjectedMessageIds).toEqual([])
+    expect(runtimeState.members[0]?.pendingInjectedMessageIds).toEqual(messageIds)
 
     const inboxDir = getInboxDir(resolveBaseDir(config), teamRunId, "lead")
     const inboxEntries = await readdir(inboxDir)
-    expect(inboxEntries).toContain("processed")
-
-    const processedEntries = await readdir(path.join(inboxDir, "processed"))
-    expect(processedEntries.sort()).toEqual(messageIds.map((messageId) => `${messageId}.json`).sort())
+    expect([...inboxEntries].sort()).toEqual(messageIds.map((messageId) => `.delivering-${messageId}.json`).sort())
   })
 
   test("sends a wake hint during the spawn race when the registry tracks the fresh member session before disk state persists it", async () => {
@@ -846,7 +949,7 @@ describe("createTeamIdleWakeHint", () => {
     if (promptInput === undefined) {
       throw new Error("expected wake hint prompt input")
     }
-    expect(promptInput.body.parts[0]?.text).not.toContain("fresh registry wake hint")
+    expect(promptInput.body.parts[0]?.text).toContain("fresh registry wake hint")
   })
 
   test("falls back to disk lookup when the registry points the member session at the wrong teamRunId", async () => {
@@ -907,6 +1010,8 @@ describe("createTeamIdleWakeHint", () => {
     if (promptInput === undefined) {
       throw new Error("expected wake hint prompt input")
     }
+    expect(promptInput.body.parts[0]?.text).toContain("first correct message")
+    expect(promptInput.body.parts[0]?.text).toContain("second correct message")
     expect(promptInput.body.parts[0]?.text).not.toContain("wrong team message")
     expect(promptInput.body.agent).toBe("atlas")
   })

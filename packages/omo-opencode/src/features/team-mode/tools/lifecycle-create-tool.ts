@@ -1,7 +1,8 @@
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool"
+import path from "node:path"
 
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
-import { getAgentConfigKey } from "../../../shared/agent-display-names"
+import { getAgentConfigKey, stripAgentListSortPrefix } from "../../../shared/agent-display-names"
 import type { OpencodeClient } from "../../../tools/delegate-task/types"
 import type { BackgroundManager } from "../../background-agent/manager"
 import type { TmuxSessionManager } from "../../tmux-subagent/manager"
@@ -66,30 +67,61 @@ export function createTeamCreateTool(
   deps: TeamCreateToolDeps = defaultTeamCreateToolDeps,
 ): ToolDefinition {
   return tool({
-    description: "Create a team run from a named or inline team spec.",
+    description: "Create a team run and spawn member sessions. Provide exactly one of teamName (existing declared spec) or inline_spec (one-off spec); omit unused optional args. Returns teamRunId; monitor with team_status/team_task_list.",
     args: {
-      teamName: tool.schema.string().optional().describe("Named team spec to load. Provide exactly one of teamName or inline_spec."),
-      inline_spec: TeamCreateInlineSpecToolSchema.optional().describe("Inline team spec object or JSON string. Provide exactly one of teamName or inline_spec; members must be a flat array, e.g. { name: \"project-analysis-team\", members: [{ name: \"structure-analyst\", category: \"quick\", prompt: \"Analyze project structure.\" }] }."),
-      leadSessionId: tool.schema.string().optional().describe("Optional non-empty session ID override. Usually omit this and let team_create use the current session."),
+      teamName: tool.schema.string().optional().describe("Name of an existing declared team spec to load. Omit when using inline_spec; do not pass an empty string."),
+      inline_spec: TeamCreateInlineSpecToolSchema.optional().describe("One-off team spec object or JSON string. Omit teamName when using this; members must be a flat array. Default shape: { name: \"project-analysis-team\", members: [{ name: \"structure-analyst\", category: \"quick\", prompt: \"Analyze project structure.\" }] }. Omit unused optional keys."),
     },
     async execute(rawArgs, toolContext) {
       const args = parseTeamCreateArgs(rawArgs)
       const runtimeContext = toolContext as TeamLifecycleToolContext
-      const leadSessionId = args.leadSessionId ?? runtimeContext.sessionID
-      if (!leadSessionId) throw new Error("team_create requires leadSessionId or tool context sessionID")
+      const leadSessionId = runtimeContext.sessionID
+      if (!leadSessionId) throw new Error("team_create requires a tool context sessionID")
       const projectRoot = typeof runtimeContext.directory === "string" ? runtimeContext.directory : process.cwd()
+      const rawCallerAgentKey = typeof runtimeContext.agent === "string"
+        ? stripAgentListSortPrefix(runtimeContext.agent).trim().toLowerCase()
+        : undefined
+      if (
+        rawCallerAgentKey !== undefined
+        && !Object.hasOwn(AGENT_ELIGIBILITY_REGISTRY, rawCallerAgentKey)
+        && rawCallerAgentKey in AGENT_ELIGIBILITY_REGISTRY
+      ) {
+        throw new Error(
+          `team_create denied: caller '${rawCallerAgentKey}' is not a registered team lead agent.`,
+        )
+      }
       const callerTeamLead = resolveCallerTeamLead(runtimeContext.agent)
       if (callerTeamLead.displayName !== undefined) {
         const callerAgentKey = getAgentConfigKey(callerTeamLead.displayName)
-        const callerRegistryEntry = AGENT_ELIGIBILITY_REGISTRY[callerAgentKey]
+        const hasCallerRegistryEntry = Object.hasOwn(AGENT_ELIGIBILITY_REGISTRY, callerAgentKey)
+        if (callerTeamLead.isEligibleForTeamLead && !hasCallerRegistryEntry) {
+          throw new Error(
+            `team_create denied: caller '${callerAgentKey}' is not a registered team lead agent.`,
+          )
+        }
+        const callerRegistryEntry = hasCallerRegistryEntry
+          ? AGENT_ELIGIBILITY_REGISTRY[callerAgentKey]
+          : undefined
         if (callerRegistryEntry?.verdict === "hard-reject") {
           throw new Error(`team_create denied: caller '${callerAgentKey}' is a hard-reject agent and cannot create teams regardless of an explicit 'lead' in the spec. ${callerRegistryEntry.rejectionMessage ?? `Agent '${callerAgentKey}' is not eligible to lead a team.`}`)
         }
       }
       const defaultCategoryName = resolveDefaultInlineCategory(executorConfig?.userCategories)
       const spec = args.teamName
-        ? await deps.loadTeamSpec(args.teamName, config, projectRoot, { callerTeamLead })
+        ? await deps.loadTeamSpec(args.teamName, config, projectRoot, {
+            callerTeamLead,
+            allowUnknownSubagentTypes: true,
+          })
         : parseInlineTeamSpec(args.inline_spec, { callerTeamLead, defaultCategoryName })
+      const leadMember = spec.members.find((member) => member.name === spec.leadAgentId)
+      if (
+        leadMember?.kind === "subagent_type"
+        && !Object.hasOwn(AGENT_ELIGIBILITY_REGISTRY, leadMember.subagent_type)
+      ) {
+        throw new Error(
+          `Project-defined agent '${leadMember.subagent_type}' cannot be a team lead.`,
+        )
+      }
       const participantRuntime = await findParticipantRuntime(leadSessionId, config, deps)
       if (participantRuntime && (participantRuntime.teamName !== spec.name || participantRuntime.leadSessionId !== leadSessionId)) {
         throw new Error(`team_create denied: session is already a participant of team ${participantRuntime.teamRunId}`)

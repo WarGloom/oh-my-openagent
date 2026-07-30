@@ -32,7 +32,7 @@ import { clearTeamSessionRegistry, registerTeamSession } from "../team-session-r
 import type { Message } from "@oh-my-opencode/team-core/types"
 import { MessageSchema } from "@oh-my-opencode/team-core/types"
 import { createTeamIdleWakeHint } from "../../../hooks/team-session-events/team-idle-wake-hint"
-import { createTeamSendMessageTool } from "./messaging"
+import { createTeamSendMessageTool, TEAM_SEND_MESSAGE_CORRELATION_ID_DESCRIPTION } from "./messaging"
 import { resolveTeamRuntimeDetails } from "./messaging-runtime"
 
 type PromptAsyncCall = {
@@ -178,6 +178,14 @@ function parseToolResult(result: string | ToolResult): TeamSendToolResult {
   return TeamSendToolResultSchema.parse(JSON.parse(typeof result === "string" ? result : result.output))
 }
 
+function getToolArgumentDescription(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null || !("description" in value)) {
+    return undefined
+  }
+
+  return typeof value.description === "string" ? value.description : undefined
+}
+
 async function createTeamFixture() {
   const baseDir = await createFixtureBaseDir()
   const config = createConfig(baseDir)
@@ -285,6 +293,27 @@ describe("createTeamSendMessageTool", () => {
     expect(message.from).toBe("m1")
   })
 
+  test("#given the runtime leader is not named lead #when a member sends to lead #then it routes to the leader member", async () => {
+    // given
+    const fixture = await createTeamFixture()
+
+    // when
+    const result = await fixture.tool.execute({
+      teamRunId: fixture.teamRunId,
+      to: "lead",
+      body: "closure-ready",
+    }, fixture.toolContext(fixture.memberOneSessionId))
+    const parsedResult = parseToolResult(result)
+
+    // then
+    expect(parsedResult.deliveredTo).toEqual(["team-lead"])
+    const inboxDir = getInboxDir(resolveBaseDir(fixture.config), fixture.teamRunId, "team-lead")
+    const [messageFile] = (await readdir(inboxDir)).filter((entry) => entry.endsWith(".json"))
+    const message = MessageSchema.parse(JSON.parse(await readFile(path.join(inboxDir, messageFile), "utf8")))
+    expect(message.from).toBe("m1")
+    expect(message.to).toBe("team-lead")
+  })
+
   test("#given recipient tries path traversal #when team_send_message runs #then it rejects without creating an escaped inbox", async () => {
     // given
     const fixture = await createTeamFixture()
@@ -298,8 +327,8 @@ describe("createTeamSendMessageTool", () => {
     }, fixture.toolContext(fixture.memberOneSessionId))
 
     // then
-    await expect(result).rejects.toThrow("unknown or inactive team recipient")
-    await expect(readdir(escapedInboxRoot)).rejects.toThrow()
+    expect(result).rejects.toThrow("unknown or inactive team recipient")
+    expect(readdir(escapedInboxRoot)).rejects.toThrow()
   })
 
   test("treats a host-injected empty correlationId as omitted", async () => {
@@ -960,7 +989,12 @@ describe("createTeamSendMessageTool", () => {
 
     const wakeHint = createTeamIdleWakeHint({
       directory: resolveBaseDir(fixture.config),
-      client,
+      client: {
+        session: {
+          ...client.session,
+          status: async () => ({ data: { [fixture.memberTwoSessionId]: { type: "busy" } } }),
+        },
+      },
     }, fixture.config, { idleSettleMs: 0 })
 
     // when
@@ -1533,6 +1567,7 @@ describe("createTeamSendMessageTool", () => {
             fixture.teamRunId,
             fixture.config,
             "turn-race",
+            { resolvedSessionID: fixture.memberTwoSessionId, insertContent: () => {} },
           )
           return staleIdleSnapshot
         }
@@ -1618,7 +1653,20 @@ describe("createTeamSendMessageTool", () => {
     }, fixture.toolContext(fixture.memberOneSessionId))
 
     // then
-    await expect(result).rejects.toThrow("correlationId")
-    await expect(readdir(getInboxDir(resolveBaseDir(fixture.config), fixture.teamRunId, "m2"))).rejects.toThrow()
+    expect(result).rejects.toThrow("correlationId")
+    expect(readdir(getInboxDir(resolveBaseDir(fixture.config), fixture.teamRunId, "m2"))).rejects.toThrow()
+  })
+
+  test("describes correlationId as omit-unless-existing-UUID guidance", async () => {
+    // given
+    const fixture = await createTeamFixture()
+
+    // when
+    const correlationIdDescription = getToolArgumentDescription(fixture.tool.args.correlationId)
+
+    // then
+    expect(correlationIdDescription).toBe(TEAM_SEND_MESSAGE_CORRELATION_ID_DESCRIPTION)
+    expect(correlationIdDescription).toContain("Omit this field")
+    expect(correlationIdDescription).toContain("do not invent slugs or task IDs")
   })
 })

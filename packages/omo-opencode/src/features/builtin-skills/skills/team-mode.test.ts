@@ -70,4 +70,36 @@ describe("teamModeSkill gating", () => {
       expect(body).toContain(toolName)
     }
   })
+
+  test("team-mode skill distinguishes independent task fanout from coordinated teams", () => {
+    // given
+    const body = teamModeSkill.template
+
+    // when
+    const independentFanoutGuidance = body.includes("independent read-only searches")
+      && body.includes("run_in_background=true")
+      && body.includes("Team mode is for shared task state")
+
+    // then
+    expect(independentFanoutGuidance).toBe(true)
+  })
+
+  test("team-mode skill inline example omits unused optional member keys", () => {
+    // given
+    const body = teamModeSkill.template
+
+    // when
+    const runtimeSafeExampleIndex = body.indexOf("Runtime-safe inline example")
+    const declaredTeamSpecIndex = body.indexOf("Declared TeamSpec files")
+    const runtimeSafeExample = body.slice(runtimeSafeExampleIndex, declaredTeamSpecIndex)
+
+    // then
+    expect(runtimeSafeExampleIndex).toBeGreaterThanOrEqual(0)
+    expect(declaredTeamSpecIndex).toBeGreaterThan(runtimeSafeExampleIndex)
+    expect(runtimeSafeExample).toContain('"category": "quick"')
+    expect(runtimeSafeExample).toContain('"prompt":')
+    expect(runtimeSafeExample).not.toContain("subagent_type")
+    expect(runtimeSafeExample).not.toContain('"kind"')
+    expect(body).toContain("Do not include unrelated member keys with empty-string values")
+  })
 })

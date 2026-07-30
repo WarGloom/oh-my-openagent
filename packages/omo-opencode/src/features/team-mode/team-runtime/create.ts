@@ -2,6 +2,7 @@ import { access, mkdir } from "node:fs/promises"
 import path from "node:path"
 
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
+import type { DelegatedModelConfig } from "../../../shared/model-resolution-types"
 import { QUESTION_DENIED_SESSION_PERMISSION } from "../../../shared/question-denied-session-permission"
 import type { ExecutorContext } from "../../../tools/delegate-task/executor-types"
 import type { BackgroundTask } from "../../background-agent/types"
@@ -77,6 +78,20 @@ async function createMemberWorktree(memberWorktreePath: string, projectRoot: str
   const absolutePath = path.isAbsolute(memberWorktreePath) ? memberWorktreePath : path.resolve(projectRoot, memberWorktreePath)
   await mkdir(absolutePath, { recursive: true })
   return absolutePath
+}
+
+function toPersistedMemberModel(model: DelegatedModelConfig | undefined): RuntimeState["members"][number]["model"] | undefined {
+  if (!model) return undefined
+  return {
+    providerID: model.providerID,
+    modelID: model.modelID,
+    ...(model.variant ? { variant: model.variant } : {}),
+    ...(model.reasoningEffort ? { reasoningEffort: model.reasoningEffort } : {}),
+    ...(model.temperature !== undefined ? { temperature: model.temperature } : {}),
+    ...(model.top_p !== undefined ? { top_p: model.top_p } : {}),
+    ...(model.maxTokens !== undefined ? { maxTokens: model.maxTokens } : {}),
+    ...(model.thinking ? { thinking: model.thinking } : {}),
+  }
 }
 
 async function waitForTaskSessionId(bgMgr: BackgroundManager, task: BackgroundTask, deadlineAt: number): Promise<string> {
@@ -192,8 +207,9 @@ export async function createTeamRun(
             continue
           }
           const resolvedMember = await resolveMember(member, ctx, categoryExamples, spec.leadAgentId)
+          const memberGoal = member.prompt?.replace(/\s+/g, " ").trim()
           const task = await bgMgr.launch({
-            description: `Create team member ${spec.name}/${member.name}`,
+            description: memberGoal ? `${member.name}: ${memberGoal}` : member.name,
             prompt: buildMemberPrompt(spec, member, runtimeState.teamRunId, config, resource.worktreePath),
             agent: resolvedMember.agentToUse,
             parentSessionId: leadSessionId,
@@ -205,16 +221,18 @@ export async function createTeamRun(
             skillContent: resolvedMember.systemContent,
             category: member.kind === "category" ? member.category : undefined,
             sessionPermission: QUESTION_DENIED_SESSION_PERMISSION,
-            onSessionCreated: async (sessionId) => {
+            onSessionCreated: async (sessionId, sessionModel) => {
               registerTeamSession(sessionId, {
                 teamRunId: runtimeState.teamRunId,
                 memberName: member.name,
                 role: member.name === spec.leadAgentId ? "lead" : "member",
               })
+              const persistedSessionModel = toPersistedMemberModel(sessionModel)
               runtimeState = await updateMemberInRuntimeState(runtimeState.teamRunId, member.name, (currentMember) => ({
                 ...currentMember,
                 sessionId,
                 status: "running",
+                ...(persistedSessionModel ? { model: persistedSessionModel } : {}),
               }), config)
             },
           })
@@ -225,18 +243,7 @@ export async function createTeamRun(
             memberName: member.name,
             role: member.name === spec.leadAgentId ? "lead" : "member",
           })
-          const persistedModel = resolvedMember.model
-            ? {
-                providerID: resolvedMember.model.providerID,
-                modelID: resolvedMember.model.modelID,
-                ...(resolvedMember.model.variant ? { variant: resolvedMember.model.variant } : {}),
-                ...(resolvedMember.model.reasoningEffort ? { reasoningEffort: resolvedMember.model.reasoningEffort } : {}),
-                ...(resolvedMember.model.temperature !== undefined ? { temperature: resolvedMember.model.temperature } : {}),
-                ...(resolvedMember.model.top_p !== undefined ? { top_p: resolvedMember.model.top_p } : {}),
-                ...(resolvedMember.model.maxTokens !== undefined ? { maxTokens: resolvedMember.model.maxTokens } : {}),
-                ...(resolvedMember.model.thinking ? { thinking: resolvedMember.model.thinking } : {}),
-              }
-            : undefined
+          const persistedModel = toPersistedMemberModel(resolvedMember.model)
           await updateMemberInRuntimeState(runtimeState.teamRunId, member.name, (currentMember) => ({
             ...currentMember,
             sessionId,
@@ -244,7 +251,9 @@ export async function createTeamRun(
             worktreePath: resource.worktreePath,
             subagent_type: resolvedMember.agentToUse,
             ...(member.kind === "category" ? { category: member.category } : {}),
-            ...(persistedModel ? { model: persistedModel } : {}),
+            ...(currentMember.sessionId === sessionId && currentMember.model
+              ? { model: currentMember.model }
+              : persistedModel ? { model: persistedModel } : {}),
           }), config)
         } catch (error) {
           failure = error instanceof Error ? error : new Error(String(error))
