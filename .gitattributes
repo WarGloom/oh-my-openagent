@@ -13,3 +13,4 @@
 *.yaml text eol=lf
 *.py text eol=lf
 .omo/evidence/**/transcript-ansi.txt -text
+.omo/evidence/**/terminal-ansi.txt -text
