@@ -1,4 +1,5 @@
 import type { BackgroundTaskAttempt, BackgroundTaskStatus } from "./types"
+import { formatParentVisibleError, limitParentVisibleNotification, sanitizeParentVisibleError } from "./parent-visible-error-sanitizer"
 
 export type BackgroundTaskNotificationStatus = "COMPLETED" | "CANCELLED" | "INTERRUPTED" | "ERROR"
 
@@ -38,7 +39,7 @@ function formatAttemptTimeline(task: BackgroundTaskNotificationTask): string {
       ]
 
       if (attempt.status !== "completed" && attempt.error) {
-        attemptLines.push(`    Error: ${attempt.error}`)
+        attemptLines.push(`    Error: ${formatParentVisibleError(attempt.error)}`)
       }
 
       return attemptLines.join("\n")
@@ -49,10 +50,11 @@ function formatAttemptTimeline(task: BackgroundTaskNotificationTask): string {
 }
 
 function formatTaskSummaryLine(task: BackgroundTaskNotificationTask): string {
-  const baseLine = `- \`${task.id}\`: ${task.description || task.id}`
+  const baseLine = `- \`${task.id}\`: ${sanitizeParentVisibleError(task.description || task.id)}`
+  const error = task.error ? formatParentVisibleError(task.error) : undefined
   const statusSuffix = task.status === "completed"
     ? ""
-    : ` [${task.status.toUpperCase()}]${task.error ? ` - ${task.error}` : ""}`
+    : ` [${task.status.toUpperCase()}]${error ? ` - ${error}` : ""}`
   const timeline = formatAttemptTimeline(task)
 
   return `${baseLine}${statusSuffix}${timeline ? `\n${timeline}` : ""}`
@@ -63,13 +65,15 @@ export function buildBackgroundTaskNotificationText(input: {
   duration: string
   statusText: BackgroundTaskNotificationStatus
   allComplete: boolean
+  allTasksComplete?: boolean
   remainingCount: number
   completedTasks: BackgroundTaskNotificationTask[]
 }): string {
   const { task, duration, statusText, allComplete, remainingCount, completedTasks } = input
+  const allTasksComplete = input.allTasksComplete ?? allComplete
 
-  const safeDescription = (t: BackgroundTaskNotificationTask): string => t.description || t.id
-  const errorInfo = task.error ? `\n**Error:** ${task.error}` : ""
+  const safeDescription = (t: BackgroundTaskNotificationTask): string => sanitizeParentVisibleError(t.description || t.id)
+  const errorInfo = task.error ? `\n**Error:** ${formatParentVisibleError(task.error)}` : ""
 
   if (allComplete) {
     const succeededTasks = completedTasks.filter((t) => t.status === "completed")
@@ -83,9 +87,11 @@ export function buildBackgroundTaskNotificationText(input: {
       : ""
 
     const hasFailures = failedTasks.length > 0
-    const header = hasFailures
-      ? `[ALL BACKGROUND TASKS FINISHED - ${failedTasks.length} FAILED]`
-      : "[BACKGROUND TASK COMPLETED]\n[ALL BACKGROUND TASKS COMPLETE]"
+    const header = allTasksComplete
+      ? hasFailures
+        ? `[ALL BACKGROUND TASKS FINISHED - ${failedTasks.length} FAILED]`
+        : "[BACKGROUND TASK COMPLETED]\n[ALL BACKGROUND TASKS COMPLETE]"
+      : `[BACKGROUND TASK BATCH COMPLETE - ${completedTasks.length} TASK${completedTasks.length === 1 ? "" : "S"}]`
 
     let body = ""
     if (succeededText) {
@@ -98,21 +104,23 @@ export function buildBackgroundTaskNotificationText(input: {
       body = `${formatTaskSummaryLine(task)}\n`
     }
 
-    const resultCollectionInstruction = "All sibling background tasks are complete. Your next action should be to call `background_output(task_id=\"<id>\")` for each task ID above."
+    const resultCollectionInstruction = allTasksComplete
+      ? "All sibling background tasks are complete. Your next action should be to call `background_output(task_id=\"<id>\")` for each task ID above."
+      : `Use \`background_output(task_id="<id>")\` to retrieve each result.\n\n**${remainingCount} task${remainingCount === 1 ? "" : "s"} still active for this parent session.**`
 
-    return `<system-reminder>
+    return limitParentVisibleNotification(`<system-reminder>
 ${header}
 
 ${body.trim()}
 
 ${resultCollectionInstruction}${hasFailures ? `\n\n**ACTION REQUIRED:** ${failedTasks.length} task(s) failed. Check errors above and decide whether to retry or proceed.` : ""}
-</system-reminder>`
+</system-reminder>`)
   }
 
   const isFailure = statusText !== "COMPLETED"
   const header = isFailure ? `[BACKGROUND TASK ${statusText}]` : "[BACKGROUND TASK RESULT READY]"
 
-  return `<system-reminder>
+  return limitParentVisibleNotification(`<system-reminder>
 ${header}
 **ID:** \`${task.id}\`
 **Description:** ${safeDescription(task)}
@@ -120,7 +128,6 @@ ${header}
 
 **${remainingCount} task${remainingCount === 1 ? "" : "s"} still in progress.** You WILL be notified when ALL complete.
 ${isFailure ? "**ACTION REQUIRED:** This task failed. Check the error and decide whether to retry, cancel remaining tasks, or continue." : "Do NOT poll - continue productive work."}
-
-Use \`background_output(task_id="${task.id}")\` to retrieve this result when ready.
-</system-reminder>`
+Do not call \`background_output\` for this task yet. Wait for the all-complete notification before collecting results.
+</system-reminder>`)
 }

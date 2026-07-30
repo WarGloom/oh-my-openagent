@@ -1,7 +1,9 @@
+/// <reference types="bun-types" />
+
 import { describe, expect, mock, test } from "bun:test"
 import type { ProviderModelsCache } from "../../shared/connected-providers-cache"
 import type { FallbackEntry } from "../../shared/model-requirements"
-import type { OpencodeClient, QueueItem } from "./constants"
+import type { QueueItem } from "./constants"
 import { ConcurrencyManager } from "./concurrency"
 import type { BackgroundTask } from "./types"
 import { tryFallbackRetry, type FallbackRetryHandlerDeps } from "./fallback-retry-handler"
@@ -27,8 +29,8 @@ function createTask(overrides: Partial<BackgroundTask> = {}): BackgroundTask {
   }
 }
 
-function createClient(): OpencodeClient {
-  return { session: { abort: mock(async () => ({})) } } as OpencodeClient
+function createClient() {
+  return { session: { abort: mock(async () => ({})) } }
 }
 
 function createDeps(): Partial<FallbackRetryHandlerDeps> {
@@ -45,11 +47,13 @@ function createDeps(): Partial<FallbackRetryHandlerDeps> {
 }
 
 function createRetryArgs(overrides: Partial<BackgroundTask> = {}) {
+  const errorInfo: { name?: string; message?: string; statusCode?: number } = {
+    message: "Subscription quota exceeded. You can continue using free models.",
+  }
+
   return {
     task: createTask(overrides),
-    errorInfo: {
-      message: "Subscription quota exceeded. You can continue using free models.",
-    },
+    errorInfo,
     source: "session.error",
     concurrencyManager: new ConcurrencyManager(),
     client: createClient(),
@@ -63,6 +67,40 @@ function createRetryArgs(overrides: Partial<BackgroundTask> = {}) {
 describe("tryFallbackRetry provider-exhaustion opt-in", () => {
   test("#given legacy STOP semantics reject provider exhaustion #when background retry opts in #then it queues the fallback", async () => {
     const args = createRetryArgs()
+
+    const result = await tryFallbackRetry(args)
+
+    expect(result).toBe(true)
+    expect(args.deps.shouldRetryError).toHaveBeenCalledWith(args.errorInfo)
+    expect(args.task.attemptCount).toBe(1)
+    expect(args.task.model).toEqual({
+      providerID: "provider-a",
+      modelID: "fallback-model-1",
+      variant: undefined,
+    })
+    expect(args.queuesByKey.get("provider-a/fallback-model-1")).toHaveLength(1)
+  })
+
+  test("#given monthly spend limit after provider auto-retry #when background retry opts in #then it queues the fallback", async () => {
+    const args = createRetryArgs()
+    args.errorInfo.message = "Claude Code returned an error result: You've hit your monthly spend limit · raise it at claude.ai/settings/usage"
+
+    const result = await tryFallbackRetry(args)
+
+    expect(result).toBe(true)
+    expect(args.task.attemptCount).toBe(1)
+    expect(args.task.model).toEqual({
+      providerID: "provider-a",
+      modelID: "fallback-model-1",
+      variant: undefined,
+    })
+    expect(args.queuesByKey.get("provider-a/fallback-model-1")).toHaveLength(1)
+  })
+
+  test("#given session limit after provider auto-retry #when background retry opts in #then it queues the fallback", async () => {
+    const args = createRetryArgs()
+    args.errorInfo.name = "SessionRetry"
+    args.errorInfo.message = "Claude Code returned an error result: You've hit your session limit · resets 2:30am (Asia/Jerusalem)"
 
     const result = await tryFallbackRetry(args)
 

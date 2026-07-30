@@ -27,10 +27,11 @@ export function createBackgroundCancel(manager: BackgroundManager, _client: Back
 
           for (const task of cancellableTasks) {
             const originalStatus = task.status
+            // Public background_cancel keeps notification enabled so BackgroundManager can defer parent wakes
+            // while the parent session is still active, instead of self-notifying immediately.
             const cancelled = await manager.cancelTask(task.id, {
               source: "background_cancel",
               abortSession: originalStatus === "running",
-              skipNotification: true,
             })
             if (!cancelled) continue
             cancelledInfo.push({
@@ -85,10 +86,11 @@ ${resumeSection}`
 Only running or pending tasks can be cancelled.`
         }
 
+        // Public background_cancel keeps notification enabled so BackgroundManager can defer parent wakes
+        // while the parent session is still active, instead of self-notifying immediately.
         const cancelled = await manager.cancelTask(task.id, {
           source: "background_cancel",
           abortSession: task.status === "running",
-          skipNotification: true,
         })
         if (!cancelled) {
           return `[ERROR] Failed to cancel task: ${task.id}`

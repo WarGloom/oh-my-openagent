@@ -62,6 +62,21 @@ describe("resolveSubagentSpawnContext", () => {
       // then
       await expect(result).rejects.toThrow(/background_task\.maxDepth cannot be enforced safely.*lookup failed/)
     })
+
+    test("includes a structured SDK error message instead of object coercion", async () => {
+      // given
+      const client = createMockClient(unsafeTestValue<OpencodeClient["session"]["get"]>((async () => ({
+        error: { data: { message: "Session not found" }, status: 404 },
+        data: undefined,
+      }))))
+
+      // when
+      const result = resolveSubagentSpawnContext(client, "stale-session")
+
+      // then
+      await expect(result).rejects.toThrow(/failed to resolve session lineage for stale-session.*Session not found/)
+      await expect(result).rejects.not.toThrow("[object Object]")
+    })
   })
 
   describe("#given session.get returns no session data", () => {
