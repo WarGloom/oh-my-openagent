@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 import type { AutoRetryHelpers } from "./auto-retry"
+import type { OhMyOpenCodeConfig } from "../../config"
 import { createRuntimeFallbackHook } from "./hook"
 import type { HookDeps, RuntimeFallbackPluginInput } from "./types"
 import { getCompaction, recordCompactionStart } from "../../shared/compaction-in-flight"
@@ -12,7 +13,9 @@ const mockCreateAutoRetryHelpers = mock((deps: HookDeps) => {
   return {
     abortSessionRequest: async () => {},
     clearSessionFallbackTimeout: () => {},
+    clearSessionFallbackState: () => {},
     scheduleSessionFallbackTimeout: () => {},
+    refreshSessionFallbackTimeout: () => false,
     autoRetryWithFallback: async () => {},
     resolveAgentForSessionFromContext: async () => undefined,
     cleanupStaleSessions: () => {},
@@ -23,10 +26,18 @@ const mockCreateEventHandler = mock((_deps: HookDeps, _helpers: AutoRetryHelpers
 const mockCreateMessageUpdateHandler = mock((_deps: HookDeps, _helpers: AutoRetryHelpers) => async () => {})
 const mockCreateChatMessageHandler = mock((_deps: HookDeps) => async () => {})
 
+const basePluginConfig: OhMyOpenCodeConfig = {
+  git_master: {
+    commit_footer: true,
+    include_co_authored_by: true,
+    git_env_prefix: "GIT_MASTER=1",
+  },
+}
+
 function createHookWithMocks() {
   return createRuntimeFallbackHook(
     createMockContext(),
-    { pluginConfig: {} },
+    { pluginConfig: basePluginConfig },
     {
       createAutoRetryHelpers: mockCreateAutoRetryHelpers,
       createEventHandler: mockCreateEventHandler,

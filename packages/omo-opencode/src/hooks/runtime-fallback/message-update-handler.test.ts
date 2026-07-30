@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test"
 import type { AutoRetryHelpers } from "./auto-retry"
-import { createMessageUpdateHandler } from "./message-update-handler"
 import { createFallbackState } from "./fallback-state"
+import { createMessageUpdateHandler } from "./message-update-handler"
 import type { HookDeps, RuntimeFallbackPluginInput } from "./types"
 import { hasVisibleAssistantResponse } from "./visible-assistant-response"
 import { extractAutoRetrySignal } from "./error-classifier"
@@ -153,11 +153,19 @@ function createRuntimeFallbackDeps(operations: string[]): HookDeps {
       max_fallback_attempts: 3,
       cooldown_seconds: 60,
       timeout_seconds: 30,
+      first_progress_timeout_seconds: 30,
+      stall_timeout_seconds: 600,
+      hard_timeout_seconds: 1800,
       notify_on_fallback: true,
       restore_primary_after_cooldown: false,
     },
     options: undefined,
     pluginConfig: {
+      git_master: {
+        commit_footer: true,
+        include_co_authored_by: true,
+        git_env_prefix: "GIT_MASTER=1",
+      },
       categories: {
         test: {
           fallback_models: ["litellm/openai.eu.gpt-5.5"],
@@ -168,7 +176,13 @@ function createRuntimeFallbackDeps(operations: string[]): HookDeps {
     sessionLastAccess: new Map(),
     sessionRetryInFlight: new Set(),
     sessionAwaitingFallbackResult: new Set(),
+    sessionFallbackAbortInFlight: new Set(),
     sessionFallbackTimeouts: new Map(),
+    sessionFallbackHardTimeouts: new Map(),
+    sessionFallbackTimeoutAgents: new Map(),
+    sessionFallbackTimeoutKinds: new Map(),
+    sessionFallbackProgressObserved: new Set(),
+    sessionFallbackUnsafeToReplay: new Set(),
     sessionStatusRetryKeys: new Map(),
     internallyAbortedSessions: new Set(),
   }
@@ -183,7 +197,9 @@ function createRuntimeFallbackHelpers(deps: HookDeps, operations: string[]): Aut
       }
     },
     clearSessionFallbackTimeout: () => {},
+    clearSessionFallbackState: () => {},
     scheduleSessionFallbackTimeout: () => {},
+    refreshSessionFallbackTimeout: () => false,
     autoRetryWithFallback: async (_sessionID: string, model: string) => {
       operations.push(`retry:${model}`)
       return { accepted: true, status: "dispatched" }
@@ -219,15 +235,15 @@ describe("createMessageUpdateHandler runtime fallback dispatch", () => {
     deps.sessionAwaitingFallbackResult.add(sessionID)
     deps.sessionFallbackTimeouts.set(sessionID, 1)
     const helpers = createRuntimeFallbackHelpers(deps, operations)
-    helpers.clearSessionFallbackTimeout = () => {
-      operations.push("clear-timeout")
+    helpers.clearSessionFallbackState = () => {
+      operations.push("clear-fallback-state")
       deps.sessionFallbackTimeouts.delete(sessionID)
     }
     const handler = createMessageUpdateHandler(deps, helpers)
 
     await handler({ sessionID, info: { role: "assistant", model: "openai/current" } })
 
-    expect(operations).toEqual(["clear-timeout"])
+    expect(operations).toEqual(["clear-fallback-state"])
     expect(deps.sessionFallbackTimeouts.has(sessionID)).toBe(false)
     expect(deps.sessionAwaitingFallbackResult.has(sessionID)).toBe(false)
     expect(state.pendingFallbackModel).toBeUndefined()
@@ -484,6 +500,36 @@ describe("createMessageUpdateHandler runtime fallback dispatch", () => {
     // then
     expect(operations.filter((operation) => operation.startsWith("abort:"))).toEqual([])
     expect(operations.filter((operation) => operation.startsWith("retry:"))).toEqual([])
+  })
+
+  it("#given quota fallback is unsafe to replay #when message update is handled #then no request is aborted or fallback dispatched and the current model is unchanged", async () => {
+    // given
+    const sessionID = "session-quota-fallback-unsafe-replay"
+    const operations: string[] = []
+    SessionCategoryRegistry.register(sessionID, "test")
+    const deps = createRuntimeFallbackDeps(operations)
+    const state = createFallbackState("openai/gpt-5.4")
+    deps.sessionStates.set(sessionID, state)
+    deps.sessionFallbackUnsafeToReplay.add(sessionID)
+    const handler = createMessageUpdateHandler(deps, createRuntimeFallbackHelpers(deps, operations))
+
+    // when
+    await handler({
+      sessionID,
+      info: {
+        role: "assistant",
+        model: "openai/gpt-5.4",
+        error: {
+          name: "ProviderRateLimitError",
+          message: "The usage limit has been reached for this model.",
+        },
+      },
+    })
+
+    // then
+    expect(operations).toEqual([])
+    expect(deps.internallyAbortedSessions.has(sessionID)).toBe(false)
+    expect(state.currentModel).toBe("openai/gpt-5.4")
   })
 })
 

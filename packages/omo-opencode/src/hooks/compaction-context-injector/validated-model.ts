@@ -43,7 +43,9 @@ export function validateCheckpointModel(
     return checkpointModel
   }
 
-  return checkpointModel.providerID === currentModel.providerID && checkpointModel.modelID === currentModel.modelID
+  return checkpointModel.providerID === currentModel.providerID &&
+    checkpointModel.modelID === currentModel.modelID &&
+    (checkpointModel.variant === undefined || checkpointModel.variant === currentModel.variant)
     ? checkpointModel
     : undefined
 }

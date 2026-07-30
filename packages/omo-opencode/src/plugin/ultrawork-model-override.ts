@@ -4,6 +4,8 @@ import { getSessionAgent } from "../features/claude-code-session-state"
 import { ULTRAWORK_PATTERN } from "../hooks/keyword-detector/constants"
 import { log } from "../shared"
 import { getAgentConfigKey } from "../shared/agent-display-names"
+import { hasRuntimeFallbackModelOverride } from "../shared/runtime-fallback-model-override-marker"
+import { setSessionModel } from "../shared/session-model-state"
 import { scheduleDeferredModelOverride } from "./ultrawork-db-model-override"
 import { resolveValidUltraworkVariant } from "./ultrawork-variant-availability"
 
@@ -104,8 +106,9 @@ function applyResolvedUltraworkOverride(args: {
   output: { message: Record<string, unknown> }
   inputAgentName: string | undefined
   tui: unknown
+  sessionID?: string
 }): void {
-  const { override, validatedVariant, output, inputAgentName, tui } = args
+  const { override, validatedVariant, output, inputAgentName, tui, sessionID } = args
   if (validatedVariant) {
     output.message["variant"] = validatedVariant
     output.message["thinking"] = validatedVariant
@@ -114,6 +117,10 @@ function applyResolvedUltraworkOverride(args: {
   if (!override.providerID || !override.modelID) return
 
   const targetModel = { providerID: override.providerID, modelID: override.modelID }
+  const outputAgentName = typeof output.message["agent"] === "string" ? output.message["agent"] : undefined
+  if (sessionID) {
+    setSessionModel(sessionID, targetModel, inputAgentName ?? outputAgentName)
+  }
   const messageId = output.message["id"] as string | undefined
   if (isSameModel(output.message.model, targetModel)) {
     if (validatedVariant && messageId) {
@@ -158,6 +165,13 @@ export function applyUltraworkModelOverrideOnMessage(
   const override = resolveUltraworkOverride(pluginConfig, inputAgentName, output, sessionID)
   if (!override) return
 
+  if (hasRuntimeFallbackModelOverride(output.message)) {
+    log("[ultrawork-model-override] Skip override; runtime fallback model already applied", {
+      sessionID,
+    })
+    return
+  }
+
   const currentModel = getMessageModel(output.message.model)
   const variantTargetModel =
     override.providerID && override.modelID
@@ -168,7 +182,7 @@ export function applyUltraworkModelOverrideOnMessage(
     log("[ultrawork-model-override] SDK validation unavailable, skipping variant override", {
       variant: override.variant,
     })
-    applyResolvedUltraworkOverride({ override, validatedVariant: undefined, output, inputAgentName, tui })
+    applyResolvedUltraworkOverride({ override, validatedVariant: undefined, output, inputAgentName, tui, sessionID })
     return
   }
 
@@ -182,7 +196,7 @@ export function applyUltraworkModelOverrideOnMessage(
         })
       }
 
-      applyResolvedUltraworkOverride({ override, validatedVariant, output, inputAgentName, tui })
+      applyResolvedUltraworkOverride({ override, validatedVariant, output, inputAgentName, tui, sessionID })
     })
     .catch((error) => {
       log("[ultrawork-model-override] Failed to validate ultrawork variant via SDK", {
@@ -191,6 +205,6 @@ export function applyUltraworkModelOverrideOnMessage(
         providerID: variantTargetModel?.providerID,
         modelID: variantTargetModel?.modelID,
       })
-      applyResolvedUltraworkOverride({ override, validatedVariant: undefined, output, inputAgentName, tui })
+      applyResolvedUltraworkOverride({ override, validatedVariant: undefined, output, inputAgentName, tui, sessionID })
     })
 }

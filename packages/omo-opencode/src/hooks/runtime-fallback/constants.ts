@@ -24,11 +24,14 @@ export const DEFAULT_FIRST_PROMPT_WATCHDOG_MS = 300_000
  */
 export const DEFAULT_CONFIG: Required<RuntimeFallbackConfig> = {
   enabled: false,
-  retry_on_errors: [429, 500, 502, 503, 504],
+  retry_on_errors: [413, 429, 500, 502, 503, 504],
   max_fallback_attempts: 3,
   cooldown_seconds: 60,
   timeout_seconds: 30,
   first_prompt_timeout_seconds: DEFAULT_FIRST_PROMPT_WATCHDOG_MS / 1000,
+  first_progress_timeout_seconds: 30,
+  stall_timeout_seconds: 600,
+  hard_timeout_seconds: 1800,
   notify_on_fallback: true,
   restore_primary_after_cooldown: false,
 }
