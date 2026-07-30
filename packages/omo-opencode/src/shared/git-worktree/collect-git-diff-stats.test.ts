@@ -1,6 +1,6 @@
 /// <reference types="bun-types" />
 
-import { describe, expect, test, spyOn, beforeEach, afterEach } from "bun:test"
+import { describe, expect, test, spyOn, beforeEach, afterEach, mock } from "bun:test"
 import * as childProcess from "node:child_process"
 import * as fs from "node:fs"
 import { unsafeTestValue } from "../../../../../test-support/unsafe-test-value"
@@ -9,8 +9,12 @@ describe("collectGitDiffStats", () => {
   let execFileSyncSpy: ReturnType<typeof spyOn>
   let execSyncSpy: ReturnType<typeof spyOn>
   let readFileSyncSpy: ReturnType<typeof spyOn>
+  let collectGitDiffStats: typeof import("./collect-git-diff-stats").collectGitDiffStats
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    mock.restore()
+    ;({ collectGitDiffStats } = await import(`./collect-git-diff-stats?test=${Date.now()}-${Math.random()}`))
+
     execSyncSpy = spyOn(childProcess, "execSync").mockImplementation(() => {
       throw new Error("execSync should not be called")
     })
@@ -43,7 +47,6 @@ describe("collectGitDiffStats", () => {
 
   test("uses execFileSync with arg arrays (no shell injection)", async () => {
     //#given
-    const { collectGitDiffStats } = await import("./collect-git-diff-stats")
     const directory = "/tmp/safe-repo;touch /tmp/pwn"
 
     //#when

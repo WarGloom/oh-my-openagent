@@ -16,6 +16,8 @@ function createMockClient(name: string): Client {
 
 const mockHttpConnect = mock(() => Promise.reject(new Error("Mocked HTTP connection failure")))
 const mockHttpClose = mock(() => Promise.resolve())
+const mockStdioConnect = mock(() => Promise.reject(new Error("Mocked stdio connection failure")))
+const mockStdioClose = mock(() => Promise.resolve())
 let lastTransportInstance: { url?: URL; options?: { requestInit?: RequestInit } } = {}
 
 class MockHttpClient {
@@ -95,6 +97,8 @@ describe("SkillMcpManager", () => {
     })
     mockHttpConnect.mockClear()
     mockHttpClose.mockClear()
+    mockStdioConnect.mockClear()
+    mockStdioClose.mockClear()
     mockTokens.mockClear()
     mockLogin.mockClear()
     mockRefresh.mockClear()

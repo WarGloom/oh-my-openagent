@@ -1,7 +1,8 @@
 /// <reference path="../../../../../bun-test.d.ts" />
 
 import { describe, test, expect } from "bun:test"
-import { createBuiltinSkills } from "./skills"
+import { createBuiltinSkills } from "@oh-my-opencode/skills-loader-core/builtin-skills"
+import { agentBrowserSkill, playwrightSkill } from "@oh-my-opencode/skills-loader-core/builtin-skills/skills/playwright"
 
 describe("createBuiltinSkills", () => {
 	test("returns playwright skill by default", () => {
@@ -13,9 +14,23 @@ describe("createBuiltinSkills", () => {
 		// then
 		const browserSkill = skills.find((s) => s.name === "playwright")
 		expect(browserSkill).toBeDefined()
+		expect(browserSkill?.description).toContain("browser")
 		expect(browserSkill?.mcpConfig?.playwright).toBeDefined()
 	})
 
+	test("exports browser skill contracts with stable tool surfaces", () => {
+		// #given - direct browser skill exports
+
+		// #when
+		const playwrightMcp = playwrightSkill.mcpConfig?.playwright
+
+		// #then
+		expect(playwrightSkill.name).toBe("playwright")
+		expect(playwrightMcp?.command).toBe("npx")
+		expect(playwrightMcp?.args).toEqual(["@playwright/mcp@latest"])
+		expect(agentBrowserSkill.name).toBe("agent-browser")
+		expect(agentBrowserSkill.allowedTools).toEqual(["Bash(agent-browser:*)"])
+	})
 
 	test("returns playwright skill when browserProvider is 'playwright'", () => {
 		// given
@@ -26,8 +41,10 @@ describe("createBuiltinSkills", () => {
 
 		// then
 		const playwrightSkill = skills.find((s) => s.name === "playwright")
+		const agentBrowserSkill = skills.find((s) => s.name === "agent-browser")
 		const devBrowserSkill = skills.find((s) => s.name === "dev-browser")
 		expect(playwrightSkill).toBeDefined()
+		expect(agentBrowserSkill).toBeUndefined()
 		expect(devBrowserSkill).toBeUndefined()
 	})
 
@@ -42,33 +59,57 @@ describe("createBuiltinSkills", () => {
 		const skillNames = skills.map((skill) => skill.name)
 		const devBrowserSkill = skills.find((skill) => skill.name === "dev-browser")
 		const playwrightSkill = skills.find((skill) => skill.name === "playwright")
+		const agentBrowserSkill = skills.find((skill) => skill.name === "agent-browser")
 		expect(devBrowserSkill).toBeDefined()
+		expect(devBrowserSkill?.description).toContain("Browser automation")
 		expect(playwrightSkill).toBeUndefined()
+		expect(agentBrowserSkill).toBeUndefined()
 		expect(skillNames).not.toContain("playwright-cli")
 		expect(skills.some((skill) => skill.allowedTools?.includes("Bash(playwright-cli:*)"))).toBe(false)
 	})
 
-	for (const browserProvider of ["playwright", "playwright-cli", "dev-browser"] as const) {
-		test(`omits the retired builtin for provider ${browserProvider}`, () => {
-			// given: an explicit retained provider
-			const retiredSkillName = ["agent", "browser"].join("-")
-			// when
-			const skills = createBuiltinSkills({ browserProvider })
-			// then: no retired builtin is advertised
-			expect(skills.map((skill) => skill.name)).not.toContain(retiredSkillName)
-		})
-	}
+	test("returns agent-browser skill when browserProvider is 'agent-browser'", () => {
+		// given
+		const options = { browserProvider: "agent-browser" as const }
 
-	test("always includes frontend, git-master, review-work, shared skills, and runtime security skills", () => {
+		// when
+		const skills = createBuiltinSkills(options)
+
+		// then
+		const agentBrowserSkill = skills.find((s) => s.name === "agent-browser")
+		const playwrightSkill = skills.find((s) => s.name === "playwright")
+		expect(agentBrowserSkill).toBeDefined()
+		expect(agentBrowserSkill?.description).toContain("browser")
+		expect(agentBrowserSkill?.allowedTools).toContain("Bash(agent-browser:*)")
+		expect(agentBrowserSkill?.template).toContain("agent-browser")
+		expect(playwrightSkill).toBeUndefined()
+	})
+
+	test("agent-browser skill template exposes bundled command documentation", () => {
+		// given
+		const options = { browserProvider: "agent-browser" as const }
+
+		// when
+		const skills = createBuiltinSkills(options)
+		const agentBrowserSkill = skills.find((s) => s.name === "agent-browser")
+
+		// then
+		expect(agentBrowserSkill?.template).toContain("## Quick start")
+		expect(agentBrowserSkill?.template).toContain("## Commands")
+		expect(agentBrowserSkill?.template).toContain("agent-browser open")
+		expect(agentBrowserSkill?.template).toContain("agent-browser snapshot")
+	})
+
+	test("always includes frontend, git-master, review-work, customize-opencode, shared skills, and runtime security skills", () => {
 		// given - both provider options
 
 		// when
 		const defaultSkills = createBuiltinSkills()
-		const cliSkills = createBuiltinSkills({ browserProvider: "playwright-cli" })
+		const agentBrowserSkills = createBuiltinSkills({ browserProvider: "agent-browser" })
 		const devBrowserSkills = createBuiltinSkills({ browserProvider: "dev-browser" })
 
 		// then
-		for (const skills of [defaultSkills, cliSkills, devBrowserSkills]) {
+		for (const skills of [defaultSkills, agentBrowserSkills, devBrowserSkills]) {
 			expect(skills.find((s) => s.name === "frontend")).toBeDefined()
 			expect(skills.find((s) => s.name === "git-master")).toBeDefined()
 			expect(skills.find((s) => s.name === "review-work")).toBeDefined()
@@ -98,12 +139,12 @@ describe("createBuiltinSkills", () => {
 
 		// when
 		const defaultSkills = createBuiltinSkills()
-		const cliSkills = createBuiltinSkills({ browserProvider: "playwright-cli" })
+		const agentBrowserSkills = createBuiltinSkills({ browserProvider: "agent-browser" })
 		const devBrowserSkills = createBuiltinSkills({ browserProvider: "dev-browser" })
 
 		// then
 		expect(defaultSkills).toHaveLength(11)
-		expect(cliSkills).toHaveLength(11)
+		expect(agentBrowserSkills).toHaveLength(11)
 		expect(devBrowserSkills).toHaveLength(11)
 	})
 
@@ -196,9 +237,10 @@ describe("createBuiltinSkills", () => {
 		const skills = createBuiltinSkills()
 		const customize = skills.find((skill) => skill.name === "customize-opencode")
 
-		// #then
+		// then
 		expect(customize).toBeDefined()
 		expect(customize?.description).toContain("opencode")
+		expect(customize?.template).toContain("opencode.json")
 		expect(customize?.template).toContain(".opencode/")
 	})
 
@@ -228,6 +270,7 @@ describe("createBuiltinSkills", () => {
 
 		// #then
 		expect(initDeep).toBeDefined()
+		expect(initDeep?.description).toContain("hierarchical AGENTS.md")
 		expect(initDeep?.argumentHint).toBe("[--create-new] [--max-depth=N]")
 	})
 
@@ -254,6 +297,17 @@ describe("createBuiltinSkills", () => {
 		// #then
 		expect(reviewWork).toBeDefined()
 		expect(reviewWork?.description).toContain("review")
+	})
+
+	test("review-work skill waits for all background reviews before collecting results", () => {
+		// #given
+		const skills = createBuiltinSkills()
+		const reviewWork = skills.find((s) => s.name === "review-work")
+
+		// #then
+		expect(reviewWork!.template).toContain("Wait for the all-complete system notification")
+		expect(reviewWork!.template).toContain("Do NOT deliver the final report until ALL 5 lanes have a terminal state")
+		expect(reviewWork!.template).toContain("timeout, ack-only reply, or empty child result")
 	})
 
 	test("review-work skill explains Codex tool compatibility before OpenCode orchestration examples", () => {
@@ -317,47 +371,11 @@ describe("createBuiltinSkills", () => {
 
 		// then
 		const playwrightSkill = skills.find((s) => s.name === "playwright")
+		const agentBrowserSkill = skills.find((s) => s.name === "agent-browser")
 		expect(playwrightSkill).toBeDefined()
+		expect(playwrightSkill?.description).toContain("browser")
 		expect(playwrightSkill?.allowedTools).toContain("Bash(playwright-cli:*)")
 		expect(playwrightSkill?.mcpConfig).toBeUndefined()
-	})
-
-	test("#given playwrightMcpArgs option #when creating builtin skills #then extra args are appended to the playwright MCP invocation", () => {
-		// #given
-		const options = {
-			browserProvider: "playwright" as const,
-			playwrightMcpArgs: [
-				"--headless",
-				"--no-sandbox",
-				"--executable-path",
-				"/opt/chromium/chrome",
-			],
-		}
-
-		// #when
-		const skills = createBuiltinSkills(options)
-		const playwright = skills.find((s) => s.name === "playwright")
-
-		// #then
-		expect(playwright?.mcpConfig?.playwright?.command).toBe("npx")
-		expect(playwright?.mcpConfig?.playwright?.args).toEqual([
-			"@playwright/mcp@latest",
-			"--headless",
-			"--no-sandbox",
-			"--executable-path",
-			"/opt/chromium/chrome",
-		])
-	})
-
-	test("#given no playwrightMcpArgs option #when creating builtin skills #then the default MCP invocation is unchanged", () => {
-		// #given
-		const options = { browserProvider: "playwright" as const }
-
-		// #when
-		const skills = createBuiltinSkills(options)
-		const playwright = skills.find((s) => s.name === "playwright")
-
-		// #then
-		expect(playwright?.mcpConfig?.playwright?.args).toEqual(["@playwright/mcp@latest"])
+		expect(agentBrowserSkill).toBeUndefined()
 	})
 })

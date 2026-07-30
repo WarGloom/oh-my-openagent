@@ -1,7 +1,17 @@
 /// <reference types="bun-types" />
 
-import { describe, expect, test } from "bun:test"
-import { formatFileChanges, parseGitDiffNumstat, parseGitStatusPorcelain } from "./index"
+import { beforeEach, describe, expect, mock, test } from "bun:test"
+
+let formatFileChanges: typeof import("./index").formatFileChanges
+let parseGitDiffNumstat: typeof import("./index").parseGitDiffNumstat
+let parseGitStatusPorcelain: typeof import("./index").parseGitStatusPorcelain
+
+beforeEach(async () => {
+  mock.restore()
+  ;({ formatFileChanges } = await import(`./format-file-changes?test=${Date.now()}-${Math.random()}`))
+  ;({ parseGitDiffNumstat } = await import(`./parse-diff-numstat?test=${Date.now()}-${Math.random()}`))
+  ;({ parseGitStatusPorcelain } = await import(`./parse-status-porcelain?test=${Date.now()}-${Math.random()}`))
+})
 
 describe("git-worktree", () => {
   test("#given status porcelain output #when parsing #then maps paths to statuses", () => {

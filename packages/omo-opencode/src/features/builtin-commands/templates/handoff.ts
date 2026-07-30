@@ -45,16 +45,16 @@ Execute these tools to gather concrete data:
 
 1. session_read({ session_id: "$SESSION_ID" }) - full session history (already executed in PHASE 0.5; reuse its output here)
 2. todoread() - current task progress
-3. Bash({ command: "git diff --stat HEAD~10..HEAD" }) - recent file changes
-4. Bash({ command: "git status --porcelain" }) - uncommitted changes
+3. Bash({ command: "git diff --stat HEAD~10..HEAD", description: "Show recent changed files" }) - recent file changes
+4. Bash({ command: "git status --porcelain", description: "Show uncommitted changes" }) - uncommitted changes
 
 Suggested execution order:
 
 \`\`\`
 session_read({ session_id: "$SESSION_ID" })  # already called in PHASE 0.5
 todoread()
-Bash({ command: "git diff --stat HEAD~10..HEAD" })
-Bash({ command: "git status --porcelain" })
+Bash({ command: "git diff --stat HEAD~10..HEAD", description: "Show recent changed files" })
+Bash({ command: "git status --porcelain", description: "Show uncommitted changes" })
 \`\`\`
 
 Analyze the gathered outputs to understand:
