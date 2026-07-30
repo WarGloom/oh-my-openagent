@@ -36,7 +36,7 @@ function isTaskActiveStatus(status: BackgroundTask["status"]): boolean {
 }
 
 function appendTimeoutNote(output: string, timeoutMs: number): string {
-  return `${output}\n\n> **Timed out waiting** after ${timeoutMs}ms. Task is still running; showing latest available output.`
+  return `${output}\n\n> **Wait limit reached** after ${timeoutMs}ms. Task is still running; showing latest available output. The system will notify when it completes.`
 }
 
 function isSessionId(value: string): boolean {
@@ -86,7 +86,7 @@ function formatTaskNotFoundMessage(taskId: string): string {
   return `Task not found: ${taskId}
 
 background_output expects a background task ID such as \`bg_...\`, not a session ID.
-Use the \`background_task_id\` / \`Background Task ID\` from the task launch output or completion notification.
+Use the \`background_task_id\` / \`Background Task ID\` from the task launch output or all-complete notification.
 To inspect this session directly, use \`session_read(session_id="${taskId}")\`, \`session_info\`, or \`session_search\`.`
 }
 

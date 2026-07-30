@@ -1,4 +1,4 @@
-type ParentWakeMessageTime = {
+export type ParentWakeMessageTime = {
   readonly created?: unknown
   readonly updated?: unknown
   readonly completed?: unknown
@@ -6,7 +6,7 @@ type ParentWakeMessageTime = {
   readonly end?: unknown
 }
 
-type ParentWakeMessageActivityPart = {
+export type ParentWakeMessageActivityPart = {
   readonly time?: ParentWakeMessageTime
   readonly state?: {
     readonly time?: ParentWakeMessageTime
@@ -63,10 +63,14 @@ export function getParentWakeMessageCreatedAt(message: ParentWakeMessageActivity
 export function getParentWakeMessageActivityAt(message: ParentWakeMessageActivity): number | undefined {
   let latest = latestTimestamp(latestTimeActivity(message.info?.time), latestTimeActivity(message.time))
   for (const part of message.parts ?? []) {
-    const partActivity = latestTimestamp(latestTimeActivity(part.time), latestTimeActivity(part.state?.time))
+    const partActivity = getParentWakeMessagePartActivityAt(part)
     if (partActivity !== undefined && (latest === undefined || partActivity > latest)) {
       latest = partActivity
     }
   }
   return latest
+}
+
+export function getParentWakeMessagePartActivityAt(part: ParentWakeMessageActivityPart): number | undefined {
+  return latestTimestamp(latestTimeActivity(part.time), latestTimeActivity(part.state?.time))
 }

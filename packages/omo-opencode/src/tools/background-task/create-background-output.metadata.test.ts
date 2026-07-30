@@ -71,7 +71,7 @@ describe("createBackgroundOutput metadata", () => {
       },
     }
     const tool = createBackgroundOutput(manager, client)
-    const context = {
+    const context = unsafeTestValue<ToolContextWithCallID>({
       sessionID: "test-session",
       messageID: "test-message",
       agent: "test-agent",
@@ -81,7 +81,7 @@ describe("createBackgroundOutput metadata", () => {
       metadata: () => {},
       ask: async () => {},
       callID: "call-1",
-    } as ToolContextWithCallID
+    })
 
     // #when
     await tool.execute({ task_id: task.id }, context)
@@ -121,7 +121,7 @@ describe("createBackgroundOutput metadata", () => {
       },
     }
     const tool = createBackgroundOutput(manager, client)
-    const context = {
+    const context = unsafeTestValue<ToolContextWithCallID>({
       sessionID: "test-session",
       messageID: "test-message",
       agent: "test-agent",
@@ -131,7 +131,7 @@ describe("createBackgroundOutput metadata", () => {
       metadata: () => {},
       ask: async () => {},
       callID: "call-1",
-    } satisfies ToolContextWithCallID
+    })
 
     // #when
     const output = await tool.execute({ task_id: "ses-child-task" }, context)
@@ -139,6 +139,7 @@ describe("createBackgroundOutput metadata", () => {
     // #then
     expect(output).toContain("background_output expects a background task ID")
     expect(output).toContain("bg_")
+    expect(output).toContain("all-complete notification")
     expect(output).toContain('session_read(session_id="ses-child-task")')
   })
 })

@@ -1,13 +1,19 @@
 /// <reference types="bun-types" />
 
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, setSystemTime, test } from "bun:test"
 import { tmpdir } from "node:os"
 import type { PluginInput } from "@opencode-ai/plugin"
 import { BackgroundManager } from "./manager"
 import { MIN_ERRORED_IDLE_POLLS } from "./session-stopped-on-error"
 import type { BackgroundTask } from "./types"
+import { DEFAULT_STALE_TIMEOUT_MS } from "./constants"
 
-type SessionMessage = { info: { role: string; error?: unknown }; parts: Array<{ type: string; text?: string }> }
+type SessionMessage = {
+  info: { role: string; error?: unknown; time?: { created: number } }
+  parts: Array<{ type: string; text?: string }>
+}
+
+afterEach(() => setSystemTime())
 
 const ERRORED_TURN: SessionMessage[] = [
   { info: { role: "user" }, parts: [{ type: "text", text: "find nothing" }] },
@@ -108,6 +114,8 @@ describe("BackgroundManager polling a session that stopped on an error", () => {
 
   test("#given an errored idle session #when a recovery prompt resumes it before the threshold #then the task is not failed", async () => {
     // given
+    const recoveryAt = Date.now()
+    setSystemTime(new Date(recoveryAt))
     const state = { status: "idle", messages: ERRORED_TURN }
     const manager = createManager(state, "ses-recovered")
     const task = createRunningTask("ses-recovered")
@@ -116,14 +124,110 @@ describe("BackgroundManager polling a session that stopped on an error", () => {
 
     // when
     state.status = "busy"
-    state.messages = [...ERRORED_TURN, { info: { role: "user" }, parts: [{ type: "text", text: "retry" }] }]
+    state.messages = [
+      ...ERRORED_TURN,
+      { info: { role: "user", time: { created: recoveryAt } }, parts: [{ type: "text", text: "retry" }] },
+    ]
     await pollTimes(manager, 1)
     state.status = "idle"
+    setSystemTime(new Date(recoveryAt + 14_999))
     await pollTimes(manager, MIN_ERRORED_IDLE_POLLS - 1)
     await manager.shutdown()
 
     // then
     expect(task.status).toBe("running")
     expect(task.consecutiveErroredIdlePolls).toBe(0)
+  })
+
+  test("#given an unanswered recovery prompt #when the existing output-settle window expires #then the new turn fails without the old error", async () => {
+    // given
+    const recoveryAt = Date.now()
+    setSystemTime(new Date(recoveryAt))
+    const state = {
+      status: "idle",
+      messages: [
+        ...ERRORED_TURN,
+        { info: { role: "user", time: { created: recoveryAt } }, parts: [{ type: "text", text: "retry" }] },
+      ],
+    }
+    const manager = createManager(state, "ses-recovery-expired")
+    const task = createRunningTask("ses-recovery-expired")
+    manager["tasks"].set(task.id, task)
+
+    // when
+    setSystemTime(new Date(recoveryAt + 15_000))
+    await pollTimes(manager, 1)
+    await manager.shutdown()
+
+    // then
+    expect(task.status).toBe("error")
+    expect(task.error).not.toContain("Rate limit reached for requests")
+  })
+
+  test("#given a recovery prompt within grace #when its real assistant output arrives #then the task completes", async () => {
+    // given
+    const recoveryAt = Date.now()
+    setSystemTime(new Date(recoveryAt))
+    const state: { status: string; messages: SessionMessage[] } = {
+      status: "idle",
+      messages: [
+        ...ERRORED_TURN,
+        { info: { role: "user", time: { created: recoveryAt } }, parts: [{ type: "text", text: "retry" }] },
+      ],
+    }
+    const manager = createManager(state, "ses-recovery-output")
+    const task = createRunningTask("ses-recovery-output")
+    manager["tasks"].set(task.id, task)
+    await pollTimes(manager, 1)
+
+    // when
+    setSystemTime(new Date(recoveryAt + 14_999))
+    state.messages.push({
+      info: { role: "assistant", time: { created: recoveryAt + 14_999 } },
+      parts: [{ type: "text", text: "recovered result" }],
+    })
+    await pollTimes(manager, 1)
+    await manager.shutdown()
+
+    // then
+    expect(task.status).toBe("completed")
+  })
+
+  test("#given a session-present TEAM recovery with a held slot #when recovery grace expires #then the task fails and releases its slot without stale teardown", async () => {
+    // given
+    const recoveryAt = Date.now()
+    setSystemTime(new Date(recoveryAt))
+    const state = {
+      status: "idle",
+      messages: [
+        ...ERRORED_TURN,
+        { info: { role: "user", time: { created: recoveryAt } }, parts: [{ type: "text", text: "retry" }] },
+      ],
+    }
+    const manager = createManager(state, "ses-team-recovery")
+    const task = createRunningTask("ses-team-recovery")
+    task.teamRunId = "team-recovery"
+    task.startedAt = new Date(recoveryAt - DEFAULT_STALE_TIMEOUT_MS - 1)
+    task.progress = { toolCalls: 0, lastUpdate: task.startedAt }
+    task.concurrencyKey = "openai/gpt-fake"
+    task.concurrencyGroup = task.concurrencyKey
+    await manager["concurrencyManager"].acquire(task.concurrencyKey)
+    manager["tasks"].set(task.id, task)
+    setSystemTime(new Date(recoveryAt + 14_999))
+    await pollTimes(manager, 1)
+    expect(task.status).toBe("running")
+    expect(manager["concurrencyManager"].getCount("openai/gpt-fake")).toBe(1)
+
+    // when
+    setSystemTime(new Date(recoveryAt + 15_000))
+    await pollTimes(manager, 1)
+    try {
+      // then
+      expect(task.status).toBe("error")
+      expect(manager["concurrencyManager"].getCount("openai/gpt-fake")).toBe(0)
+      expect(task.error).not.toContain("Rate limit reached for requests")
+    } finally {
+      await manager.shutdown()
+    }
   })
 })
