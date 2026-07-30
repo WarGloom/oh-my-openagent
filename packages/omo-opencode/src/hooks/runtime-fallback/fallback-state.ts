@@ -7,6 +7,7 @@ import type { FallbackState, FallbackResult } from "./types"
 import { HOOK_NAME } from "./constants"
 import { log } from "../../shared/logger"
 import type { RuntimeFallbackConfig } from "../../config"
+import { modelIdentity } from "./model-identity"
 
 export const stringifyRuntimeModel = stringifyRuntimeFallbackModel
 export const stringifyRuntimeModelWithVariant = stringifyRuntimeFallbackModelWithVariant
@@ -29,7 +30,7 @@ export function createFallbackState(originalModel: unknown): FallbackState {
 }
 
 export function isModelInCooldown(model: string, state: FallbackState, cooldownSeconds: number): boolean {
-  const failedAt = state.failedModels.get(model)
+  const failedAt = state.failedModels.get(modelIdentity(model) ?? model)
   if (failedAt === undefined) return false
   const cooldownMs = cooldownSeconds * 1000
   return Date.now() - failedAt < cooldownMs
@@ -84,7 +85,7 @@ export function prepareFallback(
     attempt: state.attemptCount + 1,
   })
 
-  const failedModel = state.currentModel
+  const failedModel = modelIdentity(state.currentModel) ?? state.currentModel
   const now = Date.now()
 
   state.fallbackIndex = fallbackModels.indexOf(nextModel)

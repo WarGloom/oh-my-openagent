@@ -1,6 +1,11 @@
 import { afterEach, describe, it, expect, mock } from "bun:test"
-import { dispatchInternalPrompt, releaseAllPromptAsyncReservationsForTesting } from "./prompt-async-gate"
+import {
+  DEFAULT_PROMPT_DISPATCH_TIMEOUT_MS,
+  dispatchInternalPrompt,
+  releaseAllPromptAsyncReservationsForTesting,
+} from "./prompt-async-gate"
 import { parseModelSuggestion, promptWithModelSuggestionRetry, promptSyncWithModelSuggestionRetry } from "./model-suggestion-retry"
+import { PROMPT_TIMEOUT_MS } from "./prompt-timeout-context"
 import { unsafeTestValue } from "../../../../test-support/unsafe-test-value"
 
 describe("parseModelSuggestion", () => {
@@ -330,33 +335,129 @@ describe("promptWithModelSuggestionRetry", () => {
     expect(promptMock).toHaveBeenCalledTimes(1)
   })
 
-  it("should throw error from promptAsync directly on model-not-found error", async () => {
-    // given a client that fails with model-not-found error
-    const promptMock = mock().mockRejectedValueOnce({
-      name: "ProviderModelNotFoundError",
-      data: {
-        providerID: "anthropic",
-        modelID: "claude-sonet-4",
-        suggestions: ["claude-sonnet-4"],
-      },
-    })
-    const client = { session: { promptAsync: promptMock } }
-
-    // when calling promptWithModelSuggestionRetry
-    // then should throw the error without retrying
-    await expect(
-      promptWithModelSuggestionRetry(unsafeTestValue(client), {
-        path: { id: "session-1" },
-        body: {
-          agent: "explore",
-          parts: [{ type: "text", text: "hello" }],
-          model: { providerID: "anthropic", modelID: "claude-sonet-4" },
+  it("should retry promptAsync with the suggested model on model-not-found error", async () => {
+    // given a client that fails before dispatch with a model-not-found suggestion
+    const promptMock = mock()
+      .mockRejectedValueOnce({
+        name: "ProviderModelNotFoundError",
+        data: {
+          providerID: "anthropic",
+          modelID: "claude-sonet-4",
+          suggestions: ["claude-sonnet-4"],
         },
       })
-    ).rejects.toThrow()
+      .mockResolvedValueOnce(undefined)
+    const client = { session: { promptAsync: promptMock } }
 
-    // and should call promptAsync only once
-    expect(promptMock).toHaveBeenCalledTimes(1)
+    // when
+    await promptWithModelSuggestionRetry(unsafeTestValue(client), {
+      path: { id: "session-1" },
+      body: {
+        agent: "explore",
+        parts: [{ type: "text", text: "hello" }],
+        model: { providerID: "anthropic", modelID: "claude-sonet-4" },
+      },
+    })
+
+    // then
+    expect(promptMock).toHaveBeenCalledTimes(2)
+    expect(promptMock.mock.calls[1]?.[0]).toMatchObject({
+      body: {
+        model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
+      },
+    })
+  })
+
+  it("#given async model suggestion provider does not match the request #when prompt fails #then it does not retry cross-provider", async () => {
+    // given
+    const mismatchError = {
+      name: "ProviderModelNotFoundError",
+      data: {
+        providerID: "openai",
+        modelID: "gpt-5",
+        suggestions: ["gpt-5.5"],
+      },
+    }
+    const promptMock = mock()
+      .mockRejectedValueOnce(mismatchError)
+      .mockResolvedValueOnce(undefined)
+    const client = { session: { promptAsync: promptMock } }
+    const args = {
+      path: { id: "session-cross-provider-suggestion" },
+      body: {
+        parts: [{ type: "text", text: "hello" }],
+        model: { providerID: "anthropic", modelID: "claude-sonet-4" },
+      },
+    }
+
+    // when
+    let caughtError: unknown
+    try {
+      await promptWithModelSuggestionRetry(unsafeTestValue(client), args)
+    } catch (error) {
+      caughtError = error
+    }
+    await promptWithModelSuggestionRetry(unsafeTestValue(client), args)
+
+    // then
+    expect(caughtError).toEqual(mismatchError)
+    expect(promptMock).toHaveBeenCalledTimes(2)
+    expect(promptMock.mock.calls[0]?.[0]).toMatchObject({
+      body: {
+        model: { providerID: "anthropic", modelID: "claude-sonet-4" },
+      },
+    })
+    expect(promptMock.mock.calls[1]?.[0]).toMatchObject({
+      body: {
+        model: { providerID: "anthropic", modelID: "claude-sonet-4" },
+      },
+    })
+  })
+
+  it("#given async model suggestion retry fails before acceptance #when prompting again #then the retry reservation is released", async () => {
+    // given
+    const promptMock = mock()
+      .mockRejectedValueOnce({
+        name: "ProviderModelNotFoundError",
+        data: {
+          providerID: "anthropic",
+          modelID: "claude-sonet-4",
+          suggestions: ["claude-sonnet-4"],
+        },
+      })
+      .mockRejectedValueOnce(new Error("Agent not found: missing-agent"))
+      .mockResolvedValueOnce(undefined)
+    const client = { session: { promptAsync: promptMock } }
+    const args = {
+      path: { id: "session-retry-preaccept-failure" },
+      body: {
+        agent: "missing-agent",
+        parts: [{ type: "text", text: "hello" }],
+        model: { providerID: "anthropic", modelID: "claude-sonet-4" },
+      },
+    }
+
+    // when
+    let caughtError: unknown
+    try {
+      await promptWithModelSuggestionRetry(unsafeTestValue(client), args)
+    } catch (error) {
+      caughtError = error
+    }
+    await promptWithModelSuggestionRetry(unsafeTestValue(client), {
+      ...args,
+      body: {
+        ...args.body,
+        agent: "general",
+      },
+    })
+
+    // then
+    expect(caughtError).toBeInstanceOf(Error)
+    if (caughtError instanceof Error) {
+      expect(caughtError.message).toContain("Agent not found")
+    }
+    expect(promptMock).toHaveBeenCalledTimes(3)
   })
 
   it("should throw original error when no suggestion available", async () => {
@@ -491,27 +592,31 @@ describe("promptWithModelSuggestionRetry", () => {
     })
   })
 
-  it("should throw string error message from promptAsync", async () => {
-    // given a client that fails with a string error
-    const promptMock = mock().mockRejectedValueOnce(
-      new Error("Model not found: anthropic/claude-sonet-4. Did you mean: claude-sonnet-4?")
-    )
+  it("should retry string model-not-found errors from promptAsync", async () => {
+    // given a client that fails with a string model suggestion
+    const promptMock = mock()
+      .mockRejectedValueOnce(
+        new Error("Model not found: anthropic/claude-sonet-4. Did you mean: claude-sonnet-4?")
+      )
+      .mockResolvedValueOnce(undefined)
     const client = { session: { promptAsync: promptMock } }
 
-    // when calling promptWithModelSuggestionRetry
-    // then should throw the error
-    await expect(
-      promptWithModelSuggestionRetry(unsafeTestValue(client), {
-        path: { id: "session-1" },
-        body: {
-          parts: [{ type: "text", text: "hello" }],
-          model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
-        },
-      })
-    ).rejects.toThrow()
+    // when
+    await promptWithModelSuggestionRetry(unsafeTestValue(client), {
+      path: { id: "session-1" },
+      body: {
+        parts: [{ type: "text", text: "hello" }],
+        model: { providerID: "anthropic", modelID: "claude-sonet-4" },
+      },
+    })
 
-    // and should call promptAsync only once
-    expect(promptMock).toHaveBeenCalledTimes(1)
+    // then
+    expect(promptMock).toHaveBeenCalledTimes(2)
+    expect(promptMock.mock.calls[1]?.[0]).toMatchObject({
+      body: {
+        model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
+      },
+    })
   })
 
   it("should throw error when no model in original request", async () => {
@@ -582,6 +687,42 @@ describe("promptSyncWithModelSuggestionRetry", () => {
     // then
     await expect(second).rejects.toThrow("prompt skipped by gate: reserved")
     expect(promptMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("#given sync prompt dispatch uses the default sync timeout #when prompt gate timers are scheduled #then it does not inherit the generic dispatch timeout", async () => {
+    // given
+    const promptMock = mock(async () => undefined)
+    const client = {
+      session: {
+        prompt: promptMock,
+      },
+    }
+    const originalSetTimeout = globalThis.setTimeout
+    const scheduledDelays: number[] = []
+    globalThis.setTimeout = ((handler: Parameters<typeof setTimeout>[0], timeout?: number, ...args: unknown[]) => {
+      scheduledDelays.push(typeof timeout === "number" ? timeout : 0)
+      return typeof handler === "function"
+        ? originalSetTimeout(handler, timeout, ...args)
+        : originalSetTimeout(() => undefined, timeout)
+    }) as typeof setTimeout
+
+    try {
+      // when
+      await promptSyncWithModelSuggestionRetry(unsafeTestValue(client), {
+        path: { id: "session-sync-dispatch-timeout" },
+        body: {
+          parts: [{ type: "text", text: "hello" }],
+          model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
+        },
+      })
+    } finally {
+      globalThis.setTimeout = originalSetTimeout
+    }
+
+    // then
+    expect(promptMock).toHaveBeenCalledTimes(1)
+    expect(scheduledDelays).not.toContain(DEFAULT_PROMPT_DISPATCH_TIMEOUT_MS)
+    expect(scheduledDelays.filter((delay) => delay === PROMPT_TIMEOUT_MS).length).toBeGreaterThanOrEqual(2)
   })
 
   it("should abort and throw timeout error when sync prompt hangs", async () => {
@@ -669,6 +810,38 @@ describe("promptSyncWithModelSuggestionRetry", () => {
       providerID: "anthropic",
       modelID: "claude-sonnet-4",
     })
+  })
+
+  it("#given sync model suggestion provider does not match the request #when prompt fails #then it does not retry cross-provider", async () => {
+    // given
+    const mismatchError = {
+      name: "ProviderModelNotFoundError",
+      data: {
+        providerID: "openai",
+        modelID: "gpt-5",
+        suggestions: ["gpt-5.5"],
+      },
+    }
+    const promptMock = mock().mockRejectedValueOnce(mismatchError)
+    const client = { session: { prompt: promptMock } }
+
+    // when
+    let caughtError: unknown
+    try {
+      await promptSyncWithModelSuggestionRetry(unsafeTestValue(client), {
+        path: { id: "session-1" },
+        body: {
+          parts: [{ type: "text", text: "hello" }],
+          model: { providerID: "anthropic", modelID: "claude-sonet-4" },
+        },
+      })
+    } catch (error) {
+      caughtError = error
+    }
+
+    // then
+    expect(caughtError).toEqual(mismatchError)
+    expect(promptMock).toHaveBeenCalledTimes(1)
   })
 
   it("should throw original error when no suggestion available", async () => {

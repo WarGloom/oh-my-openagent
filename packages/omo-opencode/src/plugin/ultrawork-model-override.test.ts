@@ -7,6 +7,8 @@ setDefaultTimeout(30_000)
 import * as sharedModule from "../shared"
 import * as dbOverrideModule from "./ultrawork-db-model-override"
 import * as sessionStateModule from "../features/claude-code-session-state"
+import { markRuntimeFallbackModelOverride } from "../shared/runtime-fallback-model-override-marker"
+import { clearSessionModel, getSessionModel, setSessionModel } from "../shared/session-model-state"
 import { unsafeTestValue } from "../../../../test-support/unsafe-test-value"
 
 let resolveUltraworkOverride: (typeof import("./ultrawork-model-override"))["resolveUltraworkOverride"]
@@ -257,6 +259,7 @@ describe("applyUltraworkModelOverrideOnMessage", () => {
   afterEach(() => {
     logSpy?.mockRestore()
     dbOverrideSpy?.mockRestore()
+    clearSessionModel("ses_ultrawork_state_sync")
   })
 
   function createMockTui() {
@@ -347,6 +350,49 @@ describe("applyUltraworkModelOverrideOnMessage", () => {
 
     //#then
     expect(output.message.model).toEqual(sonnetModel)
+  })
+
+  test("should sync session model state when DB override is deferred", () => {
+    //#given
+    const sessionID = "ses_ultrawork_state_sync"
+    const staleModel = { providerID: "openai", modelID: "gpt-5.5" }
+    const targetModel = { providerID: "anthropic", modelID: "claude-opus-4-7" }
+    setSessionModel(sessionID, staleModel)
+    const config = createConfig("sisyphus", { model: "anthropic/claude-opus-4-7" })
+    const output = createOutput("ultrawork do something", {
+      existingModel: staleModel,
+      messageId: "msg_123",
+    })
+    const tui = createMockTui()
+
+    //#when
+    applyUltraworkModelOverrideOnMessage(config, "sisyphus", output, tui, sessionID)
+
+    //#then
+    expect(output.message.model).toEqual(staleModel)
+    expect(getSessionModel(sessionID)).toEqual(targetModel)
+  })
+
+  test("should not override a model already applied by runtime fallback", () => {
+    //#given
+    const sessionID = "ses_ultrawork_state_sync"
+    const fallbackModel = { providerID: "github-copilot", modelID: "claude-opus-4.6" }
+    const config = createConfig("sisyphus", { model: "anthropic/claude-opus-4-7" })
+    const output = createOutput("ultrawork do something", {
+      existingModel: fallbackModel,
+      messageId: "msg_123",
+    })
+    markRuntimeFallbackModelOverride(output.message)
+    setSessionModel(sessionID, fallbackModel)
+    const tui = createMockTui()
+
+    //#when
+    applyUltraworkModelOverrideOnMessage(config, "sisyphus", output, tui, sessionID)
+
+    //#then
+    expect(output.message.model).toEqual(fallbackModel)
+    expect(getSessionModel(sessionID)).toEqual(fallbackModel)
+    expect(dbOverrideSpy).not.toHaveBeenCalled()
   })
 
   test("should fall back to direct model mutation without variant when no message ID and no SDK", () => {

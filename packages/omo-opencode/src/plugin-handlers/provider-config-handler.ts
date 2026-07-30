@@ -48,8 +48,7 @@ export function applyProviderConfig(params: {
   modelContextLimitsCache.clear()
 
   const anthropicBeta = providers?.anthropic?.options?.headers?.["anthropic-beta"];
-  params.modelCacheState.anthropicContext1MEnabled =
-    anthropicBeta?.includes("context-1m") ?? false;
+  params.modelCacheState.anthropicContext1MEnabled = anthropicBeta?.includes("context-1m") ?? false
 
   const visionCapableModelsCache = params.modelCacheState.visionCapableModelsCache
     ?? new Map<string, VisionCapableModel>()

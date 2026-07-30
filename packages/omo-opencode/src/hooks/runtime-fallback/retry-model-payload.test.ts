@@ -37,6 +37,33 @@ describe("buildRetryModelPayload", () => {
     })
   })
 
+  test("should preserve Anthropic runtime model IDs", () => {
+    // given
+    const model = "anthropic/claude-opus-4-7(max)"
+
+    // when
+    const result = buildRetryModelPayload(model)
+
+    // then
+    expect(result).toEqual({
+      model: { providerID: "anthropic", modelID: "claude-opus-4-7" },
+      variant: "max",
+    })
+  })
+
+  test("should preserve Anthropic haiku model IDs from fallback config", () => {
+    // given
+    const model = "anthropic/claude-haiku-4-5"
+
+    // when
+    const result = buildRetryModelPayload(model)
+
+    // then
+    expect(result).toEqual({
+      model: { providerID: "anthropic", modelID: "claude-haiku-4-5" },
+    })
+  })
+
   test("should include variant from model string", () => {
     // given
     const model = "anthropic/claude-sonnet-4-5 high"

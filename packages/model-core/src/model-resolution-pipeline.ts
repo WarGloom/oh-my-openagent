@@ -2,6 +2,7 @@ import { fuzzyMatchModel } from "./model-availability"
 import type { FallbackEntry } from "./model-requirements"
 import { transformModelForProvider } from "./provider-model-id-transform"
 import { normalizeModel } from "./model-normalization"
+import { parseModelString, parseVariantFromModelID } from "./model-string-parser"
 import type { ProviderCache } from "./provider-cache"
 
 type LogImplementation = (message: string, data?: unknown) => void
@@ -95,6 +96,37 @@ function findFallbackVariantForModel(
   )?.variant
 }
 
+type ParsedFallbackModel = {
+  baseModel: string
+  providerHint?: string
+  variant?: string
+}
+
+function parseUserFallbackModel(fallbackModel: string): ParsedFallbackModel | undefined {
+  const normalizedFallback = normalizeModel(fallbackModel)
+  if (!normalizedFallback) {
+    return undefined
+  }
+
+  const parsedFullModel = parseModelString(normalizedFallback)
+  if (parsedFullModel) {
+    return {
+      baseModel: `${parsedFullModel.providerID}/${parsedFullModel.modelID}`,
+      providerHint: parsedFullModel.providerID,
+      variant: parsedFullModel.variant,
+    }
+  }
+
+  const parsedModel = parseVariantFromModelID(normalizedFallback)
+  if (!parsedModel.modelID) {
+    return undefined
+  }
+
+  return {
+    baseModel: parsedModel.modelID,
+    variant: parsedModel.variant,
+  }
+}
 
 export function resolveModelPipeline(
   request: ModelResolutionRequest,
@@ -180,27 +212,49 @@ export function resolveModelPipeline(
       if (connectedSet !== null) {
         for (const model of userFallbackModels) {
           attempted.push(model)
-          const parts = model.split("/")
-          if (parts.length >= 2) {
-            const provider = parts[0]
-            if (connectedSet.has(provider)) {
-              const modelName = parts.slice(1).join("/")
-              const transformedModel = `${provider}/${deps.transformModelForProvider(provider, modelName)}`
-              log("Model resolved via user fallback_models (connected provider)", { model: transformedModel, original: model })
-              return { model: transformedModel, provenance: "provider-fallback", attempted }
-            }
+          const parsedFallback = parseUserFallbackModel(model)
+          if (!parsedFallback) {
+            continue
           }
+
+          if (parsedFallback.providerHint) {
+            if (!connectedSet.has(parsedFallback.providerHint)) {
+              continue
+            }
+            const modelNameParts = parsedFallback.baseModel.split("/")
+            modelNameParts.shift()
+            const modelName = modelNameParts.join("/")
+            const provider = parsedFallback.providerHint
+            const transformedModel = `${provider}/${deps.transformModelForProvider(provider, modelName)}`
+            log("Model resolved via user fallback_models (connected provider)", { model: transformedModel, original: model })
+            return { model: transformedModel, provenance: "provider-fallback", attempted }
+          }
+
+          const firstProvider = connectedProviders?.[0]
+          if (!firstProvider) {
+            continue
+          }
+          const transformedModel = `${firstProvider}/${deps.transformModelForProvider(firstProvider, parsedFallback.baseModel)}`
+          log("Model resolved via user fallback_models (connected provider, inferred)", {
+            model: transformedModel,
+            provider: firstProvider,
+            original: model,
+          })
+          return { model: transformedModel, provenance: "provider-fallback", attempted }
         }
         log("No connected provider found in user fallback_models, falling through to hardcoded chain")
       }
     } else {
       for (const model of userFallbackModels) {
         attempted.push(model)
-        const parts = model.split("/")
-        const providerHint = parts.length >= 2 ? [parts[0]] : undefined
-        const match = deps.fuzzyMatchModel(model, availableModels, providerHint)
+        const parsedFallback = parseUserFallbackModel(model)
+        if (!parsedFallback) {
+          continue
+        }
+        const providerHint = parsedFallback.providerHint ? [parsedFallback.providerHint] : undefined
+        const match = deps.fuzzyMatchModel(parsedFallback.baseModel, availableModels, providerHint)
         if (match) {
-          log("Model resolved via user fallback_models (availability confirmed)", { model: model, match })
+          log("Model resolved via user fallback_models (availability confirmed)", { model: parsedFallback.baseModel, match })
           return { model: match, provenance: "provider-fallback", attempted }
         }
       }

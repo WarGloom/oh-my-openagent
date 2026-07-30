@@ -1,4 +1,7 @@
-import { parseModelSuggestion as parseModelSuggestionFromCore } from "@oh-my-opencode/model-core"
+import {
+  parseModelSuggestion as parseModelSuggestionFromCore,
+  type ModelSuggestionInfo,
+} from "@oh-my-opencode/model-core"
 import type {
   SessionPromptAsyncData,
   SessionPromptData,
@@ -18,30 +21,6 @@ import { isAmbiguousPostDispatchPromptFailure } from "./prompt-failure-classifie
 
 export type { ModelSuggestionInfo } from "@oh-my-opencode/model-core"
 export { parseModelSuggestionFromCore as parseModelSuggestion }
-
-function extractMessage(error: unknown): string {
-  if (typeof error === "string") return error
-  if (error instanceof Error) return error.message
-  if (typeof error === "object" && error !== null) {
-    const obj = error as Record<string, unknown>
-    if (typeof obj.message === "string") return obj.message
-    try {
-      return JSON.stringify(error)
-    } catch (stringifyError) {
-      return ""
-    }
-  }
-  return String(error)
-}
-
-function isAgentResolutionError(error: unknown): boolean {
-  const message = extractMessage(error)
-  return message.includes("Agent not found") || message.includes("agent.name")
-}
-
-function shouldReleaseReservationAfterFailedAsyncPrompt(error: unknown): boolean {
-  return parseModelSuggestionFromCore(error) !== null || isAgentResolutionError(error)
-}
 
 type PromptAsyncArgs = Omit<SessionPromptAsyncData, "url" | "body"> & {
   readonly body: NonNullable<SessionPromptAsyncData["body"]>
@@ -68,12 +47,51 @@ type PromptSyncRetryClient = {
   }
 }
 
-export async function promptWithModelSuggestionRetry(
+function extractMessage(error: unknown): string {
+  if (typeof error === "string") return error
+  if (error instanceof Error) return error.message
+  if (typeof error === "object" && error !== null) {
+    const obj = error as Record<string, unknown>
+    if (typeof obj.message === "string") return obj.message
+    try {
+      return JSON.stringify(error)
+    } catch (stringifyError) {
+      stringifyError instanceof Error
+      return ""
+    }
+  }
+  return String(error)
+}
+
+function isAgentResolutionError(error: unknown): boolean {
+  const message = extractMessage(error)
+  return message.includes("Agent not found") || message.includes("agent.name")
+}
+
+function shouldReleaseReservationAfterFailedAsyncPrompt(error: unknown): boolean {
+  return parseModelSuggestionFromCore(error) !== null || isAgentResolutionError(error)
+}
+
+function suggestionMatchesRequestedModel(
+  suggestion: ModelSuggestionInfo,
+  model: { providerID: string; modelID: string },
+): boolean {
+  return suggestion.providerID === model.providerID && suggestion.modelID === model.modelID
+}
+
+function releaseReservationAfterFailedAsyncPrompt(sessionID: string, source: string, error: unknown): void {
+  if (shouldReleaseReservationAfterFailedAsyncPrompt(error)) {
+    releasePromptAsyncReservation(sessionID, source)
+  }
+}
+
+async function dispatchAsyncPromptWithTimeout(
   client: PromptAsyncRetryClient,
   args: PromptAsyncArgs,
-  options: PromptRetryOptions = {},
+  timeoutMs: number,
+  source: string,
+  options: PromptRetryOptions,
 ): Promise<void> {
-  const timeoutMs = options.timeoutMs ?? PROMPT_TIMEOUT_MS
   const timeoutContext = createPromptTimeoutContext(args, timeoutMs)
 
   try {
@@ -85,7 +103,7 @@ export async function promptWithModelSuggestionRetry(
         ...args,
         signal: timeoutContext.signal,
       },
-      source: "model-suggestion-retry",
+      source,
       settleMs: 0,
       ...(options.queueBehavior ? { queueBehavior: options.queueBehavior } : {}),
       ...(options.checkStatus !== undefined ? { checkStatus: options.checkStatus } : {}),
@@ -110,12 +128,53 @@ export async function promptWithModelSuggestionRetry(
     if (timeoutContext.wasTimedOut()) {
       throw new Error(`promptAsync timed out after ${timeoutMs}ms`)
     }
-    if (shouldReleaseReservationAfterFailedAsyncPrompt(error)) {
-      releasePromptAsyncReservation(args.path.id, "model-suggestion-retry")
-    }
     throw error
   } finally {
     timeoutContext.cleanup()
+  }
+}
+
+export async function promptWithModelSuggestionRetry(
+  client: PromptAsyncRetryClient,
+  args: PromptAsyncArgs,
+  options: PromptRetryOptions = {},
+): Promise<void> {
+  const timeoutMs = options.timeoutMs ?? PROMPT_TIMEOUT_MS
+
+  try {
+    await dispatchAsyncPromptWithTimeout(client, args, timeoutMs, "model-suggestion-retry", options)
+  } catch (error) {
+    const suggestion = parseModelSuggestionFromCore(error)
+    const requestedModel = args.body.model
+    if (!suggestion || !requestedModel || !suggestionMatchesRequestedModel(suggestion, requestedModel)) {
+      releaseReservationAfterFailedAsyncPrompt(args.path.id, "model-suggestion-retry", error)
+      throw error
+    }
+
+    releasePromptAsyncReservation(args.path.id, "model-suggestion-retry")
+
+    log("[model-suggestion-retry] Async model not found, retrying with suggestion", {
+      original: `${suggestion.providerID}/${suggestion.modelID}`,
+      suggested: suggestion.suggestion,
+    })
+
+    const retryArgs: PromptAsyncArgs = {
+      ...args,
+      body: {
+        ...args.body,
+        model: {
+          providerID: requestedModel.providerID,
+          modelID: suggestion.suggestion,
+        },
+      },
+    }
+
+    try {
+      await dispatchAsyncPromptWithTimeout(client, retryArgs, timeoutMs, "model-suggestion-retry:retry", options)
+    } catch (retryError) {
+      releaseReservationAfterFailedAsyncPrompt(args.path.id, "model-suggestion-retry:retry", retryError)
+      throw retryError
+    }
   }
 }
 
@@ -138,6 +197,7 @@ export async function promptSyncWithModelSuggestionRetry(
           signal: timeoutContext.signal,
         },
         source: "model-suggestion-retry:sync",
+        dispatchTimeoutMs: timeoutMs,
         settleMs: 0,
         checkStatus: false,
         checkToolState: false,
@@ -167,14 +227,12 @@ export async function promptSyncWithModelSuggestionRetry(
       timeoutContext.cleanup()
     }
   } catch (error) {
+    const requestedModel = args.body.model
     const suggestion = parseModelSuggestionFromCore(error)
-    if (!suggestion || !args.body.model) {
+    if (!suggestion || !requestedModel || !suggestionMatchesRequestedModel(suggestion, requestedModel)) {
       throw error
     }
 
-    // The first attempt failed synchronously with ProviderModelNotFoundError, which means the
-    // prompt did not reach the server. Release the post-dispatch reservation hold so the
-    // immediate retry can dispatch without waiting for the hold window to expire.
     releasePromptAsyncReservation(args.path.id, "model-suggestion-retry:sync")
 
     log("[model-suggestion-retry] Model not found, retrying with suggestion", {
@@ -187,7 +245,7 @@ export async function promptSyncWithModelSuggestionRetry(
       body: {
         ...args.body,
         model: {
-          providerID: suggestion.providerID,
+          providerID: requestedModel.providerID,
           modelID: suggestion.suggestion,
         },
       },
@@ -204,6 +262,7 @@ export async function promptSyncWithModelSuggestionRetry(
           signal: timeoutContext.signal,
         },
         source: "model-suggestion-retry:sync-retry",
+        dispatchTimeoutMs: timeoutMs,
         settleMs: 0,
         checkStatus: false,
         checkToolState: false,

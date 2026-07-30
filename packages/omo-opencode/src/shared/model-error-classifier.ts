@@ -1,21 +1,16 @@
 import {
-  getNextFallback,
-  hasMoreFallbacks,
-  isRetryableModelError,
   selectFallbackProviderWithCache,
-  shouldRetryError,
 } from "@oh-my-opencode/model-core"
-import type { ErrorInfo } from "@oh-my-opencode/model-core"
 import * as connectedProvidersCache from "./connected-providers-cache"
 
-export type { ErrorInfo }
+export type { ErrorInfo } from "@oh-my-opencode/model-core"
 export {
   isRetryableModelError,
   shouldRetryError,
   getNextFallback,
   hasMoreFallbacks,
   selectFallbackProviderWithCache,
-}
+} from "@oh-my-opencode/model-core"
 
 export function selectFallbackProvider(
   providers: string[],

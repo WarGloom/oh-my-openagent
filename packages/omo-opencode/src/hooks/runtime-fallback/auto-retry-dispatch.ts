@@ -27,21 +27,37 @@ export function createAutoRetryDispatcher(
 ) {
   const {
     ctx,
+    config,
+    options,
     sessionStates,
     sessionRetryInFlight,
     sessionAwaitingFallbackResult,
     internallyAbortedSessions,
+    sessionFallbackAbortInFlight = new Set<string>(),
     pluginConfig,
   } = deps
+  const isPositiveNumber = (value: unknown): value is number => typeof value === "number" && value > 0
+  const fallbackTimeoutsEnabled =
+    isPositiveNumber(options?.session_timeout_ms) ||
+    isPositiveNumber(config.timeout_seconds) ||
+    isPositiveNumber(config.first_progress_timeout_seconds) ||
+    isPositiveNumber(config.stall_timeout_seconds) ||
+    isPositiveNumber(config.hard_timeout_seconds)
 
   return async (
     sessionID: string,
     newModel: string,
     resolvedAgent: string | undefined,
     source: string,
+    callbacks?: {
+      onPromptFailedBeforeAccept?: () => void
+      onPromptNotAccepted?: () => void
+      onPromptAccepted?: () => Promise<void> | void
+    },
   ): Promise<AutoRetryDispatchOutcome> => {
     if (sessionRetryInFlight.has(sessionID)) {
       log(`[${HOOK_NAME}] Retry already in flight, skipping (${source})`, { sessionID })
+      callbacks?.onPromptNotAccepted?.()
       return { accepted: false, status: "blocked", reason: "retry already in flight" }
     }
 
@@ -51,17 +67,20 @@ export function createAutoRetryDispatcher(
     )
     if (!retryModelPayload) {
       log(`[${HOOK_NAME}] Invalid model format (missing provider prefix): ${newModel}`)
+      callbacks?.onPromptFailedBeforeAccept?.()
       const state = sessionStates.get(sessionID)
-      if (state?.pendingFallbackModel) {
+      if (!callbacks && state?.pendingFallbackModel) {
         state.pendingFallbackModel = undefined
       }
-      if (state) {
+      if (!callbacks && state) {
         state.pendingFallbackPromptMayHaveBeenAccepted = false
       }
+      sessionFallbackAbortInFlight.delete(sessionID)
       return { accepted: false, status: "invalid-model", reason: "missing provider prefix" }
     }
 
     const hadAwaitingFallbackResult = sessionAwaitingFallbackResult.has(sessionID)
+    const shouldBypassPromptStateChecks = source === "session.status" && !hadAwaitingFallbackResult
     const fallbackState = sessionStates.get(sessionID)
     const isCurrentFallbackGeneration = () => sessionStates.get(sessionID) === fallbackState
     const staleGenerationOutcome = (): AutoRetryDispatchOutcome => {
@@ -81,10 +100,38 @@ export function createAutoRetryDispatcher(
       fallbackState.currentModel = effectiveRetryModel
       fallbackState.pendingFallbackModel = effectiveRetryModel
     }
+
     sessionRetryInFlight.add(sessionID)
     let retryDispatched = false
     let retryMayHaveBeenAccepted = false
     let acceptedStatus: AutoRetryDispatchOutcome["status"] = "dispatched"
+    let fallbackStateRestored = false
+    let fallbackTimeoutScheduled = false
+    const scheduleFallbackTimeoutIfEnabled = (agent: string | undefined): void => {
+      if (!fallbackTimeoutsEnabled) {
+        return
+      }
+      fallbackTimeoutScheduled = true
+      scheduleSessionFallbackTimeout(sessionID, agent)
+    }
+    const restorePromptFailedBeforeAccept = () => {
+      if (callbacks?.onPromptFailedBeforeAccept) {
+        callbacks.onPromptFailedBeforeAccept()
+        fallbackStateRestored = true
+      }
+    }
+    const restorePromptNotAccepted = () => {
+      if (callbacks?.onPromptNotAccepted) {
+        callbacks.onPromptNotAccepted()
+        fallbackStateRestored = true
+      }
+    }
+    const restorePromptFailedIfNeeded = () => {
+      if (!retryDispatched && !retryMayHaveBeenAccepted && !fallbackStateRestored) {
+        restorePromptFailedBeforeAccept()
+      }
+    }
+
     try {
       const messagesResp = await ctx.client.session.messages({
         path: { id: sessionID },
@@ -94,17 +141,18 @@ export function createAutoRetryDispatcher(
 
       const retryPayload = getLastUserRetryPayload(messagesResp, sessionID)
       const originalRetryMetadata = resolveOriginalUserRetryMetadata(messagesResp)
-      const fetchedParts = originalRetryMetadata.parts.length > 0
-        ? originalRetryMetadata.parts
-        : retryPayload.retryParts
+      const fetchedParts =
+        originalRetryMetadata.parts.length > 0
+          ? originalRetryMetadata.parts
+          : retryPayload.retryParts
       const usingFetchedUserParts = originalRetryMetadata.parts.length > 0
       const retryParts =
         fetchedParts.length > 0
-          ? fetchedParts.map((part) => (
+          ? fetchedParts.map((part) =>
               hasInternalInitiatorMarker(part.text) && !hasRuntimeFallbackRetryMarker(part.text)
                 ? { ...part, text: `${part.text}\n${OMO_RUNTIME_FALLBACK_RETRY_MARKER}` }
-                : part
-            ))
+                : part,
+            )
           : (() => {
               log(
                 `[${HOOK_NAME}] No user message parts found for auto-retry (${source}); using synthetic continuation`,
@@ -127,7 +175,7 @@ export function createAutoRetryDispatcher(
       const launchAgent = resolveRegisteredAgentName(retryAgent)
       if (!hadAwaitingFallbackResult) {
         sessionAwaitingFallbackResult.add(sessionID)
-        scheduleSessionFallbackTimeout(sessionID, retryAgent)
+        scheduleFallbackTimeoutIfEnabled(retryAgent)
       }
 
       const retryPromptInput = {
@@ -145,17 +193,19 @@ export function createAutoRetryDispatcher(
       // Our own abort leaves a dangling assistant turn with no terminal error, which
       // the gate's assistant-active check would treat as blocking forever. Skip it.
       const wasInternallyAborted = internallyAbortedSessions.has(sessionID)
-      const dispatchRetryPrompt = (retrySource: string, queueBehavior?: "defer") => dispatchInternalPrompt({
-        mode: "async",
-        client: ctx.client,
-        sessionID,
-        source: retrySource,
-        settleMs: 0,
-        ...(queueBehavior ? { queueBehavior } : {}),
-        ...(wasInternallyAborted ? { checkToolState: false } : {}),
-        shouldDispatch: isCurrentFallbackGeneration,
-        input: retryPromptInput,
-      })
+      const dispatchRetryPrompt = (retrySource: string, queueBehavior?: "defer") =>
+        dispatchInternalPrompt({
+          mode: "async",
+          client: ctx.client,
+          sessionID,
+          source: retrySource,
+          settleMs: 0,
+          ...(queueBehavior ? { queueBehavior } : {}),
+          ...(wasInternallyAborted ? { checkToolState: false } : {}),
+          ...(shouldBypassPromptStateChecks ? { checkStatus: false, checkToolState: false } : {}),
+          shouldDispatch: isCurrentFallbackGeneration,
+          input: retryPromptInput,
+        })
 
       if (!isCurrentFallbackGeneration()) return staleGenerationOutcome()
       let promptResult = await dispatchRetryPrompt(`runtime-fallback:${source}`, "defer")
@@ -171,15 +221,19 @@ export function createAutoRetryDispatcher(
       if (promptResult.status === "failed") {
         if (isAmbiguousPostDispatchPromptFailure(promptResult)) {
           retryMayHaveBeenAccepted = true
-          log(`[${HOOK_NAME}] Auto-retry prompt failed after dispatch may have been accepted (${source}); preserving fallback state`, {
-            sessionID,
-            error: String(promptResult.error),
-          })
+          log(
+            `[${HOOK_NAME}] Auto-retry prompt failed after dispatch may have been accepted (${source}); preserving fallback state`,
+            {
+              sessionID,
+              error: String(promptResult.error),
+            },
+          )
           return { accepted: true, status: "possibly-accepted" }
         }
+        restorePromptFailedBeforeAccept()
         throw promptResult.error
       }
-      if (promptResult.status === "reserved") {
+      if (promptResult.status === "reserved" || promptResult.status === "active") {
         // Session still has an active reservation from the cancelled stream.
         // Retry with linear backoff until the reservation is released.
         const MAX_RESERVED_RETRIES = 6
@@ -199,20 +253,24 @@ export function createAutoRetryDispatcher(
             "defer",
           )
           if (!isCurrentFallbackGeneration()) return staleGenerationOutcome()
-          if (reservedResult.status !== "reserved") break
+          if (reservedResult.status !== "reserved" && reservedResult.status !== "active") break
         }
         if (reservedResult.status === "failed") {
           if (isAmbiguousPostDispatchPromptFailure(reservedResult)) {
             retryMayHaveBeenAccepted = true
-            log(`[${HOOK_NAME}] Auto-retry prompt failed after dispatch may have been accepted (${source}); preserving fallback state`, {
-              sessionID,
-              error: String(reservedResult.error),
-            })
+            log(
+              `[${HOOK_NAME}] Auto-retry prompt failed after dispatch may have been accepted (${source}); preserving fallback state`,
+              {
+                sessionID,
+                error: String(reservedResult.error),
+              },
+            )
             return { accepted: true, status: "possibly-accepted" }
           }
           throw reservedResult.error
         }
         if (!isInternalPromptDispatchAccepted(reservedResult)) {
+          restorePromptNotAccepted()
           log(`[${HOOK_NAME}] Auto-retry skipped by promptAsync gate after reserved retries (${source})`, {
             sessionID,
             status: reservedResult.status,
@@ -221,6 +279,7 @@ export function createAutoRetryDispatcher(
         }
         acceptedStatus = "queued"
       } else if (!isInternalPromptDispatchAccepted(promptResult)) {
+        restorePromptNotAccepted()
         log(`[${HOOK_NAME}] Auto-retry skipped by promptAsync gate (${source})`, {
           sessionID,
           status: promptResult.status,
@@ -230,21 +289,29 @@ export function createAutoRetryDispatcher(
       if (!isCurrentFallbackGeneration()) return staleGenerationOutcome()
       sessionAwaitingFallbackResult.add(sessionID)
       if (hadAwaitingFallbackResult) {
-        scheduleSessionFallbackTimeout(sessionID, retryAgent)
+        scheduleFallbackTimeoutIfEnabled(retryAgent)
       }
       const state = sessionStates.get(sessionID)
       if (state) {
         state.pendingFallbackPromptMayHaveBeenAccepted = false
       }
       retryDispatched = true
+      await callbacks?.onPromptAccepted?.()
       return { accepted: true, status: acceptedStatus }
     } catch (retryError) {
-      if (!(retryError instanceof Error)) {
-        log(`[${HOOK_NAME}] Auto-retry failed (${source})`, { sessionID, error: String(retryError) })
-        return { accepted: false, status: "failed", reason: String(retryError) }
+      restorePromptFailedIfNeeded()
+      if (!isCurrentFallbackGeneration()) {
+        return staleGenerationOutcome()
       }
-      log(`[${HOOK_NAME}] Auto-retry failed (${source})`, { sessionID, error: String(retryError) })
-      return { accepted: false, status: "failed", reason: retryError.message }
+      log(`[${HOOK_NAME}] Auto-retry failed (${source})`, {
+        sessionID,
+        error: retryError instanceof Error ? retryError.message : String(retryError),
+      })
+      return {
+        accepted: false,
+        status: "failed",
+        reason: retryError instanceof Error ? retryError.message : String(retryError),
+      }
     } finally {
       const ownsFallbackGeneration = isCurrentFallbackGeneration()
       if (ownsFallbackGeneration) {
@@ -254,17 +321,21 @@ export function createAutoRetryDispatcher(
         fallbackState.pendingFallbackPromptMayHaveBeenAccepted = true
       }
       if (!retryDispatched && !retryMayHaveBeenAccepted && ownsFallbackGeneration) {
+        sessionFallbackAbortInFlight.delete(sessionID)
         if (hadAwaitingFallbackResult) {
           sessionAwaitingFallbackResult.add(sessionID)
         } else {
           sessionAwaitingFallbackResult.delete(sessionID)
-          clearSessionFallbackTimeout(sessionID)
+          if (fallbackTimeoutScheduled) {
+            clearSessionFallbackTimeout(sessionID)
+          }
         }
-        if (fallbackState) {
+        if (fallbackState && !fallbackStateRestored) {
           fallbackState.currentModel = previousCurrentModel ?? fallbackState.currentModel
           if (hadAwaitingFallbackResult) {
             fallbackState.pendingFallbackModel = previousPendingFallbackModel
-            fallbackState.pendingFallbackPromptMayHaveBeenAccepted = previousPendingFallbackPromptMayHaveBeenAccepted
+            fallbackState.pendingFallbackPromptMayHaveBeenAccepted =
+              previousPendingFallbackPromptMayHaveBeenAccepted
           } else if (fallbackState.pendingFallbackModel) {
             fallbackState.pendingFallbackModel = undefined
             fallbackState.pendingFallbackPromptMayHaveBeenAccepted = false

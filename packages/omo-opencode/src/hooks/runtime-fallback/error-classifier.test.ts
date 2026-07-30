@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
+import { DEFAULT_CONFIG } from "./constants"
 import { classifyErrorType, extractAutoRetrySignal, extractStatusCode, isRetryableError } from "./error-classifier"
 
 describe("runtime-fallback error classifier", () => {
@@ -45,6 +46,20 @@ describe("runtime-fallback error classifier", () => {
     expect(signal).toBeDefined()
   })
 
+  test("detects Claude limit reset status signals without retrying-in countdown text", () => {
+    //#given
+    const info = {
+      status:
+        "Claude Code returned an error result: You've hit your limit · resets 10pm (Asia/Jerusalem)",
+    }
+
+    //#when
+    const signal = extractAutoRetrySignal(info)
+
+    //#then
+    expect(signal).toBeDefined()
+  })
+
   test("treats cooling-down retry messages as retryable", () => {
     //#given
     const error = {
@@ -72,6 +87,21 @@ describe("runtime-fallback error classifier", () => {
 
     //#then
     expect(retryable).toEqual([true, true, true])
+  })
+
+  test("treats 413 payload-too-large status as retryable by default", () => {
+    //#given
+    const errors = [
+      { statusCode: 413, message: "Payload Too Large" },
+      { message: "Request failed with status code 413" },
+    ]
+
+    //#when
+    const retryable = errors.map((error) => isRetryableError(error, DEFAULT_CONFIG.retry_on_errors))
+
+    //#then
+    expect(DEFAULT_CONFIG.retry_on_errors).toContain(413)
+    expect(retryable).toEqual([true, true])
   })
 
   test("treats nested AI SDK retryable Cloudflare timeout errors as retryable", () => {
@@ -279,6 +309,20 @@ describe("runtime-fallback error classifier", () => {
 
     //#then
     expect(signal).toBeUndefined()
+  })
+
+  test("treats unavailable tool alias errors as non-retryable", () => {
+    //#given
+    const error = {
+      message:
+        "Model tried to call unavailable tool 'mcp__plugin_serena_serena__activate_project'. Tool not available. Please try again.",
+    }
+
+    //#when
+    const retryable = isRetryableError(error, [400, 403, 408, 429, 500, 502, 503, 504, 529])
+
+    //#then
+    expect(retryable).toBe(false)
   })
 })
 

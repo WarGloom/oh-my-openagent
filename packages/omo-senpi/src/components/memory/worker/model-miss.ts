@@ -16,6 +16,7 @@ export type RetryableModelMiss =
 const MODEL_NOT_FOUND_PATTERN = /^Error: Model "([^"]+)" not found\. Use --list-models to see available models\.$/m
 const API_KEY_NOT_FOUND_PATTERN = /^(?:Error:\s*)?No API key found for\s+([^\s.]+)/m
 const HTTP_STATUS_PATTERN = /(?:^|\s)(\d{3})\s*:/
+const PROMPT_SHAPE_FAILURE_PATTERN = /(?:context[_ ]length[_ ]exceeded|context overflow|input exceeds (?:the )?context window|exceeds the context window|prompt is too long)/i
 const PROVIDER_DETAIL_MAX_CHARS = 200
 
 export function classifyRetryableModelMiss(result: ModelMissResult): RetryableModelMiss | undefined {
@@ -28,6 +29,7 @@ export function classifyRetryableModelMiss(result: ModelMissResult): RetryableMo
   const detail = providerFailureDetail(result)
   if (detail === undefined) return undefined
   if (isContextOverflowMessage(detail)) return { kind: "context_overflow", detail }
+  if (PROMPT_SHAPE_FAILURE_PATTERN.test(detail)) return undefined
   // A provider-side outage or a spent usage/quota limit says nothing about THIS model being wrong,
   // so the reflection chain moves to the next candidate instead of recording a dead run. The shared
   // classifier owns the pattern table; only a quota the provider marks as terminal stays a stop.

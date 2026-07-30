@@ -313,6 +313,16 @@ describe("getModelCapabilities", () => {
     })
   })
 
+  test("keeps bundled GPT-5.5 limits aligned with OpenCode runtime metadata", () => {
+    const bundledSnapshot = getBundledModelCapabilitiesSnapshot(bundledModelCapabilitiesSnapshotJson)
+
+    expect(bundledSnapshot.models["gpt-5.5"]?.limit).toMatchObject({
+      context: 1_050_000,
+      input: 920_000,
+      output: 130_000,
+    })
+  })
+
   test("falls back to heuristic family rules when no snapshot entry exists", () => {
     const result = getModelCapabilities({
       providerID: "openai",

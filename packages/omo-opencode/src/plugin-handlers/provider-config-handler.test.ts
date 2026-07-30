@@ -46,6 +46,30 @@ describe("applyProviderConfig", () => {
     ])
   })
 
+  test("keeps anthropicContext1MEnabled when anthropic-beta contains context-1m", () => {
+    // given
+    const modelCacheState = createModelCacheState()
+
+    // when
+    applyProviderConfig({
+      config: {
+        provider: {
+          anthropic: {
+            options: {
+              headers: {
+                "anthropic-beta": "context-1m",
+              },
+            },
+          },
+        },
+      },
+      modelCacheState,
+    })
+
+    // then
+    expect(modelCacheState.anthropicContext1MEnabled).toBe(true)
+  })
+
   test("caches vision-capable models from modalities and capabilities", () => {
     // given
     const modelCacheState = createModelCacheState()

@@ -199,9 +199,9 @@ export const SUPPLEMENTAL_MODEL_CAPABILITIES: Record<string, ModelCapabilitiesSn
 			output: ["text"],
 		},
 		limit: {
-			context: 400000,
-			input: 272000,
-			output: 128000,
+			context: 1050000,
+			input: 920000,
+			output: 130000,
 		},
 	},
 	// DeepSeek V4.1 Flash: official API id since 2026-09-10 (models.dev deepseek/deepseek-flash); multimodal input.
