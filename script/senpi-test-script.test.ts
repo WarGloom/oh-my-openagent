@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs"
 import { createHash } from "node:crypto"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { load } from "js-yaml"
 import { runSenpiInstaller } from "../packages/omo-senpi/src/install/install-senpi"
 import { BUILD_NODES, selectBuildNodes } from "./build-nodes"
 
@@ -246,6 +247,8 @@ describe("Senpi compatibility test script", () => {
     const needsReferences = workflow.match(/needs: \[[^\]]*senpi-compatibility[^\]]*\]/g) ?? []
 
     // #then
+    expect(senpiJob).toContain("strategy:")
+    expect(senpiJob).toContain("fail-fast: false")
     expect(senpiJob).toContain("os: [ubuntu-latest, windows-latest]")
     expect(senpiJob).toContain("bash .github/scripts/ci-senpi-posix.sh")
     expect(senpiJob).toContain('node-version: "24"')
@@ -262,5 +265,9 @@ describe("Senpi compatibility test script", () => {
     expect(posixScript).toContain("bun test --timeout 20000 packages/omo-senpi")
     expect(senpiJob).not.toContain("senpi install")
     expect(needsReferences.length, "senpi-compatibility must be included in both downstream needs lists").toBeGreaterThanOrEqual(2)
+    const parsedWorkflow = load(workflow) as { jobs: Record<string, { "continue-on-error"?: boolean }> }
+    const job = parsedWorkflow.jobs["senpi-compatibility"]
+    expect(job).toBeDefined()
+    expect(job?.["continue-on-error"] ?? false, "senpi-compatibility must remain a required CI job, not best-effort").toBe(false)
   })
 })

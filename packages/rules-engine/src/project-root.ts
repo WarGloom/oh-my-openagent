@@ -8,7 +8,11 @@ export function clearProjectRootCache(): void {
   projectRootCache.clear();
 }
 
-export function findProjectRoot(startPath: string): string | null {
+export function findProjectRoot(startPath: string, stopAt?: string): string | null {
+  if (stopAt !== undefined) {
+    return findProjectRootWithoutCache(startPath, stopAt);
+  }
+
   const cached = projectRootCache.get(startPath);
   if (cached !== undefined) return cached;
   const startDir = resolveStartDir(startPath);
@@ -18,18 +22,29 @@ export function findProjectRoot(startPath: string): string | null {
     return cachedStartDir;
   }
 
+  return findProjectRootWithoutCache(startPath);
+}
+
+function findProjectRootWithoutCache(startPath: string, stopAt?: string): string | null {
+  const startDir = resolveStartDir(startPath);
   const visited: string[] = [];
   let current = startDir;
   let resolved: string | null = null;
   while (true) {
-    const cachedAncestor = projectRootCache.get(current);
-    if (cachedAncestor !== undefined) {
-      resolved = cachedAncestor;
-      break;
+    if (stopAt === undefined) {
+      const cachedAncestor = projectRootCache.get(current);
+      if (cachedAncestor !== undefined) {
+        resolved = cachedAncestor;
+        break;
+      }
     }
     visited.push(current);
     if (hasProjectMarker(current)) {
       resolved = current;
+      break;
+    }
+    if (stopAt !== undefined && current === stopAt) {
+      resolved = null;
       break;
     }
     const parent = dirname(current);
@@ -37,8 +52,10 @@ export function findProjectRoot(startPath: string): string | null {
     current = parent;
   }
 
-  for (const directory of visited) projectRootCache.set(directory, resolved);
-  projectRootCache.set(startPath, resolved);
+  if (stopAt === undefined) {
+    for (const directory of visited) projectRootCache.set(directory, resolved);
+    projectRootCache.set(startPath, resolved);
+  }
   return resolved;
 }
 
