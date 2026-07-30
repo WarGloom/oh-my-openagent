@@ -528,10 +528,10 @@ NEVER merge. NEVER comment. NEVER review. Write to file ONLY.
 
 ## Phase 4: Collect & Update
 
-Poll `background_output()` per task. As each completes:
+Wait for the all-complete background task notification, then call `background_output()` for each task:
 1. Parse report.
 2. `task_update(id=task_id, status="completed", description=REPORT_SUMMARY)`
-3. Stream to user immediately.
+3. Stream the collected summaries to the user.
 
 ---
 
