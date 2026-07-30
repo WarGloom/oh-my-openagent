@@ -14,8 +14,11 @@ import {
   shouldReserveRecipientMailbox,
   type TeamSendMessageToolDeps,
 } from "./messaging-runtime"
+import type { RuntimeState } from "@oh-my-opencode/team-core/types"
 
 const MESSAGE_TOOL_KINDS = ["message", "announcement"] as const
+
+export const TEAM_SEND_MESSAGE_CORRELATION_ID_DESCRIPTION = "Optional UUID correlation ID for linking to an existing team message thread. Omit this field unless you are copying an existing UUID; do not invent slugs or task IDs."
 
 export type { LiveDeliveryClient } from "./messaging-live-delivery"
 export type { TeamSendMessageToolDeps } from "./messaging-runtime"
@@ -35,20 +38,29 @@ const TeamSendMessageArgsSchema = z.object({
   references: z.array(TeamReferenceArgsSchema).optional(),
 })
 
+function resolveRecipientAlias(to: string, runtimeState: RuntimeState, senderName: string): string {
+  if (to !== "lead") return to
+
+  const leaderMember = runtimeState.members.find((member) => member.agentType === "leader")
+  if (leaderMember === undefined || leaderMember.name === senderName) return to
+
+  return leaderMember.name
+}
+
 export function createTeamSendMessageTool(
   config: TeamModeConfig,
   client: LiveDeliveryClient,
   deps: TeamSendMessageToolDeps = defaultTeamSendMessageToolDeps,
 ): ToolDefinition {
   return tool({
-    description: "Send a message to a team member or broadcast to the team.",
+    description: "Send an async team message. Recipients receive it automatically as a future conversation turn; this tool returns delivery metadata, not replies or message history.",
     args: {
       teamRunId: tool.schema.string().describe("Team run ID"),
-      to: tool.schema.string().describe("Recipient name or * for broadcast"),
-      body: tool.schema.string().describe("Message body"),
+      to: tool.schema.string().describe("Recipient member name, or * for lead-only broadcast."),
+      body: tool.schema.string().describe("Message body delivered into the recipient's conversation."),
       kind: tool.schema.enum(MESSAGE_TOOL_KINDS).optional().default("message").describe("Message kind"),
-      correlationId: tool.schema.string().optional().describe("Optional UUID correlation ID. Do not use task IDs like 'task-1'."),
-      summary: tool.schema.string().optional().describe("Optional summary"),
+      correlationId: tool.schema.string().optional().describe(TEAM_SEND_MESSAGE_CORRELATION_ID_DESCRIPTION),
+      summary: tool.schema.string().optional().describe("Optional brief summary for notifications/status surfaces."),
       references: tool.schema.array(tool.schema.object({
         path: tool.schema.string(),
         description: tool.schema.string().optional(),
@@ -66,11 +78,13 @@ export function createTeamSendMessageTool(
       const targetDirectory = typeof runtimeContext.directory === "string" ? runtimeContext.directory : process.cwd()
 
       const teamRuntime = await resolveTeamRuntimeDetails(args.teamRunId, sessionID, config, deps)
+      const runtimeState = await deps.loadRuntimeState(teamRuntime.teamRunId, config)
+      const resolvedRecipient = resolveRecipientAlias(args.to, runtimeState, teamRuntime.senderName)
       const message = MessageSchema.parse({
         version: 1,
         messageId: randomUUID(),
         from: teamRuntime.senderName,
-        to: args.to,
+        to: resolvedRecipient,
         body: args.body,
         kind: args.kind ?? "message",
         timestamp: Date.now(),
@@ -87,7 +101,6 @@ export function createTeamSendMessageTool(
         throw new BroadcastNotPermittedError()
       }
 
-      const runtimeState = await deps.loadRuntimeState(teamRuntime.teamRunId, config)
       const reservedRecipients = new Set<string>(
         runtimeState.members
           .filter((member) => shouldReserveRecipientMailbox(member, message, teamRuntime.senderName))

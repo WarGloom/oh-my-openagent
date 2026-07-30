@@ -1,3 +1,5 @@
+/// <reference types="bun-types" />
+
 import { afterEach, describe, expect, it } from "bun:test"
 import { randomUUID } from "node:crypto"
 import { mkdir, mkdtemp, rm } from "node:fs/promises"
@@ -5,6 +7,8 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 
 import { TeamModeConfigSchema } from "../../config/schema/team-mode"
+import type { TeamModeConfig } from "../../config/schema/team-mode"
+import { withInboxConsumerLease } from "../../features/team-mode/team-mailbox"
 import { sendMessage } from "../../features/team-mode/team-mailbox/send"
 import {
   clearTeamSessionRegistry,
@@ -13,6 +17,21 @@ import {
 import { saveRuntimeState } from "../../features/team-mode/team-state-store/store"
 import type { RuntimeState } from "../../features/team-mode/types"
 import { createTeamMailboxInjector } from "./hook"
+
+type MailboxInjectorTestDeps = {
+  readonly withInboxConsumerLease: typeof withInboxConsumerLease
+}
+
+function createDeferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
+  let resolveDeferred: (() => void) | undefined
+  const promise = new Promise<void>((resolve) => {
+    resolveDeferred = resolve
+  })
+  if (resolveDeferred === undefined) {
+    throw new Error("deferred resolver was not initialized")
+  }
+  return { promise, resolve: resolveDeferred }
+}
 
 function createRuntimeState(sessionID: string, teamRunId = randomUUID()): RuntimeState {
   return {
@@ -54,10 +73,11 @@ async function seedRuntimeState(baseDir: string, runtimeState: RuntimeState): Pr
   await saveRuntimeState(runtimeState, config)
 }
 
-function createHook(baseDir: string) {
+function createHook(baseDir: string, deps?: MailboxInjectorTestDeps) {
   return createTeamMailboxInjector(
     {},
     TeamModeConfigSchema.parse({ enabled: true, base_dir: baseDir }),
+    deps,
   )
 }
 
@@ -145,6 +165,76 @@ describe("createTeamMailboxInjector", () => {
         },
       ],
     })
+  })
+
+  it("#given idle settlement attempts after transform persists its claim #when synthetic insertion is paused #then settlement enters only after insertion releases the inbox lease", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    temporaryDirectories.push(baseDir)
+    const config = TeamModeConfigSchema.parse({ base_dir: baseDir, enabled: true })
+    const runtimeState = createRuntimeState("session-member")
+    const messageId = randomUUID()
+    await seedRuntimeState(baseDir, runtimeState)
+    await sendMessage({
+      version: 1,
+      messageId,
+      from: "lead",
+      to: "member-a",
+      kind: "message",
+      body: "race-sensitive synthetic claim",
+      timestamp: 1,
+    }, runtimeState.teamRunId, config, { isLead: true, activeMembers: ["lead", "member-a"] })
+    const output = createOutput("session-member")
+    const leaseAcquired = createDeferred()
+    const leaseReleased = createDeferred()
+    let leaseHeld = false
+    let settlementCompleted = false
+    let insertionObservedBeforeSettlement = false
+    const serializedLease = async <T>(
+      _teamRunId: string,
+      _recipient: string,
+      _config: TeamModeConfig,
+      operation: () => Promise<T>,
+      _options: { readonly staleAfterMs: number },
+    ): Promise<T> => {
+      if (leaseHeld) {
+        await leaseReleased.promise
+        return operation()
+      }
+      leaseHeld = true
+      leaseAcquired.resolve()
+      try {
+        const result = await operation()
+        insertionObservedBeforeSettlement = output.messages.length === 2 && !settlementCompleted
+        return result
+      } finally {
+        leaseHeld = false
+        leaseReleased.resolve()
+      }
+    }
+    const hook = createHook(baseDir, {
+      withInboxConsumerLease: serializedLease,
+    })
+
+    // when
+    const hookRun = hook["experimental.chat.messages.transform"]?.({ sessionID: "session-member" }, output)
+    await leaseAcquired.promise
+    const pendingSettlement = serializedLease(
+      runtimeState.teamRunId,
+      "member-a",
+      config,
+      async () => {
+        settlementCompleted = true
+      },
+      { staleAfterMs: 0 },
+    )
+    await hookRun
+    await pendingSettlement
+
+    // then
+    expect(insertionObservedBeforeSettlement).toBe(true)
+    expect(settlementCompleted).toBe(true)
+    expect(output.messages[0]?.parts[0]?.text).toContain(messageId)
   })
 
   it("does not inject twice for the same turn marker", async () => {

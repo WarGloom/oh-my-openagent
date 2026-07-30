@@ -147,12 +147,12 @@ describe("team lifecycle tools", () => {
     expect(result.runtimeState.members[0]).toMatchObject({ name: "lead", agentType: "leader" })
   })
 
-  test("team_create treats an empty leadSessionId override as absent and uses the context session", async () => {
+  test("team_create ignores a legacy leadSessionId override and uses the context session", async () => {
     // given
     const teamCreateTool = createTeamCreateToolForTest()
 
     // when
-    await teamCreateTool.execute({ inline_spec: createSpec(), leadSessionId: "" }, createToolContext("lead-session"))
+    await teamCreateTool.execute({ inline_spec: createSpec(), leadSessionId: "stale-session" }, createToolContext("lead-session"))
 
     // then
     expect(createTeamRunMock).toHaveBeenCalledWith(
@@ -166,30 +166,71 @@ describe("team lifecycle tools", () => {
     )
   })
 
-  test("team_create rejects when neither leadSessionId nor a context session is available", async () => {
+  test("team_create rejects when the tool context session is unavailable", async () => {
     // given
     const teamCreateTool = createTeamCreateToolForTest()
 
     // when
     let errorMessage = ""
     try {
-      await teamCreateTool.execute({ inline_spec: createSpec(), leadSessionId: "" }, createToolContext(""))
+      await teamCreateTool.execute({ inline_spec: createSpec() }, createToolContext(""))
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : String(error)
     }
 
     // then
-    expect(errorMessage).toContain("leadSessionId")
+    expect(errorMessage).toContain("tool context sessionID")
   })
 
-  test("team_create checks participant conflicts against the effective leadSessionId override", async () => {
+  test("team_create treats empty optional strings as omitted for inline specs", async () => {
     // given
     const teamCreateTool = createTeamCreateToolForTest()
-    await teamCreateTool.execute({ inline_spec: createSpec(), leadSessionId: "effective-lead-session" }, createToolContext("caller-session-a"))
+
+    // when
+    const result = parseToolResult<{ teamRunId: string }>(await teamCreateTool.execute({ teamName: "", inline_spec: createSpec() }, createToolContext("lead-session")))
+
+    // then
+    expect(result.teamRunId).toBe("team-run-1")
+    expect(createTeamRunMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "lead-session",
+      expect.anything(),
+      config,
+      backgroundManager,
+      undefined,
+      { callerAgentTypeId: undefined, parentMessageID: expect.any(String) },
+    )
+  })
+
+  test("team_create treats empty optional strings as omitted for named specs", async () => {
+    // given
+    const teamCreateTool = createTeamCreateToolForTest()
+
+    // when
+    const result = parseToolResult<{ teamRunId: string }>(await teamCreateTool.execute({ teamName: "alpha-team", inline_spec: "" }, createToolContext("lead-session")))
+
+    // then
+    expect(result.teamRunId).toBe("team-run-1")
+    expect(loadTeamSpecMock).toHaveBeenCalledWith("alpha-team", config, "/project", expect.anything())
+    expect(createTeamRunMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "lead-session",
+      expect.anything(),
+      config,
+      backgroundManager,
+      undefined,
+      { callerAgentTypeId: undefined, parentMessageID: expect.any(String) },
+    )
+  })
+
+  test("team_create checks participant conflicts against the caller session", async () => {
+    // given
+    const teamCreateTool = createTeamCreateToolForTest()
+    await teamCreateTool.execute({ inline_spec: createSpec() }, createToolContext("caller-session"))
     const betaSpec = { ...createSpec(), name: "beta-team" }
 
     // when
-    const result = teamCreateTool.execute({ inline_spec: betaSpec, leadSessionId: "effective-lead-session" }, createToolContext("caller-session-b"))
+    const result = teamCreateTool.execute({ inline_spec: betaSpec, leadSessionId: "different-stale-session" }, createToolContext("caller-session"))
 
     // then
     expect(result).rejects.toThrow("team_create denied: session is already a participant")

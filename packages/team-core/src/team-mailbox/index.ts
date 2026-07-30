@@ -16,5 +16,6 @@ export {
   commitDeliveryReservation,
   releaseDeliveryReservation,
   reclaimStaleReservations,
+  inspectDeliveryReservationState,
 } from "./reservation"
-export type { DeliveryReservation } from "./reservation"
+export type { DeliveryReservation, DeliveryReservationState } from "./reservation"

@@ -80,12 +80,15 @@ export async function requeuePendingLiveDeliveries(
   memberName: string,
   messageIds: readonly string[],
   config: TeamModeConfig,
-): Promise<void> {
+): Promise<string[]> {
+  const requeuedMessageIds: string[] = []
   for (const messageId of messageIds) {
     const reservation = await reserveMessageForDelivery(teamRunId, memberName, messageId, config)
     if (reservation === null) {
       continue
     }
     await releaseDeliveryReservation(reservation)
+    requeuedMessageIds.push(messageId)
   }
+  return requeuedMessageIds
 }

@@ -3,6 +3,7 @@ import {
   promptSyncWithModelSuggestionRetry,
   promptWithModelSuggestionRetry,
 } from "./model-suggestion-retry"
+import type { PromptRetryOptions } from "./prompt-timeout-context"
 import { dispatchInternalPrompt, isInternalPromptDispatchAccepted } from "./prompt-async-gate"
 import { isAmbiguousPostDispatchPromptFailure } from "./prompt-failure-classifier"
 
@@ -86,8 +87,9 @@ export function promptWithRetryInDirectory(
   client: PromptRetryClient,
   args: PromptRetryArgs,
   directory: string,
+  options: PromptRetryOptions = {},
 ): Promise<void> {
-  return promptWithModelSuggestionRetry(client, routePromptRetry(args, directory), { queueBehavior: "defer" })
+  return promptWithModelSuggestionRetry(client, routePromptRetry(args, directory), { queueBehavior: "defer", ...options })
 }
 
 export function promptSyncWithRetryInDirectory(

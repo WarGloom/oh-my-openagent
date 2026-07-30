@@ -63,14 +63,19 @@ function createRuntimeState(teamRunId: string): RuntimeState {
   }
 }
 
-function createRuntimeStateWithPendingMessage(teamRunId: string, messageId: string): RuntimeState {
+function createRuntimeStateWithPendingMessages(teamRunId: string, messageIds: readonly string[]): RuntimeState {
   const runtimeState = createRuntimeState(teamRunId)
   const worker = runtimeState.members[0]
   if (worker === undefined) {
     throw new Error("worker member missing from fixture")
   }
-  worker.pendingInjectedMessageIds = [messageId]
+  worker.pendingInjectedMessageIds = [...messageIds]
+  worker.lastInjectedTurnMarker = "turn:blocked-until-error-requeue"
   return runtimeState
+}
+
+function createRuntimeStateWithPendingMessage(teamRunId: string, messageId: string): RuntimeState {
+  return createRuntimeStateWithPendingMessages(teamRunId, [messageId])
 }
 
 function createRuntimeStateWithLeader(teamRunId: string, pendingInjectedMessageIds: string[] = []): RuntimeState {
@@ -193,6 +198,74 @@ describe("createTeamMemberErrorHandler", () => {
     const workerInboxEntries = await readdir(getInboxDir(resolveBaseDir(config), teamRunId, "worker"))
     expect(workerInboxEntries).toContain(`.delivering-${messageId}.json`)
     expect(workerInboxEntries).not.toContain(`${messageId}.json`)
+  })
+
+  test("keeps a retryable background-managed member running while fallback recovery owns the error", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    const config = createConfig(baseDir)
+    const teamRunId = randomUUID()
+    await seedRuntimeState(createRuntimeState(teamRunId), config)
+    const consumedSessions: string[] = []
+    const handler = createTeamMemberErrorHandler(config, {
+      backgroundManager: {
+        findBySession: () => ({
+          status: "running",
+          teamRunId,
+        }),
+        consumeFallbackRetryResult: (sessionID: string) => {
+          consumedSessions.push(sessionID)
+          return Promise.resolve(true)
+        },
+        getFallbackRetryResult: () => {
+          throw new Error("consume should be preferred")
+        },
+      },
+    })
+
+    // when
+    await handler({
+      event: {
+        type: "session.error",
+        properties: { sessionID: "member-session", error: new Error("hit rate limit") },
+      },
+    })
+
+    // then
+    const runtimeState = await loadRuntimeState(teamRunId, config)
+    expect(runtimeState.status).toBe("active")
+    expect(runtimeState.members[0]?.status).toBe("running")
+    expect(consumedSessions).toEqual(["member-session"])
+  })
+
+  test("marks a retryable background-managed member errored when fallback recovery does not start", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    const config = createConfig(baseDir)
+    const teamRunId = randomUUID()
+    await seedRuntimeState(createRuntimeState(teamRunId), config)
+    const handler = createTeamMemberErrorHandler(config, {
+      backgroundManager: {
+        findBySession: () => ({
+          status: "running",
+          teamRunId,
+        }),
+        getFallbackRetryResult: () => Promise.resolve(false),
+      },
+    })
+
+    // when
+    await handler({
+      event: {
+        type: "session.error",
+        properties: { sessionID: "member-session", error: new Error("hit rate limit") },
+      },
+    })
+
+    // then
+    const runtimeState = await loadRuntimeState(teamRunId, config)
+    expect(runtimeState.status).toBe("active")
+    expect(runtimeState.members[0]?.status).toBe("errored")
   })
 
   test("marks the member errored during the spawn race when the registry tracks the fresh session before disk state persists it", async () => {
@@ -359,6 +432,7 @@ describe("createTeamMemberErrorHandler", () => {
     const runtimeState = await loadRuntimeState(teamRunId, config)
     expect(runtimeState.members[0]?.status).toBe("errored")
     expect(runtimeState.members[0]?.pendingInjectedMessageIds).toEqual([])
+    expect(runtimeState.members[0]?.lastInjectedTurnMarker).toBeUndefined()
 
     const inboxEntries = await readdir(getInboxDir(resolveBaseDir(config), teamRunId, "worker"))
     expect(inboxEntries).toContain(`${messageId}.json`)
@@ -402,7 +476,7 @@ describe("createTeamMemberErrorHandler", () => {
     expect(inboxEntries).not.toContain("processed")
   })
 
-  test("#given session.error arrives after peer message reached history #when pending live delivery exists #then it does not requeue a duplicate peer message", async () => {
+  test("#given every pending claim is reserved and history-confirmed #when session.error arrives #then the singleton live batch remains running and reserved", async () => {
     // given
     const baseDir = await createTemporaryBaseDir()
     const config = createConfig(baseDir)
@@ -449,5 +523,43 @@ describe("createTeamMemberErrorHandler", () => {
     expect(inboxEntries).toContain(`.delivering-${messageId}.json`)
     expect(inboxEntries).not.toContain(`${messageId}.json`)
     expect(inboxEntries).not.toContain("processed")
+  })
+
+  test("#given two reserved claims and history confirms only one #when terminal error settles #then both claims are requeued", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    const config = createConfig(baseDir)
+    const teamRunId = randomUUID()
+    const deliveredMessageId = randomUUID()
+    const unconfirmedMessageId = randomUUID()
+    await seedRuntimeState(createRuntimeStateWithPendingMessages(teamRunId, [deliveredMessageId, unconfirmedMessageId]), config)
+    await seedReservedMessage(teamRunId, config, deliveredMessageId)
+    await seedReservedMessage(teamRunId, config, unconfirmedMessageId)
+    const handler = createTeamMemberErrorHandler(config, {
+      settleMs: 0,
+      client: {
+        session: {
+          status: async () => ({ data: { "member-session": { type: "idle" } } }),
+          messages: async () => ({ data: [{ text: `<peer_message messageId="${deliveredMessageId}">delivered live claim</peer_message>` }] }),
+        },
+      },
+    })
+
+    // when
+    await handler({
+      event: {
+        type: "session.error",
+        properties: { sessionID: "member-session", error: new Error("terminal partial-batch failure") },
+      },
+    })
+
+    // then
+    const runtimeState = await loadRuntimeState(teamRunId, config)
+    expect(runtimeState.members[0]?.status).toBe("errored")
+    expect(runtimeState.members[0]?.pendingInjectedMessageIds).toEqual([])
+    const inboxEntries = await readdir(getInboxDir(resolveBaseDir(config), teamRunId, "worker"))
+    expect(inboxEntries).toContain(`${deliveredMessageId}.json`)
+    expect(inboxEntries).toContain(`${unconfirmedMessageId}.json`)
+    expect(inboxEntries.some((entry) => entry.startsWith(".delivering-"))).toBe(false)
   })
 })
