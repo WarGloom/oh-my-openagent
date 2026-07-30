@@ -37,3 +37,4 @@ packages/omo-senpi/src/components/telemetry/schema-registry/** -text
 packages/omo-senpi/vendor/** -text -whitespace
 
 .omo/evidence/**/transcript-ansi.txt -text
+.omo/evidence/**/terminal-ansi.txt -text
