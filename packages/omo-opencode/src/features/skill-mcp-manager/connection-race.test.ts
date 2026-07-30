@@ -4,6 +4,8 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js"
 import type { ClaudeCodeMcpServer } from "../claude-code-mcp-loader/types"
 import { setStdioClientDependenciesForTesting } from "./stdio-client"
 import type { SkillMcpClientInfo, SkillMcpManagerState } from "./types"
+import * as originalClientModule from "@modelcontextprotocol/sdk/client/index.js"
+import * as originalStdioModule from "@modelcontextprotocol/sdk/client/stdio.js"
 
 type Deferred<TValue> = {
   promise: Promise<TValue>
@@ -52,8 +54,32 @@ afterAll(() => {
   mock.restore()
 })
 
-const { disconnectAll, disconnectSession } = await import("./cleanup")
-const { getOrCreateClient } = await import("./connection")
+async function importFreshConnectionModules() {
+  mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
+    Client: MockClient,
+  }))
+
+  mock.module("@modelcontextprotocol/sdk/client/stdio.js", () => ({
+    StdioClientTransport: MockStdioClientTransport,
+  }))
+
+  const cleanupModule = await import(`./cleanup?test=${Date.now()}-${Math.random()}`)
+  const connectionModule = await import(`./connection?test=${Date.now()}-${Math.random()}`)
+
+  mock.module("@modelcontextprotocol/sdk/client/index.js", () => originalClientModule)
+  mock.module("@modelcontextprotocol/sdk/client/stdio.js", () => originalStdioModule)
+  mock.restore()
+
+  return {
+    disconnectAll: cleanupModule.disconnectAll,
+    disconnectSession: cleanupModule.disconnectSession,
+    getOrCreateClient: connectionModule.getOrCreateClient,
+  }
+}
+
+let disconnectAll: typeof import("./cleanup").disconnectAll
+let disconnectSession: typeof import("./cleanup").disconnectSession
+let getOrCreateClient: typeof import("./connection").getOrCreateClient
 
 function createDeferred<TValue>(): Deferred<TValue> {
   let resolvePromise: ((value: TValue) => void) | null = null
@@ -123,6 +149,10 @@ beforeEach(() => {
     createClient: (clientInfo, options) => new MockClient(clientInfo, options),
     createTransport: (options) => new MockStdioClientTransport(options),
   })
+})
+
+beforeEach(async () => {
+  ;({ disconnectAll, disconnectSession, getOrCreateClient } = await importFreshConnectionModules())
 })
 
 afterEach(async () => {
