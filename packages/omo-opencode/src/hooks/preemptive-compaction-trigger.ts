@@ -12,6 +12,25 @@ const PREEMPTIVE_COMPACTION_COOLDOWN_MS = 60_000
 declare function setTimeout(handler: () => void, timeout?: number): unknown
 declare function clearTimeout(timeoutID: unknown): void
 
+export function isCachedUsageAboveCompactionThreshold(
+  cached: CachedCompactionState,
+  modelCacheState?: ContextLimitModelCacheState,
+): boolean | null {
+  if (!cached.modelID) return false
+
+  const actualLimit = resolveActualContextLimit(cached.providerID, cached.modelID, modelCacheState)
+
+  if (actualLimit === null) {
+    return null
+  }
+
+  // A cold-cache turn reports most of its prompt as cache.write; it occupies the window like any input.
+  const totalInputTokens =
+    (cached.tokens.input ?? 0) + (cached.tokens.cache?.read ?? 0) + (cached.tokens.cache?.write ?? 0)
+  const usageRatio = totalInputTokens / actualLimit
+  return usageRatio >= PREEMPTIVE_COMPACTION_THRESHOLD
+}
+
 async function withTimeout<TValue>(promise: Promise<TValue>, timeoutMs: number, errorMessage: string): Promise<TValue> {
   let timeoutID: unknown
 
@@ -55,9 +74,8 @@ export async function runPreemptiveCompactionIfNeeded(args: {
   const cached = tokenCache.get(sessionID)
   if (!cached) return
 
-  const actualLimit = resolveActualContextLimit(cached.providerID, cached.modelID, modelCacheState)
-
-  if (actualLimit === null) {
+  const usageAboveThreshold = isCachedUsageAboveCompactionThreshold(cached, modelCacheState)
+  if (usageAboveThreshold === null) {
     log("[preemptive-compaction] Skipping preemptive compaction: unknown context limit for model", {
       providerID: cached.providerID,
       modelID: cached.modelID,
@@ -65,11 +83,7 @@ export async function runPreemptiveCompactionIfNeeded(args: {
     return
   }
 
-  // A cold-cache turn reports most of its prompt as cache.write; it occupies the window like any input.
-  const totalInputTokens =
-    (cached.tokens.input ?? 0) + (cached.tokens.cache?.read ?? 0) + (cached.tokens.cache?.write ?? 0)
-  const usageRatio = totalInputTokens / actualLimit
-  if (usageRatio < PREEMPTIVE_COMPACTION_THRESHOLD || !cached.modelID) return
+  if (!usageAboveThreshold) return
 
   compactionInProgress.add(sessionID)
   lastCompactionTime.set(sessionID, Date.now())

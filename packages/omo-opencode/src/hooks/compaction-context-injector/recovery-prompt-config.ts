@@ -17,7 +17,11 @@ function matchesExpectedModel(
     return true
   }
 
-  return actualModel?.providerID === expectedModel.providerID && actualModel.modelID === expectedModel.modelID
+  return (
+    actualModel?.providerID === expectedModel.providerID &&
+    actualModel.modelID === expectedModel.modelID &&
+    (expectedModel.variant === undefined || actualModel.variant === expectedModel.variant)
+  )
 }
 
 function matchesExpectedTools(

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 
 import { releaseAllPromptAsyncReservationsForTesting, releasePromptAsyncReservation } from "./prompt-async-gate"
+import { configureSharedSubunitLogger } from "./logger"
 import {
   getPromptReservation,
   isTransientRetryReservationOwner,
@@ -83,6 +84,24 @@ describe("releasePromptAsyncReservation supersedeTransientRetryOwners", () => {
     // then
     expect(released).toBe(false)
     expect(getPromptReservation(sessionID)?.source).toBe("model-suggestion-retry")
+  })
+
+  test("foreign release can suppress mismatch logging without clearing the reservation", () => {
+    const sessionID = "session-quiet-foreign-release"
+    const logs: string[] = []
+    configureSharedSubunitLogger((message) => logs.push(message))
+    try {
+      reserve(sessionID, "background-agent-parent-wake")
+      expect(releasePromptAsyncReservation(sessionID, "ralph-loop", { logOnMismatch: false })).toBe(false)
+      expect(logs).toEqual([])
+      expect(getPromptReservation(sessionID)?.source).toBe("background-agent-parent-wake")
+
+      expect(releasePromptAsyncReservation(sessionID, "ralph-loop")).toBe(false)
+      expect(logs).toHaveLength(1)
+      expect(getPromptReservation(sessionID)?.source).toBe("background-agent-parent-wake")
+    } finally {
+      configureSharedSubunitLogger(undefined)
+    }
   })
 
   test("#given a session reserved by user-prompt #when a recovery release passes supersede #then the foreground turn is preserved", () => {
