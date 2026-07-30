@@ -12,3 +12,4 @@
 *.yml text eol=lf
 *.yaml text eol=lf
 *.py text eol=lf
+.omo/evidence/**/transcript-ansi.txt -text
