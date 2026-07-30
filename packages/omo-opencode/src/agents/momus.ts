@@ -2,7 +2,7 @@ import { buildNativeAgentPrompt } from "./native-model-prompt"
 import type { AgentConfig } from "@opencode-ai/sdk"
 import type { AgentMode, AgentPromptMetadata } from "./types"
 import { buildClaudeThinkingConfig, isGpt5_6Model, isGpt6Model, isGptModel } from "./types"
-import { createAgentToolRestrictions } from "../shared/permission-compat"
+import { createAgentToolRestrictions, DENY_HEAVY_MCP_TOOLS } from "../shared/permission-compat"
 import { MOMUS_GPT_5_6_PROMPT } from "./momus-gpt-5-6"
 
 const MODE: AgentMode = "subagent"
@@ -281,7 +281,13 @@ Response language: match the language of the plan content.
 export { MOMUS_DEFAULT_PROMPT as MOMUS_SYSTEM_PROMPT }
 
 export function createMomusAgent(model: string): AgentConfig {
-  const restrictions = createAgentToolRestrictions(["write", "edit", "apply_patch"])
+  const restrictions = createAgentToolRestrictions([
+    "write",
+    "edit",
+    "apply_patch",
+    "task",
+    ...Object.keys(DENY_HEAVY_MCP_TOOLS),
+  ])
 
   const base = {
     description:
