@@ -83,21 +83,21 @@ async function fileExists(filePath: string): Promise<boolean> {
   try {
     await stat(filePath)
     return true
-  } catch {
-    return false
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return false
+    }
+    throw error
   }
 }
 
 async function driveIdle(config: TeamModeConfig, withMessagesApi: boolean): Promise<void> {
-  const session: Record<string, unknown> = {}
-  if (withMessagesApi) {
-    session.messages = async () => ({ data: [] })
-  }
+  const session = withMessagesApi ? { messages: async () => ({ data: [] }) } : {}
   const handler = createTeamIdleWakeHint(
     {
       directory: "/tmp/project",
       client: { session },
-    } as never,
+    },
     config,
   )
   await handler({
@@ -142,7 +142,7 @@ describe("issue #5101 - pending live delivery must not be silently lost on idle-
     expect(runtimeState.members[0]?.pendingInjectedMessageIds).toEqual([])
   })
 
-  test("#given the client cannot read session history #when the recipient idles #then the prior ack-all behavior is preserved (loss-safe fallback unavailable)", async () => {
+  test("#given session history is unavailable for a reserved claim #when the recipient idles #then the claim is requeued instead of acknowledged", async () => {
     // given
     const baseDir = await mkdtemp(path.join(tmpdir(), "wake-hint-delivering-ackall-"))
     temporaryDirectories.push(baseDir)
@@ -159,7 +159,9 @@ describe("issue #5101 - pending live delivery must not be silently lost on idle-
       "processed",
       `${messageId}.json`,
     )
-    expect(await fileExists(processedPath)).toBe(true)
-    expect(await listUnreadMessages(teamRunId, "worker", config)).toEqual([])
+    expect(await fileExists(processedPath)).toBe(false)
+    expect((await listUnreadMessages(teamRunId, "worker", config)).map((message) => message.messageId)).toEqual([
+      messageId,
+    ])
   })
 })

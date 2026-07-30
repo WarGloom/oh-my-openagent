@@ -45,7 +45,7 @@ export function createTeamDeleteTool(
 
   return tool({
     description:
-      "Delete a completed or shutdown-approved team run. Pass force=true to tear it down even while members are still active.",
+      "Delete a completed or shutdown-approved team run and clean its runtime state. Use force=true only after confirming active members are safe to tear down.",
     args: { teamRunId: tool.schema.string(), force: tool.schema.boolean().optional() },
     async execute(rawArgs, toolContext) {
       const args = TeamDeleteArgsSchema.parse(rawArgs)
@@ -80,7 +80,8 @@ export function createTeamShutdownRequestTool(
   void client
 
   return tool({
-    description: "Request shutdown for a team member.",
+    description:
+      "Lead requests a team member to stop after current work. Follow with team_approve_shutdown when the member can be closed.",
     args: { teamRunId: tool.schema.string(), targetMemberName: tool.schema.string() },
     async execute(rawArgs, toolContext) {
       const args = TeamShutdownRequestArgsSchema.parse(rawArgs)
@@ -106,7 +107,8 @@ export function createTeamApproveShutdownTool(
   void client
 
   return tool({
-    description: "Approve a pending shutdown request.",
+    description:
+      "Approve a pending shutdown request for a member. Lead or the target member can approve before team_delete cleanup.",
     args: { teamRunId: tool.schema.string(), memberName: tool.schema.string() },
     async execute(rawArgs, toolContext) {
       const args = TeamApproveShutdownArgsSchema.parse(rawArgs)
@@ -133,7 +135,7 @@ export function createTeamRejectShutdownTool(
   void client
 
   return tool({
-    description: "Reject a pending shutdown request.",
+    description: "Reject a pending shutdown request with a reason when the member must keep working.",
     args: { teamRunId: tool.schema.string(), memberName: tool.schema.string(), reason: tool.schema.string() },
     async execute(rawArgs, toolContext) {
       const args = TeamRejectShutdownArgsSchema.parse(rawArgs)
