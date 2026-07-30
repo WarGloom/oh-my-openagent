@@ -5,7 +5,7 @@ export type BuildNode = {
 	deps: string[]
 }
 
-const OPENTUI_EXTERNALS = ["@opentui/core", "@opentui/keymap", "@opentui/solid"]
+const OPENTUI_EXTERNALS = ["@opentui/core", "@opentui/keymap", "@opentui/solid", "solid-js"]
 
 export const BUILD_NODES: BuildNode[] = [
 	{ id: "git-bash-mcp", command: "bun", args: ["run", "build:git-bash-mcp"], deps: [] },

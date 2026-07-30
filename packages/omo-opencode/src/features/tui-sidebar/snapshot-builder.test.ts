@@ -1,3 +1,5 @@
+/// <reference types="bun-types" />
+
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -7,7 +9,6 @@ import { LOOP_FRESH_MS } from "./constants"
 import { buildTuiRuntimeSnapshot } from "./snapshot-builder"
 import { TuiRuntimeSnapshotSchema } from "./snapshot-schema"
 import type { SessionAgentResolver } from "./snapshot-builder"
-import type { BackgroundTaskSnapshot } from "../background-agent/types"
 
 type StatusRow = { readonly type: string }
 type StatusMap = Record<string, StatusRow>
@@ -17,10 +18,6 @@ type FakeClient = {
     readonly status: () => Promise<{ readonly data: StatusMap }>
     readonly messages: (input: { readonly path: { readonly id: string } }) => Promise<unknown>
   }
-}
-
-type FakeBackgroundManager = {
-  readonly getTasksSnapshot: () => readonly BackgroundTaskSnapshot[]
 }
 
 const tempDirs: string[] = []
@@ -80,12 +77,6 @@ function createClient(statuses: StatusMap): FakeClient {
   }
 }
 
-function createBackgroundManager(tasks: readonly BackgroundTaskSnapshot[]): FakeBackgroundManager {
-  return {
-    getTasksSnapshot: () => tasks,
-  }
-}
-
 const resolveTestSessionAgent: SessionAgentResolver = async (sessionID) => {
   switch (sessionID) {
     case "ses-main":
@@ -108,7 +99,7 @@ describe("buildTuiRuntimeSnapshot", () => {
     }
   })
 
-  it("#given SDK data statuses background jobs and a live loop #when building #then it returns a schema-valid runtime snapshot", async () => {
+  it("#given SDK data statuses and a live loop #when building #then it returns a schema-valid runtime snapshot", async () => {
     // given
     const projectDir = makeTempDir("schema-project")
     writeLiveLoop(projectDir)
@@ -121,15 +112,6 @@ describe("buildTuiRuntimeSnapshot", () => {
         "ses-idle": { type: "idle" },
         "ses-sub": { type: "retry" },
       }),
-      backgroundManager: createBackgroundManager([
-        {
-          title: "Explore runtime",
-          status: "running",
-          toolCalls: 3,
-          lastTool: "grep",
-          agent: "sisyphus",
-        },
-      ]),
       sessionAgentResolver: resolveTestSessionAgent,
     })
 
@@ -139,9 +121,6 @@ describe("buildTuiRuntimeSnapshot", () => {
     expect(snapshot.activeAgents).toEqual([
       { name: "sisyphus", status: "busy" },
       { name: "atlas", status: "retry" },
-    ])
-    expect(snapshot.jobBoard).toEqual([
-      { title: "Explore runtime", status: "running", toolCalls: 3, lastTool: "grep" },
     ])
     expect(snapshot.loop).toEqual({
       kind: "live",
@@ -169,14 +148,13 @@ describe("buildTuiRuntimeSnapshot", () => {
           messages: async () => ({ data: [] }),
         },
       },
-      backgroundManager: createBackgroundManager([]),
     })
 
     // then
     expect(snapshot.activeAgents).toEqual([{ name: "ses-fallback", status: "running" }])
   })
 
-  it("#given prompt-derived task and loop titles #when building #then persisted mirror text is redacted", async () => {
+  it("#given a prompt-derived loop title #when building #then persisted mirror text is redacted", async () => {
     // given
     const projectDir = makeTempDir("sensitive-text")
     writeSensitiveLiveLoop(projectDir)
@@ -185,23 +163,11 @@ describe("buildTuiRuntimeSnapshot", () => {
     const snapshot = await buildTuiRuntimeSnapshot({
       projectDir,
       client: createClient({}),
-      backgroundManager: createBackgroundManager([
-        {
-          title: "atlas background task",
-          status: "running",
-          toolCalls: 1,
-          lastTool: "read",
-          agent: "atlas",
-        },
-      ]),
       sessionAgentResolver: resolveTestSessionAgent,
     })
 
     // then
     expect(snapshot.loop?.activeGoal).toBeNull()
-    expect(snapshot.jobBoard).toEqual([
-      { title: "atlas background task", status: "running", toolCalls: 1, lastTool: "read" },
-    ])
     expect(JSON.stringify(snapshot)).not.toContain("sk-live")
   })
 })

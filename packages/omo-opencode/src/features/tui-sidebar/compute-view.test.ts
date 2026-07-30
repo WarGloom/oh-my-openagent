@@ -8,6 +8,7 @@ import type {
   LoopState,
   RosterState,
   SidebarView,
+  TeamsState,
 } from "./state-types"
 
 const validConfig: ConfigState = { kind: "valid" }
@@ -22,6 +23,7 @@ const roster: RosterState = {
 const idleAgents: AgentsState = { kind: "none" }
 const idleJobs: JobBoardState = { kind: "none" }
 const idleLoop: LoopState = { kind: "none" }
+const idleTeams: TeamsState = { kind: "none" }
 const activeAgents: AgentsState = {
   kind: "list",
   agents: [{ name: "sisyphus", status: "busy" }],
@@ -50,6 +52,7 @@ describe("tui sidebar computeView", () => {
       agents: idleAgents,
       jobs: idleJobs,
       loop: idleLoop,
+      teams: idleTeams,
     }
 
     // when
@@ -68,6 +71,7 @@ describe("tui sidebar computeView", () => {
       agents: idleAgents,
       jobs: idleJobs,
       loop: idleLoop,
+      teams: idleTeams,
     }
 
     // when
@@ -85,6 +89,7 @@ describe("tui sidebar computeView", () => {
       agents: activeAgents,
       jobs: idleJobs,
       loop: idleLoop,
+      teams: idleTeams,
     }
 
     // when
@@ -96,6 +101,7 @@ describe("tui sidebar computeView", () => {
       loop: idleLoop,
       agents: activeAgents,
       jobs: idleJobs,
+      teams: idleTeams,
       configBanner: { kind: "none" },
     })
   })
@@ -108,6 +114,7 @@ describe("tui sidebar computeView", () => {
       agents: idleAgents,
       jobs: activeJobs,
       loop: idleLoop,
+      teams: idleTeams,
     }
 
     // when
@@ -119,6 +126,7 @@ describe("tui sidebar computeView", () => {
       loop: idleLoop,
       agents: idleAgents,
       jobs: activeJobs,
+      teams: idleTeams,
       configBanner: { kind: "invalid" },
     })
   })
@@ -131,6 +139,7 @@ describe("tui sidebar computeView", () => {
       agents: idleAgents,
       jobs: idleJobs,
       loop: liveLoop,
+      teams: idleTeams,
     }
 
     // when
@@ -142,8 +151,78 @@ describe("tui sidebar computeView", () => {
       loop: liveLoop,
       agents: idleAgents,
       jobs: idleJobs,
+      teams: idleTeams,
       configBanner: { kind: "none" },
     })
+  })
+
+  it("#given only relevant team members #when computing and keying the view #then teams activate the view and change its key", () => {
+    // given
+    const firstSections = {
+      config: validConfig,
+      roster,
+      agents: idleAgents,
+      jobs: idleJobs,
+      loop: idleLoop,
+      teams: {
+        kind: "list" as const,
+        teams: [{ name: "sidebar-team", leadSessionId: "ses-member", members: [{ name: "idle-member", status: "idle" as const, work: "Reviewing sidebar", sessionId: "ses-member" }] }],
+      },
+    }
+    const secondSections = {
+      ...firstSections,
+      teams: {
+        kind: "list" as const,
+        teams: [{ name: "sidebar-team", leadSessionId: "ses-member", members: [{ name: "idle-member", status: "idle" as const, work: "Testing sidebar", sessionId: "ses-member" }] }],
+      },
+    }
+
+    // when
+    const firstView = computeView(firstSections)
+    const secondView = computeView(secondSections)
+
+    // then
+    expect(firstView).toMatchObject({ kind: "active", teams: firstSections.teams })
+    expect(viewKey(secondView)).not.toBe(viewKey(firstView))
+  })
+
+  it("#given Team rows with different lead session identities #when computing keys #then the key changes", () => {
+    // given
+    const base = {
+      config: validConfig,
+      roster,
+      agents: idleAgents,
+      jobs: idleJobs,
+      loop: idleLoop,
+    }
+    const firstView = computeView({
+      ...base,
+      teams: {
+        kind: "list",
+        teams: [{
+          name: "sidebar-team",
+          leadSessionId: "ses-first-lead",
+          members: [{ name: "member", status: "idle", work: null, sessionId: "ses-member" }],
+        }],
+      },
+    })
+    const secondView = computeView({
+      ...base,
+      teams: {
+        kind: "list",
+        teams: [{
+          name: "sidebar-team",
+          leadSessionId: "ses-second-lead",
+          members: [{ name: "member", status: "idle", work: null, sessionId: "ses-member" }],
+        }],
+      },
+    })
+
+    // when
+    const keys = [viewKey(firstView), viewKey(secondView)]
+
+    // then
+    expect(keys[1]).not.toBe(keys[0])
   })
 
   it("#given equivalent views built with different literal key order #when computing keys #then viewKey is stable", () => {
@@ -153,6 +232,7 @@ describe("tui sidebar computeView", () => {
       loop: liveLoop,
       agents: activeAgents,
       jobs: activeJobs,
+      teams: idleTeams,
       configBanner: { kind: "invalid" },
     }
     const second: SidebarView = {
@@ -162,6 +242,7 @@ describe("tui sidebar computeView", () => {
         kind: "list",
       },
       agents: { agents: [{ status: "busy", name: "sisyphus" }], kind: "list" },
+      teams: idleTeams,
       loop: {
         activeGoal: "Ship sidebar",
         blocked: 1,
