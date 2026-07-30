@@ -80,11 +80,10 @@ function parseCanonicalRuntimeFallbackModel(model: string): { providerID: string
   if (!parsed?.providerID || !parsed.modelID) return undefined
 
   const canonicalModelID = canonicalizeRuntimeFallbackModelID(parsed.modelID)
-  const variant = parsed.variant?.toLowerCase()
 
   return {
     providerID: canonicalizeRuntimeFallbackProviderFamily(parsed.providerID, parsed.modelID),
-    modelID: variant ? `${canonicalModelID}::${variant}` : canonicalModelID,
+    modelID: canonicalModelID,
   }
 }
 

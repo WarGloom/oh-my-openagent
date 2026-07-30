@@ -2,6 +2,7 @@ import type { OhMyOpenCodeConfig } from "../../config"
 import { HOOK_NAME } from "./constants"
 import { log } from "../../shared/logger"
 import { SessionCategoryRegistry } from "../../shared/session-category-registry"
+import { getSessionModel } from "../../shared/session-model-state"
 import { stringifyRuntimeModel } from "./fallback-state"
 
 type ResolveFallbackBootstrapModelOptions = {
@@ -18,6 +19,15 @@ export function resolveFallbackBootstrapModel(
   const eventModel = stringifyRuntimeModel(options.eventModel)
   if (eventModel) {
     return eventModel
+  }
+
+  const sessionModel = stringifyRuntimeModel(getSessionModel(options.sessionID))
+  if (sessionModel) {
+    log(`[${HOOK_NAME}] Derived model from session model state for ${options.source}`, {
+      sessionID: options.sessionID,
+      model: sessionModel,
+    })
+    return sessionModel
   }
 
   const agentConfigs = options.pluginConfig?.agents

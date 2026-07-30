@@ -126,6 +126,7 @@ describe("scheduleDeferredModelOverride", () => {
       "msg_001",
       { providerID: "anthropic", modelID: "claude-opus-4-7" },
     )
+    await settleDeferredModelOverrideWork()
 
     //#then
     const model = readMessageModel("msg_001")
@@ -142,6 +143,7 @@ describe("scheduleDeferredModelOverride", () => {
       { providerID: "anthropic", modelID: "claude-opus-4-7" },
       "max",
     )
+    await settleDeferredModelOverrideWork()
 
     //#then
     expect(readMessageField("msg_002", "variant")).toBe("max")
@@ -203,6 +205,7 @@ describe("scheduleDeferredModelOverride", () => {
       "msg_003",
       { providerID: "anthropic", modelID: "claude-opus-4-7" },
     )
+    await settleDeferredModelOverrideWork()
 
     //#then
     const model = readMessageModel("msg_003")
@@ -220,6 +223,7 @@ describe("scheduleDeferredModelOverride", () => {
       "msg_004",
       { providerID: "anthropic", modelID: "claude-opus-4-7" },
     )
+    await settleDeferredModelOverrideWork()
 
     //#then
     expect(logSpy).toHaveBeenCalledWith(
@@ -239,6 +243,7 @@ describe("scheduleDeferredModelOverride", () => {
       "msg_corrupt",
       { providerID: "anthropic", modelID: "claude-opus-4-7" },
     )
+    await settleDeferredModelOverrideWork()
 
     //#then
     const failureCall = logSpy.mock.calls.find((call: readonly unknown[]) => {

@@ -53,6 +53,26 @@ describe("runtime fallback error classifier", () => {
         expectedStatusCode: undefined,
       },
       {
+        label: "claude code session limit reset window",
+        error: {
+          name: "SessionRetry",
+          message: "Claude Code returned an error result: You've hit your session limit · resets 2:30am (Asia/Jerusalem)",
+        },
+        expectedType: "quota_exceeded",
+        expectedRetryable: true,
+        expectedStatusCode: undefined,
+      },
+      {
+        label: "github copilot pro plus five-hour session limit",
+        error: {
+          name: "SessionRetry",
+          message: "Too Many Requests: {\"error\":{\"message\":\"Sorry, you've exceeded your 5 hour session limits.\",\"code\":\"user_global_rate_limited:pro_plus\"}}",
+        },
+        expectedType: "quota_exceeded",
+        expectedRetryable: true,
+        expectedStatusCode: undefined,
+      },
+      {
         label: "anthropic abort",
         error: {
           name: "MessageAbortedError",
@@ -160,22 +180,29 @@ describe("runtime fallback error classifier", () => {
 
   test("leaves OpenCode context overflow to native compaction", () => {
     //#given
-    const error = {
-      name: "ContextOverflowError",
-      data: {
-        message: "Your input exceeds the context window of this model. Please adjust your input and try again.",
-        responseBody:
-          '{"error":{"message":"Your input exceeds the context window of this model. Please adjust your input and try again.","type":"invalid_request_error","code":"context_too_large"}}',
+    const errors = [
+      {
+        name: "ContextOverflowError",
+        data: {
+          message: "Your input exceeds the context window of this model. Please adjust your input and try again.",
+          responseBody:
+            '{"error":{"message":"Your input exceeds the context window of this model. Please adjust your input and try again.","type":"invalid_request_error","code":"context_too_large"}}',
+        },
       },
-    }
+      {
+        name: "ContextLengthError",
+        message: "context_length_exceeded: prompt is too long for this model",
+      },
+    ]
 
     //#when
-    const type = classifyRuntimeFallbackError(error)
-    const retryable = isRuntimeFallbackRetryableError(error, [400, ...DEFAULT_RETRY_CODES])
+    const results = errors.map((error) => ({
+      type: classifyRuntimeFallbackError(error),
+      retryable: isRuntimeFallbackRetryableError(error, [400, ...DEFAULT_RETRY_CODES]),
+    }))
 
     //#then
-    expect(type).toBe("context_overflow")
-    expect(retryable).toBe(false)
+    expect(results).toEqual(errors.map(() => ({ type: "context_overflow", retryable: false })))
   })
 
   test("extracts provider auto-retry signals from status summary or details", () => {
@@ -189,5 +216,31 @@ describe("runtime fallback error classifier", () => {
 
     //#then
     expect(signal).toEqual({ signal: retryInfo.summary })
+  })
+
+  test("extracts provider reset-window auto-retry signals", () => {
+    //#given
+    const retryInfo = {
+      status: "Claude Code returned an error result: You've hit your limit · resets 10pm (Asia/Jerusalem)",
+    }
+
+    //#when
+    const signal = extractRuntimeFallbackAutoRetrySignal(retryInfo)
+
+    //#then
+    expect(signal).toEqual({ signal: retryInfo.status })
+  })
+
+  test("extracts provider session-limit reset-window auto-retry signals", () => {
+    //#given
+    const retryInfo = {
+      status: "Claude Code returned an error result: You've hit your session limit · resets 2:30am (Asia/Jerusalem)",
+    }
+
+    //#when
+    const signal = extractRuntimeFallbackAutoRetrySignal(retryInfo)
+
+    //#then
+    expect(signal).toEqual({ signal: retryInfo.status })
   })
 })

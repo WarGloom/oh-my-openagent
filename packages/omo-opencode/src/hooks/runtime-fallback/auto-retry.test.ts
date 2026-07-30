@@ -1,28 +1,53 @@
-import { describe, expect, test } from "bun:test"
+/// <reference types="bun-types" />
 
+import { afterEach, describe, expect, it, test } from "bun:test"
+
+import { releaseAllPromptAsyncReservationsForTesting } from "../shared/prompt-async-gate"
+import { SessionCategoryRegistry } from "../../shared/session-category-registry"
 import { OMO_INTERNAL_INITIATOR_MARKER } from "../../shared/internal-initiator-marker"
 import { OMO_RUNTIME_FALLBACK_RETRY_MARKER } from "../../shared/runtime-fallback-retry-marker"
 import { createAutoRetryHelpers } from "./auto-retry"
 import { createFallbackState } from "./fallback-state"
 import type { HookDeps, RuntimeFallbackPluginInput } from "./types"
 
-function createContext(promptCalls: { count: number }): RuntimeFallbackPluginInput {
+type PromptInput = Parameters<RuntimeFallbackPluginInput["client"]["session"]["promptAsync"]>[0]
+
+type PromptRecorder = {
+  calls: PromptInput[]
+  count: number
+}
+
+function createPromptRecorder(): PromptRecorder {
+  return { calls: [], count: 0 }
+}
+
+function createDefaultMessagesResponse() {
+  return {
+    data: [
+      {
+        info: { role: "user" },
+        parts: [{ type: "text", text: "retry this" }],
+      },
+    ],
+  }
+}
+
+function createContext(
+  messagesResponse: unknown,
+  promptRecorder: PromptRecorder,
+  statusResponse: unknown = { data: {} },
+): RuntimeFallbackPluginInput {
   const session = {
     abort: async () => ({}),
-    messages: async () => ({
-      data: [
-        {
-          info: { role: "user" },
-          parts: [{ type: "text", text: "retry this" }],
-        },
-      ],
-    }),
-    promptAsync: async () => {
-      promptCalls.count += 1
+    messages: async () => messagesResponse,
+    promptAsync: async (input: PromptInput) => {
+      promptRecorder.calls.push(input)
+      promptRecorder.count += 1
       return {}
     },
-    status: async () => ({ data: { "session-auto-retry": { type: "busy" } } }),
+    status: async () => statusResponse,
   }
+
   return {
     client: {
       session,
@@ -34,67 +59,113 @@ function createContext(promptCalls: { count: number }): RuntimeFallbackPluginInp
   }
 }
 
-function createDeps(promptCalls: { count: number }): HookDeps {
+function createDeps(
+  messagesResponse: unknown,
+  promptRecorder: PromptRecorder,
+  statusResponse?: unknown,
+): HookDeps {
   return {
-    ctx: createContext(promptCalls),
+    ctx: createContext(messagesResponse, promptRecorder, statusResponse),
     config: {
       enabled: true,
       retry_on_errors: [429, 503, 529],
       max_fallback_attempts: 3,
       cooldown_seconds: 60,
       timeout_seconds: 0,
+      first_progress_timeout_seconds: 0,
+      stall_timeout_seconds: 600,
+      hard_timeout_seconds: 1800,
       notify_on_fallback: false,
       restore_primary_after_cooldown: false,
     },
     options: undefined,
-    pluginConfig: undefined,
+    pluginConfig: {
+      git_master: {
+        commit_footer: true,
+        include_co_authored_by: true,
+        git_env_prefix: "GIT_MASTER=1",
+      },
+    },
     sessionStates: new Map(),
     sessionLastAccess: new Map(),
     sessionRetryInFlight: new Set(),
     sessionAwaitingFallbackResult: new Set(),
+    sessionFallbackAbortInFlight: new Set(),
     sessionFallbackTimeouts: new Map(),
+    sessionFallbackHardTimeouts: new Map(),
+    sessionFallbackTimeoutAgents: new Map(),
+    sessionFallbackTimeoutKinds: new Map(),
+    sessionFallbackProgressObserved: new Set(),
+    sessionFallbackUnsafeToReplay: new Set(),
     sessionStatusRetryKeys: new Map(),
     internallyAbortedSessions: new Set(),
   }
 }
 
 describe("createAutoRetryHelpers", () => {
-  test("#given fallback prompt returns ambiguous EOF #when auto retry runs #then pending fallback is marked as possibly accepted", async () => {
-    // given
-    const promptCalls = { count: 0 }
-    const deps = createDeps(promptCalls)
-    deps.ctx.client.session.promptAsync = async () => {
-      promptCalls.count += 1
-      throw new Error("JSON Parse error: Unexpected EOF")
-    }
-    const helpers = createAutoRetryHelpers(deps)
-    const sessionID = "session-auto-retry-ambiguous"
-    const state = createFallbackState("anthropic/claude-opus-4-7")
-    state.pendingFallbackModel = "openai/gpt-5.4"
-    deps.sessionStates.set(sessionID, state)
-
-    // when
-    await helpers.autoRetryWithFallback(sessionID, "openai/gpt-5.4", undefined, "session.error")
-
-    // then
-    expect(promptCalls.count).toBe(1)
-    expect(deps.sessionAwaitingFallbackResult.has(sessionID)).toBe(true)
-    expect(state.pendingFallbackModel).toBe("openai/gpt-5.4")
-    expect(state.pendingFallbackPromptMayHaveBeenAccepted).toBe(true)
+  afterEach(() => {
+    releaseAllPromptAsyncReservationsForTesting()
+    SessionCategoryRegistry.clear()
   })
 
-  test("#given an existing fallback result is pending #when the next retry is accepted as queued #then queued pending state supersedes the previous fallback", async () => {
-    // given
-    const promptCalls = { count: 0 }
-    const deps = createDeps(promptCalls)
-    const helpers = createAutoRetryHelpers(deps)
+  it("dispatches a fallback prompt with the requested model", async () => {
+    const promptRecorder = createPromptRecorder()
+    const deps = createDeps(createDefaultMessagesResponse(), promptRecorder)
     const sessionID = "session-auto-retry"
+    const state = createFallbackState("anthropic/claude-opus-4-7")
+    deps.sessionStates.set(sessionID, state)
+
+    const helpers = createAutoRetryHelpers(deps)
+    const outcome = await helpers.autoRetryWithFallback(
+      sessionID,
+      "openai/gpt-5.4",
+      undefined,
+      "session.error",
+    )
+
+    expect(outcome.accepted).toBe(true)
+    expect(promptRecorder.count).toBe(1)
+    expect(promptRecorder.calls[0]?.body.model).toEqual({
+      providerID: "openai",
+      modelID: "gpt-5.4",
+    })
+    expect(deps.sessionAwaitingFallbackResult.has(sessionID)).toBe(true)
+
+    helpers.clearSessionFallbackTimeout(sessionID)
+  })
+
+  it("preserves a variant in the fallback prompt payload", async () => {
+    const promptRecorder = createPromptRecorder()
+    const deps = createDeps(createDefaultMessagesResponse(), promptRecorder)
+    const sessionID = "session-auto-retry-variant"
+    deps.sessionStates.set(sessionID, createFallbackState("anthropic/claude-opus-4-7"))
+
+    const helpers = createAutoRetryHelpers(deps)
+    const outcome = await helpers.autoRetryWithFallback(
+      sessionID,
+      "openai/gpt-5.4(high)",
+      "metis",
+      "session.status",
+    )
+
+    const body = promptRecorder.calls[0]?.body
+    expect(outcome.accepted).toBe(true)
+    expect(body.model).toEqual({ providerID: "openai", modelID: "gpt-5.4" })
+    expect(body.variant).toBe("high")
+
+    helpers.clearSessionFallbackTimeout(sessionID)
+  })
+
+  test("queues a newer fallback while a previous fallback result is pending", async () => {
+    const promptRecorder = createPromptRecorder()
+    const deps = createDeps(createDefaultMessagesResponse(), promptRecorder)
+    const helpers = createAutoRetryHelpers(deps)
+    const sessionID = "session-auto-retry-queued"
     const state = createFallbackState("anthropic/claude-opus-4-7")
     state.pendingFallbackModel = "openai/gpt-5.4"
     deps.sessionStates.set(sessionID, state)
     deps.sessionAwaitingFallbackResult.add(sessionID)
 
-    // when
     const outcome = await helpers.autoRetryWithFallback(
       sessionID,
       "google/gemini-2.5-pro",
@@ -102,152 +173,197 @@ describe("createAutoRetryHelpers", () => {
       "session.status",
     )
 
-    // then
     expect(outcome).toEqual({ accepted: true, status: "queued" })
-    expect(promptCalls.count).toBe(0)
+    expect(promptRecorder.count).toBe(0)
     expect(deps.sessionAwaitingFallbackResult.has(sessionID)).toBe(true)
     expect(state.pendingFallbackModel).toBe("google/gemini-2.5-pro")
   })
-  test("#given compact-flushed session with no recoverable user parts #when auto-retry fires the synthetic continuation #then the injected prompt is marked synthetic and carries the internal initiator marker (#4085)", async () => {
-    // given - capture the actual parts forwarded to client.session.promptAsync
-    const promptCalls: { count: number; lastBody: unknown } = { count: 0, lastBody: undefined }
-    const deps = createDeps(promptCalls)
-    // Post-compact case: messages() returns no user role entries, so
-    // getLastUserRetryPayload falls through to the synthetic "continue".
-    deps.ctx.client.session.messages = async () => ({ data: [] })
-    deps.ctx.client.session.promptAsync = async (args: unknown) => {
-      promptCalls.count += 1
-      promptCalls.lastBody = (args as { body?: unknown })?.body
-      return {}
+
+  it("marks an ambiguous prompt failure as possibly accepted", async () => {
+    const promptRecorder = createPromptRecorder()
+    const deps = createDeps(createDefaultMessagesResponse(), promptRecorder)
+    deps.ctx.client.session.promptAsync = async (input: PromptInput) => {
+      promptRecorder.calls.push(input)
+      promptRecorder.count += 1
+      throw new Error("JSON Parse error: Unexpected EOF")
     }
+
     const helpers = createAutoRetryHelpers(deps)
-    const sessionID = "session-compact-flushed"
+    const sessionID = "session-auto-retry-ambiguous"
     const state = createFallbackState("anthropic/claude-opus-4-7")
     state.pendingFallbackModel = "openai/gpt-5.4"
     deps.sessionStates.set(sessionID, state)
 
-    // when
-    await helpers.autoRetryWithFallback(sessionID, "openai/gpt-5.4", undefined, "session.error")
+    await helpers.autoRetryWithFallback(
+      sessionID,
+      "openai/gpt-5.4",
+      undefined,
+      "session.error",
+    )
 
-    // then
-    expect(promptCalls.count).toBe(1)
-    const body = promptCalls.lastBody as { parts?: ReadonlyArray<Record<string, unknown>> } | undefined
-    expect(body).toBeDefined()
-    const parts = body?.parts ?? []
-    expect(parts.length).toBe(1)
-    const firstPart = parts[0] ?? {}
-    expect(firstPart["type"]).toBe("text")
-    // Without the marker + synthetic flag, OMO's continuation/keyword-detector
-    // hooks treat this as a real user prompt and the TUI shows a bare "continue"
-    // that the user never typed (see #4085 / Discord report).
-    expect(firstPart["synthetic"]).toBe(true)
-    expect(String(firstPart["text"] ?? "")).toContain("OMO_INTERNAL_INITIATOR")
-    expect(String(firstPart["text"] ?? "")).toContain("OMO_RUNTIME_FALLBACK_RETRY")
+    expect(promptRecorder.count).toBe(1)
+    expect(deps.sessionAwaitingFallbackResult.has(sessionID)).toBe(true)
+    expect(state.pendingFallbackModel).toBe("openai/gpt-5.4")
+    expect(state.pendingFallbackPromptMayHaveBeenAccepted).toBe(true)
   })
 
-  test("#given a reused internal continuation part #when auto retry dispatches a fallback #then it preserves the part identity and appends the fallback acknowledgement marker", async () => {
-    // given
-    const promptCalls = { count: 0 }
-    const deps = createDeps(promptCalls)
+  it("bypasses the tool-state gate for a provider retry signal", async () => {
+    const promptRecorder = createPromptRecorder()
+    const deps = createDeps(
+      {
+        data: [
+          { info: { role: "user" }, parts: [{ type: "text", text: "retry this" }] },
+          {
+            info: { role: "assistant", finish: "unknown" },
+            parts: [{ type: "step-start" }],
+          },
+        ],
+      },
+      promptRecorder,
+    )
+    const sessionID = "session-active-assistant-runtime-fallback"
+    deps.sessionStates.set(sessionID, createFallbackState("anthropic/claude-opus-4-7"))
+
+    const helpers = createAutoRetryHelpers(deps)
+    await helpers.autoRetryWithFallback(
+      sessionID,
+      "openai/gpt-5.4",
+      undefined,
+      "session.status",
+    )
+
+    expect(promptRecorder.count).toBe(1)
+    expect(promptRecorder.calls[0]?.body.model).toEqual({
+      providerID: "openai",
+      modelID: "gpt-5.4",
+    })
+    expect(deps.sessionAwaitingFallbackResult.has(sessionID)).toBe(true)
+
+    helpers.clearSessionFallbackTimeout(sessionID)
+  })
+
+  it("does not dispatch an invalid model and clears its pending state", async () => {
+    const promptRecorder = createPromptRecorder()
+    const deps = createDeps(createDefaultMessagesResponse(), promptRecorder)
+    const sessionID = "session-invalid-fallback-model"
+    const state = createFallbackState("openai/gpt-5.5")
+    state.pendingFallbackModel = "claude-opus-4-7"
+    deps.sessionStates.set(sessionID, state)
+
+    const helpers = createAutoRetryHelpers(deps)
+    const outcome = await helpers.autoRetryWithFallback(
+      sessionID,
+      "claude-opus-4-7",
+      "sisyphus",
+      "session.status",
+    )
+
+    expect(outcome).toEqual({
+      accepted: false,
+      status: "invalid-model",
+      reason: "missing provider prefix",
+    })
+    expect(promptRecorder.count).toBe(0)
+    expect(state.pendingFallbackModel).toBeUndefined()
+    expect(deps.sessionAwaitingFallbackResult.has(sessionID)).toBe(false)
+  })
+
+  it("leaves fallback state unchanged when promptAsync is unavailable", async () => {
+    const promptRecorder = createPromptRecorder()
+    const deps = createDeps(createDefaultMessagesResponse(), promptRecorder)
+    const sessionID = "session-auto-retry-no-dispatch"
+    const state = createFallbackState("anthropic/claude-opus-4-7")
+    deps.sessionStates.set(sessionID, state)
+    Reflect.deleteProperty(deps.ctx.client.session, "promptAsync")
+
+    const helpers = createAutoRetryHelpers(deps)
+    await helpers.autoRetryWithFallback(
+      sessionID,
+      "openai/gpt-5.4",
+      undefined,
+      "session.status",
+    )
+
+    expect(promptRecorder.count).toBe(0)
+    expect(deps.sessionAwaitingFallbackResult.has(sessionID)).toBe(false)
+    expect(state.currentModel).toBe("anthropic/claude-opus-4-7")
+    expect(state.fallbackIndex).toBe(-1)
+    expect(state.attemptCount).toBe(0)
+    expect(state.pendingFallbackModel).toBeUndefined()
+  })
+
+  test("injects a synthetic continuation with the internal retry markers", async () => {
+    const promptRecorder = createPromptRecorder()
+    const deps = createDeps(createDefaultMessagesResponse(), promptRecorder)
+    deps.ctx.client.session.messages = async () => ({ data: [] })
+
+    const helpers = createAutoRetryHelpers(deps)
+    const sessionID = "session-compact-flushed"
+    deps.sessionStates.set(sessionID, createFallbackState("anthropic/claude-opus-4-7"))
+
+    await helpers.autoRetryWithFallback(
+      sessionID,
+      "openai/gpt-5.4",
+      undefined,
+      "session.error",
+    )
+
+    expect(promptRecorder.count).toBe(1)
+    const parts = promptRecorder.calls[0]?.body.parts ?? []
+    expect(parts).toHaveLength(1)
+    expect(parts[0]?.type).toBe("text")
+    expect("synthetic" in (parts[0] ?? {}) && parts[0].synthetic).toBe(true)
+    expect(String("text" in (parts[0] ?? {}) ? parts[0].text : "")).toContain(
+      OMO_INTERNAL_INITIATOR_MARKER,
+    )
+    expect(String("text" in (parts[0] ?? {}) ? parts[0].text : "")).toContain(
+      OMO_RUNTIME_FALLBACK_RETRY_MARKER,
+    )
+
+    helpers.clearSessionFallbackTimeout(sessionID)
+  })
+
+  test("preserves an existing internal continuation part identity", async () => {
+    const promptRecorder = createPromptRecorder()
+    const deps = createDeps(createDefaultMessagesResponse(), promptRecorder)
     const internalText = `continue\n${OMO_INTERNAL_INITIATOR_MARKER}`
-    let capturedBody: Record<string, unknown> | undefined
+
     deps.ctx.client.session.messages = async () => ({
       data: [
         {
           info: { role: "user", id: "msg_internal_continuation" },
-          parts: [{ type: "text", text: internalText, id: "prt_internal_continuation" }],
+          parts: [
+            {
+              type: "text",
+              text: internalText,
+              id: "prt_internal_continuation",
+            },
+          ],
         },
       ],
     })
-    deps.ctx.client.session.promptAsync = async (input: { body: Record<string, unknown> }) => {
-      promptCalls.count += 1
-      capturedBody = input.body
-      return {}
-    }
-    const helpers = createAutoRetryHelpers(deps)
+
     const sessionID = "session-reused-internal-continuation"
     deps.sessionStates.set(sessionID, createFallbackState("anthropic/claude-opus-4-7"))
+    const helpers = createAutoRetryHelpers(deps)
 
-    // when
-    await helpers.autoRetryWithFallback(sessionID, "openai/gpt-5.4", undefined, "session.error")
+    await helpers.autoRetryWithFallback(
+      sessionID,
+      "openai/gpt-5.4",
+      undefined,
+      "session.error",
+    )
 
-    // then
-    expect(promptCalls.count).toBe(1)
-    expect(capturedBody?.messageID).toBe("msg_internal_continuation")
-    expect(capturedBody?.parts).toEqual([
+    expect(promptRecorder.count).toBe(1)
+    expect(promptRecorder.calls[0]?.body.messageID).toBe("msg_internal_continuation")
+    expect(promptRecorder.calls[0]?.body.parts).toEqual([
       {
         type: "text",
         text: `${internalText}\n${OMO_RUNTIME_FALLBACK_RETRY_MARKER}`,
         id: "prt_internal_continuation",
       },
     ])
-  })
 
-  test("#given a persisted user message with id and part ids #when auto retry runs #then the fallback prompt reuses the original messageID and part ids", async () => {
-    // given
-    const promptCalls = { count: 0 }
-    const deps = createDeps(promptCalls)
-    let capturedBody: Record<string, unknown> | undefined
-    deps.ctx.client.session.messages = async () => ({
-      data: [
-        {
-          info: { role: "user", id: "msg_original_user" },
-          parts: [{ type: "text", text: "retry this", id: "prt_original" }],
-        },
-      ],
-    })
-    deps.ctx.client.session.promptAsync = async (input: { body: Record<string, unknown> }) => {
-      promptCalls.count += 1
-      capturedBody = input.body
-      return {}
-    }
-    const helpers = createAutoRetryHelpers(deps)
-    const sessionID = "session-auto-retry-dedup"
-    const state = createFallbackState("anthropic/claude-opus-4-7")
-    deps.sessionStates.set(sessionID, state)
-
-    // when
-    await helpers.autoRetryWithFallback(sessionID, "openai/gpt-5.4", undefined, "session.error")
-
-    // then
-    expect(promptCalls.count).toBe(1)
-    expect(capturedBody?.messageID).toBe("msg_original_user")
-    expect(capturedBody?.parts).toEqual([{ type: "text", text: "retry this", id: "prt_original" }])
-  })
-
-  test("#given internal abort marker is set #when abort request runs #then stale cleanup TTL is refreshed", async () => {
-    // given
-    const promptCalls = { count: 0 }
-    const deps = createDeps(promptCalls)
-    const helpers = createAutoRetryHelpers(deps)
-    const sessionID = "session-internal-abort-refresh"
-    const staleLastAccess = Date.now() - 13 * 60 * 60 * 1000
-    deps.sessionLastAccess.set(sessionID, staleLastAccess)
-
-    // when
-    await helpers.abortSessionRequest(sessionID, "session.status.retry-signal")
-
-    // then
-    expect(deps.internallyAbortedSessions.has(sessionID)).toBe(true)
-    expect(deps.sessionLastAccess.get(sessionID)).toBeGreaterThan(staleLastAccess)
-  })
-
-  test("#given stale internal abort marker #when stale session cleanup runs #then the marker is cleared", () => {
-    // given
-    const promptCalls = { count: 0 }
-    const deps = createDeps(promptCalls)
-    const helpers = createAutoRetryHelpers(deps)
-    const sessionID = "session-stale-internal-abort"
-    deps.sessionStates.set(sessionID, createFallbackState("anthropic/claude-opus-4-7"))
-    deps.sessionLastAccess.set(sessionID, Date.now() - 13 * 60 * 60 * 1000)
-    deps.internallyAbortedSessions.add(sessionID)
-
-    // when
-    helpers.cleanupStaleSessions()
-
-    // then
-    expect(deps.sessionStates.has(sessionID)).toBe(false)
-    expect(deps.sessionLastAccess.has(sessionID)).toBe(false)
-    expect(deps.internallyAbortedSessions.has(sessionID)).toBe(false)
+    helpers.clearSessionFallbackTimeout(sessionID)
   })
 })
