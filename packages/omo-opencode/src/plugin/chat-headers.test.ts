@@ -4,6 +4,40 @@ import { OMO_INTERNAL_INITIATOR_MARKER } from "../shared"
 import { createChatHeadersHandler } from "./chat-headers"
 
 describe("createChatHeadersHandler", () => {
+  test("does not modify anthropic-beta headers", async () => {
+    const handler = createChatHeadersHandler({
+      ctx: {
+        client: {
+          session: {
+            message: async () => ({
+              data: {
+                parts: [],
+              },
+            }),
+          },
+        },
+      } as never,
+    })
+    const output: { headers: Record<string, string> } = {
+      headers: {
+        "anthropic-beta": "prompt-caching-2024-07-18",
+      },
+    }
+
+    await handler(
+      {
+        sessionID: "ses_9",
+        provider: { id: "anthropic" },
+        message: {
+          role: "assistant",
+        },
+      },
+      output,
+    )
+
+    expect(output.headers["anthropic-beta"]).toBe("prompt-caching-2024-07-18")
+  })
+
   test("sets x-initiator=agent for Copilot internal marker messages", async () => {
     const handler = createChatHeadersHandler({
       ctx: {
