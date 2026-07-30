@@ -35,3 +35,5 @@ packages/omo-senpi/src/components/telemetry/schema-registry/** -text
 # The vendored bunshin-ts build output is pinned byte for byte by vendor/PIN.json (bunshin-ts-vendor.test.ts): no line-ending
 # conversion and no whitespace checks (the upstream build output is copied as built).
 packages/omo-senpi/vendor/** -text -whitespace
+
+.omo/evidence/**/transcript-ansi.txt -text
