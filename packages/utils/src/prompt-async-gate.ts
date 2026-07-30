@@ -16,6 +16,7 @@ import {
   nextPromptQueueID,
   releaseInFlightPromptMatchingDedupe,
   schedulePromptQueueDrain,
+  settlePromptDispatchResult,
 } from "./prompt-async-gate/queue"
 import {
   clearRecentPromptDispatchesForTesting,
@@ -243,6 +244,7 @@ export async function dispatchInternalPrompt<TInput = PromptAsyncInput>(
     ) {
       markLiveRouteUnavailable("timeout")
     }
+    await settlePromptDispatchResult(args, deferResult)
     return deferResult
   }
 
@@ -268,6 +270,7 @@ export async function dispatchInternalPrompt<TInput = PromptAsyncInput>(
       checkStatus: args.checkStatus !== false,
       checkToolState: args.checkToolState !== false,
       durableRetry: args.durableRetry === true,
+      onDispatchResult: args.onDispatchResult,
       shouldDispatch: args.shouldDispatch,
       retryDispatchFailure: args.retryDispatchFailure,
       dispatch: async (_dispatchInput: unknown) => dispatchWithPathCompatibility(dispatch, input),
@@ -304,6 +307,7 @@ export async function dispatchInternalPrompt<TInput = PromptAsyncInput>(
   ) {
     markLiveRouteUnavailable("timeout")
   }
+  await settlePromptDispatchResult(args, directResult)
   return directResult
 }
 

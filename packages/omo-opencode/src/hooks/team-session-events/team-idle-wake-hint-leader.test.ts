@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, mock, setDefaultTimeout, test } from "bun:test"
 import { randomUUID } from "node:crypto"
-import { mkdtemp, mkdir, rm } from "node:fs/promises"
+import { mkdtemp, mkdir, readdir, rm } from "node:fs/promises"
 
 // Windows CI runners can exceed the 5 s Bun default on fs-heavy team-mode tests.
 setDefaultTimeout(process.platform === "win32" ? 30_000 : 10_000)
@@ -11,8 +11,8 @@ import path from "node:path"
 
 import { TeamModeConfigSchema } from "../../config/schema/team-mode"
 import type { TeamModeConfig } from "../../config/schema/team-mode"
-import { listUnreadMessages } from "../../features/team-mode/team-mailbox/inbox"
 import { sendMessage } from "../../features/team-mode/team-mailbox/send"
+import { getInboxDir, resolveBaseDir } from "../../features/team-mode/team-registry/paths"
 import { saveRuntimeState } from "../../features/team-mode/team-state-store/store"
 import type { RuntimeState } from "../../features/team-mode/types"
 import {
@@ -87,16 +87,18 @@ async function seedRuntimeState(runtimeState: RuntimeState, config: TeamModeConf
   await saveRuntimeState(runtimeState, config)
 }
 
-async function sendCompletionToLead(teamRunId: string, config: TeamModeConfig, body: string, timestamp: number): Promise<void> {
+async function sendCompletionToLead(teamRunId: string, config: TeamModeConfig, body: string, timestamp: number): Promise<string> {
+  const messageId = randomUUID()
   await sendMessage({
     version: 1,
-    messageId: randomUUID(),
+    messageId,
     from: "worker",
     to: "lead",
     kind: "message",
     body,
     timestamp,
   }, teamRunId, config, { isLead: false, activeMembers: ["lead"] })
+  return messageId
 }
 
 afterEach(async () => {
@@ -121,7 +123,12 @@ describe("createTeamIdleWakeHint leader delivery", () => {
     })
     const handler = createTeamIdleWakeHint({
       directory: "/tmp/project",
-      client: { session: { promptAsync: promptAsyncSpy } },
+      client: {
+        session: {
+          promptAsync: promptAsyncSpy,
+          messages: async () => ({ data: promptInputs }),
+        },
+      },
     }, config, immediatePromptGateOptions)
 
     // when
@@ -129,20 +136,25 @@ describe("createTeamIdleWakeHint leader delivery", () => {
       { length: COMPLETION_CYCLE_COUNT },
       (_, index) => `completion ${index + 1}`,
     )
+    const completionMessageIds: string[] = []
     for (const [index, body] of completionBodies.entries()) {
-      await sendCompletionToLead(teamRunId, config, body, 100 + index)
+      completionMessageIds.push(await sendCompletionToLead(teamRunId, config, body, 100 + index))
       await handler({ event: { type: "session.idle", properties: { sessionID: "lead-session" } } })
       releasePromptAsyncReservation("lead-session", "team-idle-wake-hint")
     }
+    await handler({ event: { type: "session.idle", properties: { sessionID: "lead-session" } } })
 
     // then
     expect(promptAsyncSpy).toHaveBeenCalledTimes(COMPLETION_CYCLE_COUNT)
     expect(promptInputs.map((input) => input.path.id)).toEqual(Array(COMPLETION_CYCLE_COUNT).fill("lead-session"))
-    expect(promptInputs.at(-1)?.body.parts[0]?.text).toContain(`${COMPLETION_CYCLE_COUNT} new team messages`)
+    for (const [index, body] of completionBodies.entries()) {
+      expect(promptInputs[index]?.body.parts[0]?.text).toContain(body)
+    }
 
-    const unreadMessages = await listUnreadMessages(teamRunId, "lead", config)
-    expect(unreadMessages.map((message) => message.body)).toEqual(completionBodies)
-    // Loaded Windows runners push this past the 5s default; the waits stay event-driven
-    // (~11ms locally), so only the ceiling moves.
+    const inboxDir = getInboxDir(resolveBaseDir(config), teamRunId, "lead")
+    expect(await readdir(inboxDir)).toEqual(["processed"])
+    expect((await readdir(path.join(inboxDir, "processed"))).sort()).toEqual(
+      completionMessageIds.map((messageId) => `${messageId}.json`).sort(),
+    )
   }, 30_000)
 })

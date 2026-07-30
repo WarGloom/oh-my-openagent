@@ -1,5 +1,5 @@
 import type { TeamModeConfig } from "../config"
-import { loadRuntimeState, transitionRuntimeState } from "../team-state-store/store"
+import { transitionRuntimeState } from "../team-state-store/store"
 import type { Message } from "../types"
 import { listUnreadMessages } from "./inbox"
 
@@ -8,6 +8,11 @@ export interface InjectionResult {
   content?: string
   messageIds: string[]
   reason?: string
+}
+
+type InjectionClaim = {
+  readonly resolvedSessionID: string | undefined
+  readonly insertContent: (content: string) => void
 }
 
 function escapeAttributeValue(value: string): string {
@@ -47,6 +52,7 @@ export async function pollAndBuildInjection(
   teamRunId: string,
   config: TeamModeConfig,
   turnMarker: string,
+  claim: InjectionClaim,
 ): Promise<InjectionResult> {
   const unreadMessages = await listUnreadMessages(teamRunId, memberName, config)
   let result: InjectionResult | undefined
@@ -55,6 +61,10 @@ export async function pollAndBuildInjection(
     const runtimeMember = currentRuntimeState.members.find((member) => member.name === memberName)
     if (runtimeMember === undefined) {
       throw new Error(`runtime member not found for session ${sessionID}: ${memberName}`)
+    }
+    if (runtimeMember.sessionId !== claim.resolvedSessionID) {
+      result = { injected: false, messageIds: [], reason: "stale session" }
+      return currentRuntimeState
     }
 
     if (runtimeMember.lastInjectedTurnMarker === turnMarker) {
@@ -77,7 +87,9 @@ export async function pollAndBuildInjection(
       messageIds.push(unreadMessage.messageId)
       envelopes.push(buildEnvelope(unreadMessage))
     }
-    result = { injected: true, content: envelopes.join("\n"), messageIds }
+    const content = envelopes.join("\n")
+    claim.insertContent(content)
+    result = { injected: true, content, messageIds }
 
     return {
       ...currentRuntimeState,

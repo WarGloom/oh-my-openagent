@@ -127,6 +127,14 @@ function buildPromptFromNaturalMember(member: JsonRecord): string {
     : "Work on the assigned team task and report findings to the lead."
 }
 
+function deleteEmptyStringFields(member: JsonRecord, fields: string[]): void {
+  for (const field of fields) {
+    if (typeof member[field] === "string" && member[field].trim().length === 0) {
+      delete member[field]
+    }
+  }
+}
+
 function normalizeInlineMember(member: JsonRecord, options?: NormalizeTeamSpecInputOptions): JsonRecord {
   const strippedMember = omitEmptyStringFields(member)
   const {
@@ -141,6 +149,8 @@ function normalizeInlineMember(member: JsonRecord, options?: NormalizeTeamSpecIn
     system_prompt: _systemPromptSnakeCase,
     ...normalizedMember
   } = strippedMember
+
+  deleteEmptyStringFields(normalizedMember, ["name", "kind", "category", "subagent_type", "prompt"])
 
   const rawKind = normalizedMember.kind
 
@@ -167,8 +177,24 @@ function normalizeInlineMember(member: JsonRecord, options?: NormalizeTeamSpecIn
     }
   }
 
+  if (
+    normalizedMember.kind === "category"
+    && (normalizedMember.category === undefined || normalizedMember.category === null)
+    && options?.defaultCategoryName !== undefined
+  ) {
+    normalizedMember.category = options.defaultCategoryName
+  }
+
   if (normalizedMember.kind === "category" && normalizedMember.prompt === undefined) {
     normalizedMember.prompt = buildPromptFromNaturalMember(strippedMember)
+  }
+
+  if (normalizedMember.kind === "category" && normalizedMember.subagent_type === undefined) {
+    delete normalizedMember.subagent_type
+  }
+
+  if (normalizedMember.kind === "subagent_type" && normalizedMember.category === undefined) {
+    delete normalizedMember.category
   }
 
   return normalizedMember
