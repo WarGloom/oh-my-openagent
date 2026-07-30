@@ -30,6 +30,8 @@ type ParentWakeSessionInspectorOptions = {
   readonly parentSessionActivityInProgressWindowMs?: number
 }
 
+export type ParentWakeOutputInspectionResult = "output" | "no-output" | "unknown"
+
 export class ParentWakeSessionInspector {
   private recentParentSessionActivity: Map<string, number> = new Map()
 
@@ -40,6 +42,10 @@ export class ParentWakeSessionInspector {
 
   recordActivity(sessionID: string): void {
     this.recentParentSessionActivity.set(sessionID, Date.now())
+  }
+
+  clearActivity(sessionID: string): void {
+    this.recentParentSessionActivity.delete(sessionID)
   }
 
   hasRecentActivity(sessionID: string): boolean {
@@ -93,12 +99,18 @@ export class ParentWakeSessionInspector {
     })
   }
 
-  async hasAssistantOrToolOutputAfterDispatchedWake(sessionID: string, wake: PendingParentWake): Promise<boolean> {
+  async hasAssistantOrToolOutputAfterDispatchedWake(
+    sessionID: string,
+    wake: PendingParentWake,
+  ): Promise<ParentWakeOutputInspectionResult> {
     const messages = await this.loadMessages(sessionID)
+    if (!messages) {
+      return "unknown"
+    }
     return hasAssistantOrToolOutputAfterParentWake({
       messages,
       wake,
-    })
+    }) ? "output" : "no-output"
   }
 
   shutdown(): void {

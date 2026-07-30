@@ -16,6 +16,8 @@ export type PendingParentWake = {
   noReplyAdmittedAt?: number
   toolCallDeferralStartedAt?: number
   allowEmptyAssistantTurnRetry?: boolean
+  allowInternalWakeTailRetry?: boolean
+  replyRequiredNoReplyDispatch?: boolean
   noAssistantOutputRetryCount?: number
   gateHoldExpiresAt?: number
 }
@@ -45,11 +47,25 @@ export function cloneParentWake(wake: PendingParentWake): PendingParentWake {
     ...(wake.allowEmptyAssistantTurnRetry !== undefined
       ? { allowEmptyAssistantTurnRetry: wake.allowEmptyAssistantTurnRetry }
       : {}),
+    ...(wake.allowInternalWakeTailRetry !== undefined
+      ? { allowInternalWakeTailRetry: wake.allowInternalWakeTailRetry }
+      : {}),
+    ...(wake.replyRequiredNoReplyDispatch !== undefined
+      ? { replyRequiredNoReplyDispatch: wake.replyRequiredNoReplyDispatch }
+      : {}),
     ...(wake.noAssistantOutputRetryCount !== undefined
       ? { noAssistantOutputRetryCount: wake.noAssistantOutputRetryCount }
       : {}),
     ...(wake.gateHoldExpiresAt !== undefined ? { gateHoldExpiresAt: wake.gateHoldExpiresAt } : {}),
   }
+}
+
+export function cloneParentWakeForReplyRetry(wake: PendingParentWake): PendingParentWake {
+  const retryWake = cloneParentWake(wake)
+  delete retryWake.dispatchedAt
+  delete retryWake.replyRequiredNoReplyDispatch
+  retryWake.allowInternalWakeTailRetry = true
+  return retryWake
 }
 
 export function isRedundantParentWake(latestWake: PendingParentWake, dispatchedWake: PendingParentWake): boolean {
@@ -88,7 +104,10 @@ function parentWakePromptContextMatches(left: PendingParentWake, right: PendingP
 }
 
 function parentWakeReplyModeIsCovered(latestWake: PendingParentWake, dispatchedWake: PendingParentWake): boolean {
-  return !latestWake.shouldReply || dispatchedWake.shouldReply
+  if (!latestWake.shouldReply) {
+    return true
+  }
+  return dispatchedWake.shouldReply && dispatchedWake.replyRequiredNoReplyDispatch !== true
 }
 
 function parentWakeNotificationsAreCovered(latestWake: PendingParentWake, dispatchedWake: PendingParentWake): boolean {
@@ -109,14 +128,18 @@ function isBackgroundTaskFailureHeader(line: string): boolean {
     || (line.startsWith("[ALL BACKGROUND TASKS FINISHED") && line.endsWith("]"))
 }
 
-function isFinalBackgroundTaskNotification(notification: string): boolean {
+export function isAllBackgroundTasksCompleteNotification(notification: string): boolean {
+  return getSystemReminderHeaderLines(notification).some((line) => line === "[ALL BACKGROUND TASKS COMPLETE]")
+}
+
+export function isFinalBackgroundTaskNotification(notification: string): boolean {
   return getSystemReminderHeaderLines(notification).some((line) =>
     line === "[ALL BACKGROUND TASKS COMPLETE]"
     || (line.startsWith("[ALL BACKGROUND TASKS FINISHED") && line.endsWith("]"))
   )
 }
 
-function isBackgroundTaskProgressNotification(notification: string): boolean {
+export function isBackgroundTaskProgressNotification(notification: string): boolean {
   if (!getSystemReminderHeaderLines(notification).some(isBackgroundTaskProgressHeader)) {
     return false
   }
@@ -124,6 +147,10 @@ function isBackgroundTaskProgressNotification(notification: string): boolean {
   return notification.split("\n").some((line) =>
     /^\*\*\d+ tasks? still in progress\.\*\* You WILL be notified when ALL complete\.$/.test(line.trim())
   )
+}
+
+export function isBackgroundTaskRetryNotification(notification: string): boolean {
+  return getSystemReminderHeaderLines(notification).some((line) => line === "[BACKGROUND TASK RETRYING]")
 }
 
 function isBackgroundTaskProgressHeader(line: string): boolean {

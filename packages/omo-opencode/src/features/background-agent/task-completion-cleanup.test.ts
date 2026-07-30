@@ -501,6 +501,34 @@ describe("BackgroundManager.notifyParentSession cleanup scheduling", () => {
       expect(notificationPayload).toContain(taskB.id)
     })
 
+    test("#when a local completion batch finishes while another parent task remains active #then wording is batch scoped", async () => {
+      // given
+      const sessionStatuses: Record<string, { type: string }> = {
+        "parent-1": { type: "busy" },
+      }
+      const { manager, promptAsyncCalls } = createManager(true, sessionStatuses)
+      managerUnderTest = manager
+      const taskA = createTask({ id: "task-a", parentSessionId: "parent-1", description: "task A", status: "completed", completedAt: new Date("2026-03-11T00:01:00.000Z") })
+      const taskB = createTask({ id: "task-b", parentSessionId: "parent-1", description: "task B", status: "running" })
+      getTasks(manager).set(taskA.id, taskA)
+      getTasks(manager).set(taskB.id, taskB)
+      getPendingByParent(manager).set(taskA.parentSessionId, new Set([taskA.id]))
+
+      // when
+      await notifyParentSessionForTest(manager, taskA)
+      sessionStatuses["parent-1"] = { type: "idle" }
+      manager.handleEvent({ type: "session.idle", properties: { sessionID: "parent-1" } })
+      await waitForDeferredWake(promptAsyncCalls)
+
+      // then
+      expect(promptAsyncCalls).toHaveLength(1)
+      const notificationPayload = JSON.stringify(promptAsyncCalls[0]?.body.parts)
+      expect(notificationPayload).toContain("BACKGROUND TASK BATCH COMPLETE")
+      expect(notificationPayload).not.toContain("ALL BACKGROUND TASKS COMPLETE")
+      expect(notificationPayload).toContain("1 task still active for this parent session")
+      expect(notificationPayload).toContain(taskA.id)
+    })
+
     test("#when retry no-reply notification batches with final completion #then idle flush sends one reply wake", async () => {
       // given
       const sessionStatuses: Record<string, { type: string }> = {
@@ -824,6 +852,33 @@ describe("BackgroundManager.notifyParentSession cleanup scheduling", () => {
       const notificationPayload = JSON.stringify(promptAsyncCalls[0]?.body.parts)
       expect(notificationPayload).toContain("ALL BACKGROUND TASKS COMPLETE")
       expect(notificationPayload).not.toContain("BACKGROUND TASK NOTIFICATION READY")
+    })
+
+    test("#when background_cancel cancels a running task while busy parent session is active #then promptAsync stays idle and the wake remains queued", async () => {
+      // given
+      const sessionStatuses: Record<string, { type: string }> = {
+        "parent-1": { type: "busy" },
+      }
+      const { manager, promptAsyncCalls } = createManager(true, sessionStatuses)
+      managerUnderTest = manager
+      const task = createTask({
+        id: "task-a",
+        parentSessionId: "parent-1",
+        description: "task A",
+        status: "running",
+      })
+      getTasks(manager).set(task.id, task)
+      getPendingByParent(manager).set(task.parentSessionId, new Set([task.id]))
+
+      // when
+      const cancelled = await manager.cancelTask(task.id, { source: "background_cancel", abortSession: true })
+
+      // then
+      expect(cancelled).toBe(true)
+      expect(promptAsyncCalls).toHaveLength(0)
+      const pendingWake = getPendingParentWakes(manager).get("parent-1")
+      expect(pendingWake).toBeDefined()
+      expect(pendingWake?.notifications.length ?? 0).toBeGreaterThan(0)
     })
 
     test("#when a single background task finishes during a stale busy parent status #then completion notification is retried after the parent becomes idle", async () => {

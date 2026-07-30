@@ -1,5 +1,6 @@
 import type { BackgroundTaskConfig } from "../../config/schema"
 import type { OpencodeClient } from "./constants"
+import { extractErrorMessage } from "./error-classifier"
 
 export const DEFAULT_MAX_SUBAGENT_DEPTH = 3
 export const DEFAULT_MAX_LIVE_DESCENDANTS_PER_ROOT = 24
@@ -33,13 +34,24 @@ export async function resolveSubagentSpawnContext(
     visitedSessionIDs.add(currentSessionID)
     let nextParentSessionID: string | undefined
     try {
-      const response = await client.session.get({ path: { id: currentSessionID }, ...(directory ? { query: { directory } } : {}) })
-      if (response.error) throw new Error(String(response.error))
-      if (!response.data) throw new Error("No session data returned")
+      const response = await client.session.get({
+        path: { id: currentSessionID },
+        ...(directory ? { query: { directory } } : {}),
+      })
+      if (response.error) {
+        throw new Error(extractErrorMessage(response.error) ?? "Unknown session lookup error")
+      }
+
+      if (!response.data) {
+        throw new Error("No session data returned")
+      }
+
       nextParentSessionID = response.data.parentID
     } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error)
-      throw new Error(`Subagent spawn blocked: failed to resolve session lineage for ${parentSessionID}, so background_task.maxDepth cannot be enforced safely. ${reason}`)
+      const reason = extractErrorMessage(error) ?? "Unknown session lookup error"
+      throw new Error(
+        `Subagent spawn blocked: failed to resolve session lineage for ${parentSessionID}, so background_task.maxDepth cannot be enforced safely. ${reason}`
+      )
     }
     if (!nextParentSessionID) { rootSessionID = currentSessionID; break }
     currentSessionID = nextParentSessionID
