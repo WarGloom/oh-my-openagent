@@ -1,4 +1,12 @@
 import { CATEGORY_PROMPT_APPEND_RESOLVERS } from "./constants"
+import { ROUTINE_VERIFICATION_ROUTING_POLICY } from "../../shared/routine-verification-routing-policy"
+
+function joinPromptSections(sections: Array<string | undefined>): string {
+  return sections
+    .map((section) => section?.trim())
+    .filter((section): section is string => section !== undefined && section.length > 0)
+    .join("\n\n")
+}
 
 export function resolveCategoryPromptAppendForModel(
   categoryName: string,
@@ -8,11 +16,8 @@ export function resolveCategoryPromptAppendForModel(
 ): string | undefined {
   const dynamicResolver = CATEGORY_PROMPT_APPEND_RESOLVERS[categoryName]
   if (!dynamicResolver) {
-    return staticPromptAppend || undefined
+    return joinPromptSections([staticPromptAppend, ROUTINE_VERIFICATION_ROUTING_POLICY])
   }
   const dynamicBase = dynamicResolver(actualModel)
-  if (!userPromptAppend) {
-    return dynamicBase || undefined
-  }
-  return dynamicBase ? `${dynamicBase}\n\n${userPromptAppend}` : userPromptAppend
+  return joinPromptSections([dynamicBase, userPromptAppend, ROUTINE_VERIFICATION_ROUTING_POLICY])
 }

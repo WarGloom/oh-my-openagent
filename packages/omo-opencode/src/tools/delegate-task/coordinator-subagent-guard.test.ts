@@ -1,10 +1,12 @@
+/// <reference types="bun-types" />
+
+import { describe, expect, test } from "bun:test"
+
 /**
  * Regression test for issue #4027: coordinator agents must not be selectable as
  * subagent targets via task(). Symmetric guard to PR #4065 (team_create caller
  * eligibility) — this covers the TARGET side of delegation.
  */
-const { describe, test, expect } = require("bun:test")
-
 import { resolveSubagentExecution } from "./subagent-resolver"
 import { COORDINATOR_AGENT_NAMES } from "./constants"
 import type { ExecutorContext } from "./executor-types"
@@ -62,11 +64,14 @@ describe("coordinator subagent guard (#4027)", () => {
     expect(result.error).toContain("prometheus")
     expect(result.error).toContain("coordinator")
     expect(result.error).toContain("duplicate")
+    expect(result.error).toContain('category="deep"')
+    expect(result.error).toContain('subagent_type="oracle"')
+    expect(result.error).not.toContain("hephaestus")
     expect(result.agentToUse).toBe("")
     expect(result.categoryModel).toBeUndefined()
   })
 
-  test("#given subagent_type=hephaestus #when resolveSubagentExecution is called #then it is not blocked by coordinator guard", async () => {
+  test("#given subagent_type=hephaestus #when resolveSubagentExecution is called #then it is rejected with category guidance", async () => {
     //#given
     const ctx = makeCtx()
     const args = {
@@ -80,8 +85,11 @@ describe("coordinator subagent guard (#4027)", () => {
     //#when
     const result = await resolveSubagentExecution(args, ctx, "sisyphus", "")
 
-    //#then — hephaestus may fail for other reasons (API call), but NOT the coordinator guard
-    expect(result.error).not.toContain("coordinator agent")
+    //#then
+    expect(result.agentToUse).toBe("")
+    expect(result.categoryModel).toBeUndefined()
+    expect(result.error).toContain('Cannot use subagent_type="hephaestus" directly')
+    expect(result.error).toContain('Use category="deep"')
   })
 
   test("#given subagent_type=sisyphus #when resolveSubagentExecution is called #then sisyphus is NOT blocked by coordinator guard (registry: eligible)", async () => {
