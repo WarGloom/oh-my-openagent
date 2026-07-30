@@ -1,3 +1,5 @@
+/// <reference types="bun-types" />
+
 import { describe, test, expect } from "bun:test"
 import {
   isRecord,
@@ -5,6 +7,7 @@ import {
   getErrorText,
   extractErrorName,
   extractErrorMessage,
+  extractErrorStatusCode,
   getSessionErrorMessage,
   isTerminalSessionError,
 } from "./error-classifier"
@@ -269,24 +272,24 @@ describe("extractErrorMessage", () => {
     })
   })
 
-  describe("#given complex error with data wrapper", () => {
-    test("extracts from error.data.message", () => {
-      const error = {
-        data: {
-          message: "data message",
-        },
-      }
-      expect(extractErrorMessage(error)).toBe("data message")
-    })
+	describe("#given complex error with data wrapper", () => {
+		test("extracts from error.data.message", () => {
+			const error = {
+				data: {
+					message: "data message",
+				},
+			}
+			expect(extractErrorMessage(error)).toBe("data message")
+		})
 
-    test("prefers nested message over generic top-level message", () => {
-      const error = {
-        message: "Error",
-        data: { message: "Forbidden: Selected provider is forbidden" },
-      }
-      expect(extractErrorMessage(error)).toBe("Forbidden: Selected provider is forbidden")
-    })
-  })
+		test("prefers nested message over generic top-level message", () => {
+			const error = {
+				message: "Error",
+				data: { message: "Forbidden: Selected provider is forbidden" },
+			}
+			expect(extractErrorMessage(error)).toBe("Forbidden: Selected provider is forbidden")
+		})
+	})
 
   describe("#given invalid inputs", () => {
     test("returns undefined for null", () => {
@@ -422,11 +425,29 @@ describe("isTerminalSessionError", () => {
 
   describe("#given name and message together", () => {
     test("classifies as terminal when message matches even with generic name", () => {
-      expect(isTerminalSessionError({ name: "Error", message: "no provider available" })).toBe(true)
+      expect(
+        isTerminalSessionError({ name: "Error", message: "no provider available" }),
+      ).toBe(true)
     })
 
     test("does NOT classify as terminal when only a generic error name is present", () => {
       expect(isTerminalSessionError({ name: "ProviderNotFoundError" })).toBe(false)
     })
+  })
+})
+
+describe("extractErrorStatusCode", () => {
+  test("#given auth statusCode #when extracting status #then it returns 401", () => {
+    expect(extractErrorStatusCode({ statusCode: 401 })).toBe(401)
+  })
+
+  test("#given auth code #when extracting status #then it returns 403", () => {
+    expect(extractErrorStatusCode({ code: 403 })).toBe(403)
+  })
+
+  test("#given string status #when extracting status #then it returns numeric status", () => {
+    expect(extractErrorStatusCode({ status: "401" })).toBe(401)
+  })
+})
   })
 })

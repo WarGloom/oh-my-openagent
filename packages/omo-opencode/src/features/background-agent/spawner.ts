@@ -2,7 +2,12 @@ import { log, promptWithRetryInDirectory } from "../../shared"
 import { stripAgentListSortPrefix } from "../../shared/agent-display-names"
 import { applySessionPromptParams } from "../../shared/session-prompt-params-helpers"
 import { setSessionTools } from "../../shared/session-tools-store"
-import { setSessionAgent, subagentSessions, updateSessionAgent } from "../claude-code-session-state"
+import {
+  delegatedTaskSessions,
+  setSessionAgent,
+  subagentSessions,
+  updateSessionAgent,
+} from "../claude-code-session-state"
 import { getTaskToastManager } from "../task-toast-manager"
 import type { ConcurrencyManager } from "./concurrency"
 import type { OnSubagentSessionCreated, OpencodeClient, QueueItem } from "./constants"
@@ -13,6 +18,11 @@ import { buildTaskPromptBody } from "./spawner/task-prompt-body"
 import { invokeTmuxSessionCreatedCallback } from "./spawner/tmux-callback-invoker"
 
 export { buildFallbackBody, FALLBACK_AGENT, isAgentNotFoundError }
+export {
+  buildBackgroundTaskPromptTools,
+  buildTaskPromptBody,
+  cloneBackgroundTaskUserPermission,
+} from "./spawner/task-prompt-body"
 
 export interface SpawnerContext {
   client: OpencodeClient
@@ -74,8 +84,9 @@ export async function startTask(item: QueueItem, ctx: SpawnerContext): Promise<v
 
   const sessionID = createResult.data.id
   const normalizedAgent = stripAgentListSortPrefix(input.agent)
-  await input.onSessionCreated?.(sessionID)
+  await input.onSessionCreated?.(sessionID, input.model)
   subagentSessions.add(sessionID)
+  delegatedTaskSessions.add(sessionID)
   setSessionAgent(sessionID, normalizedAgent)
 
   task.status = "running"
@@ -112,6 +123,7 @@ export async function startTask(item: QueueItem, ctx: SpawnerContext): Promise<v
     model: input.model,
     prompt: input.prompt,
     includeTeamToolDenylist: input.teamRunId === undefined,
+    userPermission: input.userPermission,
   })
   setSessionTools(sessionID, promptBody.tools)
 
@@ -182,11 +194,36 @@ export async function resumeTask(
   }
   const sessionID = task.sessionId
 
+  if (task.parentSessionId !== input.parentSessionId) {
+    log("[background-agent] Resume rejected - foreign parent session:", {
+      taskId: task.id,
+      expectedParent: task.parentSessionId,
+      providedParent: input.parentSessionId,
+    })
+    throw new Error("Resume forbidden: task belongs to a different parent session")
+  }
+
   if (task.status === "running") {
     throw new Error(
       `Task ${task.id} is currently running and cannot accept a continuation prompt. ` +
         "Wait for it to complete before resuming it with task_id.",
     )
+  }
+
+  const snapshot = {
+    status: task.status,
+    completedAt: task.completedAt,
+    error: task.error,
+    startedAt: task.startedAt,
+    progress: task.progress,
+    parentMessageId: task.parentMessageId,
+    parentModel: task.parentModel,
+    parentAgent: task.parentAgent,
+    concurrencyKey: task.concurrencyKey,
+    concurrencyGroup: task.concurrencyGroup,
+    prompt: task.prompt,
+    skillContent: task.skillContent,
+    wasSubagentSession: subagentSessions.has(sessionID),
   }
 
   const concurrencyKey = task.concurrencyGroup ?? task.agent
@@ -197,10 +234,11 @@ export async function resumeTask(
   task.status = "running"
   task.completedAt = undefined
   task.error = undefined
-  task.parentSessionId = input.parentSessionId
   task.parentMessageId = input.parentMessageId
   task.parentModel = input.parentModel
   task.parentAgent = input.parentAgent
+  task.prompt = input.prompt
+  task.skillContent = input.system
   task.startedAt = new Date()
 
   task.progress = {
@@ -236,6 +274,7 @@ export async function resumeTask(
     agent: task.agent,
     model: task.model,
     prompt: input.prompt,
+    system: input.system,
     includeTeamToolDenylist: task.teamRunId === undefined,
   })
   setSessionTools(sessionID, resumeBody.tools)
@@ -248,6 +287,28 @@ export async function resumeTask(
     },
     directory,
   ).catch(async (error) => {
+    if (error instanceof Error && error.message.startsWith("promptAsync skipped by gate:")) {
+      if (task.concurrencyKey) {
+        concurrencyManager.release(task.concurrencyKey)
+      }
+      task.status = snapshot.status
+      task.completedAt = snapshot.completedAt
+      task.error = snapshot.error
+      task.startedAt = snapshot.startedAt
+      task.progress = snapshot.progress
+      task.parentMessageId = snapshot.parentMessageId
+      task.parentModel = snapshot.parentModel
+      task.parentAgent = snapshot.parentAgent
+      task.concurrencyKey = snapshot.concurrencyKey
+      task.concurrencyGroup = snapshot.concurrencyGroup
+      task.prompt = snapshot.prompt
+      task.skillContent = snapshot.skillContent
+      if (!snapshot.wasSubagentSession) {
+        subagentSessions.delete(sessionID)
+      }
+      getTaskToastManager()?.removeTask(task.id)
+      return
+    }
     if (isAgentNotFoundError(error) && task.agent !== FALLBACK_AGENT) {
       log("[background-agent] Resume agent not found, retrying with fallback agent", {
         original: task.agent,

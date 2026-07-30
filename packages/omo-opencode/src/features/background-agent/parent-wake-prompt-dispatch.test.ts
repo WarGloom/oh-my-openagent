@@ -46,7 +46,7 @@ async function dispatchAt(
     sessionID: SESSION_ID,
     latestWake: wake,
     emptyAssistantTurnRetry: false,
-    toolWaitDecision: { defer: false },
+    toolWaitDecision: { defer: false, skipPromptGateToolStateCheck: false },
     getDispatchedWake: () => undefined,
     hasRecordedPromptAfterDispatch: async () => false,
     trackDispatchedWake: () => {},

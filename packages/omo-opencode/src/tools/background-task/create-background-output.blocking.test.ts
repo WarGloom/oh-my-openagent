@@ -27,7 +27,7 @@ const mockContext = {
     promise.nothrow = () => promise
     return promise
   },
-} as ToolContext
+} as unknown as ToolContext
 
 function createTask(overrides: Partial<BackgroundTask> = {}): BackgroundTask {
   return {
@@ -130,7 +130,7 @@ describe("createBackgroundOutput block=true polling", () => {
     expect(output).not.toContain("Timed out waiting")
   })
 
-  test("returns legacy status output with timeout note when task stays running", async () => {
+  test("returns legacy status output with active wait-limit note when task stays running", async () => {
     // #given
     let pollCount = 0
     const task = createTask({ status: "running" })
@@ -157,7 +157,8 @@ describe("createBackgroundOutput block=true polling", () => {
     // #then
     expect(pollCount).toBeGreaterThanOrEqual(2)
     expect(output).toContain("# Task Status")
-    expect(output).toContain("Timed out waiting")
+    expect(output).toContain("Wait limit reached")
     expect(output).toContain("still running")
+    expect(output).toContain("notify when it completes")
   })
 })

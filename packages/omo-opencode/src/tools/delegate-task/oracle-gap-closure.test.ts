@@ -240,9 +240,9 @@ describe("delegate-task Oracle gap closure", () => {
     expect(promptCalls[0]?.body?.system).toBe("skill instructions")
   })
 
-  test("#given background continuation loads skills through tool entry #when task resumes #then skill content is threaded into resumed prompt", async () => {
+  test("#given background continuation loads skills through tool entry #when task resumes #then skill content stays hidden from resumed prompt", async () => {
     //#given
-    const resumeCalls: Array<{ prompt?: string }> = []
+    const resumeCalls: Array<{ prompt?: string; system?: string }> = []
     spyOn(executor, "resolveSkillContent").mockResolvedValue({
       content: "skill instructions",
       contents: undefined,
@@ -253,7 +253,7 @@ describe("delegate-task Oracle gap closure", () => {
     const delegateTask = createDelegateTask({
       directory: "/tmp",
       manager: {
-        resume: async (input: { prompt?: string }) => {
+        resume: async (input: { prompt?: string; system?: string }) => {
           resumeCalls.push(input)
           return {
             id: "bg_skills",
@@ -281,7 +281,7 @@ describe("delegate-task Oracle gap closure", () => {
     )
 
     //#then
-    expect(resumeCalls[0]?.prompt).toContain("skill instructions")
-    expect(resumeCalls[0]?.prompt).toContain("keep going")
+    expect(resumeCalls[0]?.system).toContain("skill instructions")
+    expect(resumeCalls[0]?.prompt).toBe("keep going")
   })
 })
