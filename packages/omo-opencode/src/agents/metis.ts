@@ -3,7 +3,7 @@ import type { AgentConfig } from "@opencode-ai/sdk"
 import type { AgentMode, AgentPromptMetadata } from "./types"
 import { buildClaudeThinkingConfig, isKimiK2CodeModel } from "./types"
 import { buildAntiDuplicationSection } from "./dynamic-agent-prompt-builder"
-import { createAgentToolRestrictions } from "../shared/permission-compat"
+import { createAgentToolRestrictions, DENY_HEAVY_MCP_TOOLS } from "../shared/permission-compat"
 
 const MODE: AgentMode = "subagent"
 
@@ -390,7 +390,13 @@ For Build and Research, run the exploration yourself before questioning. Prompt 
 **ALWAYS**: classify first; be specific ("change UserService only, or AuthService too?"); explore before asking for Build and Research intents; give Prometheus actionable directives; and include the agent-executable QA directives in every output.
 </critical_rules>`
 
-const metisRestrictions = createAgentToolRestrictions(["write", "edit", "apply_patch"])
+const metisRestrictions = createAgentToolRestrictions([
+  "write",
+  "edit",
+  "apply_patch",
+  "task",
+  ...Object.keys(DENY_HEAVY_MCP_TOOLS),
+])
 
 export function createMetisAgent(model: string): AgentConfig {
   const prompt = isKimiK2CodeModel(model) ? METIS_K2_7_SYSTEM_PROMPT : METIS_SYSTEM_PROMPT

@@ -37,6 +37,20 @@ describe("buildCategorySkillsDelegationGuide", () => {
     expect(result).toContain("SENTINEL_USER_SKILL (user)")
     expect(result).toContain("SENTINEL_PROJECT_SKILL (project)")
   })
+
+  it("#given categories #when building #then includes routine verification routing policy", () => {
+    //#given
+    const allSkills = [...builtinSkills]
+
+    //#when
+    const result = buildCategorySkillsDelegationGuide(categories, allSkills)
+
+    //#then
+    expect(result).toContain("Routine Verification Routing")
+    expect(result).toContain('category="quick"')
+    expect(result).toContain("must not make autonomous fixes")
+    expect(result).toContain("Never route UI/design, architecture, hard debugging")
+  })
 })
 
 describe("buildUltraworkSection", () => {
