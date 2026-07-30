@@ -146,20 +146,24 @@ paths. Prefix release is deliberately tight:
 ```ts
 export function releasePromptAsyncReservation(
   sessionID: string,
+  source: string,
   options?: {
-    reservedBy?: string
-    reservedByPrefix?: string
+    reservedBy?: string | readonly string[]
+    reservedByPrefix?: string | readonly string[]
+    logOnMismatch?: boolean
   },
 ): boolean
 
-releasePromptAsyncReservation(sessionID, {
+releasePromptAsyncReservation(sessionID, "runtime-fallback-abort:retry", {
   reservedByPrefix: "runtime-fallback:",
 })
 ```
 
 `reservedByPrefix` must end in `:`. This prevents broad releases such as
 `runtime` matching unrelated sources. Exact source release remains available
-for callers that know the full reservation source.
+for callers that know the full reservation source. `logOnMismatch: false` is
+reserved for benign cleanup paths that probe whether they own a reservation and
+must not clear or spam logs when another route owns it.
 
 Raw prompt calls outside the gate are blocked by
 `packages/omo-opencode/src/shared/prompt-async-route-audit.test.ts`. The audit uses the TypeScript

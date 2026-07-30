@@ -297,7 +297,7 @@ OUTPUT FORMAT:
 
 ## Phase 3: Collect Results
 
-As agents complete (system notifications), collect via `background_output(task_id="...")`.
+Wait for the all-complete background task notification, then collect each result via `background_output(task_id="...")`.
 
 Track completion in a table:
 
