@@ -605,6 +605,30 @@ describe("ralph-loop", () => {
       expect(hook.getState()?.iteration).toBe(2)
     })
 
+    test("should clear loop after non-recoverable agent-not-found session error", async () => {
+      // given - active loop and an agent resolution failure from OpenCode
+      const hook = createRalphLoopHook(createMockPluginInput())
+      hook.startLoop("session-123", "Test task")
+
+      // when - OpenCode rejects the continuation agent name
+      await hook.event({
+        event: {
+          type: "session.error",
+          properties: {
+            sessionID: "session-123",
+            error: {
+              name: "UnknownError",
+              data: { message: 'Agent not found: "sisyphus"' },
+            },
+          },
+        },
+      })
+
+      // then - the loop is cleared instead of retrying forever
+      expect(hook.getState()).toBeNull()
+      expect(promptCalls.length).toBe(0)
+    })
+
     test("should clear state on session deletion", async () => {
       // given - active loop
       const hook = makeHook(createMockPluginInput())
@@ -1496,7 +1520,7 @@ Original task: Build something`
       expect(toastCalls.some(t => t.title === "Ralph Loop Complete!")).toBe(true)
     })
 
-    test("should prepend ultrawork to continuation prompt when ultrawork=true", async () => {
+    test("should emit an ultrawork system directive continuation prompt when ultrawork=true", async () => {
       // given - hook with ultrawork mode enabled
       const hook = makeHook(createMockPluginInput())
       hook.startLoop("session-123", "Build API", { ultrawork: true })
@@ -1506,9 +1530,9 @@ Original task: Build something`
         event: { type: "session.idle", properties: { sessionID: "session-123" } },
       })
 
-      // then - prompt should start with "ultrawork "
+      // then - prompt should stay a system directive while preserving ultrawork mode
       expect(promptCalls.length).toBe(1)
-      expect(promptCalls[0].text).toMatch(/^ultrawork /)
+      expect(promptCalls[0].text).toMatch(/^\[SYSTEM DIRECTIVE: OH-MY-OPENCODE - ULTRAWORK LOOP /)
     })
 
     test("should NOT prepend ultrawork to continuation prompt when ultrawork=false", async () => {

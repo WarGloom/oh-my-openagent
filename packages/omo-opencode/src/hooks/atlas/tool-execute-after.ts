@@ -16,11 +16,18 @@ export function createToolExecuteAfterHandler(input: {
   autoCommit: boolean
   getState: (sessionID: string) => SessionState
   isCallerOrchestrator?: (sessionID: string | undefined) => Promise<boolean>
+  isCallerOrchestratorFn?: (sessionID: string | undefined, client?: PluginInput["client"]) => Promise<boolean>
   collectGitDiffStats?: typeof collectGitDiffStats
   formatFileChanges?: typeof formatFileChanges
 }): (toolInput: ToolExecuteAfterInput, toolOutput: ToolExecuteAfterOutput | undefined) => Promise<void> {
   const { ctx, pendingFilePaths, pendingTaskRefs, pendingPlanSnapshots, autoCommit, getState } = input
-  const resolveIsCallerOrchestrator = input.isCallerOrchestrator ?? ((sessionID) => isCallerOrchestrator(sessionID, ctx.client))
+  const resolveIsCallerOrchestrator = input.isCallerOrchestrator
+    ?? ((sessionID: string | undefined) => {
+      if (input.isCallerOrchestratorFn) {
+        return input.isCallerOrchestratorFn(sessionID, ctx.client)
+      }
+      return isCallerOrchestrator(sessionID, ctx.client)
+    })
   const collectGitDiffStatsImpl = input.collectGitDiffStats ?? collectGitDiffStats
   const formatFileChangesImpl = input.formatFileChanges ?? formatFileChanges
   return async (toolInput, toolOutput): Promise<void> => {

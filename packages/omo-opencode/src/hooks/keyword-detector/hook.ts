@@ -24,6 +24,10 @@ import { detectKeywordsWithType, extractPromptText, looksLikeSlashCommand } from
 import { getUltraworkMessageForSource } from "./ultrawork"
 import { getUltraworkSource, type UltraworkSource } from "./ultrawork/source-detector"
 
+function hasModeMarker(text: string, type: string): boolean {
+  return text.includes(`[${type}-mode]`)
+}
+
 const defaultModeUltraworkInjectedSessions = new Set<string>()
 const DEFAULT_MODE_ULTRAWORK_SESSION_CAP = 256
 const ULTRAWORK_CONTINUATION_MARKER = "<ultrawork-mode>active</ultrawork-mode>"
@@ -54,13 +58,6 @@ function suppressComboStandalones(detected: DetectedKeyword[]): DetectedKeyword[
   const hasCombo = detected.some((k) => k.type === "hyperplan-ultrawork")
   if (!hasCombo) return detected
   return detected.filter((k) => k.type !== "ultrawork" && k.type !== "hyperplan")
-}
-
-function filterAlreadyInjectedKeywords(
-  detected: DetectedKeyword[],
-  text: string,
-): DetectedKeyword[] {
-  return detected.filter((keyword) => !text.includes(keyword.message.trim()))
 }
 
 export function createKeywordDetectorHook(
@@ -198,12 +195,6 @@ export function createKeywordDetectorHook(
         }
       }
 
-      detectedKeywords = filterAlreadyInjectedKeywords(detectedKeywords, cleanText)
-      if (detectedKeywords.length === 0) {
-        log(`[keyword-detector] Skipping already injected keyword messages`, { sessionID: input.sessionID })
-        return
-      }
-
       const hasUltrawork = detectedKeywords.some((k) => k.type === "ultrawork")
       if (hasUltrawork && explicitUltrawork) {
         const runtimeVariant = getRuntimeVariant(input, output.message)
@@ -272,10 +263,21 @@ export function createKeywordDetectorHook(
           .catch((err) => log(`[keyword-detector] Failed to show toast`, { error: err, sessionID: input.sessionID }))
       }
 
-      const allMessages = detectedKeywords
+      const textPart = output.parts.find(isRealUserTextPart)
+      const originalText = textPart?.text ?? ""
+      const dedupedKeywords = detectedKeywords.filter(
+        (keyword) => !hasModeMarker(originalText, keyword.type) && !originalText.includes(keyword.message.trim()),
+      )
+      if (dedupedKeywords.length === 0) {
+        log(`[keyword-detector] Skipping duplicate mode injection`, {
+          sessionID: input.sessionID,
+          types: detectedKeywords.map((k) => k.type),
+        })
+      }
+
+      const allMessages = dedupedKeywords
         .filter((k) => !(compactUltrawork && k.type === "ultrawork"))
         .map((k) => k.message).join("\n\n")
-      const textPart = output.parts.find(isRealUserTextPart)
       const requiresFullGuidance = (hasUltrawork || hasHyperplanUltrawork) && !compactUltrawork && allMessages.length > 0
       const messageID = input.messageID ?? (typeof output.message.id === "string" ? output.message.id : undefined)
       let fullGuidanceDurablyAdded = textPart !== undefined && requiresFullGuidance
@@ -315,9 +317,9 @@ export function createKeywordDetectorHook(
         explicitUltraworkSessions.set(input.sessionID, { source: promptSource, needsRestoration: false })
       }
 
-      log(`[keyword-detector] Detected ${detectedKeywords.length} keywords`, {
+      log(`[keyword-detector] Detected ${dedupedKeywords.length} keywords`, {
         sessionID: input.sessionID,
-        types: detectedKeywords.map((k) => k.type),
+        types: dedupedKeywords.map((k) => k.type),
       })
     },
     clearSession: (sessionID: string): void => {

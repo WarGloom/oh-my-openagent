@@ -8,7 +8,9 @@ export type TailMonitorState = {
   currentMessageID?: string
   currentHasOutput: boolean
   consecutiveNoTextMessages: number
+  consecutiveRecoveryFailures: number
   lastCompactedAt?: number
+  lastRecoveryAttemptAt?: number
   lastRecoveryAt?: number
 }
 

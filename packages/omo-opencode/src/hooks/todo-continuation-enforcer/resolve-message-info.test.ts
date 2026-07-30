@@ -66,4 +66,64 @@ describe("resolveLatestMessageInfo", () => {
       tools: undefined,
     })
   })
+
+  test("#given latest message used runtime fallback override #when resolving continuation info #then suppresses stale fallback model", async () => {
+    // given
+    const fallbackModel = { providerID: "opencode", modelID: "qwen3.6-plus-free", variant: "high" }
+    const messages: MessageWithInfo[] = [
+      {
+        info: {
+          role: "assistant",
+          agent: "sisyphus",
+          model: fallbackModel,
+          runtimeFallbackModelOverride: true,
+        },
+      },
+    ]
+
+    // when
+    const result = await resolveLatestMessageInfo(
+      unsafeTestValue({}),
+      "ses_runtime_fallback_override_info",
+      messages,
+    )
+
+    // then
+    expect(result.resolvedInfo).toEqual({
+      agent: "sisyphus",
+      model: undefined,
+      modelSuppressed: true,
+      tools: undefined,
+    })
+  })
+
+  test("#given latest message has provider error #when resolving continuation info #then suppresses stale error model", async () => {
+    // given
+    const errorModel = { providerID: "opencode", modelID: "qwen3.6-plus-free", variant: "high" }
+    const messages: MessageWithInfo[] = [
+      {
+        info: {
+          role: "assistant",
+          agent: "sisyphus",
+          model: errorModel,
+          error: { name: "ProviderModelNotFoundError" },
+        },
+      },
+    ]
+
+    // when
+    const result = await resolveLatestMessageInfo(
+      unsafeTestValue({}),
+      "ses_provider_error_model_info",
+      messages,
+    )
+
+    // then
+    expect(result.resolvedInfo).toEqual({
+      agent: "sisyphus",
+      model: undefined,
+      modelSuppressed: true,
+      tools: undefined,
+    })
+  })
 })

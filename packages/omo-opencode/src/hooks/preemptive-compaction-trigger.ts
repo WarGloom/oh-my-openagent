@@ -18,6 +18,27 @@ const PREEMPTIVE_COMPACTION_COOLDOWN_MS = 60_000
 declare function setTimeout(handler: () => void, timeout?: number): unknown
 declare function clearTimeout(timeoutID: unknown): void
 
+export function isCachedUsageAboveCompactionThreshold(
+  cached: CachedCompactionState,
+  modelCacheState?: ContextLimitModelCacheState,
+): boolean | null {
+  if (!cached.modelID) return false
+
+  const actualLimit = resolveActualContextLimit(
+    cached.providerID,
+    cached.modelID,
+    modelCacheState,
+  )
+
+  if (actualLimit === null) {
+    return null
+  }
+
+  const totalInputTokens = (cached.tokens.input ?? 0) + (cached.tokens.cache?.read ?? 0)
+  const usageRatio = totalInputTokens / actualLimit
+  return usageRatio >= PREEMPTIVE_COMPACTION_THRESHOLD
+}
+
 async function withTimeout<TValue>(
   promise: Promise<TValue>,
   timeoutMs: number,
@@ -65,13 +86,8 @@ export async function runPreemptiveCompactionIfNeeded(args: {
   const cached = tokenCache.get(sessionID)
   if (!cached) return
 
-  const actualLimit = resolveActualContextLimit(
-    cached.providerID,
-    cached.modelID,
-    modelCacheState,
-  )
-
-  if (actualLimit === null) {
+  const usageAboveThreshold = isCachedUsageAboveCompactionThreshold(cached, modelCacheState)
+  if (usageAboveThreshold === null) {
     log("[preemptive-compaction] Skipping preemptive compaction: unknown context limit for model", {
       providerID: cached.providerID,
       modelID: cached.modelID,
@@ -79,9 +95,7 @@ export async function runPreemptiveCompactionIfNeeded(args: {
     return
   }
 
-  const totalInputTokens = (cached.tokens.input ?? 0) + (cached.tokens.cache?.read ?? 0)
-  const usageRatio = totalInputTokens / actualLimit
-  if (usageRatio < PREEMPTIVE_COMPACTION_THRESHOLD || !cached.modelID) return
+  if (!usageAboveThreshold) return
 
   compactionInProgress.add(sessionID)
   lastCompactionTime.set(sessionID, Date.now())

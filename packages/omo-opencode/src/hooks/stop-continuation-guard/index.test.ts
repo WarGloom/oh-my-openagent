@@ -85,6 +85,19 @@ describe("stop-continuation-guard", () => {
     expect(marker?.sources.stop?.state).toBe("stopped")
   })
 
+  test("should preserve stopped state across guard recreation", () => {
+    // given - a session stopped by a previous guard instance
+    const input = createMockPluginInput()
+    const sessionID = "test-session-reloaded"
+    createStopContinuationGuardHook(input).stop(sessionID)
+
+    // when - a new guard instance is created for the same directory
+    const reloadedGuard = createStopContinuationGuardHook(input)
+
+    // then - the persisted marker keeps the session stopped
+    expect(reloadedGuard.isStopped(sessionID)).toBe(true)
+  })
+
   test("should return false for non-stopped sessions", () => {
     // given - a guard hook with no stopped sessions
     const guard = createStopContinuationGuardHook(createMockPluginInput())

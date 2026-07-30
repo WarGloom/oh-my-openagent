@@ -136,9 +136,10 @@ describe("ralph-loop non-abort error continuation", () => {
 			},
 		})
 
-		// then - the ULW continuation preserves the user's loop prompt
+		// then - the ULW continuation keeps the ultrawork system directive and preserves the user's loop prompt
 		expect(promptCalls).toHaveLength(1)
 		expect(promptCalls[0]?.sessionID).toBe("session-123")
+		expect(promptCalls[0]?.text).toMatch(/^\[SYSTEM DIRECTIVE: OH-MY-OPENCODE - ULTRAWORK LOOP /)
 		expect(promptCalls[0]?.text).toContain("Keep ultraworking")
 		expect(hook.getState()?.iteration).toBe(2)
 	})

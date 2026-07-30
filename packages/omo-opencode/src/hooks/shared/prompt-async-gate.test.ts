@@ -1,4 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { existsSync, readFileSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+
+import { _flushForTesting, _resetLoggerForTesting, _setLoggerForTesting } from "../../shared/logger"
 
 import {
   _setPromptGateMessagesFetchTimeoutMsForTesting,
@@ -356,6 +361,55 @@ describe("dispatchInternalPrompt", () => {
     expect(first.status).toBe("queued")
     expect(second).toEqual({ status: "reserved", reservedBy: "test:queue-defer-existing:first" })
     expect(calls).toEqual(["first"])
+  })
+})
+
+describe("releasePromptAsyncReservation", () => {
+  test("#given a foreign reservation #when quiet mismatch release is requested #then reservation stays and mismatch is not logged", async () => {
+    // given
+    const logPath = join(tmpdir(), `prompt-async-gate-quiet-mismatch-${Date.now()}.log`)
+    _setLoggerForTesting({ filePath: logPath })
+    try {
+      const sessionID = "ses_quiet_mismatch"
+      const client = {
+        session: {
+          status: async () => ({ status: "idle" }),
+          messages: async () => ({ data: [] }),
+          promptAsync: async () => ({}),
+        },
+      }
+      await dispatchInternalPrompt({
+        mode: "async",
+        client,
+        sessionID,
+        source: "background-agent-parent-wake",
+        input: { path: { id: sessionID }, body: { parts: [{ type: "text", text: "wake" }] } },
+        settleMs: 0,
+      })
+
+      // when
+      const released = releasePromptAsyncReservation(sessionID, "ralph-loop", { logOnMismatch: false })
+      const next = await dispatchInternalPrompt({
+        mode: "async",
+        client,
+        sessionID,
+        source: "ralph-loop",
+        input: { path: { id: sessionID }, body: { parts: [{ type: "text", text: "continue" }] } },
+        settleMs: 0,
+        queueBehavior: "defer",
+      })
+      _flushForTesting()
+
+      // then
+      expect(released).toBe(false)
+      expect(next).toEqual({ status: "reserved", reservedBy: "background-agent-parent-wake" })
+      const logContents = existsSync(logPath) ? readFileSync(logPath, "utf8") : ""
+      expect(logContents).not.toContain("promptAsync reservation release skipped for different source")
+    } finally {
+      releaseAllPromptAsyncReservationsForTesting()
+      _resetLoggerForTesting()
+      rmSync(logPath, { force: true })
+    }
   })
 })
 

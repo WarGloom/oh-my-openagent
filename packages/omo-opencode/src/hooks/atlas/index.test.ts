@@ -2338,7 +2338,7 @@ session_id: ses_untrusted_999
       }
     })
 
-    test("should reset continuation failure state on session.compacted event", async () => {
+    test("should reset continuation failure state and guard idle after session.compacted event", async () => {
       //#given - boulder state with incomplete plan and prompt always fails
       const planPath = join(TEST_DIR, "test-plan.md")
       writeFileSync(planPath, "# Plan\n- [ ] Task 1\n- [ ] Task 2")
@@ -2356,8 +2356,39 @@ session_id: ses_untrusted_999
       const hook = createTestAtlasHook(mockInput)
 
       const originalDateNow = Date.now
+      const originalSetTimeout = globalThis.setTimeout
+      const originalClearTimeout = globalThis.clearTimeout
       let now = 0
+      const scheduledRetries = new Map<ReturnType<typeof setTimeout>, { callback: () => Promise<void>; delay: number }>()
       Date.now = () => now
+      globalThis.setTimeout = ((handler: Parameters<typeof setTimeout>[0], timeout?: number, ...args: unknown[]) => {
+        const delay = timeout ?? 0
+        if (delay >= 5000 && delay !== DEFAULT_PROMPT_DISPATCH_TIMEOUT_MS && delay !== 5000) {
+          const timerID = originalSetTimeout(() => undefined, 0)
+          scheduledRetries.set(timerID, {
+            delay,
+            callback: async () => {
+              if (typeof handler === "function") {
+                const result: unknown = handler(...args)
+                await Promise.resolve(result)
+              }
+            },
+          })
+          return timerID
+        }
+        return typeof handler === "function"
+          ? originalSetTimeout(handler, timeout, ...args)
+          : originalSetTimeout(() => undefined, timeout)
+      }) as typeof setTimeout
+      globalThis.clearTimeout = ((id?: ReturnType<typeof setTimeout>) => {
+        if (id !== undefined && scheduledRetries.has(id)) {
+          scheduledRetries.delete(id)
+          return
+        }
+        if (id !== undefined) {
+          originalClearTimeout(id)
+        }
+      }) as typeof clearTimeout
 
       try {
         //#when - 10 failures disable continuation, then compaction resets it
@@ -2376,10 +2407,21 @@ session_id: ses_untrusted_999
         await hook.handler({ event: { type: "session.idle", properties: { sessionID: MAIN_SESSION_ID } } })
         await flushMicrotasks()
 
-        //#then - 10 attempts + 1 after compaction (11 total)
+        //#then - Atlas does not inject immediately after compaction
+        expect(promptMock).toHaveBeenCalledTimes(10)
+        const scheduledRetry = Array.from(scheduledRetries.values()).at(-1)
+        expect(scheduledRetry?.delay).toBe(54_000)
+
+        now += 60_000
+        await scheduledRetry?.callback()
+        await flushMicrotasks()
+
+        //#then - compaction reset failures, so continuation resumes without another idle event
         expect(promptMock).toHaveBeenCalledTimes(11)
       } finally {
         Date.now = originalDateNow
+        globalThis.setTimeout = originalSetTimeout
+        globalThis.clearTimeout = originalClearTimeout
       }
     })
 
@@ -2492,15 +2534,16 @@ session_id: ses_untrusted_999
         }) as typeof setTimeout
 
         globalThis.clearTimeout = ((id?: ReturnType<typeof setTimeout>) => {
-          const timerEntry = id ? capturedTimers.get(id) : undefined
-          if (id !== undefined && timerEntry) {
+          if (id === undefined) {
+            return
+          }
+          const timerEntry = capturedTimers.get(id)
+          if (timerEntry) {
             timerEntry.cleared = true
             capturedTimers.delete(id)
             return
           }
-          if (id !== undefined) {
-            originalClearTimeout(id)
-          }
+          originalClearTimeout(id)
         }) as typeof clearTimeout
       })
 

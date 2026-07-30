@@ -39,8 +39,7 @@ export function createAtlasEventHandler(input: {
         const state = sessions.get(sessionID)
         if (
           state
-          &&
-          state.lastContinuationInjectedAt !== undefined
+          && state.lastContinuationInjectedAt !== undefined
           && state.lastContinuationInjectedAt !== previousInjectedAt
         ) {
           state.skipNextIdleAfterRuntimeErrorRetry = true
