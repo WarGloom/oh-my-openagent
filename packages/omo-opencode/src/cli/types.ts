@@ -30,7 +30,6 @@ export interface InstallConfig {
   hasGemini: boolean
   hasCopilot: boolean
   hasCodex: boolean
-  hasSenpi: boolean
   hasOpencodeZen: boolean
   hasZaiCodingPlan: boolean
   hasKimiForCoding: boolean

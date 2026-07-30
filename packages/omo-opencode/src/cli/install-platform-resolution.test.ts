@@ -72,7 +72,6 @@ describe("install platform resolution", () => {
       delete process.env.OMO_ENABLE_SENPI_PLATFORM
     }
   })
-
   test("resolves explicit --platform=opencode", () => {
     // given
     const invocationName = "omo"
