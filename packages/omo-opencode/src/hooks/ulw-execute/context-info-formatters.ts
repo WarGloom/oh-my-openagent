@@ -52,6 +52,15 @@ function formatElapsedHuman(elapsedMs: number | undefined): string {
   return `${seconds}s`
 }
 
+export function buildStartWorkSelectionCommand(
+  option: Pick<BoulderWorkResumeOption, "plan_name" | "worktree_path">,
+): string {
+  const command = `/start-work "${option.plan_name}"`
+  return option.worktree_path === undefined
+    ? command
+    : `${command} --worktree ${option.worktree_path}`
+}
+
 export function buildMultipleActiveWorksContext(params: {
   readonly resumeOptions: readonly BoulderWorkResumeOption[]
   readonly sessionId: string
@@ -68,6 +77,7 @@ export function buildMultipleActiveWorksContext(params: {
       return `${index + 1}. ${option.plan_name} - ${option.progress.completed}/${option.progress.total} (${percent}%) - elapsed: ${formatElapsedHuman(option.elapsed_ms)} - worktree: ${option.worktree_path ?? "current directory"} - sessions: ${option.session_count}`
     })
     .join("\n")
+  const selectionCommands = resumeOptions.map(buildStartWorkSelectionCommand).join("\n")
 
   return `
 <system-reminder>
@@ -78,9 +88,12 @@ Session ID: ${sessionId}
 
 ${optionList}
 
-Use the Question tool to ask the user which plan to resume.
-- If the user chooses one option, run /ulw-execute {plan-name} for that plan.
-- If the user chooses to start a new plan, proceed with cold-start auto-selection flow.
+<start-work-selection-required>
+${selectionCommands}
+</start-work-selection-required>
+
+Present these commands to the USER. The USER must issue exactly one command in a new turn.
+Atlas must stop now. "Use the Question tool" is prohibited; do not read, edit, delegate, or execute any plan during this ambiguous turn.
 </system-reminder>`
 }
 
