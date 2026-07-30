@@ -1,6 +1,16 @@
 import { MAX_AGENTS, MAX_JOBS } from "./constants"
+import { readSessionJobsMirror } from "./session-jobs-mirror"
 import type { TuiRuntimeSnapshot } from "./snapshot-schema"
-import type { AgentsState, ConfigState, JobBoardState, JobRow, LoopState, RosterRow, RosterState } from "./state-types"
+import type {
+  AgentsState,
+  ConfigState,
+  JobBoardState,
+  JobRow,
+  LoopState,
+  RosterRow,
+  RosterState,
+  TeamsState,
+} from "./state-types"
 import type { BackgroundTaskStatus } from "../background-agent/types"
 
 const JOB_STATUS_PRIORITY: Record<BackgroundTaskStatus, number> = {
@@ -42,19 +52,39 @@ export function deriveAgents(snap: TuiRuntimeSnapshot | null): AgentsState {
   }
 }
 
-export function deriveJobBoard(snap: TuiRuntimeSnapshot | null): JobBoardState {
-  if (!snap || snap.jobBoard.length === 0) {
+export function deriveCurrentSessionJobs(
+  projectDir: string,
+  sessionId: string | null,
+  now: number = Date.now(),
+): JobBoardState {
+  if (sessionId === null) {
+    return { kind: "none" }
+  }
+
+  return deriveJobs(readSessionJobsMirror(projectDir, sessionId, now))
+}
+
+function deriveJobs(jobs: readonly JobRow[] | null): JobBoardState {
+  if (!jobs || jobs.length === 0) {
     return { kind: "none" }
   }
 
   return {
     kind: "list",
-    jobs: [...snap.jobBoard].sort(compareJobs).slice(0, MAX_JOBS),
+    jobs: [...jobs].sort(compareJobs).slice(0, MAX_JOBS),
   }
 }
 
 export function deriveLoop(snap: TuiRuntimeSnapshot | null): LoopState {
   return snap?.loop ?? { kind: "none" }
+}
+
+export function deriveTeams(snap: TuiRuntimeSnapshot | null): TeamsState {
+  if (!snap) {
+    return { kind: "none" }
+  }
+
+  return { kind: "list", teams: snap.teams }
 }
 
 function compareRosterRows(left: RosterRow, right: RosterRow): number {

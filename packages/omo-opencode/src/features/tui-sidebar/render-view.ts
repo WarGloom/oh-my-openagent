@@ -2,7 +2,9 @@ import { LABEL_MAX } from "./constants"
 import { box, text } from "./element-helpers"
 import type { ViewNode } from "./element-helpers"
 import { assertNever } from "./state-types"
-import type { AgentsState, ConfigBanner, JobBoardState, LoopState, RosterState, SidebarView } from "./state-types"
+import { teamLines, teamNodes } from "./team-section"
+import type { TeamSectionInteraction } from "./team-section"
+import type { ConfigBanner, JobBoardState, LoopState, SidebarView } from "./state-types"
 
 type ThemeLike = {
   readonly error?: unknown
@@ -15,21 +17,25 @@ type ThemeLike = {
   readonly borderSubtle?: unknown
 }
 
-export function buildViewNodes(view: SidebarView, theme: ThemeLike): ViewNode[] {
+export function buildViewNodes(
+  view: SidebarView,
+  theme: ThemeLike,
+  teamInteraction?: TeamSectionInteraction,
+): ViewNode[] {
   switch (view.kind) {
     case "active":
       return [
         box({ flexDirection: "column", gap: 1 }, [
           ...configBannerNodes(view.configBanner, theme),
           ...loopNodes(view.loop, theme),
-          ...agentNodes(view.agents, theme),
           ...jobNodes(view.jobs, theme),
+          ...teamNodes(view.teams, theme, teamInteraction),
         ]),
       ]
     case "broken":
       return brokenNodes(view.messages, theme)
     case "idle":
-      return idleNodes(view.roster, theme)
+      return []
     default:
       return assertNever(view)
   }
@@ -45,13 +51,13 @@ function linesForView(view: SidebarView): string[] {
       return [
         ...configBannerLines(view.configBanner),
         ...loopLines(view.loop),
-        ...agentLines(view.agents),
         ...jobLines(view.jobs),
+        ...teamLines(view.teams),
       ]
     case "broken":
       return ["config invalid - run doctor", ...view.messages]
     case "idle":
-      return rosterLines(view.roster)
+      return []
     default:
       return assertNever(view)
   }
@@ -116,34 +122,6 @@ function loopLines(loop: LoopState): string[] {
   }
 }
 
-function agentNodes(agents: AgentsState, theme: ThemeLike): ViewNode[] {
-  switch (agents.kind) {
-    case "none":
-      return []
-    case "list":
-      return [
-        section(
-          "Agents",
-          theme,
-          agents.agents.map((agent) => text({ fg: theme.text }, `${truncate(agent.name)} ${agent.status}`)),
-        ),
-      ]
-    default:
-      return assertNever(agents)
-  }
-}
-
-function agentLines(agents: AgentsState): string[] {
-  switch (agents.kind) {
-    case "none":
-      return []
-    case "list":
-      return ["Agents", ...agents.agents.map((agent) => `${agent.name} ${agent.status}`)]
-    default:
-      return assertNever(agents)
-  }
-}
-
 function jobNodes(jobs: JobBoardState, theme: ThemeLike): ViewNode[] {
   switch (jobs.kind) {
     case "none":
@@ -187,27 +165,6 @@ function brokenNodes(messages: readonly string[], theme: ThemeLike): ViewNode[] 
       ...messages.map((message) => text({ fg: theme.textMuted }, truncate(message))),
     ]),
   ]
-}
-
-function idleNodes(roster: RosterState, theme: ThemeLike): ViewNode[] {
-  return [
-    section(
-      "Models",
-      theme,
-      rosterLines(roster).map((line) => text({ fg: theme.text }, line)),
-    ),
-  ]
-}
-
-function rosterLines(roster: RosterState): string[] {
-  switch (roster.kind) {
-    case "empty":
-      return ["No configured models"]
-    case "rows":
-      return roster.rows.map((row) => `${row.label} ${row.model}`)
-    default:
-      return assertNever(roster)
-  }
 }
 
 function section(title: string, theme: ThemeLike, children: readonly ViewNode[]): ViewNode {
