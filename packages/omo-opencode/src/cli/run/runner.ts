@@ -15,6 +15,7 @@ import { suppressRunInput } from "./stdin-suppression"
 import { createTimestampedStdoutController } from "./timestamp-output"
 import { createCliPostHog, getPostHogDistinctId } from "../../shared/posthog"
 import { dispatchInternalPrompt, isInternalPromptDispatchAccepted } from "../../shared/prompt-async-gate"
+import { logRunTrace, traceRunStep } from "./run-debug"
 import { isAmbiguousPostDispatchPromptFailure } from "../../shared/prompt-failure-classifier"
 import { resolveRunnableRunAgent } from "./runnable-agent-resolver"
 
@@ -66,13 +67,16 @@ export async function run(options: RunOptions): Promise<number> {
   }
 
   try {
-    const resolvedModel = resolveRunModel(options.model)
+    const resolvedModel = await traceRunStep("resolve run model", async () => resolveRunModel(options.model))
 
-    const { client, cleanup: serverCleanup } = await createServerConnection({
-      port: options.port,
-      attach: options.attach,
-      signal: abortController.signal,
-    })
+    logRunTrace("begin run orchestration")
+    const { client, cleanup: serverCleanup } = await traceRunStep("createServerConnection", async () =>
+      createServerConnection({
+        port: options.port,
+        attach: options.attach,
+        signal: abortController.signal,
+      }),
+    )
 
     const cleanup = () => {
       serverCleanup()
@@ -89,11 +93,13 @@ export async function run(options: RunOptions): Promise<number> {
     process.on("SIGINT", handleSigint)
 
     try {
-      const sessionID = await resolveSession({
-        client,
-        sessionId: options.sessionId,
-        directory,
-      })
+      const sessionID = await traceRunStep("resolveSession", async () =>
+        resolveSession({
+          client,
+          sessionId: options.sessionId,
+          directory,
+        }),
+      )
       const runnableAgent = await resolveRunnableRunAgent(client, resolvedAgent, pluginConfig)
 
       console.log(pc.dim(`Session: ${sessionID}`))
@@ -109,14 +115,23 @@ export async function run(options: RunOptions): Promise<number> {
         abortController,
         verbose: options.verbose ?? false,
       }
-      const events = await client.event.subscribe({ query: { directory } })
+      const events = await traceRunStep("client.event.subscribe", async () =>
+        client.event.subscribe({ query: { directory } }),
+      )
       const eventState = createEventState()
-      eventState.agentColorsByName = await loadAgentProfileColors(client)
+      void loadAgentProfileColors(client)
+        .then((colors) => {
+          eventState.agentColorsByName = colors
+        })
+        .catch(() => {
+          eventState.agentColorsByName = {}
+        })
+      logRunTrace("start event processor")
       const eventProcessor = processEvents(ctx, events.stream, eventState).catch(
         () => {},
       )
 
-      const promptResult = await dispatchInternalPrompt({
+      const promptResult = await traceRunStep("dispatchInternalPrompt", async () => dispatchInternalPrompt({
         mode: "async",
         client,
         sessionID,
@@ -135,7 +150,7 @@ export async function run(options: RunOptions): Promise<number> {
           },
           query: { directory },
         },
-      })
+      }))
       const promptMayHaveBeenAccepted = promptResult.status === "failed"
         && isAmbiguousPostDispatchPromptFailure(promptResult)
       if (promptResult.status === "failed") {
@@ -150,14 +165,20 @@ export async function run(options: RunOptions): Promise<number> {
       if (!promptMayHaveBeenAccepted && !isInternalPromptDispatchAccepted(promptResult)) {
         throw new Error(`Session ${sessionID} is not idle; promptAsync skipped by gate: ${promptResult.status}`)
       }
-      await waitForPromptStart(ctx, eventState, abortController)
-      const exitCode = await pollForCompletion(ctx, eventState, abortController, {
-        requireMeaningfulWork: true,
-      })
+      await traceRunStep("waitForPromptStart", async () =>
+        waitForPromptStart(ctx, eventState, abortController),
+      )
+      const exitCode = await traceRunStep("pollForCompletion", async () =>
+        pollForCompletion(ctx, eventState, abortController, {
+          requireMeaningfulWork: true,
+        }),
+      )
 
       abortController.abort()
+      logRunTrace("abort requested after pollForCompletion")
 
       await waitForEventProcessorShutdown(eventProcessor)
+      logRunTrace("event processor stopped")
       cleanup()
 
       const durationMs = Date.now() - startTime

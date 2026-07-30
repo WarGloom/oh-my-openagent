@@ -1,10 +1,12 @@
-import { describe, it, expect, mock, spyOn, afterEach } from "bun:test"
+import { beforeEach, describe, it, expect, mock, spyOn, afterEach } from "bun:test"
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import type { RunContext } from "./types"
 import { _resetForTesting, setSessionAgent } from "../../features/claude-code-session-state"
 import { writeState as writeRalphLoopState } from "../../hooks/ralph-loop/storage"
+import * as boulderSessionLineageModule from "../../hooks/atlas/boulder-session-lineage"
+import * as sessionLastAgentModule from "../../hooks/atlas/session-last-agent"
 import { unsafeTestValue } from "../../../../../test-support/unsafe-test-value"
 
 const testDirs: string[] = []
@@ -18,6 +20,14 @@ afterEach(() => {
     }
   }
 })
+
+beforeEach(() => {
+  mock.restore()
+})
+
+async function importFreshCompletionModule(): Promise<typeof import("./completion")> {
+  return import(`./completion?test=${Date.now()}-${Math.random()}`)
+}
 
 function createTempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "omo-run-continuation-"))
@@ -79,7 +89,9 @@ describe("checkCompletionConditions continuation coverage", () => {
     writeFileSync(planPath, "- [ ] incomplete task\n", "utf-8")
     writeBoulderStateFile(directory, planPath, ["test-session"])
     const ctx = createMockContext(directory)
-    const { checkCompletionConditions } = await import("./completion")
+    spyOn(boulderSessionLineageModule, "isSessionInBoulderLineage").mockResolvedValue(true)
+    spyOn(sessionLastAgentModule, "getLastAgentFromSession").mockResolvedValue("atlas")
+    const { checkCompletionConditions } = await importFreshCompletionModule()
 
     // when
     const result = await checkCompletionConditions(ctx)
@@ -97,7 +109,9 @@ describe("checkCompletionConditions continuation coverage", () => {
     writeFileSync(planPath, "- [x] completed task\n", "utf-8")
     writeBoulderStateFile(directory, planPath, ["test-session"])
     const ctx = createMockContext(directory)
-    const { checkCompletionConditions } = await import("./completion")
+    spyOn(boulderSessionLineageModule, "isSessionInBoulderLineage").mockResolvedValue(true)
+    spyOn(sessionLastAgentModule, "getLastAgentFromSession").mockResolvedValue("atlas")
+    const { checkCompletionConditions } = await importFreshCompletionModule()
 
     // when
     const result = await checkCompletionConditions(ctx)
@@ -195,7 +209,9 @@ describe("checkCompletionConditions continuation coverage", () => {
         : [],
     })))
 
-    const { checkCompletionConditions } = await import("./completion")
+    spyOn(boulderSessionLineageModule, "isSessionInBoulderLineage").mockResolvedValue(true)
+    spyOn(sessionLastAgentModule, "getLastAgentFromSession").mockResolvedValue("atlas")
+    const { checkCompletionConditions } = await importFreshCompletionModule()
 
     // when
     const result = await checkCompletionConditions(ctx)
@@ -223,7 +239,7 @@ describe("checkCompletionConditions continuation coverage", () => {
     })))
     ctx.client.session.messages = unsafeTestValue<RunContext["client"]["session"]["messages"]>(mock(async () => ({ data: [] })))
 
-    const { checkCompletionConditions } = await import("./completion")
+    const { checkCompletionConditions } = await importFreshCompletionModule()
 
     // when
     const result = await checkCompletionConditions(ctx)
@@ -258,7 +274,7 @@ describe("checkCompletionConditions continuation coverage", () => {
         : [],
     })))
 
-    const { checkCompletionConditions } = await import("./completion")
+    const { checkCompletionConditions } = await importFreshCompletionModule()
 
     // when
     const result = await checkCompletionConditions(ctx)
@@ -293,7 +309,7 @@ describe("checkCompletionConditions continuation coverage", () => {
         : [],
     })))
 
-    const { checkCompletionConditions } = await import("./completion")
+    const { checkCompletionConditions } = await importFreshCompletionModule()
 
     // when
     const result = await checkCompletionConditions(ctx)
@@ -325,7 +341,7 @@ describe("checkCompletionConditions continuation coverage", () => {
         : [],
     })))
 
-    const { checkCompletionConditions } = await import("./completion")
+    const { checkCompletionConditions } = await importFreshCompletionModule()
 
     // when
     const result = await checkCompletionConditions(ctx)
@@ -352,7 +368,7 @@ describe("checkCompletionConditions continuation coverage", () => {
       },
     })))
 
-    const { checkCompletionConditions } = await import("./completion")
+    const { checkCompletionConditions } = await importFreshCompletionModule()
 
     // when
     const result = await checkCompletionConditions(ctx)
@@ -480,7 +496,9 @@ describe("checkCompletionConditions continuation coverage", () => {
         : [],
     })))
 
-    const { checkCompletionConditions } = await import("./completion")
+    spyOn(boulderSessionLineageModule, "isSessionInBoulderLineage").mockResolvedValue(true)
+    spyOn(sessionLastAgentModule, "getLastAgentFromSession").mockResolvedValue("atlas")
+    const { checkCompletionConditions } = await importFreshCompletionModule()
 
     // when
     const result = await checkCompletionConditions(ctx)
