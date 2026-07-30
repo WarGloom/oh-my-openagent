@@ -2,6 +2,8 @@
 
 Parallel multi-agent coordination for omo, modeled after Claude Code's experimental Agent Teams.
 
+This guide describes Team Mode in the OpenCode edition. Senpi member rules are listed separately below; they do not change the OpenCode tool API or eligibility rules.
+
 ## Status
 
 OFF by default. Enable via JSONC config.
@@ -11,6 +13,8 @@ OFF by default. Enable via JSONC config.
 - Parallel exploration with bounded coordination.
 - Long-running multi-step refactors split across specialised agents.
 - Research + implementation pipelines that need shared task lists.
+
+Do not use team mode for independent one-off searches, read-only audits, or fact gathering where workers do not need shared state or peer messaging. Use parallel background `task(..., run_in_background=true, load_skills=[])` subagents for that. Team mode is for coordinated work with shared tasks, mailbox state, lifecycle closure, worktrees, or tmux visibility.
 
 ## Enable
 
@@ -51,6 +55,22 @@ All fields live under `team_mode`:
 
 Team specs live under `~/.omo/teams/{name}/config.json` (user scope) or `<project>/.omo/teams/{name}/config.json` (project scope):
 
+For one-off inline `team_create({ inline_spec })` calls, prefer the runtime-safe category-member shorthand and omit unused optional keys:
+
+```json
+{
+  "name": "project-analysis-team",
+  "members": [
+    { "name": "structure-analyst", "category": "quick", "prompt": "Analyze project structure and report concrete files." },
+    { "name": "quality-analyst", "category": "quick", "prompt": "Analyze tests, CI/CD, build scripts, and conventions." }
+  ]
+}
+```
+
+Do not pass empty strings for unused fields such as `teamName`, `kind`, `category`, or `subagent_type`. Omit unused keys entirely. `team_create` always binds lead ownership to the calling session; callers cannot override the lead session ID.
+
+Declared team config files can use the full canonical discriminated member schema:
+
 ```json
 {
   "name": "ccapi-explorers",
@@ -69,10 +89,33 @@ When both scopes define the same team name, project scope wins.
 
 ## Member kinds
 
+- **`kind: "subagent_type"`**: direct built-in or project-defined agent. Built-in examples include `atlas`, `sisyphus`, `sisyphus-junior`, and `hephaestus`. `prompt` optional.
+- **`kind: "category"`** — routed through `sisyphus-junior` with the chosen category model. `prompt` REQUIRED.
+
+Inline category shorthand `{ "name": "worker", "category": "quick", "prompt": "..." }` is preferred for ad-hoc teams. If you use canonical `kind`, make the fields match the kind and omit unrelated keys.
+
+### Project-defined agent members
+
+Set `subagent_type` to the exact final name of an agent defined in the current project's `.opencode/agents/*.md`. Project-defined agents can be members, not team leads.
+
+The final agent must be visible, non-native, use mode `subagent` or `all`, and already agree with the Team launcher permissions: unconditionally allow `call_omo_agent`, `team_send_message`, `team_task_list`, `team_task_get`, `team_task_update`, and `team_status`; unconditionally deny `task`, `question`, and any agent-specific launcher denies. OMO uses the active configuration for that project directory as-is: it does not change permissions or add prompts, models, or fallback behavior. A same-name definition from another later source does not qualify; the agent must come from the current project's file.
+
+## Eligible agents
+
+For OpenCode:
+
+- **Eligible built-ins:** `sisyphus`, `atlas`, `sisyphus-junior`.
+- **Conditional:** `hephaestus` (registry verdict `conditional`; OpenCode still sets `teammate: "allow"` in `tool-config-handler.ts`).
+- **Hard-reject:** `oracle`, `librarian`, `explore`, `multimodal-looker`, `metis`, `momus`, `prometheus`.
+
+Hard-reject agents fail TeamSpec parsing because they cannot write mailbox state. Use the `task` tool for those agents; its implementation module is named `delegate-task`. Project-defined members must meet the requirements above.
+
+### Senpi member rules
+
+The following rules apply only to Senpi, not the OpenCode edition described in the rest of this guide. See [Senpi task delegation and teams](senpi-task.md).
+
 - **`kind: "category"`**: routed to the category worker, a fresh worker session configured by the category's model and skills. `prompt` REQUIRED. Unknown categories fail with `UNRESOLVABLE_CATEGORY` and the error lists the available ones.
 - **`kind: "subagent_type"`** (alias `"agent"`): a user-defined agent from `omo.json` `agents`, invoked directly. `prompt` optional. The kind is inferred from whichever field you set, so you can omit it.
-
-## Who can be a member
 
 - **Eligible:** any resolvable category, and any user-defined agent.
 - **Rejected at parse:** the curated read-only agents (`explore`, `librarian`, `plan-consultant`, `plan-reviewer`) and the ulw-loop reviewer trio (`omo-native-code-reviewer`, `omo-native-qa-executor`, `omo-native-gate-reviewer`).

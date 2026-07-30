@@ -3,7 +3,7 @@ import type { CompactionAgentConfigCheckpoint } from "../../shared/compaction-ag
 import { log } from "../../shared/logger"
 import { normalizeSDKResponse } from "../../shared/normalize-sdk-response"
 import { normalizePromptTools } from "../../shared/prompt-tools"
-import { getSessionModel } from "../../shared/session-model-state"
+import { getStoredSessionModel } from "../../shared/session-model-state"
 import { getSessionTools } from "../../shared/session-tools-store"
 import { isCompactionAgent } from "./session-id"
 import { resolveValidatedModel } from "./validated-model"
@@ -14,9 +14,11 @@ type SessionMessage = {
     model?: {
       providerID?: string
       modelID?: string
+      variant?: string
     }
     providerID?: string
     modelID?: string
+    variant?: string
     tools?: Record<string, boolean | "allow" | "deny" | "ask">
   }
 }
@@ -34,7 +36,7 @@ export async function resolveSessionPromptConfig(
   ctx: ResolverContext,
   sessionID: string,
 ): Promise<CompactionAgentConfigCheckpoint> {
-  const storedModel = getSessionModel(sessionID)
+  const storedModel = getStoredSessionModel(sessionID)
   const promptConfig: CompactionAgentConfigCheckpoint = {
     agent: getSessionAgent(sessionID),
     tools: getSessionTools(sessionID),
@@ -72,15 +74,20 @@ export async function resolveSessionPromptConfig(
       }
     }
   } catch (error) {
+    const errorText = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
     log("[compaction-context-injector] Failed to resolve prompt config from messages", {
       sessionID,
       directory: ctx.directory,
-      error: String(error),
+      error: errorText,
     })
   }
 
   if (!promptConfig.model && storedModel) {
-    promptConfig.model = storedModel
+    promptConfig.model = {
+      providerID: storedModel.providerID,
+      modelID: storedModel.modelID,
+      ...(storedModel.variant ? { variant: storedModel.variant } : {}),
+    }
   }
 
   return promptConfig
@@ -110,10 +117,11 @@ export async function resolveLatestSessionPromptConfig(
       ...(tools ? { tools } : {}),
     }
   } catch (error) {
+    const errorText = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
     log("[compaction-context-injector] Failed to resolve latest prompt config", {
       sessionID,
       directory: ctx.directory,
-      error: String(error),
+      error: errorText,
     })
     return {}
   }

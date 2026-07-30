@@ -2,6 +2,7 @@ import { getAgentConfigKey } from "../../shared/agent-display-names"
 
 export const subagentSessions = new Set<string>()
 export const syncSubagentSessions = new Set<string>()
+export const delegatedTaskSessions = new Set<string>()
 export const handedBackSyncSessions = new Set<string>()
 
 let _mainSessionID: string | undefined
@@ -78,6 +79,7 @@ export function _resetForTesting(): void {
   _mainSessionID = undefined
   subagentSessions.clear()
   syncSubagentSessions.clear()
+  delegatedTaskSessions.clear()
   handedBackSyncSessions.clear()
   sessionAgentMap.clear()
   registeredAgentNames.clear()

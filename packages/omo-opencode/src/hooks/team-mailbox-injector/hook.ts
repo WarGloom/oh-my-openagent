@@ -3,6 +3,7 @@ import { findResolvedMemberSession } from "../../features/team-mode/member-sessi
 import type { PluginContext } from "../../plugin/types"
 import type { ExecutorContext } from "../../tools/delegate-task/executor-types"
 
+import { withInboxConsumerLease } from "../../features/team-mode/team-mailbox"
 import { pollAndBuildInjection } from "../../features/team-mode/team-mailbox/poll"
 import { log } from "../../shared/logger"
 
@@ -40,6 +41,10 @@ export type TeamMailboxInjectorHook = {
     input: TeamMailboxInjectorInput,
     output: TeamMailboxInjectorOutput,
   ) => Promise<void>
+}
+
+type TeamMailboxInjectorDeps = {
+  readonly withInboxConsumerLease?: typeof withInboxConsumerLease
 }
 
 function resolveSessionID(input: TeamMailboxInjectorInput, messages: MessageWithParts[]): string | undefined {
@@ -81,7 +86,12 @@ function createInjectedMessage(sessionID: string, content: string): MessageWithP
   }
 }
 
-export function createTeamMailboxInjector(_ctx: HookContext, config: TeamModeConfig): TeamMailboxInjectorHook {
+export function createTeamMailboxInjector(
+  _ctx: HookContext,
+  config: TeamModeConfig,
+  deps: TeamMailboxInjectorDeps = {},
+): TeamMailboxInjectorHook {
+  const consumeInbox = deps.withInboxConsumerLease ?? withInboxConsumerLease
   return {
     "experimental.chat.messages.transform": async (input, output): Promise<void> => {
       if (!config.enabled || output.messages.length === 0) {
@@ -100,27 +110,30 @@ export function createTeamMailboxInjector(_ctx: HookContext, config: TeamModeCon
         }
 
         const turnMarker = buildTurnMarker(sessionID, output.messages)
-        const result = await pollAndBuildInjection(
-          sessionID,
-          runtimeMember.memberName,
+        await consumeInbox(
           runtimeMember.teamRunId,
+          runtimeMember.memberName,
           config,
-          turnMarker,
+          async () => {
+            await pollAndBuildInjection(
+              sessionID,
+              runtimeMember.memberName,
+              runtimeMember.teamRunId,
+              config,
+              turnMarker,
+              {
+                resolvedSessionID: runtimeMember.sessionId,
+                insertContent: (content) => {
+                  const lastUserMessageIndex = findLastUserMessageIndex(output.messages)
+                  const injectedMessage = createInjectedMessage(sessionID, content)
+                  if (lastUserMessageIndex === -1) output.messages.unshift(injectedMessage)
+                  else output.messages.splice(lastUserMessageIndex, 0, injectedMessage)
+                },
+              },
+            )
+          },
+          { staleAfterMs: 0 },
         )
-
-        if (!result.injected || result.content === undefined) {
-          return
-        }
-
-        const lastUserMessageIndex = findLastUserMessageIndex(output.messages)
-        const injectedMessage = createInjectedMessage(sessionID, result.content)
-
-        if (lastUserMessageIndex === -1) {
-          output.messages.unshift(injectedMessage)
-          return
-        }
-
-        output.messages.splice(lastUserMessageIndex, 0, injectedMessage)
       } catch (error) {
         log("[team-mailbox-injector] Failed to inject team mailbox messages", {
           error: error instanceof Error ? error.message : String(error),
