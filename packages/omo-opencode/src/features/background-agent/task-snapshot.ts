@@ -7,6 +7,7 @@ function toSnapshot(task: BackgroundTask): BackgroundTaskSnapshot {
     toolCalls: task.progress?.toolCalls ?? null,
     lastTool: task.progress?.lastTool ?? null,
     agent: task.agent,
+    parentSessionId: task.parentSessionId,
   })
 }
 
