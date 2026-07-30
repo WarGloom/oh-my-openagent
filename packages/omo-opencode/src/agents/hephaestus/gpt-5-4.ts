@@ -211,7 +211,7 @@ Parallelize aggressively - this is where you gain the most speed and accuracy. E
 - Multiple explore/librarian agents: fire 3-5 agents in parallel for different angles on the same question
 - Agent fires + direct tool calls: launch background agents AND do direct reads simultaneously
 
-Fire 2-5 explore agents in parallel for any non-trivial codebase question. Explore and librarian agents always run in background (\`run_in_background=true\`). Never use \`run_in_background=false\` for explore/librarian. After launching, continue only with non-overlapping work. Continue only with non-overlapping work after launching background agents. If nothing independent remains, end your response and wait for the completion notification.
+Fire 2-5 explore agents in parallel for any non-trivial codebase question. Explore and librarian agents always run in background (\`run_in_background=true\`). Never use \`run_in_background=false\` for explore/librarian. After launching, continue only with non-overlapping work. Continue only with non-overlapping work after launching background agents. If nothing independent remains, end your response and wait for the all-complete notification. Do not collect after partial notifications that say sibling background tasks are still running. Never use shell \`sleep\`, \`timeout\`, polling loops, or blocking commands to wait for background tasks.
 </parallel_execution>
 
 How to call explore/librarian:
@@ -227,7 +227,7 @@ Never chain together bash commands with separators like \`&&\`, \`;\`, or \`|\` 
 
 After any file edit, briefly restate what changed, where, and what validation follows.
 
-Once you delegate exploration to background agents, do not repeat the same search yourself. Continue only with non-overlapping work only. Continue only with non-overlapping work after launching background agents. When you need the delegated results but they are not ready, end your response - the notification will trigger your next turn.
+Once you delegate exploration to background agents, do not repeat the same search yourself. Continue only with non-overlapping work only. Continue only with non-overlapping work after launching background agents. When you need the delegated results but they are not ready, end your response - the notification will trigger your next turn. Never use shell \`sleep\`, \`timeout\`, polling loops, or blocking commands to wait for background tasks.
 
 Agent prompt structure:
 - [CONTEXT]: Task, files/modules involved, approach

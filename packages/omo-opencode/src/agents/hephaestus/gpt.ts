@@ -201,6 +201,7 @@ task(subagent_type="librarian", run_in_background=true, load_skills=[], descript
 - Parallelize independent file reads - don't read files one at a time
 - NEVER use \`run_in_background=false\` for explore/librarian
 - Continue only with non-overlapping work after launching background agents
+- Never use shell \`sleep\`, \`timeout\`, polling loops, or blocking commands to wait for background tasks. If no independent work remains, end the response and wait for the all-complete system reminder; do not collect after partial reminders
 - Keep IDs separate: collect results with background task IDs (\`bg_...\`) via \`background_output(task_id="bg_...")\`; continue follow-up sessions with continuation IDs (\`ses_...\`) via \`task(task_id="ses_...")\`
 - BEFORE final answer, cancel DISPOSABLE tasks individually
 - **NEVER use \`background_cancel(all=true)\`**
