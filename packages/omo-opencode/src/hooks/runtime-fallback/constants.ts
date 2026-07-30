@@ -12,10 +12,13 @@ import type { RuntimeFallbackConfig } from "../../config"
  */
 export const DEFAULT_CONFIG: Required<RuntimeFallbackConfig> = {
   enabled: false,
-  retry_on_errors: [429, 500, 502, 503, 504],
+  retry_on_errors: [413, 429, 500, 502, 503, 504],
   max_fallback_attempts: 3,
   cooldown_seconds: 60,
   timeout_seconds: 30,
+  first_progress_timeout_seconds: 30,
+  stall_timeout_seconds: 600,
+  hard_timeout_seconds: 1800,
   notify_on_fallback: true,
   restore_primary_after_cooldown: false,
 }
@@ -32,12 +35,7 @@ export const RETRYABLE_ERROR_PATTERNS = RUNTIME_FALLBACK_RETRYABLE_ERROR_PATTERN
 export const HOOK_NAME = "runtime-fallback"
 
 /**
- * First-prompt watchdog: how long to wait for the first sign of progress
- * (assistant text/reasoning/finish) from a subagent session before assuming
- * the provider is silently stuck and dispatching the configured fallback.
- *
- * Tuned to be longer than typical first-token latency (well under 30s in
- * practice) yet much shorter than the 30-minute outer poll timeout that
- * would otherwise be the only safety net.
+ * Fallback first-prompt watchdog timeout for direct factory callers.
+ * The runtime hook passes runtime_fallback.first_progress_timeout_seconds explicitly.
  */
-export const DEFAULT_FIRST_PROMPT_WATCHDOG_MS = 90_000
+export const DEFAULT_FIRST_PROMPT_WATCHDOG_MS = DEFAULT_CONFIG.first_progress_timeout_seconds * 1000

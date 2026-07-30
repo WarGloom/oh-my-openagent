@@ -57,6 +57,23 @@ describe("runtime-fallback quota error regressions", () => {
     expect(retryable).toBe(true)
   })
 
+  test("treats wrapped Claude limit reset messages as retryable", () => {
+    //#given
+    const error = {
+      type: "api_error",
+      message:
+        "Claude Code returned an error result: You've hit your limit · resets 4am (Asia/Jerusalem)\nSubprocess stderr: Warning: Custom betas are only available for API key users. Ignoring provided betas.",
+    }
+
+    //#when
+    const errorType = classifyErrorType(error)
+    const retryable = isRetryableError(error, [429, 500, 502, 503, 504])
+
+    //#then
+    expect(errorType).toBe("quota_exceeded")
+    expect(retryable).toBe(true)
+  })
+
   test("classifies Volcano Engine 'exceeded the usage quota' as quota_exceeded and retryable", () => {
     //#given
     const error = {
