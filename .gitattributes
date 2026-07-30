@@ -33,3 +33,4 @@ packages/telemetry-core/src/otlp-proto/** -text -whitespace
 packages/omo-senpi/src/components/telemetry/schema-registry/** -text
 
 .omo/evidence/**/transcript-ansi.txt -text
+.omo/evidence/**/terminal-ansi.txt -text
