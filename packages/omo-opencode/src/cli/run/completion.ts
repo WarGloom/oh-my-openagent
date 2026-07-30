@@ -1,11 +1,14 @@
 import pc from "picocolors"
 import type { RunContext, Todo, ChildSession, SessionStatus } from "./types"
 import { normalizeSDKResponse } from "../../shared"
+import { traceRunStep } from "./run-debug"
 import { getContinuationState, type ContinuationState } from "./continuation-state"
 
 export async function checkCompletionConditions(ctx: RunContext): Promise<boolean> {
   try {
-    const continuationState = await getContinuationState(ctx.directory, ctx.sessionID, ctx.client)
+    const continuationState = await traceRunStep("getContinuationState (checkCompletionConditions)", () =>
+      getContinuationState(ctx.directory, ctx.sessionID, ctx.client),
+    )
 
     if (continuationState.hasActiveHookMarker) {
       const reason = continuationState.activeHookMarkerReason ?? "continuation hook is active"
@@ -52,10 +55,12 @@ function areContinuationHooksIdle(ctx: RunContext, continuationState: Continuati
 }
 
 async function areAllTodosComplete(ctx: RunContext): Promise<boolean> {
-  const todosRes = await ctx.client.session.todo({
-    path: { id: ctx.sessionID },
-    query: { directory: ctx.directory },
-  })
+  const todosRes = await traceRunStep("session.todo (completion)", () =>
+    ctx.client.session.todo({
+      path: { id: ctx.sessionID },
+      query: { directory: ctx.directory },
+    }),
+  )
   const todos = normalizeSDKResponse(todosRes, [] as Todo[])
 
   const incompleteTodos = todos.filter((t) => t.status !== "completed" && t.status !== "cancelled")
@@ -74,9 +79,11 @@ async function areAllChildrenIdle(ctx: RunContext): Promise<boolean> {
 }
 
 async function fetchAllStatuses(ctx: RunContext): Promise<Record<string, SessionStatus>> {
-  const statusRes = await ctx.client.session.status({
-    query: { directory: ctx.directory },
-  })
+  const statusRes = await traceRunStep("session.status (completion)", () =>
+    ctx.client.session.status({
+      query: { directory: ctx.directory },
+    }),
+  )
   return normalizeSDKResponse(statusRes, {} as Record<string, SessionStatus>)
 }
 
@@ -85,10 +92,12 @@ async function areAllDescendantsIdle(
   sessionID: string,
   allStatuses: Record<string, SessionStatus>,
 ): Promise<boolean> {
-  const childrenRes = await ctx.client.session.children({
-    path: { id: sessionID },
-    query: { directory: ctx.directory },
-  })
+  const childrenRes = await traceRunStep(`session.children (completion, session=${sessionID})`, () =>
+    ctx.client.session.children({
+      path: { id: sessionID },
+      query: { directory: ctx.directory },
+    }),
+  )
   const children = normalizeSDKResponse(childrenRes, [] as ChildSession[])
 
   for (const child of children) {
