@@ -3,6 +3,7 @@ import { tool } from "@opencode-ai/plugin"
 
 import { OhMyOpenCodeConfigSchema, type OhMyOpenCodeConfig } from "../config"
 import * as openclawRuntimeDispatch from "../openclaw/runtime-dispatch"
+import type { SkillLoadOptions } from "../tools/skill/types"
 import type { ToolsRecord } from "./types"
 
 const fakeTool = tool({
@@ -46,7 +47,12 @@ const TEAM_TOOL_NAMES = [
 const { createToolRegistry, trimToolsToCap } = await import("./tool-registry")
 
 const toolFactories: NonNullable<Parameters<typeof createToolRegistry>[0]["toolFactories"]> = {
-  createBackgroundTools: mock(() => ({})),
+  createBackgroundTools: mock(() => ({
+    background_output: fakeTool,
+    mcp_background_output: fakeTool,
+    background_cancel: fakeTool,
+    mcp_background_cancel: fakeTool,
+  })),
   createCallOmoAgent: mock(() => fakeTool),
   createLookAt: mock(() => fakeTool),
   createSkillMcpTool: mock(() => fakeTool),
@@ -112,6 +118,125 @@ describe("#given tool trimming prioritization", () => {
     expect(filteredTools).not.toHaveProperty("edit")
     expect(filteredTools).toHaveProperty("bash")
     expect(filteredTools).toHaveProperty("read")
+  })
+})
+
+describe("#given max_tools cap and low-priority background tools", () => {
+  test("#when background and background_cancel exceed cap #then they are removed before edit", () => {
+    const filteredTools = {
+      keep_one: fakeTool,
+      keep_two: fakeTool,
+      keep_three: fakeTool,
+      edit: fakeTool,
+      background_output: fakeTool,
+      background_cancel: fakeTool,
+    } satisfies ToolsRecord
+
+    trimToolsToCap(filteredTools, 4)
+
+    expect(filteredTools).not.toHaveProperty("background_output")
+    expect(filteredTools).not.toHaveProperty("background_cancel")
+    expect(filteredTools).toHaveProperty("edit")
+    expect(filteredTools).toHaveProperty("keep_one")
+    expect(filteredTools).toHaveProperty("keep_two")
+    expect(filteredTools).toHaveProperty("keep_three")
+  })
+})
+
+describe("#given background task aliases", () => {
+  test("#when creating tool registry #then MCP-prefixed background tool names are registered", () => {
+    const result = createToolRegistry({
+      ctx: { directory: "/tmp" } as Parameters<typeof createToolRegistry>[0]["ctx"],
+      pluginConfig: {},
+      managers: {
+        backgroundManager: {},
+        tmuxSessionManager: {},
+        skillMcpManager: {},
+      } as Parameters<typeof createToolRegistry>[0]["managers"],
+      skillContext: {
+        mergedSkills: [],
+        availableSkills: [],
+        browserProvider: "playwright",
+        disabledSkills: new Set(),
+      },
+      availableCategories: [],
+    })
+
+    expect(result.filteredTools).toHaveProperty("background_output")
+    expect(result.filteredTools).toHaveProperty("mcp_background_output")
+    expect(result.filteredTools).toHaveProperty("background_cancel")
+    expect(result.filteredTools).toHaveProperty("mcp_background_cancel")
+    expect(result.filteredTools["mcp_background_output"]).toBe(result.filteredTools["background_output"])
+    expect(result.filteredTools["mcp_background_cancel"]).toBe(result.filteredTools["background_cancel"])
+  })
+})
+
+describe("#given native OpenCode skills", () => {
+  test("#when PluginInput exposes skills #then skill and task tools receive that accessor", () => {
+    syncSessionCreatedCallbacks.length = 0
+    toolFactories.createSkillTool.mockClear()
+    toolFactories.createDelegateTask.mockClear()
+    const nativeSkills = {
+      all: mock(() => []),
+      get: mock(() => undefined),
+      dirs: mock(() => []),
+    } satisfies NonNullable<SkillLoadOptions["nativeSkills"]>
+
+    createToolRegistry({
+      ctx: {
+        directory: "/tmp",
+        skills: nativeSkills,
+        serverUrl: new URL("http://127.0.0.1:1"),
+      } as unknown as Parameters<typeof createToolRegistry>[0]["ctx"],
+      pluginConfig: createPluginConfig(),
+      managers: {
+        backgroundManager: {},
+        tmuxSessionManager: {},
+        skillMcpManager: {},
+      } as Parameters<typeof createToolRegistry>[0]["managers"],
+      skillContext: {
+        mergedSkills: [],
+        availableSkills: [],
+        browserProvider: "playwright",
+        disabledSkills: new Set(),
+      },
+      availableCategories: [],
+      toolFactories,
+    })
+
+    expect(toolFactories.createSkillTool.mock.calls.at(-1)?.[0].nativeSkills).toBe(nativeSkills)
+    expect(toolFactories.createDelegateTask.mock.calls.at(-1)?.[0].nativeSkills).toBe(nativeSkills)
+    expect(nativeSkills.all).not.toHaveBeenCalled()
+  })
+
+  test("#when PluginInput has no skills accessor #then tool registry does not create an HTTP fallback", () => {
+    syncSessionCreatedCallbacks.length = 0
+    toolFactories.createSkillTool.mockClear()
+    toolFactories.createDelegateTask.mockClear()
+
+    createToolRegistry({
+      ctx: {
+        directory: "/tmp",
+        serverUrl: new URL("http://127.0.0.1:1"),
+      } as Parameters<typeof createToolRegistry>[0]["ctx"],
+      pluginConfig: createPluginConfig(),
+      managers: {
+        backgroundManager: {},
+        tmuxSessionManager: {},
+        skillMcpManager: {},
+      } as Parameters<typeof createToolRegistry>[0]["managers"],
+      skillContext: {
+        mergedSkills: [],
+        availableSkills: [],
+        browserProvider: "playwright",
+        disabledSkills: new Set(),
+      },
+      availableCategories: [],
+      toolFactories,
+    })
+
+    expect(toolFactories.createSkillTool.mock.calls.at(-1)?.[0].nativeSkills).toBeUndefined()
+    expect(toolFactories.createDelegateTask.mock.calls.at(-1)?.[0].nativeSkills).toBeUndefined()
   })
 })
 

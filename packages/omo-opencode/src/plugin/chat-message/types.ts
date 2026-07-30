@@ -17,14 +17,18 @@ export type ChatMessageHandlerOutput = {
 export type ChatMessageInput = {
   readonly sessionID: string
   readonly agent?: string
-  readonly model?: { readonly providerID: string; readonly modelID: string }
+  readonly model?: { readonly providerID: string; readonly modelID: string; readonly variant?: string }
 }
 
 export type UlwExecuteHookOutput = {
   readonly parts: Array<{ readonly type: string; readonly text?: string }>
 }
 
-export type SessionModelOverride = { readonly providerID: string; readonly modelID: string }
+export type SessionModelOverride = { readonly providerID: string; readonly modelID: string; readonly variant?: unknown }
+export type SessionModelSelection = {
+  readonly model: SessionModelOverride
+  readonly variant?: string
+}
 
 export type WorkStartingCommand = "ulw-execute" | "ralph-loop" | "ulw-loop"
 

@@ -110,9 +110,12 @@ export function createChatMessageHandler(args: {
       firstMessageVariantGate.markApplied(input.sessionID)
     }
 
-    const storedMainSessionModel = getStoredMainSessionModel(input, pluginConfig, isFirstMessage)
+    const storedMainSessionModel = getStoredMainSessionModel(input, isFirstMessage)
     if (storedMainSessionModel) {
-      output.message.model = storedMainSessionModel
+      output.message.model = storedMainSessionModel.model
+      if (storedMainSessionModel.variant && output.message["variant"] === undefined) {
+        output.message["variant"] = storedMainSessionModel.variant
+      }
     }
 
     await runChatMessageHooks({
