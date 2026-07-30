@@ -278,7 +278,7 @@ When a model errors, the runtime can move through the configured fallback array.
 The plugin uses two independent fallback systems:
 
 - **model-fallback**: proactive model chain selection in chat params.
-- **runtime-fallback**: reactive recovery after runtime failures from provider/API behavior.
+- **runtime-fallback**: reactive recovery after runtime failures from provider/API behavior. It advances on retryable provider errors and retry-status signals, while progress-aware first-progress/stall/hard timeouts bound true hangs without treating normal long thinking as failure. If tool execution has already started in the current turn, runtime-fallback avoids automatic prompt replay so side effects are not duplicated.
 
 ### File-Based Prompts
 
@@ -891,7 +891,7 @@ Current composition counts:
 | Hook                                        | Event           | Description                                                                                                                                                                                                                                                 |
 | ------------------------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **anthropic-context-window-limit-recovery** | Event           | Handles Claude context window limits gracefully.                                                                                                                                                                                                            |
-| **runtime-fallback**                        | Event + Message | Automatically switches to backup models on retryable API errors (e.g., 429, 500, 502, 503, 504), provider key misconfiguration errors (e.g., missing API key), and provider retry signals. `message.updated` retry-signal detection requires `timeout_seconds > 0`; structured `session.status` retry events can still trigger fallback. |
+| **runtime-fallback**                        | Event + Message | Automatically switches to backup models on retryable API errors (e.g., 429, 500, 502, 503, 504, 529), provider key misconfiguration errors (e.g., missing API key), provider retry signals, and progress-aware hang detection. `message.updated` retry-signal detection requires `timeout_seconds > 0`; structured `session.status` retry events can still trigger fallback. |
 | **model-fallback**                          | Message         | Applies the pending model-fallback chain to the next chat.message when a fallback is queued.                                                                                                                                                                                             |
 | **json-error-recovery**                     | PostToolUse     | Recovers from JSON parse errors in tool outputs.                                                                                                                                                                                                            |
 

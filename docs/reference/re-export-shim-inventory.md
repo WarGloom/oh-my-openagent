@@ -24,7 +24,6 @@ Snapshot date: 2026-08-31. Total shim exports found: 286.
 | `@oh-my-opencode/mcp-client-core` | 21 |
 | `@oh-my-opencode/model-core` | 7 |
 | `@oh-my-opencode/omo-codex` | 41 |
-| `@oh-my-opencode/omo-senpi` | 1 |
 | `@oh-my-opencode/openclaw-core` | 30 |
 | `@oh-my-opencode/rules-engine` | 4 |
 | `@oh-my-opencode/skills-loader-core` | 65 |
@@ -78,7 +77,6 @@ Snapshot date: 2026-08-31. Total shim exports found: 286.
 | `packages/omo-opencode/src/cli/install-codex/lsp-daemon-reaper.ts` | `@oh-my-opencode/omo-codex` |
 | `packages/omo-opencode/src/cli/install-codex/toml-section-editor.ts` | `@oh-my-opencode/omo-codex` |
 | `packages/omo-opencode/src/cli/install-codex/types.ts` | `@oh-my-opencode/omo-codex` |
-| `packages/omo-opencode/src/cli/install-senpi/index.ts` | `@oh-my-opencode/omo-senpi` |
 | `packages/omo-opencode/src/cli/provider-model-id-transform.ts` | `@oh-my-opencode/model-core` |
 | `packages/omo-opencode/src/config/schema/git-env-prefix.ts` | `@oh-my-opencode/skills-loader-core` |
 | `packages/omo-opencode/src/config/schema/team-mode.ts` | `@oh-my-opencode/team-core` |

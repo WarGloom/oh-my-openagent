@@ -1,6 +1,6 @@
 ---
 name: hyperplan
-description: "Adversarial multi-agent planning skill. Self-orchestrates 5 hostile category members (unspecified-low, unspecified-high, deep, ultrabrain, artistry) via team-mode for ruthless cross-critique debate, distills only the defensible insights, then MANDATORILY hands the distilled insight bundle to the `plan` agent for executable plan formalization. Use when planning needs maximum rigor and surfacing of weak assumptions, blind spots, and over-engineering. Triggers: 'hyperplan', 'hpp', '/hyperplan', 'adversarial plan', 'hostile planning', 'cross-critique plan', '하이퍼플랜', '적대적 계획', '교차 비평'."
+description: "Adversarial multi-agent planning skill. Self-orchestrates 5 hostile category members (unspecified-low, unspecified-high, deep, ultrabrain, artistry) via team-mode for ruthless cross-critique debate, distills only the defensible insights, then MANDATORILY formalizes the distilled insight bundle into an executable plan directly with OMO-native Momus/Oracle escalation only when needed. Use when planning needs maximum rigor and surfacing of weak assumptions, blind spots, and over-engineering. Triggers: 'hyperplan', 'hpp', '/hyperplan', 'adversarial plan', 'hostile planning', 'cross-critique plan', '하이퍼플랜', '적대적 계획', '교차 비평'."
 ---
 
 # HYPERPLAN — Adversarial Multi-Agent Planning
@@ -190,13 +190,13 @@ Output format: numbered findings/critiques, each proposes a concrete alternative
 
 You execute this in **7 phases**. End your turn at every phase boundary marked **[WAIT]** so the team's async messages can flow back to you. Resume on the next turn after `<peer_message>` blocks arrive.
 
-**Critical separation**: You (the Lead) **distill** the surviving insights in Phase 5, but you DO NOT write the work plan. The work plan is produced by the `plan` agent in Phase 6 — this handoff is **mandatory**, not optional. Hyperplan = adversarial distillation + dedicated planner formalization. Skipping the handoff turns it back into vanilla orchestration.
+**Critical separation**: You (the Lead) **distill** the surviving insights in Phase 5, but you DO NOT write the work plan until Phase 6. The work plan is produced through OMO-native formalization in Phase 6 — this handoff contract is **mandatory**, not optional. Hyperplan = adversarial distillation + formalized executable plan. Skipping formalization turns it back into vanilla orchestration.
 
 ### Phase 0: Acknowledge and capture the request
 
 1. Say "HYPERPLAN MODE ENABLED!" exactly once.
 2. Restate the user's planning request in 1 sentence so all members start with the same scope.
-3. Create your todo list for the 7 phases (the Phase 6 plan-agent handoff is mandatory — include it explicitly).
+3. Create your todo list for the 7 phases (Phase 6 OMO-native formalization is mandatory — include it explicitly).
 
 ### Phase 1: Spawn the adversarial team
 
@@ -366,53 +366,61 @@ The team is done debating. Your job at this phase is **distillation only** — y
 - Total findings filtered out (conceded/destroyed): [count]
 ```
 
-4. Briefly tell the user: "Adversarial distillation complete. Handing the surviving insights to the plan agent for executable plan formalization." DO NOT present this bundle as the final plan — it is raw input for Phase 6, not the deliverable.
+4. Briefly tell the user: "Adversarial distillation complete. Formalizing the surviving insights into an executable OMO-native plan." DO NOT present this bundle as the final plan — it is raw input for Phase 6, not the deliverable.
 
-### Phase 6: MANDATORY plan agent handoff
+### Phase 6: MANDATORY OMO-native formalization
 
-You MUST dispatch the insight bundle to the `plan` agent. The Lead does NOT write executable plans in hyperplan — that responsibility is delegated, by contract, to the dedicated planner. This separation is non-negotiable.
+You MUST formalize the insight bundle into an executable plan yourself. The Lead does not invent findings, but after the adversarial rounds the Lead owns the final structure. Do NOT dispatch to OpenCode runtime `plan`.
 
-1. **Dispatch the handoff** as a foreground task (you wait for the plan):
+1. **Formalize from this handoff contract**:
 
-```typescript
-task({
-  subagent_type: "plan",
-  load_skills: [],
-  run_in_background: false,
-  description: "Formalize hyperplan-distilled insights into executable plan",
-  prompt: `<hyperplan-handoff>
+```xml
+<hyperplan-handoff>
 The following insight bundle survived an adversarial 5-member cross-critique debate (skeptic/validator/researcher/architect/creative). Every claim here was either uncontested OR defended/refined under attack — conceded findings were already filtered out.
 
-Your task: produce an EXECUTABLE work plan from these insights. You do NOT need to re-explore the codebase or re-derive the constraints — they are already battle-tested. Your value is plan structure, sequencing, dependency analysis, parallelization opportunities, and explicit verification criteria per task.
+Your task: produce an EXECUTABLE work plan from these insights.
+This is a FORMALIZATION-ONLY handoff: Hyperplan has already completed context gathering, cross-critique, and distillation. Treat the bundle as authoritative input.
+Do NOT repeat requirements discovery or plan-review loops unless an Open Question explicitly cannot be represented as a user-input gate. Your value is plan structure, sequencing, dependency analysis, parallelization opportunities, and explicit verification criteria per task.
 
 Hard rules for your plan:
 - Every Hard Constraint MUST be respected by the plan.
 - Every Risk MUST have its Mitigation woven into the relevant task.
 - Every Open Question MUST surface as a user-input gate BEFORE the dependent tasks can start.
+- Treat Decisions as settled unless they conflict with an Open Question.
+- Do NOT add new scope or re-litigate defeated/conceded findings.
 - Every task MUST have explicit success criteria.
 
 [paste the full Insight Bundle from Phase 5 here]
-</hyperplan-handoff>`
-})
+</hyperplan-handoff>
 ```
 
-2. **Do NOT invent or pre-write the plan yourself.** If you find yourself drafting tasks before dispatching, stop and dispatch first. The plan agent's output is the deliverable.
+2. **Produce the executable plan directly** with:
+- a short provenance line
+- ordered waves or dependency graph
+- atomic tasks with owner/category suggestions
+- verification gates for each task
+- explicit user-input gates for unresolved Open Questions
 
-3. **Present the plan agent's output to the user verbatim**, prefixed with one provenance line:
+3. **Use OMO-native escalation only when needed**:
+- If you save the plan to `.omo/plans/*.md`, call Momus with the plan path as the sole prompt before execution.
+- If a hard architecture/debugging uncertainty remains, call Oracle with the exact decision, evidence, and uncertainty.
+- Do not reopen generic explore/librarian discovery unless a required Open Question cannot be represented as a user-input gate.
+
+4. **Present the formalized plan to the user**, prefixed with one provenance line:
 
 ```
-*Plan derived from hyperplan adversarial review (5 members, 3 rounds) and formalized by the plan agent.*
+*Plan derived from hyperplan adversarial review (5 members, 3 rounds) and formalized by Sisyphus using the OMO-native handoff contract.*
 
-[plan agent output]
+[formalized executable plan]
 ```
 
-4. If the plan agent returns clarifying questions instead of a plan, forward them to the user without modification — the planner is allowed to interview before committing.
+5. If the formalization exposes clarifying questions instead of a safe plan, forward those questions to the user without modification.
 
 DO NOT save the plan to disk unless the user asks. Hyperplan is a planning consultation, not a file-emitting workflow — the plan lives in your conversation output.
 
 ### Phase 7: Cleanup
 
-After the plan agent's output has been presented to the user:
+After the formalized plan has been presented to the user:
 
 1. Call `team_shutdown_request` for each of the 5 members.
 2. The Lead can `team_approve_shutdown` for each member (Lead has approval authority).
@@ -429,12 +437,12 @@ If any step fails, surface the error and suggest manual cleanup via `team_list` 
 | Soft-pedaling member prompts ("be respectful") | Adversarial pressure is the mechanism. Politeness defeats the skill. |
 | Synthesizing findings before Round 3 completes | Premature synthesis preserves weak findings. |
 | Including conceded findings in the insight bundle | Conceded = defeated. Bundle must contain only survivors. |
-| **Lead writing the plan in Phase 5 instead of handing off in Phase 6** | **The handoff is the contract. Hyperplan = adversarial distillation + dedicated planner formalization. Lead-written plans skip the planner's value-add (sequencing, dependencies, success criteria) and turn this back into vanilla orchestration.** |
-| **Skipping the `plan` agent dispatch ("the bundle is already a plan")** | **The bundle is INPUT, not output. The plan agent owns sequencing, parallelization, and verification gates. Without the dispatch, hyperplan loses half its value.** |
-| **Pre-writing tasks before dispatching to plan agent** | **Anchors the plan agent to your draft and undermines its independent judgment. Dispatch raw insights, let the planner structure.** |
+| **Lead writing the plan in Phase 5 before the handoff contract** | **Phase 5 produces INPUT, not output. Phase 6 is where the surviving bundle becomes an executable plan.** |
+| **Calling OpenCode runtime `plan` for Phase 6** | **OMO-native hyperplan must not route to runtime `plan`; formalize directly and use Momus/Oracle only for targeted review or hard uncertainty.** |
+| **Pre-writing tasks before the insight bundle is complete** | **Anchors the final plan to partial evidence and undermines adversarial filtering.** |
 | Forgetting to clean up the team | Leaks runtime state. Always Phase 7. |
 | Calling `delegate_task` instead of `team_send_message` | These are different systems. `team_*` only for inter-member traffic. |
-| Calling `team_send_message` to ship the bundle to the plan agent | Wrong channel. Plan agent is NOT a team member. Use `task(subagent_type="plan", ...)` for the handoff. |
+| Calling `team_send_message` to ship the bundle to a non-team planner | Wrong channel. Planner/reviewer agents are not team members; use direct formalization plus targeted `task()` only for Momus/Oracle when needed. |
 | Running this from a planner agent (prometheus) | Planners cannot orchestrate teams. Must run from sisyphus. |
 | Running this in a non-main session | Team-mode is main-session-only. |
 
@@ -446,5 +454,5 @@ If any step fails, surface the error and suggest manual cleanup via `team_list` 
 - The members do not see each other's text responses directly — only what you forward via `team_send_message`. You are the information broker. The bundles you forward in Phases 3 and 4 are the entire context they have.
 - Keep bundles concise — ≤32KB per message. If aggregated findings exceed this, summarize before forwarding (preserve the spirit of each finding).
 - The skill explicitly forbids you from softening adversarial prompts. The hostility IS the mechanism.
-- The Phase 6 plan-agent handoff runs **synchronously** (`run_in_background: false`) — you wait for the planner before Phase 7 cleanup. Do NOT shut down the team until the plan agent has returned, in case the planner needs you to forward a clarifying question to a specific member (rare, but possible).
-- The plan agent does NOT have access to the team mailbox. Everything it needs must be in the bundle you dispatch. If the planner asks for additional context, you fetch it (via explore/librarian/oracle) and re-dispatch with `task_id` resume — do NOT spin up a new plan agent.
+- Phase 6 formalization happens in the main Sisyphus session. Do NOT shut down the team until the plan has been presented, in case you need to ask a specific member for a narrow clarification (rare, but possible).
+- Momus does not have access to the team mailbox. If you save a plan for Momus review, include everything needed in the saved plan file.
