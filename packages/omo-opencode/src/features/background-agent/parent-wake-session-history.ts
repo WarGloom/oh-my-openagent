@@ -9,8 +9,15 @@ import {
   latestAssistantTurnHasToolBlock,
   latestAssistantTurnIsCompletedEmptyNoProgress,
 } from "./parent-wake-history-state"
-import type { PendingParentWake } from "./parent-wake-dedupe"
-import { getParentWakeMessageCreatedAt } from "./parent-wake-message-activity"
+import {
+  isBackgroundTaskProgressNotification,
+  isFinalBackgroundTaskNotification,
+  type PendingParentWake,
+} from "./parent-wake-dedupe"
+import {
+  getParentWakeMessageCreatedAt,
+  getParentWakeMessagePartActivityAt,
+} from "./parent-wake-message-activity"
 import type { ParentWakeSessionMessage } from "./parent-wake-session-message"
 
 export type ToolWaitDeferralDecision = {
@@ -67,7 +74,9 @@ export function getParentWakeSessionHistoryDeferralDecision(input: {
     return { defer: true, skipPromptGateToolStateCheck: false }
   }
   const messages = [...input.messages]
+  const wakeIsTerminalBackgroundTaskFinal = input.wake.notifications.some(isFinalBackgroundTaskNotification)
   let strippedOwnAdmittedDeposit = false
+  let strippedOwnAdmittedTailCreatedAt: number | undefined
   if (input.wake.noReplyAdmittedAt !== undefined) {
     while (messages.length > 0) {
       const last = messages[messages.length - 1]
@@ -75,20 +84,33 @@ export function getParentWakeSessionHistoryDeferralDecision(input: {
         !last
         || getParentWakeMessageRole(last) !== "user"
         || !isSyntheticOrInternalUserMessage(last)
-        || !parentWakeMessageContainsNotification(last, input.wake)
+        || !parentWakeMessageIsInternalNotification(last, input.wake)
       ) {
         break
+      }
+      if (!strippedOwnAdmittedDeposit) {
+        strippedOwnAdmittedTailCreatedAt = getParentWakeMessageCreatedAt(last)
       }
       messages.pop()
       strippedOwnAdmittedDeposit = true
     }
   }
+  const strippedInternalProgressTail = wakeIsTerminalBackgroundTaskFinal
+    ? stripTrailingInternalBackgroundProgressNotifications(messages)
+    : false
   const latestAssistantBlocksPrompt = latestAssistantTurnBlocksInternalPrompt(messages)
   const latestAssistantHasUnansweredQuestion = latestAssistantTurnHasUnansweredQuestion(messages)
+  if (input.wake.allowInternalWakeTailRetry && latestInternalWakeTailOnlyBlocks(messages, input.wake)) {
+    delete input.wake.toolCallDeferralStartedAt
+    delete input.wake.allowInternalWakeTailRetry
+    log("[background-agent] Retrying parent wake past matching internal wake tail:", { sessionID: input.sessionID })
+    return { defer: false, skipPromptGateToolStateCheck: true }
+  }
   if (!latestAssistantBlocksPrompt) {
     delete input.wake.toolCallDeferralStartedAt
     delete input.wake.allowEmptyAssistantTurnRetry
-    return { defer: false, skipPromptGateToolStateCheck: strippedOwnAdmittedDeposit }
+    delete input.wake.allowInternalWakeTailRetry
+    return { defer: false, skipPromptGateToolStateCheck: strippedOwnAdmittedDeposit || strippedInternalProgressTail }
   }
   const now = input.now ?? Date.now()
   input.wake.toolCallDeferralStartedAt ??= now
@@ -102,10 +124,27 @@ export function getParentWakeSessionHistoryDeferralDecision(input: {
     })
     return { defer: true, skipPromptGateToolStateCheck: false }
   }
+  const latestAssistantHasStaleToolBlock = latestAssistantTurnHasToolBlock(messages)
+    && !latestAssistantTurnHasFreshToolActivity(messages, now, input.toolCallDeferMaxMs)
+  if (
+    shouldResumeRetainedCompleteWakeAfterStaleAdmittedTail({
+      wake: input.wake,
+      strippedOwnAdmittedDeposit,
+      strippedOwnAdmittedTailCreatedAt,
+      latestAssistantHasStaleToolBlock,
+      toolCallDeferMaxMs: input.toolCallDeferMaxMs,
+      now,
+    })
+  ) {
+    delete input.wake.toolCallDeferralStartedAt
+    log("[background-agent] Retrying retained parent wake after admitted all-complete tail outlived stale tool deferral:", {
+      sessionID: input.sessionID,
+    })
+    return { defer: false, skipPromptGateToolStateCheck: true }
+  }
   if (
     now - input.wake.toolCallDeferralStartedAt >= input.toolCallDeferMaxMs
-    && latestAssistantTurnHasToolBlock(messages)
-    && !latestAssistantTurnHasFreshToolActivity(messages, now, input.toolCallDeferMaxMs)
+    && latestAssistantHasStaleToolBlock
   ) {
     // A reply dispatch here would fork a concurrent assistant turn: the turn is
     // still mid-flight, only its busy signals are quiet (silent tool, blind
@@ -145,7 +184,7 @@ export function hasRecordedParentWakePromptMessage(input: {
     }
     if (
       createdAt >= dispatchedAt - input.acceptedMessageSkewMs
-      && parentWakeMessageContainsNotification(message, input.wake)
+      && parentWakeMessageIsInternalNotification(message, input.wake)
     ) {
       return true
     }
@@ -161,13 +200,30 @@ export function hasAssistantOutputAfterParentWakeAdmission(input: {
   if (admittedAt === undefined || !input.messages) {
     return false
   }
-  return input.messages.some((message) => {
-    if (getParentWakeMessageRole(message) !== "assistant") {
-      return false
-    }
+  let currentAdmissionSeen = false
+  for (const message of input.messages) {
     const createdAt = getParentWakeMessageCreatedAt(message)
-    return createdAt !== undefined && createdAt >= admittedAt && parentWakeMessageHasOutput(message)
-  })
+    if (parentWakeMessageIsInternalNotification(message, input.wake)) {
+      if (createdAt === undefined || createdAt >= admittedAt) {
+        currentAdmissionSeen = true
+      }
+      continue
+    }
+    if (!currentAdmissionSeen) {
+      continue
+    }
+    const role = getParentWakeMessageRole(message)
+    if (role !== "assistant" && role !== "tool") {
+      continue
+    }
+    if (createdAt !== undefined && createdAt < admittedAt) {
+      continue
+    }
+    if (parentWakeMessageHasOutput(message)) {
+      return true
+    }
+  }
+  return false
 }
 
 export function hasAssistantOrToolOutputAfterParentWake(input: {
@@ -178,16 +234,70 @@ export function hasAssistantOrToolOutputAfterParentWake(input: {
     return false
   }
   const dispatchedAt = input.wake.dispatchedAt
-  return input.messages.some((message) => {
-    const createdAt = getParentWakeMessageCreatedAt(message)
-    return createdAt !== undefined
-      && createdAt >= dispatchedAt
-      && parentWakeMessageHasOutput(message)
-  })
+  return input.messages.some((message) => parentWakeMessageHasOutputAfterWake(message, dispatchedAt))
 }
 
 function getParentWakeMessageRole(message: ParentWakeSessionMessage): string | undefined {
   return message.info?.role ?? message.role
+}
+
+function latestInternalWakeTailOnlyBlocks(
+  messages: readonly ParentWakeSessionMessage[],
+  wake: PendingParentWake,
+): boolean {
+  const latestMessage = messages[messages.length - 1]
+  if (!latestMessage || !isSyntheticOrInternalUserMessage(latestMessage)) {
+    return false
+  }
+  if (!parentWakeMessageIsInternalNotification(latestMessage, wake)) {
+    return false
+  }
+
+  return !latestAssistantTurnBlocksInternalPrompt(messages.slice(0, -1))
+}
+
+function stripTrailingInternalBackgroundProgressNotifications(messages: ParentWakeSessionMessage[]): boolean {
+  let stripped = false
+  while (messages.length > 0) {
+    const latestMessage = messages[messages.length - 1]
+    if (
+      !latestMessage
+      || getParentWakeMessageRole(latestMessage) !== "user"
+      || !isSyntheticOrInternalUserMessage(latestMessage)
+      || !parentWakeMessageContainsNotificationMatching(latestMessage, isBackgroundTaskProgressNotification)
+    ) {
+      break
+    }
+    messages.pop()
+    stripped = true
+  }
+  return stripped
+}
+
+function shouldResumeRetainedCompleteWakeAfterStaleAdmittedTail(input: {
+  readonly wake: PendingParentWake
+  readonly strippedOwnAdmittedDeposit: boolean
+  readonly strippedOwnAdmittedTailCreatedAt: number | undefined
+  readonly latestAssistantHasStaleToolBlock: boolean
+  readonly toolCallDeferMaxMs: number
+  readonly now: number
+}): boolean {
+  if (!input.wake.shouldReply || input.wake.noReplyAdmittedAt === undefined) {
+    return false
+  }
+  if (!input.strippedOwnAdmittedDeposit || !input.latestAssistantHasStaleToolBlock) {
+    return false
+  }
+  if (!input.wake.notifications.some(isFinalBackgroundTaskNotification)) {
+    return false
+  }
+  if (
+    input.strippedOwnAdmittedTailCreatedAt !== undefined
+    && input.strippedOwnAdmittedTailCreatedAt < input.wake.noReplyAdmittedAt
+  ) {
+    return false
+  }
+  return input.now - input.wake.noReplyAdmittedAt >= input.toolCallDeferMaxMs
 }
 
 function parentWakeMessageHasOutput(message: ParentWakeSessionMessage): boolean {
@@ -203,38 +313,83 @@ function parentWakeMessageHasOutput(message: ParentWakeSessionMessage): boolean 
   if (!message.parts || message.parts.length === 0) {
     return role === "assistant"
   }
-  return message.parts.some((part) => {
-    if (part.type === "text" || part.type === "reasoning") {
-      return typeof part.text === "string" && part.text.trim().length > 0
-    }
-    if (
-      part.type === "tool"
-      || part.type === "tool_use"
-      || part.type === "tool-call"
-      || part.type === "tool-invocation"
-      || part.type === "tool_result"
-      || part.type === "tool-result"
-    ) {
-      return true
-    }
-    if (part.content !== undefined) {
-      if (typeof part.content === "string") {
-        return part.content.trim().length > 0
-      }
-      if (Array.isArray(part.content)) {
-        return part.content.length > 0
-      }
-      return true
-    }
+  return message.parts.some(parentWakePartHasOutput)
+}
+
+function parentWakeMessageHasOutputAfterWake(message: ParentWakeSessionMessage, dispatchedAt: number): boolean {
+  const role = getParentWakeMessageRole(message)
+  if (role !== "assistant" && role !== "tool") {
     return false
-  })
+  }
+  const finish = message.info?.finish ?? message.finish
+  const error = message.info?.error ?? message.error
+  if (role === "assistant" && (finish === "error" || error !== undefined)) {
+    return false
+  }
+
+  const createdAt = getParentWakeMessageCreatedAt(message)
+  if (createdAt !== undefined && createdAt >= dispatchedAt) {
+    if (!message.parts || message.parts.length === 0) {
+      return role === "assistant"
+    }
+    return message.parts.some(parentWakePartHasOutput)
+  }
+
+  return message.parts?.some((part) => {
+    const partActivityAt = getParentWakeMessagePartActivityAt(part)
+    return partActivityAt !== undefined
+      && partActivityAt >= dispatchedAt
+      && parentWakePartHasOutput(part)
+  }) ?? false
+}
+
+function parentWakePartHasOutput(part: NonNullable<ParentWakeSessionMessage["parts"]>[number]): boolean {
+  if (part.type === "text" || part.type === "reasoning") {
+    return typeof part.text === "string" && part.text.trim().length > 0
+  }
+  if (
+    part.type === "tool"
+    || part.type === "tool_use"
+    || part.type === "tool-call"
+    || part.type === "tool-invocation"
+    || part.type === "tool_result"
+    || part.type === "tool-result"
+  ) {
+    return true
+  }
+  if (part.content !== undefined) {
+    if (typeof part.content === "string") {
+      return part.content.trim().length > 0
+    }
+    if (Array.isArray(part.content)) {
+      return part.content.length > 0
+    }
+    return true
+  }
+  return false
+}
+
+
+function parentWakeMessageIsInternalNotification(
+  message: ParentWakeSessionMessage,
+  wake: PendingParentWake,
+): boolean {
+  return isSyntheticOrInternalUserMessage(message) && parentWakeMessageContainsNotification(message, wake)
 }
 
 function parentWakeMessageContainsNotification(message: ParentWakeSessionMessage, wake: PendingParentWake): boolean {
+  return parentWakeMessageContainsNotificationMatching(
+    message,
+    (notification) => wake.notifications.some((wakeNotification) => notification.includes(wakeNotification)),
+  )
+}
+
+function parentWakeMessageContainsNotificationMatching(
+  message: ParentWakeSessionMessage,
+  matchesNotification: (notification: string) => boolean,
+): boolean {
   if (getParentWakeMessageRole(message) !== "user") {
     return false
   }
-  return message.parts?.some((part) =>
-    typeof part.text === "string" && wake.notifications.some((notification) => part.text?.includes(notification))
-  ) ?? false
+  return message.parts?.some((part) => typeof part.text === "string" && matchesNotification(part.text)) ?? false
 }

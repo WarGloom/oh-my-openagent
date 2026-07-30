@@ -22,13 +22,10 @@ export async function executeBackgroundContinuation(
       throw new Error("task_id is required to continue a background task")
     }
 
-    const effectivePrompt = systemContent
-      ? `${systemContent}\n\n${args.prompt}`
-      : args.prompt
-
     const task = await manager.resume({
       sessionId: taskID,
-      prompt: effectivePrompt,
+      prompt: args.prompt,
+      system: systemContent,
       parentSessionId: parentContext.sessionID,
       parentMessageId: parentContext.messageID,
       parentModel: parentContext.model,

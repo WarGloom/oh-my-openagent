@@ -1,3 +1,5 @@
+/// <reference types="bun-types" />
+
 import { afterEach, describe, expect, test } from "bun:test"
 import { tmpdir } from "node:os"
 import type { PluginInput } from "@opencode-ai/plugin"
@@ -28,7 +30,13 @@ type SessionMessageStub = {
     time?: { created?: number; completed?: number }
     error?: { name?: string }
   }
-  parts?: Array<{ type?: string; text?: string; synthetic?: boolean; state?: { status?: string } }>
+  parts?: Array<{
+    type?: string
+    text?: string
+    synthetic?: boolean
+    time?: { created?: number; updated?: number }
+    state?: { status?: string; time?: { created?: number; updated?: number } }
+  }>
 }
 
 const FINAL_WAKE = [
@@ -326,7 +334,7 @@ describe("parent wake noReply admission liveness (issues #4874/#5086)", () => {
 
 describe("parent wake admitted-consumption drop (duplicate ALL-COMPLETE regression)", () => {
   test("#given admitted wake consumed by live turn output #when stale tool-call deferral would force a resume #then no duplicate reply dispatch and the wake is dropped", async () => {
-    // given: reproduce ses_14a3ab27bffe — admit-only deposit at T, parent's live
+    // given: reproduce ses_14a3ab27bffe - admit-only deposit at T, parent's live
     // turn keeps producing output after the admission, then the stale tool-call
     // hatch fires while every busy signal is blind.
     const originalDateNow = Date.now
@@ -339,6 +347,15 @@ describe("parent wake admitted-consumption drop (duplicate ALL-COMPLETE regressi
         consumed
           ? [
               ...BLOCKED_MESSAGES,
+              {
+                info: { role: "user", time: { created: 100_100 } },
+                parts: [
+                  {
+                    type: "text",
+                    text: `${FINAL_WAKE}\n\n<!-- OMO_INTERNAL_INITIATOR -->`,
+                  },
+                ],
+              },
               {
                 info: { role: "assistant", finish: "tool-calls", time: { created: 101_000 } },
                 parts: [
@@ -378,15 +395,40 @@ describe("parent wake admitted-consumption drop (duplicate ALL-COMPLETE regressi
     }
   })
 
-  test("#given admitted wake while the tool-blocked turn is still mid-flight #when the tool-call deferral goes stale #then no reply dispatch forks the turn", async () => {
-    // given: reproduce ses_149e6ecb2ffe — admit-only deposit during a silent
-    // long-running tool (sleep), no post-admission output yet
+  test("#given admitted wake while the tool-blocked turn has fresh activity #when retry flushes #then no reply dispatch forks the turn", async () => {
+    // given: fresh tool activity means the live turn may still consume the
+    // admit-only deposit, so reply-producing recovery remains unsafe.
     const originalDateNow = Date.now
     let now = 100_000
     Date.now = () => now
+    let deposited = false
     const { notifier, promptAsyncCalls } = createNotifier({
       sessionStatuses: { "parent-1": { type: "idle" } },
-      messagesProvider: () => BLOCKED_MESSAGES,
+      messagesProvider: () => [
+        {
+          info: { role: "user", time: { created: 80_000 } },
+          parts: [{ type: "text", text: "start work" }],
+        },
+        {
+          info: { role: "assistant", finish: "tool-calls", time: { created: 99_500 } },
+          parts: [{ type: "tool", state: { status: "running", time: { updated: now } } }],
+        },
+        ...(deposited
+          ? [
+              {
+                info: { role: "user", time: { created: 100_100 } },
+                parts: [
+                  {
+                    type: "text",
+                    text: `${FINAL_WAKE}
+
+<!-- OMO_INTERNAL_INITIATOR -->`,
+                  },
+                ],
+              },
+            ]
+          : []),
+      ],
     })
     notifier.queuePendingParentWake("parent-1", FINAL_WAKE, { agent: "sisyphus" }, true)
 
@@ -396,9 +438,9 @@ describe("parent wake admitted-consumption drop (duplicate ALL-COMPLETE regressi
       expect(promptAsyncCalls).toHaveLength(1)
       expect(promptAsyncCalls[0]?.body.noReply).toBe(true)
 
-      // when: the deferral goes stale while the same tool turn is still running
-      now = 110_000
-      releaseParentWakeHold("parent-1")
+      // when: the deposit is visible but the preceding tool still has fresh activity
+      deposited = true
+      now = 101_000
       notifier.clearPendingParentWakeTimer("parent-1")
       await notifier.flushPendingParentWake("parent-1")
 
@@ -406,6 +448,60 @@ describe("parent wake admitted-consumption drop (duplicate ALL-COMPLETE regressi
       expect(promptAsyncCalls).toHaveLength(1)
       expect(notifier.getPendingParentWakes().get("parent-1")?.shouldReply).toBe(true)
       expect(notifier.getPendingParentWakeTimers().has("parent-1")).toBe(true)
+    } finally {
+      Date.now = originalDateNow
+      notifier.shutdown()
+      releaseAllPromptAsyncReservationsForTesting()
+    }
+  })
+
+  test("#given admitted all-complete wake is transcript tail behind stale tool-block #when retry flushes after hold expiry #then it resumes with a reply", async () => {
+    // given: reproduce the visible deadlock from the TUI - the noReply system
+    // reminder is already the transcript tail, but the previous assistant row
+    // still looks like an unresolved background tool turn.
+    const originalDateNow = Date.now
+    let now = 100_000
+    Date.now = () => now
+    let deposited = false
+    const { notifier, promptAsyncCalls } = createNotifier({
+      sessionStatuses: { "parent-1": { type: "idle" } },
+      messagesProvider: () =>
+        deposited
+          ? [
+              ...BLOCKED_MESSAGES,
+              {
+                info: { role: "user", time: { created: 100_100 } },
+                parts: [
+                  {
+                    type: "text",
+                    text: `${FINAL_WAKE}
+
+<!-- OMO_INTERNAL_INITIATOR -->`,
+                  },
+                ],
+              },
+            ]
+          : BLOCKED_MESSAGES,
+    })
+    notifier.queuePendingParentWake("parent-1", FINAL_WAKE, { agent: "sisyphus" }, true)
+
+    try {
+      // when: flush admits the wake as noReply during history deferral
+      await notifier.flushPendingParentWake("parent-1")
+      expect(promptAsyncCalls).toHaveLength(1)
+      expect(promptAsyncCalls[0]?.body.noReply).toBe(true)
+
+      // when: the noReply deposit is visible, stale, and the gate hold has expired
+      deposited = true
+      now = 106_000
+      notifier.clearPendingParentWakeTimer("parent-1")
+      await notifier.flushPendingParentWake("parent-1")
+
+      // then: the retained wake is converted into the reply-producing turn the agent needs
+      expect(promptAsyncCalls).toHaveLength(2)
+      expect(promptAsyncCalls[1]?.body.noReply).toBe(false)
+      expect(JSON.stringify(promptAsyncCalls[1]?.body.parts)).toContain("ALL BACKGROUND TASKS COMPLETE")
+      expect(notifier.getPendingParentWakes().has("parent-1")).toBe(false)
     } finally {
       Date.now = originalDateNow
       notifier.shutdown()
@@ -497,9 +593,174 @@ describe("parent wake admitted-consumption drop (duplicate ALL-COMPLETE regressi
     }
   })
 
+  test("#given previous assistant output has a late timestamp before the admitted wake #then the visible wake still resumes", async () => {
+    // given: the transcript visibly ends with the internal all-complete wake.
+    // A preceding assistant row can carry a timestamp after admission, but it
+    // did not consume the wake because it is ordered before the deposit.
+    const originalDateNow = Date.now
+    let now = 100_000
+    Date.now = () => now
+    let deposited = false
+    const { notifier, promptAsyncCalls } = createNotifier({
+      sessionStatuses: { "parent-1": { type: "idle" } },
+      messagesProvider: () =>
+        deposited
+          ? [
+              ...SAFE_MESSAGES,
+              {
+                info: { role: "assistant", finish: "stop", time: { created: 101_000 } },
+                parts: [{ type: "text", text: "previous turn finished" }],
+              },
+              {
+                info: { role: "user", time: { created: 100_100 } },
+                parts: [
+                  {
+                    type: "text",
+                    text: `${FINAL_WAKE}\n\n<!-- OMO_INTERNAL_INITIATOR -->`,
+                  },
+                ],
+              },
+            ]
+          : BLOCKED_MESSAGES,
+    })
+    notifier.queuePendingParentWake("parent-1", FINAL_WAKE, { agent: "sisyphus" }, true)
+
+    try {
+      // when: flush admits the wake as noReply during history deferral
+      await notifier.flushPendingParentWake("parent-1")
+      expect(promptAsyncCalls).toHaveLength(1)
+      expect(promptAsyncCalls[0]?.body.noReply).toBe(true)
+
+      // when: the transcript ends at the admitted wake and the parent is idle
+      deposited = true
+      now = 110_000
+      releaseParentWakeHold("parent-1")
+      notifier.clearPendingParentWakeTimer("parent-1")
+      await notifier.flushPendingParentWake("parent-1")
+
+      // then: the reply-producing resume dispatches instead of dropping the wake
+      expect(promptAsyncCalls).toHaveLength(2)
+      expect(promptAsyncCalls[1]?.body.noReply).toBe(false)
+      expect(JSON.stringify(promptAsyncCalls[1]?.body.parts)).toContain("ALL BACKGROUND TASKS COMPLETE")
+      expect(notifier.getPendingParentWakes().has("parent-1")).toBe(false)
+    } finally {
+      Date.now = originalDateNow
+      notifier.shutdown()
+      releaseAllPromptAsyncReservationsForTesting()
+    }
+  })
+
+  test("#given real user quotes the wake text before assistant output #then quoted text does not consume the admitted wake", async () => {
+    // given: a real user message can quote the wake text, but without the
+    // internal marker it is not the admitted deposit.
+    const originalDateNow = Date.now
+    let now = 100_000
+    Date.now = () => now
+    let quoted = false
+    const { notifier, promptAsyncCalls } = createNotifier({
+      sessionStatuses: { "parent-1": { type: "idle" } },
+      messagesProvider: () =>
+        quoted
+          ? [
+              ...SAFE_MESSAGES,
+              {
+                info: { role: "user", time: { created: 100_100 } },
+                parts: [{ type: "text", text: FINAL_WAKE }],
+              },
+              {
+                info: { role: "assistant", finish: "stop", time: { created: 101_000 } },
+                parts: [{ type: "text", text: "I saw your quoted text" }],
+              },
+            ]
+          : BLOCKED_MESSAGES,
+    })
+    notifier.queuePendingParentWake("parent-1", FINAL_WAKE, { agent: "sisyphus" }, true)
+
+    try {
+      // when: flush admits the wake as noReply during history deferral
+      await notifier.flushPendingParentWake("parent-1")
+      expect(promptAsyncCalls).toHaveLength(1)
+      expect(promptAsyncCalls[0]?.body.noReply).toBe(true)
+
+      // when: a real user quote is followed by normal assistant output
+      quoted = true
+      now = 110_000
+      releaseParentWakeHold("parent-1")
+      notifier.clearPendingParentWakeTimer("parent-1")
+      await notifier.flushPendingParentWake("parent-1")
+
+      // then: the original wake still resumes because our deposit was never seen
+      expect(promptAsyncCalls).toHaveLength(2)
+      expect(promptAsyncCalls[1]?.body.noReply).toBe(false)
+      expect(JSON.stringify(promptAsyncCalls[1]?.body.parts)).toContain("ALL BACKGROUND TASKS COMPLETE")
+      expect(notifier.getPendingParentWakes().has("parent-1")).toBe(false)
+    } finally {
+      Date.now = originalDateNow
+      notifier.shutdown()
+      releaseAllPromptAsyncReservationsForTesting()
+    }
+  })
+
+  test("#given tool output follows the admitted internal wake #then the wake is consumed without duplicate reply", async () => {
+    // given: a tool-role message after the admitted deposit means the live turn
+    // acted on the wake, so a reply retry would duplicate work.
+    const originalDateNow = Date.now
+    let now = 100_000
+    Date.now = () => now
+    let consumedByTool = false
+    const { notifier, promptAsyncCalls } = createNotifier({
+      sessionStatuses: { "parent-1": { type: "idle" } },
+      messagesProvider: () =>
+        consumedByTool
+          ? [
+              ...SAFE_MESSAGES,
+              {
+                info: { role: "user", time: { created: 100_100 } },
+                parts: [
+                  {
+                    type: "text",
+                    text: `${FINAL_WAKE}
+
+<!-- OMO_INTERNAL_INITIATOR -->`,
+                  },
+                ],
+              },
+              {
+                info: { role: "tool", time: { created: 101_000 } },
+                parts: [{ type: "tool-result" }],
+              },
+            ]
+          : BLOCKED_MESSAGES,
+    })
+    notifier.queuePendingParentWake("parent-1", FINAL_WAKE, { agent: "sisyphus" }, true)
+
+    try {
+      // when: flush admits the wake as noReply during history deferral
+      await notifier.flushPendingParentWake("parent-1")
+      expect(promptAsyncCalls).toHaveLength(1)
+      expect(promptAsyncCalls[0]?.body.noReply).toBe(true)
+
+      // when: tool output appears after the admitted internal wake
+      consumedByTool = true
+      now = 110_000
+      releaseParentWakeHold("parent-1")
+      notifier.clearPendingParentWakeTimer("parent-1")
+      await notifier.flushPendingParentWake("parent-1")
+
+      // then: the retained wake is dropped rather than re-dispatched as a reply
+      expect(promptAsyncCalls).toHaveLength(1)
+      expect(notifier.getPendingParentWakes().has("parent-1")).toBe(false)
+      expect(notifier.getDispatchedParentWakes().has("parent-1")).toBe(false)
+    } finally {
+      Date.now = originalDateNow
+      notifier.shutdown()
+      releaseAllPromptAsyncReservationsForTesting()
+    }
+  })
+
   test("#given admitted wake with only aborted assistant output after admission #then reply liveness is preserved", async () => {
     // given: an aborted (error) assistant message after admission is not
-    // consumption — the parent never addressed the notification.
+    // consumption - the parent never addressed the notification.
     const originalDateNow = Date.now
     let now = 100_000
     Date.now = () => now
@@ -576,10 +837,11 @@ describe("BackgroundManager parent wake recent-activity admission liveness", () 
       },
     }
     const ctx: PluginInput = {
-      client: client as PluginInput["client"],
+      client: client as unknown as PluginInput["client"],
       project: {} as PluginInput["project"],
       directory: tmpdir(),
       worktree: tmpdir(),
+      experimental_workspace: { register: () => {} },
       serverUrl: new URL("http://localhost"),
       $: {} as PluginInput["$"],
     }
