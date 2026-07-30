@@ -146,3 +146,45 @@ describe("launch-gated Fable 5.5 on a cold provider-models cache", () => {
 		expect(result?.model).toBe(expected);
 	});
 });
+
+describe("resolveModelPipeline user fallback models", () => {
+  test("resolves bare user fallback models through the first connected provider", () => {
+    const result = resolveModelPipeline(
+      {
+        intent: {
+          userFallbackModels: ["claude-opus-4-7"],
+        },
+        constraints: {
+          availableModels: new Set<string>(),
+        },
+      },
+      {
+        readConnectedProvidersCache: () => ["anthropic"],
+        findProviderModelMetadata: () => undefined,
+      },
+    )
+
+    expect(result).toEqual({
+      model: "anthropic/claude-opus-4-7",
+      provenance: "provider-fallback",
+      attempted: ["claude-opus-4-7"],
+    })
+  })
+
+  test("matches user fallback models with variant suffixes against available models", () => {
+    const result = resolveModelPipeline({
+      intent: {
+        userFallbackModels: ["openai/gpt-5 high"],
+      },
+      constraints: {
+        availableModels: new Set<string>(["openai/gpt-5"]),
+      },
+    })
+
+    expect(result).toEqual({
+      model: "openai/gpt-5",
+      provenance: "provider-fallback",
+      attempted: ["openai/gpt-5 high"],
+    })
+  })
+})

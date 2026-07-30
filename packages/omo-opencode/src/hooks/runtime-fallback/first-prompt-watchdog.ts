@@ -9,7 +9,7 @@ import { normalizeModelToCanonicalString } from "./normalize-model"
 import { createFallbackState } from "./fallback-state"
 import { getFallbackModelsForSession } from "./fallback-models"
 import { resolveFallbackBootstrapModel } from "./fallback-bootstrap-model"
-import { dispatchFallbackRetry } from "./fallback-retry-dispatcher"
+import { dispatchFallbackRetry, suppressUnsafeAutoReplay } from "./fallback-retry-dispatcher"
 
 const SOURCE = "first-prompt-watchdog"
 const SESSION_NEXT_EVENT_PREFIX = "session.next."
@@ -59,14 +59,17 @@ function hasAssistantCompletionMarker(info: Record<string, unknown>): boolean {
 export function observeEventForWatchdog(
   event: { type: string; properties?: unknown },
   watchdog: FirstPromptWatchdog,
-): void {
+): string | undefined {
   const props = isRecord(event.properties) ? event.properties : undefined
-  if (!props) return
+  if (!props) return undefined
 
   if (event.type.startsWith(SESSION_NEXT_EVENT_PREFIX)) {
     const sessionID = resolveSessionEventID(props) ?? resolveMessageEventSessionID(props)
-    if (sessionID) watchdog.onAssistantProgress(sessionID)
-    return
+    if (sessionID) {
+      watchdog.onAssistantProgress(sessionID)
+      return sessionID
+    }
+    return undefined
   }
 
   if (event.type === "message.part.updated" || event.type === "message.part.delta") {
@@ -78,22 +81,23 @@ export function observeEventForWatchdog(
     const hasNonEmptySessionPart = typeof part?.sessionID === "string" && Object.keys(part).length > 0
     if (sessionID && (hasPartType || hasTopLevelType || hasTextDelta || hasNonEmptySessionPart)) {
       watchdog.onAssistantProgress(sessionID)
+      return sessionID
     }
-    return
+    return undefined
   }
 
   if (event.type === "message.updated") {
     const info = isRecord(props.info) ? props.info : undefined
-    if (!info) return
+    if (!info) return undefined
     const sessionID = typeof info?.sessionID === "string" ? info.sessionID : undefined
     const role = typeof info?.role === "string" ? info.role : undefined
-    if (!sessionID || !role) return
+    if (!sessionID || !role) return undefined
 
     if (role === "user") {
       const model = normalizeModelToCanonicalString(info?.model)
       const agent = typeof info?.agent === "string" ? info.agent : undefined
       watchdog.onUserMessage(sessionID, model, agent)
-      return
+      return undefined
     }
 
     if (role === "assistant") {
@@ -105,15 +109,17 @@ export function observeEventForWatchdog(
       const hasAnyPart = parts.some((part) => isRecord(part) && typeof part.type === "string")
       if (hasError || hasFinish || hasAnyPart) {
         watchdog.onAssistantProgress(sessionID)
+        return sessionID
       }
     }
-    return
+    return undefined
   }
 
   if (TERMINAL_EVENT_TYPES.has(event.type)) {
     const sessionID = resolveSessionEventID(props)
     if (sessionID) watchdog.onSessionTerminal(sessionID)
   }
+  return undefined
 }
 
 export function createFirstPromptWatchdog(
@@ -123,6 +129,8 @@ export function createFirstPromptWatchdog(
 ): FirstPromptWatchdog {
   const timers = new Map<string, RuntimeFallbackTimeout>()
   const armed = new Set<string>()
+  const progressSatisfied = new Set<string>()
+  const terminalSessions = new Set<string>()
 
   const cancel = (sessionID: string): void => {
     const timer = timers.get(sessionID)
@@ -137,12 +145,22 @@ export function createFirstPromptWatchdog(
     timers.delete(sessionID)
     armed.delete(sessionID)
 
+    if (terminalSessions.has(sessionID)) {
+      log(`[${HOOK_NAME}] ${SOURCE}: session terminated before fire, skipping`, { sessionID })
+      return
+    }
+
     if (!subagentSessions.has(sessionID)) {
       log(`[${HOOK_NAME}] ${SOURCE}: session no longer a subagent at fire time, skipping`, { sessionID })
       return
     }
 
     const resolvedAgent = await helpers.resolveAgentForSessionFromContext(sessionID, agent)
+    if (terminalSessions.has(sessionID)) {
+      log(`[${HOOK_NAME}] ${SOURCE}: session terminated during agent resolution, skipping`, { sessionID })
+      return
+    }
+
     const fallbackModels = getFallbackModelsForSession(sessionID, resolvedAgent, deps.pluginConfig)
 
     if (fallbackModels.length === 0) {
@@ -182,6 +200,7 @@ export function createFirstPromptWatchdog(
     // OpenCode's perspective when the watchdog fires. Forcefully end it so the
     // fallback prompt can take over cleanly. Network errors from abort are
     // logged inside abortSessionRequest and do not block fallback dispatch.
+    if (suppressUnsafeAutoReplay(deps, helpers, { sessionID, state, source: SOURCE })) return
     await helpers.abortSessionRequest(sessionID, SOURCE)
 
     await dispatchFallbackRetry(deps, helpers, {
@@ -196,7 +215,10 @@ export function createFirstPromptWatchdog(
   return {
     onUserMessage(sessionID, model, agent) {
       if (!sessionID) return
+      if (watchdogMs <= 0) return
       if (!subagentSessions.has(sessionID)) return
+      if (terminalSessions.has(sessionID)) return
+      if (progressSatisfied.has(sessionID)) return
       if (armed.has(sessionID)) return
 
       armed.add(sessionID)
@@ -209,13 +231,19 @@ export function createFirstPromptWatchdog(
     },
     onAssistantProgress(sessionID) {
       if (!sessionID || !armed.has(sessionID)) return
+      progressSatisfied.add(sessionID)
       cancel(sessionID)
       log(`[${HOOK_NAME}] ${SOURCE}: cancelled (assistant progress observed)`, { sessionID })
     },
     onSessionTerminal(sessionID) {
-      if (!sessionID || !armed.has(sessionID)) return
+      if (!sessionID) return
+      const wasArmed = armed.has(sessionID)
+      terminalSessions.add(sessionID)
+      progressSatisfied.delete(sessionID)
       cancel(sessionID)
-      log(`[${HOOK_NAME}] ${SOURCE}: cancelled (session terminal)`, { sessionID })
+      if (wasArmed) {
+        log(`[${HOOK_NAME}] ${SOURCE}: cancelled (session terminal)`, { sessionID })
+      }
     },
     dispose() {
       for (const timer of timers.values()) {
@@ -223,6 +251,8 @@ export function createFirstPromptWatchdog(
       }
       timers.clear()
       armed.clear()
+      progressSatisfied.clear()
+      terminalSessions.clear()
     },
   }
 }
