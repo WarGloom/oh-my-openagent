@@ -90,6 +90,7 @@ export function createToolExecuteBeforeHandler(args: {
       }
     }
 
+    await hooks.runtimeFallback?.["tool.execute.before"]?.(input, output)
     await hooks.writeExistingFileGuard?.["tool.execute.before"]?.(input, output)
     await hooks.notepadWriteGuard?.["tool.execute.before"]?.(input, output)
     await hooks.questionLabelTruncator?.["tool.execute.before"]?.(input, output)
@@ -101,9 +102,10 @@ export function createToolExecuteBeforeHandler(args: {
     await hooks.directoryReadmeInjector?.["tool.execute.before"]?.(input, output)
     await hooks.rulesInjector?.["tool.execute.before"]?.(input, output)
     await hooks.tasksTodowriteDisabler?.["tool.execute.before"]?.(input, output)
-      await hooks.webfetchRedirectGuard?.["tool.execute.before"]?.(input, output)
-      await hooks.fsyncSkipWarning?.["tool.execute.before"]?.(input, output)
-      await hooks.prometheusMdOnly?.["tool.execute.before"]?.(input, output)
+    await hooks.serenaNavigationGuard?.["tool.execute.before"]?.(input, output)
+    await hooks.webfetchRedirectGuard?.["tool.execute.before"]?.(input, output)
+    await hooks.fsyncSkipWarning?.["tool.execute.before"]?.(input, output)
+    await hooks.prometheusMdOnly?.["tool.execute.before"]?.(input, output)
     await hooks.sisyphusJuniorNotepad?.["tool.execute.before"]?.(input, output)
     await hooks.atlasHook?.["tool.execute.before"]?.(input, output)
     await hooks.compactionTodoPreserver?.["tool.execute.before"]?.(input, output)
@@ -138,6 +140,7 @@ export function createToolExecuteBeforeHandler(args: {
         const resolvedAgent = await resolveSessionAgent(ctx.client, taskId)
         replaceToolArgs(output, { subagent_type: resolvedAgent ?? "continue" })
       }
+
     }
 
     if (input.tool === "skill") {
