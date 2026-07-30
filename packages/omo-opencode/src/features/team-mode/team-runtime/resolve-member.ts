@@ -2,7 +2,9 @@ import type { FallbackEntry } from "../../../shared/model-requirements"
 import type { DelegatedModelConfig } from "../../../shared/model-resolution-types"
 import type { ExecutorContext } from "../../../tools/delegate-task/executor-types"
 import type { DelegateTaskArgs } from "../../../tools/delegate-task/types"
-import type { Member } from "../types"
+import { AGENT_ELIGIBILITY_REGISTRY, type Member } from "../types"
+import { resolveFinalProjectAgent } from "../final-open-code-agent-registry"
+import { resolveAgentFallbackChain } from "../../../tools/delegate-task/subagent-model-resolution"
 import { buildSystemContent, resolveCategoryExecution, resolveSubagentExecution } from "./resolve-member-dependencies"
 
 export class TeamMemberResolutionError extends Error {
@@ -20,7 +22,7 @@ export interface ResolvedMember {
   agentToUse: string
   model: DelegatedModelConfig | undefined
   fallbackChain: FallbackEntry[] | undefined
-  systemContent: string
+  systemContent: string | undefined
 }
 
 function createBaseDelegateTaskArgs(
@@ -96,6 +98,21 @@ export async function resolveMember(
           maxPromptTokens: execution.maxPromptTokens,
           model: execution.categoryModel,
         }),
+      }
+    }
+
+    if (!Object.hasOwn(AGENT_ELIGIBILITY_REGISTRY, member.subagent_type)) {
+      if (member.name === parentAgent) {
+        throw new Error("Project-defined agents cannot be team leads.")
+      }
+      const projectAgent = await resolveFinalProjectAgent(ctx.client, ctx.directory, member.subagent_type)
+      const fallbackChain = resolveAgentFallbackChain(projectAgent.name, projectAgent.model, ctx)
+      return {
+        memberName: member.name,
+        agentToUse: projectAgent.name,
+        model: projectAgent.model,
+        fallbackChain,
+        systemContent: undefined,
       }
     }
 
