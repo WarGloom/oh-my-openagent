@@ -72,6 +72,7 @@ describe("createBuiltinSkills", () => {
 			expect(skills.find((s) => s.name === "frontend")).toBeDefined()
 			expect(skills.find((s) => s.name === "git-master")).toBeDefined()
 			expect(skills.find((s) => s.name === "review-work")).toBeDefined()
+			expect(skills.find((s) => s.name === "customize-opencode")).toBeDefined()
 			expect(skills.find((s) => s.name === "remove-ai-slops")).toBeDefined()
 			expect(skills.find((s) => s.name === "init-deep")).toBeDefined()
 			expect(skills.find((s) => s.name === "debugging")).toBeDefined()
@@ -119,6 +120,7 @@ describe("createBuiltinSkills", () => {
 		expect(skills.map((s) => s.name)).toContain("git-master")
 		expect(skills.map((s) => s.name)).not.toContain("dev-browser")
 		expect(skills.map((s) => s.name)).toContain("review-work")
+		expect(skills.map((s) => s.name)).toContain("customize-opencode")
 		expect(skills.map((s) => s.name)).toContain("remove-ai-slops")
 		expect(skills.map((s) => s.name)).toContain("init-deep")
 		expect(skills.map((s) => s.name)).toContain("debugging")
@@ -142,6 +144,7 @@ describe("createBuiltinSkills", () => {
 		expect(skills.map((s) => s.name)).toContain("frontend")
 		expect(skills.map((s) => s.name)).not.toContain("dev-browser")
 		expect(skills.map((s) => s.name)).toContain("review-work")
+		expect(skills.map((s) => s.name)).toContain("customize-opencode")
 		expect(skills.map((s) => s.name)).toContain("remove-ai-slops")
 		expect(skills.map((s) => s.name)).toContain("init-deep")
 		expect(skills.map((s) => s.name)).toContain("debugging")
@@ -160,6 +163,7 @@ describe("createBuiltinSkills", () => {
 				"frontend",
 				"git-master",
 				"review-work",
+				"customize-opencode",
 				"remove-ai-slops",
 				"init-deep",
 				"debugging",
@@ -186,6 +190,19 @@ describe("createBuiltinSkills", () => {
 
 		// #then
 		expect(skills.length).toBe(11)
+	})
+
+	test("customize-opencode skill documents opencode configuration scope", () => {
+		// #given - default options
+
+		// #when
+		const skills = createBuiltinSkills()
+		const customize = skills.find((skill) => skill.name === "customize-opencode")
+
+		// #then
+		expect(customize).toBeDefined()
+		expect(customize?.description).toContain("opencode")
+		expect(customize?.template).toContain(".opencode/")
 	})
 
 	test("#given disabled_skills with debugging and visual-qa #when creating builtin skills #then both are filtered out", () => {
