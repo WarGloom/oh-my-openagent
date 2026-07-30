@@ -49,6 +49,11 @@ export async function updateTaskStatus(
     return updateTaskStatus(teamRunId, taskId, newStatus, memberName, config)
   }
 
+  if ((task.status === "pending" || task.status === "claimed") && newStatus === "completed") {
+    await updateTaskStatus(teamRunId, taskId, "in_progress", memberName, config)
+    return updateTaskStatus(teamRunId, taskId, newStatus, memberName, config)
+  }
+
   if (!isValidTransition(task.status, newStatus)) {
     throw new InvalidTaskTransitionError(task.status, newStatus)
   }
