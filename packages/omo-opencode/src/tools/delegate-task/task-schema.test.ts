@@ -1,19 +1,10 @@
+/// <reference types="bun-types" />
+
+import { describe, expect, test } from "bun:test"
 import { unsafeTestValue } from "../../../../../test-support/unsafe-test-value"
-const { describe, expect, test } = require("bun:test")
+import { createDelegateTask } from "./tools"
 
-function requireFresh<T>(modulePath: string): T {
-  const resolvedPath = require.resolve(modulePath)
-  if (require.cache?.[resolvedPath]) {
-    delete require.cache[resolvedPath]
-  }
-  return require(modulePath) as T
-}
-
-function createDelegateTask(...args: Parameters<typeof import("./tools").createDelegateTask>): ReturnType<typeof import("./tools").createDelegateTask> {
-  return requireFresh<typeof import("./tools")>("./tools").createDelegateTask(...args)
-}
-
-	describe("createDelegateTask schema", () => {
+describe("createDelegateTask schema", () => {
 	test("#given category arg #when tool is created #then category accepts any string", () => {
 		//#given
 		const toolDefinition = createDelegateTask({ manager: {} as never, client: {} as never, directory: "/tmp/test" })
@@ -33,7 +24,7 @@ function createDelegateTask(...args: Parameters<typeof import("./tools").createD
 		expect(categorySchema.def.innerType.def.type).toBe("string")
 	})
 
-	test("#given task description #when tool is created #then primary agents are not advertised for subagent_type", () => {
+	test("#given task description #when tool is created #then task description separates categories from direct subagents", () => {
 		//#given
 		const toolDefinition = createDelegateTask({ manager: {} as never, client: {} as never, directory: "/tmp/test" })
 
@@ -42,10 +33,60 @@ function createDelegateTask(...args: Parameters<typeof import("./tools").createD
 
 		//#then
 		expect(description).toContain("subagent_type: Use specific agent directly")
+		expect(description).toContain('For implementation/deep-worker tasks, use category="deep" instead of subagent_type="hephaestus".')
 		expect(description).toContain("task_id: Continuation session id")
-		expect(description).not.toContain("sisyphus")
-		expect(description).not.toContain("hephaestus")
-		expect(description).not.toContain("prometheus")
+		expect(description).toContain("Sisyphus-Junior")
+		expect(description).toContain("Available agent types:")
+		expect(description).not.toContain("- hephaestus:")
+		expect(description).not.toContain("- plan:")
+		expect(description).toContain("- sisyphus-junior: Category-spawned general executor")
+		expect(description).not.toContain("- sisyphus:")
+		expect(description).not.toContain("- prometheus:")
+	})
+
+	test("#given available subagent names omitted #when tool is created #then registered custom agent names remain valid", () => {
+		//#given
+		const toolDefinition = createDelegateTask({ manager: {} as never, client: {} as never, directory: "/tmp/test" })
+
+		//#when
+		const subagentSchema = unsafeTestValue<{
+			def: {
+				type: string
+				innerType: {
+					def: { type: string }
+				}
+			}
+		}>(toolDefinition.args.subagent_type)
+
+		//#then
+		expect(subagentSchema.def.type).toBe("optional")
+		expect(subagentSchema.def.innerType.def.type).toBe("string")
+	})
+
+	test("#given available subagent names include disabled direct agents #when tool is created #then they are filtered from the schema", () => {
+		//#given
+		const toolDefinition = createDelegateTask({
+			manager: {} as never,
+			client: {} as never,
+			directory: "/tmp/test",
+			availableSubagentNames: ["oracle", "plan", "hephaestus", "Hephaestus - Deep Agent", "explore"],
+		})
+
+		//#when
+		const subagentSchema = unsafeTestValue<{
+			def: {
+				type: string
+				innerType: {
+					def: { type: string; entries?: Record<string, string> }
+				}
+			}
+		}>(toolDefinition.args.subagent_type)
+
+		//#then
+		expect(subagentSchema.def.innerType.def.entries).not.toHaveProperty("plan")
+		expect(subagentSchema.def.innerType.def.entries).not.toHaveProperty("hephaestus")
+		expect(subagentSchema.def.innerType.def.entries).not.toHaveProperty("Hephaestus - Deep Agent")
+		expect(subagentSchema.def.innerType.def.entries).toHaveProperty("oracle", "oracle")
 	})
 
 	test("#given task schema #when describing async mode #then it names background task ids explicitly", () => {

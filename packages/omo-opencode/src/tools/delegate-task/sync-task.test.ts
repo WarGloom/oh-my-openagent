@@ -1,3 +1,4 @@
+/// <reference types="bun-types" />
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test"
 
 function clearRequireCache(modulePath: string): void {
@@ -50,12 +51,18 @@ describe("executeSyncTask - cleanup on error paths", () => {
       removeTaskCalls.push(id)
     })
 
-    const { subagentSessions } = require("../../features/claude-code-session-state")
+    const { subagentSessions, syncSubagentSessions } = require("../../features/claude-code-session-state")
+    subagentSessions.clear()
+    syncSubagentSessions.clear()
+    const addSubagentSession = subagentSessions.add.bind(subagentSessions)
+    const deleteSubagentSession = subagentSessions.delete.bind(subagentSessions)
     spyOn(subagentSessions, "add").mockImplementation((id: string) => {
       addCalls.push(id)
+      return addSubagentSession(id)
     })
     spyOn(subagentSessions, "delete").mockImplementation((id: string) => {
       deleteCalls.push(id)
+      return deleteSubagentSession(id)
     })
 
   })
@@ -65,6 +72,9 @@ describe("executeSyncTask - cleanup on error paths", () => {
     __resetTimingConfig()
 
     mock.restore()
+    const { subagentSessions, syncSubagentSessions } = require("../../features/claude-code-session-state")
+    subagentSessions.clear()
+    syncSubagentSessions.clear()
     resetToastManager?.()
     resetToastManager = null
     const { clearAllDelegatedChildSessionBootstrap } = require("../../shared/delegated-child-session-bootstrap")
@@ -144,6 +154,7 @@ describe("executeSyncTask - cleanup on error paths", () => {
       sendSyncPrompt: async () => null,
       pollSyncSession: async () => null,
       fetchSyncResult: async () => ({ ok: true as const, textContent: "Result" }),
+      getSyncMessageCount: async () => ({ ok: true as const, count: 0 }),
     }
 
     const mockCtx = {
@@ -402,6 +413,7 @@ describe("executeSyncTask - cleanup on error paths", () => {
       },
       pollSyncSession: async () => null,
       fetchSyncResult: async () => ({ ok: true as const, textContent: "Result" }),
+      getSyncMessageCount: async () => ({ ok: true as const, count: 0 }),
     }
 
     const mockCtx = {
@@ -469,6 +481,7 @@ describe("executeSyncTask - cleanup on error paths", () => {
       },
       pollSyncSession: async () => null,
       fetchSyncResult: async () => ({ ok: true as const, textContent: "Result" }),
+      getSyncMessageCount: async () => ({ ok: true as const, count: 0 }),
     }
 
     const mockCtx = {
@@ -609,7 +622,7 @@ describe("executeSyncTask - cleanup on error paths", () => {
     expect(deleteCalls[0]).toBe("ses_test_12345678")
   })
 
-  test("retries sync session on retryable runtime session error using next fallback model", async () => {
+  test("retries same sync session on retryable runtime session error using next fallback model", async () => {
     const mockClient = {
       session: {
         create: async () => ({ data: { id: "ignored" } }),
@@ -621,6 +634,7 @@ describe("executeSyncTask - cleanup on error paths", () => {
     const createSessionInputs: Array<{ category?: string }> = []
     const attemptedModels: Array<{ providerID: string; modelID: string; variant?: string } | undefined> = []
     const polledSessions: string[] = []
+    let pollCount = 0
 
     const deps = {
       createSyncSession: async (_client: unknown, input: { category?: string }) => {
@@ -635,11 +649,13 @@ describe("executeSyncTask - cleanup on error paths", () => {
       },
       pollSyncSession: async (_ctx: unknown, _client: unknown, input: { sessionID: string }) => {
         polledSessions.push(input.sessionID)
-        return input.sessionID === "ses_first"
+        pollCount++
+        return pollCount === 1
           ? "Forbidden: Selected provider is forbidden"
           : null
       },
       fetchSyncResult: async (_client: unknown, sessionID: string) => ({ ok: true as const, textContent: `Result from ${sessionID}` }),
+      getSyncMessageCount: async () => ({ ok: true as const, count: 0 }),
     }
 
     const metadataCalls: CapturedMetadata[] = []
@@ -682,21 +698,21 @@ describe("executeSyncTask - cleanup on error paths", () => {
       sessionID: "parent-session",
     }, "sisyphus-junior", initialModel, undefined, undefined, fallbackChain, deps)
 
-    expect(createdSessions).toEqual(["ses_first", "ses_second"])
-    expect(createSessionInputs).toHaveLength(2)
+    expect(createdSessions).toEqual(["ses_first"])
+    expect(createSessionInputs).toHaveLength(1)
     expect(createSessionInputs[0]?.category).toBe("quick")
-    expect(createSessionInputs[1]?.category).toBe("quick")
-    expect(polledSessions).toEqual(["ses_first", "ses_second"])
+    expect(polledSessions).toEqual(["ses_first", "ses_first"])
     expect(attemptedModels).toEqual([
       { providerID: "genai-proxy-openai", modelID: "gpt-5.6-luna-fast", variant: undefined },
       { providerID: "genai-proxy-aws", modelID: "us.anthropic.claude-haiku-4-5-20251001-v1:0", variant: undefined },
     ])
-    expect(result).toContain("Result from ses_second")
+    expect(result).toContain("Result from ses_first")
     expect(deleteCalls).toContain("ses_first")
+    expect(deleteCalls).not.toContain("ses_second")
 
     const finalMetadata = metadataCalls[metadataCalls.length - 1]
-    expect(finalMetadata.metadata.sessionId).toBe("ses_second")
-    expect(finalMetadata.metadata.taskId).toBe("ses_second")
+    expect(finalMetadata.metadata.sessionId).toBe("ses_first")
+    expect(finalMetadata.metadata.taskId).toBe("ses_first")
     expect(finalMetadata.metadata.model).toEqual({
       providerID: "genai-proxy-aws",
       modelID: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
@@ -716,6 +732,8 @@ describe("executeSyncTask - cleanup on error paths", () => {
     const { shouldRetryError } = require("../../shared/model-error-classifier")
     const createdSessions: string[] = []
     const attemptedModels: Array<{ providerID: string; modelID: string; variant?: string } | undefined> = []
+    const polledSessions: string[] = []
+    let pollCount = 0
 
     const pollError = "Subscription quota exceeded. You can continue using free models."
     const deps = {
@@ -729,14 +747,15 @@ describe("executeSyncTask - cleanup on error paths", () => {
         return null
       },
       pollSyncSession: async (_ctx: unknown, _client: unknown, input: { sessionID: string }) => {
-        return input.sessionID === "ses_quota_primary"
-          ? pollError
-          : null
+        polledSessions.push(input.sessionID)
+        pollCount++
+        return pollCount === 1 ? pollError : null
       },
       fetchSyncResult: async (_client: unknown, sessionID: string) => ({
         ok: true as const,
         textContent: `Result from ${sessionID}`,
       }),
+      getSyncMessageCount: async () => ({ ok: true as const, count: 0 }),
       isProviderExhaustionFallbackEligible: (error: { message?: string }) => error.message === pollError,
     }
 
@@ -779,12 +798,13 @@ describe("executeSyncTask - cleanup on error paths", () => {
 
     //#then
     expect(shouldRetryError({ message: pollError })).toBe(true)
-    expect(createdSessions).toEqual(["ses_quota_primary", "ses_quota_fallback"])
+    expect(createdSessions).toEqual(["ses_quota_primary"])
+    expect(polledSessions).toEqual(["ses_quota_primary", "ses_quota_primary"])
     expect(attemptedModels).toEqual([
       { providerID: "anthropic", modelID: "claude-sonnet-4-6", variant: undefined },
       { providerID: "openai", modelID: "gpt-5.4", variant: "medium" },
     ])
-    expect(result).toContain("Result from ses_quota_fallback")
+    expect(result).toContain("Result from ses_quota_primary")
   })
 
   test("#given no fallback chain #when poll returns retryable runtime error #then returns poll error without creating retry session", async () => {
@@ -909,7 +929,7 @@ describe("executeSyncTask - cleanup on error paths", () => {
     expect(getDelegatedChildSessionBootstrap("ses_bootstrap_sync")).toBeUndefined()
   })
 
-  test("replays sync session side effects for retry-created sessions", async () => {
+  test("reuses sync session side effects when retrying with a fallback model", async () => {
     const mockClient = {
       session: {
         create: async () => ({ data: { id: "ignored" } }),
@@ -918,7 +938,10 @@ describe("executeSyncTask - cleanup on error paths", () => {
 
     const { executeSyncTask } = require("./sync-task")
     const createdSessions: string[] = []
+    const attemptedModels: Array<{ providerID: string; modelID: string; variant?: string } | undefined> = []
+    const polledSessions: string[] = []
     const onSyncSessionCreated = mock(async (_event: unknown) => {})
+    let pollCount = 0
 
     const deps = {
       createSyncSession: async () => {
@@ -926,13 +949,19 @@ describe("executeSyncTask - cleanup on error paths", () => {
         createdSessions.push(sessionID)
         return { ok: true as const, sessionID }
       },
-      sendSyncPrompt: async () => null,
+      sendSyncPrompt: async (_client: unknown, input: { categoryModel?: { providerID: string; modelID: string; variant?: string } }) => {
+        attemptedModels.push(input.categoryModel)
+        return null
+      },
       pollSyncSession: async (_ctx: unknown, _client: unknown, input: { sessionID: string }) => {
-        return input.sessionID === "ses_first"
+        polledSessions.push(input.sessionID)
+        pollCount++
+        return pollCount === 1
           ? "Forbidden: Selected provider is forbidden"
           : null
       },
       fetchSyncResult: async (_client: unknown, sessionID: string) => ({ ok: true as const, textContent: `Result from ${sessionID}` }),
+      getSyncMessageCount: async () => ({ ok: true as const, count: 0 }),
     }
 
     const metadataCalls: CapturedMetadata[] = []
@@ -975,13 +1004,18 @@ describe("executeSyncTask - cleanup on error paths", () => {
       sessionID: "parent-session",
     }, "sisyphus-junior", initialModel, undefined, undefined, fallbackChain, deps)
 
-    expect(result).toContain("Result from ses_second")
+    expect(createdSessions).toEqual(["ses_first"])
+    expect(polledSessions).toEqual(["ses_first", "ses_first"])
+    expect(attemptedModels).toMatchObject([
+      { providerID: "genai-proxy-openai", modelID: "gpt-5.6-luna-fast", variant: undefined },
+      { providerID: "genai-proxy-aws", modelID: "us.anthropic.claude-haiku-4-5-20251001-v1:0", variant: undefined },
+    ])
+    expect(result).toContain("Result from ses_first")
     expect(onSyncSessionCreated.mock.calls.map((call: unknown[]) => call[0])).toEqual([
       { sessionID: "ses_first", parentID: "parent-session", title: "test task" },
-      { sessionID: "ses_second", parentID: "parent-session", title: "test task" },
     ])
-    expect(addTaskCalls.map((task) => task.sessionID)).toEqual(["ses_first", "ses_second"])
-    expect(addTaskCalls.map((task) => task.id)).toEqual(["sync_ses_firs", "sync_ses_firs"])
+    expect(addTaskCalls.map((task) => task.sessionID)).toEqual(["ses_first"])
+    expect(addTaskCalls.map((task) => task.id)).toEqual(["sync_ses_firs"])
   })
 
   test("publishes latest retry session metadata when final retry still fails", async () => {
@@ -993,6 +1027,8 @@ describe("executeSyncTask - cleanup on error paths", () => {
 
     const { executeSyncTask } = require("./sync-task")
     const createdSessions: string[] = []
+    const polledSessions: string[] = []
+    let pollCount = 0
 
     const deps = {
       createSyncSession: async () => {
@@ -1002,11 +1038,14 @@ describe("executeSyncTask - cleanup on error paths", () => {
       },
       sendSyncPrompt: async () => null,
       pollSyncSession: async (_ctx: unknown, _client: unknown, input: { sessionID: string }) => {
-        return input.sessionID === "ses_first"
+        polledSessions.push(input.sessionID)
+        pollCount++
+        return pollCount === 1
           ? "Forbidden: Selected provider is forbidden"
           : "Final retry failed"
       },
       fetchSyncResult: async () => ({ ok: true as const, textContent: "unused" }),
+      getSyncMessageCount: async () => ({ ok: true as const, count: 0 }),
     }
 
     const metadataCalls: CapturedMetadata[] = []
@@ -1050,9 +1089,11 @@ describe("executeSyncTask - cleanup on error paths", () => {
     }, "sisyphus-junior", initialModel, undefined, undefined, fallbackChain, deps)
 
     expect(result).toBe("Final retry failed")
+    expect(createdSessions).toEqual(["ses_first"])
+    expect(polledSessions).toEqual(["ses_first", "ses_first"])
     const finalMetadata = metadataCalls[metadataCalls.length - 1]
-    expect(finalMetadata.metadata.sessionId).toBe("ses_second")
-    expect(finalMetadata.metadata.taskId).toBe("ses_second")
+    expect(finalMetadata.metadata.sessionId).toBe("ses_first")
+    expect(finalMetadata.metadata.taskId).toBe("ses_first")
     expect(finalMetadata.metadata.model).toEqual({
       providerID: "genai-proxy-aws",
       modelID: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
@@ -1184,6 +1225,58 @@ describe("executeSyncTask - cleanup on error paths", () => {
     }
     expect(taskMeta.metadata.spawnDepth).toBe(3) // NOT 1 (the fallback value)
   })
+
+  test("does not block when onSyncSessionCreated never resolves", async () => {
+    const mockClient = {
+      session: {
+        create: async () => ({ data: { id: "ses_test_12345678" } }),
+      },
+    }
+
+    const { executeSyncTask } = require("./sync-task")
+
+    const deps = {
+      createSyncSession: async () => ({ ok: true, sessionID: "ses_test_12345678" }),
+      sendSyncPrompt: async () => null,
+      pollSyncSession: async () => null,
+      fetchSyncResult: async () => ({ ok: true as const, textContent: "Result" }),
+    }
+
+    const mockCtx = {
+      sessionID: "parent-session",
+      callID: "call-123",
+      metadata: () => {},
+    }
+
+    const mockExecutorCtx = {
+      client: mockClient,
+      directory: "/tmp",
+      onSyncSessionCreated: async () => new Promise(() => {}),
+    }
+
+    const args = {
+      prompt: "test prompt",
+      description: "test task",
+      category: "test",
+      load_skills: [],
+      run_in_background: false,
+      command: null,
+    }
+
+    const result = await Promise.race([
+      executeSyncTask(args, mockCtx, mockExecutorCtx, {
+        sessionID: "parent-session",
+      }, "test-agent", undefined, undefined, undefined, undefined, deps),
+      new Promise((_, reject) => {
+        setTimeout(() => {
+          reject(new Error("onSyncSessionCreated was awaited and blocked execution"))
+        }, 500)
+      }),
+    ])
+
+    expect(result).toContain("Task completed")
+  })
+
 })
 
 export {}
