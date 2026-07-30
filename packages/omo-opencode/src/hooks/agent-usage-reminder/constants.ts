@@ -2,6 +2,35 @@ import { join } from "node:path"
 import { OPENCODE_STORAGE } from "../../shared"
 export const AGENT_USAGE_REMINDER_STORAGE = join(OPENCODE_STORAGE, "agent-usage-reminder")
 
+export const BASH_TOOLS = new Set(["bash", "mcp__oc__bash"])
+
+export const BASH_CALL_THRESHOLD = 3
+
+export const BASH_REMINDER_MESSAGE = `
+[Agent Usage Reminder — Multi-Step Workflow Detected]
+
+You've run ${BASH_CALL_THRESHOLD}+ bash commands directly without spawning any agents.
+Multi-step workflows (git operations, builds, tests, deployments) should be delegated.
+
+RECOMMENDED: Delegate to background agents instead:
+
+\`\`\`
+// Parallel execution across repos/commands
+task(subagent_type="explore", load_skills=[], run_in_background=true,
+  prompt="Run typecheck and report results")
+
+task(category="deep", load_skills=[], run_in_background=true,
+  prompt="Perform git sync: fetch upstream, merge dev, resolve conflicts")
+\`\`\`
+
+WHY:
+- Agents run in parallel — multiple repos/commands simultaneously
+- Context window stays clean in the main session
+- Failures are isolated per agent, not mixed into your main thread
+
+If this bash call is a simple one-off, ignore this reminder.
+`
+
 // All tool names normalized to lowercase for case-insensitive matching
 export const TARGET_TOOLS = new Set([
   "grep",

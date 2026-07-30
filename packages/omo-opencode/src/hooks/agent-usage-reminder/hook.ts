@@ -1,6 +1,13 @@
 import type { PluginInput } from "@opencode-ai/plugin"
 import { loadAgentUsageState, saveAgentUsageState, clearAgentUsageState } from "./storage"
-import { TARGET_TOOLS, AGENT_TOOLS, REMINDER_MESSAGE } from "./constants"
+import {
+  TARGET_TOOLS,
+  AGENT_TOOLS,
+  REMINDER_MESSAGE,
+  BASH_TOOLS,
+  BASH_CALL_THRESHOLD,
+  BASH_REMINDER_MESSAGE,
+} from "./constants"
 import type { AgentUsageState } from "./types"
 import { getSessionAgent } from "../../features/claude-code-session-state"
 import { getAgentConfigKey } from "../../shared/agent-display-names"
@@ -49,6 +56,7 @@ export function createAgentUsageReminderHook(_ctx: PluginInput) {
       sessionID,
       agentUsed: false,
       reminderCount: 0,
+      bashCallCount: 0,
       updatedAt: Date.now(),
     }
     sessionStates.set(sessionID, state)
@@ -58,6 +66,7 @@ export function createAgentUsageReminderHook(_ctx: PluginInput) {
   function markAgentUsed(sessionID: string): void {
     const state = getOrCreateState(sessionID)
     state.agentUsed = true
+    state.bashCallCount = 0
     state.updatedAt = Date.now()
     saveAgentUsageState(state)
   }
@@ -79,6 +88,22 @@ export function createAgentUsageReminderHook(_ctx: PluginInput) {
 
     if (AGENT_TOOLS.has(toolLower)) {
       markAgentUsed(sessionID)
+      return
+    }
+
+    if (BASH_TOOLS.has(toolLower)) {
+      const state = getOrCreateState(sessionID)
+      if (state.agentUsed) return
+
+      state.bashCallCount = (state.bashCallCount ?? 0) + 1
+      state.updatedAt = Date.now()
+      saveAgentUsageState(state)
+
+      if (state.bashCallCount === BASH_CALL_THRESHOLD) {
+        output.output += BASH_REMINDER_MESSAGE
+        state.reminderCount++
+        saveAgentUsageState(state)
+      }
       return
     }
 

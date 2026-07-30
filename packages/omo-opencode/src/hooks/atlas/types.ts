@@ -52,6 +52,7 @@ export interface SessionState {
   lastEventWasAbortError?: boolean
   skipNextIdleAfterRuntimeErrorRetry?: boolean
   lastContinuationInjectedAt?: number
+  lastCompactedAt?: number
   isInjectingContinuation?: boolean
   promptFailureCount: number
   lastFailureAt?: number

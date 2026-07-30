@@ -29,6 +29,7 @@ export function createRalphLoopEventHandlerImpl(ctx: PluginInput, options: Ralph
       runtime.runtimeErrorRetriedSessions.delete(runtimeRetryActivitySessionID)
       releasePromptAsyncReservation(runtimeRetryActivitySessionID, "ralph-loop", {
         supersedeTransientRetryOwners: true,
+        logOnMismatch: false,
       })
       runtime.recentHandledSyntheticIdleAt.delete(runtimeRetryActivitySessionID)
     }

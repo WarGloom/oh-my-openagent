@@ -1,7 +1,11 @@
 import type { PluginInput } from "@opencode-ai/plugin"
 import type { BackgroundManager } from "../../features/background-agent"
 
-import { clearContinuationMarker, setContinuationMarkerSource } from "../../features/run-continuation-state"
+import {
+  clearContinuationMarker,
+  readContinuationMarker,
+  setContinuationMarkerSource,
+} from "../../features/run-continuation-state"
 import { resolveSessionEventID } from "../../shared/event-session-id"
 import { log } from "../../shared/logger"
 
@@ -64,7 +68,12 @@ export function createStopContinuationGuardHook(
   }
 
   const isStopped = (sessionID: string): boolean => {
-    return stoppedSessions.has(sessionID)
+    if (stoppedSessions.has(sessionID)) {
+      return true
+    }
+
+    const marker = readContinuationMarker(ctx.directory, sessionID)
+    return marker?.sources.stop?.state === "stopped"
   }
 
   const clear = (sessionID: string): void => {

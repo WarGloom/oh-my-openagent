@@ -2286,7 +2286,7 @@ session_id: ses_untrusted_999
       }
     })
 
-    test("should reset continuation failure state on session.compacted event", async () => {
+    test("should reset continuation failure state and guard idle after session.compacted event", async () => {
       //#given - boulder state with incomplete plan and prompt always fails
       const planPath = join(TEST_DIR, "test-plan.md")
       writeFileSync(planPath, "# Plan\n- [ ] Task 1\n- [ ] Task 2")
@@ -2301,10 +2301,21 @@ session_id: ses_untrusted_999
 
       const promptMock = mock(() => Promise.reject(new Error("Bad Request")))
       const mockInput = createMockPluginInput({ promptMock })
-      const hook = createTestAtlasHook(mockInput)
+      const scheduledRetries = new Map<number, { callback: () => Promise<void>; delay: number }>()
+      let nextTimerID = 0
+      const retryScheduler: AtlasRetryScheduler = (callback, delay) => {
+        const timerID = nextTimerID++
+        scheduledRetries.set(timerID, { callback, delay })
+        return {
+          cancel: () => {
+            scheduledRetries.delete(timerID)
+          },
+        }
+      }
+      const hook = createTestAtlasHook(mockInput, { retryScheduler })
 
       const originalDateNow = Date.now
-      let now = 0
+      let now = originalDateNow()
       Date.now = () => now
 
       try {
@@ -2324,7 +2335,16 @@ session_id: ses_untrusted_999
         await hook.handler({ event: { type: "session.idle", properties: { sessionID: MAIN_SESSION_ID } } })
         await flushMicrotasks()
 
-        //#then - 10 attempts + 1 after compaction (11 total)
+        //#then - Atlas does not inject immediately after compaction
+        expect(promptMock).toHaveBeenCalledTimes(10)
+        const scheduledRetry = Array.from(scheduledRetries.values()).at(-1)
+        expect(scheduledRetry?.delay).toBe(54_000)
+
+        now += 60_000
+        await scheduledRetry?.callback()
+        await flushMicrotasks()
+
+        //#then - compaction reset failures, so continuation resumes without another idle event
         expect(promptMock).toHaveBeenCalledTimes(11)
       } finally {
         Date.now = originalDateNow

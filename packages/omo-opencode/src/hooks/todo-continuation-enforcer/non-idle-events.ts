@@ -145,6 +145,7 @@ export function handleNonIdleEvent(args: {
         state.tokenLimitDetected = false
         state.unrecoverableErrorDetected = false
       }
+      log(`[${HOOK_NAME}] Cancelling countdown on user-role message`, { sessionID })
       sessionStateStore.cancelCountdown(sessionID)
       return
     }
