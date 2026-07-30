@@ -65,7 +65,11 @@ export async function executeSyncTask(
     spawnReservation?.commit()
     syncSessionID = sessionID
 
-    const registerSyncSession = async (newSessionID: string): Promise<void> => {
+    const registerSyncSession = async (
+      newSessionID: string,
+      currentModel: DelegatedModelConfig | undefined = categoryModel,
+      notifySessionCreated = true,
+    ): Promise<void> => {
       syncSessionID = newSessionID
       await registerSyncSessionSideEffects({
         args,
@@ -73,9 +77,10 @@ export async function executeSyncTask(
         sessionID: newSessionID,
         parentContext,
         agentToUse,
-        categoryModel,
+        categoryModel: currentModel,
         fallbackChain,
         systemContent,
+        notifySessionCreated,
       })
     }
 
@@ -114,14 +119,6 @@ export async function executeSyncTask(
     }
     await publishSyncMetadata(sessionID, categoryModel, spawnContext.childDepth)
 
-    const setSyncSessionID = (currentSessionID: string): void => {
-      syncSessionID = currentSessionID
-    }
-
-    const cleanupRetrySession = (currentSessionID: string): void => {
-      cleanupSyncSessionSideEffects(currentSessionID, executorCtx)
-    }
-
     try {
       return await runSyncTaskLoop({
         args,
@@ -142,11 +139,8 @@ export async function executeSyncTask(
         syncPollTimeoutMs,
         systemContent,
         toastManager: toastManager ?? undefined,
-        modelInfo,
         registerSyncSession,
         publishSyncMetadata,
-        cleanupRetrySession,
-        setSyncSessionID,
       })
     } finally {
       if (toastManager && taskId !== undefined) {
