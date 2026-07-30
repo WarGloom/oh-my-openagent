@@ -68,7 +68,7 @@ session.error / message.updated (with error) / session.status (retry signal)
   → findNextAvailableFallback(): skip cooldown models
   → prepareFallback(): update state, mark current failed
   → dispatchFallbackRetry(): toast notification + promptAsync with new model
-  → 30s timeout: abort and try next if exceeded
+  → progress-aware watchdog: first-progress timeout, stall timeout after assistant/model progress, and hard timeout for true hangs; tool progress aborts without auto-replay
 ```
 
 ## COOLDOWN MECHANISM

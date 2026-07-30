@@ -5,6 +5,7 @@ export interface RuntimeFallbackInterval {
 }
 
 export type RuntimeFallbackTimeout = object | number
+export type RuntimeFallbackTimeoutKind = "first-progress" | "stall" | "hard"
 
 export interface RuntimeFallbackPluginInput {
   client: {
@@ -81,6 +82,11 @@ export interface RuntimeFallbackHook {
       parts?: Array<{ type: string; text?: string }>
     },
   ) => Promise<void>
+  "tool.execute.before"?: (
+    input: { tool: string; sessionID: string; callID?: string },
+    output: unknown,
+  ) => Promise<void>
+  "tool.execute.after"?: (input: { tool: string; sessionID: string; callID?: string }, output: unknown) => Promise<void>
   dispose?: () => void
 }
 
@@ -93,7 +99,17 @@ export interface HookDeps {
   sessionLastAccess: Map<string, number>
   sessionRetryInFlight: Set<string>
   sessionAwaitingFallbackResult: Set<string>
+  sessionFallbackAbortInFlight: Set<string>
   sessionFallbackTimeouts: Map<string, RuntimeFallbackTimeout>
+  sessionFallbackHardTimeouts: Map<string, RuntimeFallbackTimeout>
+  sessionFallbackTimeoutAgents: Map<string, string | undefined>
+  sessionFallbackTimeoutKinds: Map<string, RuntimeFallbackTimeoutKind>
+  sessionFallbackProgressObserved: Set<string>
+  /**
+   * Sessions that observed tool execution in the current turn. Auto-replaying
+   * the last user prompt after this could duplicate side effects.
+   */
+  sessionFallbackUnsafeToReplay: Set<string>
   sessionStatusRetryKeys: Map<string, Set<string>>
   /**
    * Sessions whose in-flight request was aborted by us (to swap in a fallback

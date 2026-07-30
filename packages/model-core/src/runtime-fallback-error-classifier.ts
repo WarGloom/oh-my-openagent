@@ -19,7 +19,7 @@ import {
 import { RUNTIME_FALLBACK_RETRYABLE_ERROR_PATTERNS } from "./runtime-fallback-retryable-patterns"
 
 export type RuntimeFallbackErrorType =
-  "missing_api_key" | "invalid_api_key" | "model_not_found" | "quota_exceeded" | "context_overflow" | "abort"
+  "missing_api_key" | "invalid_api_key" | "model_not_found" | "context_overflow" | "quota_exceeded" | "abort"
 
 export interface RuntimeFallbackRetryOptions {
   onUnsafeRetryableSignalRejected?: (details: {
@@ -85,6 +85,16 @@ export function isTerminalQuotaError(error: unknown): boolean {
   )
 }
 
+function hasProviderResetWindowSignal(message: string): boolean {
+  return (
+    message.includes("resets") &&
+    (message.includes("hit your limit") ||
+      message.includes("hit your session limit") ||
+      message.includes("reached your limit") ||
+      message.includes("reached your session limit"))
+  )
+}
+
 export function classifyRuntimeFallbackError(error: unknown): RuntimeFallbackErrorType | undefined {
   if (isTerminalQuotaError(error)) {
     return "abort"
@@ -123,6 +133,18 @@ export function classifyRuntimeFallbackError(error: unknown): RuntimeFallbackErr
   }
 
   if (
+    errorName?.includes("contextoverflow") ||
+    errorName?.includes("contextlength") ||
+    /context.?length.?exceeded/i.test(message) ||
+    /context.?overflow/i.test(message) ||
+    /input.?exceeds.?context.?window/i.test(message) ||
+    /exceeds.?the.?context.?window/i.test(message) ||
+    /prompt.?is.?too.?long/i.test(message)
+  ) {
+    return "context_overflow"
+  }
+
+  if (
     errorName?.includes("quotaexceeded") ||
     errorName?.includes("insufficientquota") ||
     errorName?.includes("billingerror") ||
@@ -141,12 +163,20 @@ export function classifyRuntimeFallbackError(error: unknown): RuntimeFallbackErr
     /\bin\s+arrears\b/i.test(message) ||
     /\brecharge\s+and\s+try\b/i.test(message) ||
     /billing.?(?:hard.?)?limit/i.test(message) ||
+    /monthly.?spend.?limit/i.test(message) ||
+    /spend.?limit/i.test(message) ||
     /exhausted\s+your\s+capacity/i.test(message) ||
     /resource.?exhausted/i.test(message) ||
     /\bcapacity_limit\b/i.test(message) ||
     /out\s+of\s+credits?/i.test(message) ||
     /payment.?required/i.test(message) ||
     /usage\s+limit/i.test(message) ||
+    /weekly.?rate.?limit/i.test(message) ||
+    /exceeded\s+your\s+\d+\s*hour\s+session\s+limits?/i.test(message) ||
+    /user_weekly_rate_limited/i.test(message) ||
+    /user_global_rate_limited(?::[a-z0-9_+-]+)?/i.test(message) ||
+    /hit\s+your\s+limit/i.test(message) ||
+    /reached\s+your\s+limit/i.test(message) ||
     /credit\s+balance.*too\s+low/i.test(message) ||
     /limit\s+exhausted/i.test(message) ||
     /使用上限/.test(message) ||
@@ -155,7 +185,9 @@ export function classifyRuntimeFallbackError(error: unknown): RuntimeFallbackErr
     /额度.*不足/.test(message) ||
     /余额.*不足/.test(message) ||
     /已耗尽/.test(message) ||
-    isLocalizedQuotaExhaustionMessage(message)
+    isLocalizedQuotaExhaustionMessage(message) ||
+    hasProviderResetWindowSignal(message) ||
+    message.includes("an error occurred while processing your request")
   ) {
     return "quota_exceeded"
   }
