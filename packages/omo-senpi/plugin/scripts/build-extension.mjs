@@ -217,6 +217,47 @@ export async function checkExtensionCurrent(options = {}) {
   }
 }
 
+export async function ensureExtensionCurrent(options = {}) {
+  const current = await checkExtensionCurrent(options)
+  if (current.ok) return { ...current, rebuilt: false }
+
+  const output = options.outputPath ?? outputPath
+  const taskOutput = options.taskOutputPath ?? (options.outputPath === undefined
+    ? taskOutputPath
+    : join(dirname(output), "omo-task.js"))
+  const memberOutput = options.memberOutputPath ?? (options.outputPath === undefined
+    ? memberOutputPath
+    : join(dirname(output), "omo-member.js"))
+  const memoryMcpOutput = options.memoryMcpOutputPath ?? (options.outputPath === undefined
+    ? memoryMcpOutputPath
+    : join(dirname(output), "omo-memory-mcp.js"))
+  const supervisorOutput = options.supervisorOutputPath ?? (options.outputPath === undefined
+    ? supervisorOutputPath
+    : join(dirname(output), "memory-run-supervisor.mjs"))
+  const advisorRuntimeOutput = options.advisorRuntimeOutputPath ?? (options.outputPath === undefined
+    ? advisorRuntimeOutputPath
+    : join(dirname(output), "omo-init-deep-advisor.js"))
+  const build = await buildExtension({
+    outputPath: output,
+    taskOutputPath: taskOutput,
+    memberOutputPath: memberOutput,
+    memoryMcpOutputPath: memoryMcpOutput,
+    supervisorOutputPath: supervisorOutput,
+    advisorRuntimeOutputPath: advisorRuntimeOutput,
+  })
+  return {
+    ok: true,
+    rebuilt: true,
+    output,
+    taskOutput,
+    memberOutput,
+    memoryMcpOutput,
+    supervisorOutput,
+    advisorRuntimeOutput,
+    ...build,
+  }
+}
+
 function run(command, args) {
   const result = spawnSync(command, args, {
     cwd: repoRoot,
@@ -267,9 +308,9 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.a
     }
     console.log(`omo-senpi extension build is current: ${result.output}`)
   } else {
-    await buildExtension()
-    console.log(
-      `Built omo-senpi extensions: ${outputPath}, ${taskOutputPath}, ${memberOutputPath}, ${memoryMcpOutputPath}, ${supervisorOutputPath}, ${advisorRuntimeOutputPath}`,
-    )
+    const result = await ensureExtensionCurrent()
+    console.log(result.rebuilt
+      ? `Built omo-senpi extensions: ${result.output}, ${result.taskOutput}, ${result.memberOutput}, ${result.memoryMcpOutput}, ${result.supervisorOutput}, ${result.advisorRuntimeOutput}`
+      : `omo-senpi extension build is current: ${result.output}`)
   }
 }
