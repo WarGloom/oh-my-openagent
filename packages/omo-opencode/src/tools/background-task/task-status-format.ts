@@ -18,6 +18,7 @@ export function formatTaskStatus(task: BackgroundTask): string {
   if (task.progress?.lastTool) {
     progressSection = `\n| Last tool | ${task.progress.lastTool} |`
   }
+  const modelSection = task.model ? `| Model | \`${task.model.providerID}/${task.model.modelID}\` |\n` : ""
 
   let lastMessageSection = ""
   if (task.progress?.lastMessage) {
@@ -60,7 +61,7 @@ ${truncated}
 | Task ID | \`${task.id}\` |
 | Description | ${task.description} |
 | Agent | ${task.agent} |
-| Status | **${task.status}** |
+${modelSection}| Status | **${task.status}** |
 | ${durationLabel} | ${duration} |
 | Session ID | \`${task.sessionId}\` |${progressSection}
 ${statusNote}

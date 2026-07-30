@@ -94,6 +94,7 @@ export class ParentWakePendingQueue {
       if (latestWake.gateHoldExpiresAt !== undefined) {
         pendingWake.gateHoldExpiresAt = latestWake.gateHoldExpiresAt
       }
+      pendingWake.allowInternalWakeTailRetry ||= latestWake.allowInternalWakeTailRetry
       const noAssistantOutputRetryCount = Math.max(
         pendingWake.noAssistantOutputRetryCount ?? 0,
         latestWake.noAssistantOutputRetryCount ?? 0,

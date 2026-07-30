@@ -1,6 +1,10 @@
 import { log } from "../../shared"
 import { settleAfterSessionIdle } from "../../hooks/shared/session-idle-settle"
-import type { ParentWakePromptContext, PendingParentWake } from "./parent-wake-dedupe"
+import {
+  cloneParentWakeForReplyRetry,
+  type ParentWakePromptContext,
+  type PendingParentWake,
+} from "./parent-wake-dedupe"
 import { ParentWakeDispatchedTracker } from "./parent-wake-dispatched-tracker"
 import { ParentWakeFlushRunner } from "./parent-wake-flush-runner"
 import { ParentWakePendingQueue } from "./parent-wake-pending-queue"
@@ -95,6 +99,10 @@ export class ParentWakeNotifier {
     this.sessionInspector.recordActivity(sessionID)
   }
 
+  clearParentSessionActivity(sessionID: string): void {
+    this.sessionInspector.clearActivity(sessionID)
+  }
+
   queuePendingParentWake(
     sessionID: string,
     notification: string,
@@ -111,7 +119,17 @@ export class ParentWakeNotifier {
   }
 
   clearDispatchedParentWake(sessionID: string): void {
+    const wake = this.dispatchedTracker.getWake(sessionID)
     this.dispatchedTracker.clearWake(sessionID)
+    if (wake?.replyRequiredNoReplyDispatch !== true) {
+      return
+    }
+
+    this.requeueWake(sessionID, cloneParentWakeForReplyRetry(wake))
+    this.schedulePendingParentWakeFlush(sessionID, 0)
+    log("[background-agent] Requeued reply-required parent wake after noReply admission observed parent output:", {
+      sessionID,
+    })
   }
 
   async requeueDispatchedParentWake(sessionID: string, reason: string): Promise<boolean> {
@@ -122,7 +140,21 @@ export class ParentWakeNotifier {
 
     await settleAfterSessionIdle()
 
-    if (await this.sessionInspector.hasAssistantOrToolOutputAfterDispatchedWake(sessionID, wake)) {
+    const settledWake = this.dispatchedTracker.getWake(sessionID)
+    if (!dispatchedWakeMatches(settledWake, wake)) {
+      return false
+    }
+
+    const outputInspection = await this.sessionInspector.hasAssistantOrToolOutputAfterDispatchedWake(
+      sessionID,
+      settledWake,
+    )
+    const currentWake = this.dispatchedTracker.getWake(sessionID)
+    if (!dispatchedWakeMatches(currentWake, settledWake)) {
+      return false
+    }
+
+    if (outputInspection === "output") {
       this.clearDispatchedParentWake(sessionID)
       log("[background-agent] Ignored late parent wake failure after assistant output:", {
         sessionID,
@@ -132,11 +164,12 @@ export class ParentWakeNotifier {
     }
 
     this.dispatchedTracker.clearWake(sessionID)
-    this.requeueWake(sessionID, wake)
+    this.requeueWake(sessionID, currentWake)
     this.schedulePendingParentWakeFlush(sessionID)
     log("[background-agent] Requeued dispatched parent wake after prompt failure:", {
       sessionID,
       reason,
+      ...(outputInspection === "unknown" ? { historyInspection: "unknown" } : {}),
     })
     return true
   }
@@ -180,4 +213,11 @@ export class ParentWakeNotifier {
   ): Promise<ToolWaitDeferralDecision> {
     return this.sessionInspector.shouldDeferForHistory(sessionID, wake)
   }
+}
+
+function dispatchedWakeMatches(
+  currentWake: PendingParentWake | undefined,
+  expectedWake: PendingParentWake,
+): currentWake is PendingParentWake {
+  return currentWake?.dispatchedAt !== undefined && currentWake.dispatchedAt === expectedWake.dispatchedAt
 }
