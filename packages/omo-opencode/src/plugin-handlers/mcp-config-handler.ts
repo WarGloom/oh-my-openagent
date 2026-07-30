@@ -25,6 +25,31 @@ function captureUserDisabledMcps(
   return disabled;
 }
 
+function prioritizeUserConfiguredMcps(
+  merged: Record<string, McpEntry>,
+  userMcp: Record<string, unknown> | undefined,
+): Record<string, McpEntry> {
+  if (!userMcp) {
+    return merged;
+  }
+
+  const prioritized: Record<string, McpEntry> = {};
+
+  for (const name of Object.keys(userMcp)) {
+    if (merged[name]) {
+      prioritized[name] = merged[name];
+    }
+  }
+
+  for (const [name, value] of Object.entries(merged)) {
+    if (!(name in prioritized)) {
+      prioritized[name] = value;
+    }
+  }
+
+  return prioritized;
+}
+
 export async function applyMcpConfig(params: {
   config: Record<string, unknown>;
   ctx: { directory: string };
@@ -47,6 +72,12 @@ export async function applyMcpConfig(params: {
     }
   }
 
+  // Spread order determines collision winners (last write wins).
+  // userMcp spreads after mcpResult so user config overrides Claude Code
+  // on name collision. prioritizeUserConfiguredMcps (called below) then
+  // reorders keys so user-configured MCPs appear first in opencode's MCP
+  // state, which controls the trim order of any downstream tool-budget
+  // filter — user MCPs survive trimming when many MCP servers are loaded.
   const merged = {
     ...createBuiltinMcps(disabledMcps, params.pluginConfig, { cwd: params.ctx.directory }),
     ...mcpResult.servers,
@@ -65,5 +96,5 @@ export async function applyMcpConfig(params: {
     delete merged[name];
   }
 
-  params.config.mcp = merged;
+  params.config.mcp = prioritizeUserConfiguredMcps(merged, userMcp);
 }
