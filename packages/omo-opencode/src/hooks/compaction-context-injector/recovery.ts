@@ -6,9 +6,13 @@ import {
 } from "../../shared/internal-initiator-marker"
 import { log } from "../../shared/logger"
 import { isAmbiguousPostDispatchPromptFailure } from "../../shared/prompt-failure-classifier"
-import { setSessionModel } from "../../shared/session-model-state"
-import { setSessionTools } from "../../shared/session-tools-store"
-import { createExpectedRecoveryPromptConfig, isPromptConfigRecovered } from "./recovery-prompt-config"
+import { clearSessionModel, setSessionModel } from "../../shared/session-model-state"
+import { deleteSessionTools, setSessionTools } from "../../shared/session-tools-store"
+import {
+  createExpectedRecoveryPromptConfig,
+  type RecoveryPromptConfig,
+  isPromptConfigRecovered,
+} from "./recovery-prompt-config"
 import { validateCheckpointModel } from "./validated-model"
 import { resolveLatestSessionPromptConfig, resolveSessionPromptConfig } from "./session-prompt-config-resolver"
 import {
@@ -16,15 +20,53 @@ import {
   NO_TEXT_TAIL_THRESHOLD,
   RECOVERY_COOLDOWN_MS,
   RECENT_COMPACTION_WINDOW_MS,
+  MAX_CONSECUTIVE_RECOVERY_FAILURES,
 } from "./constants"
 import type { CompactionContextClient } from "./types"
 import type { TailMonitorState } from "./tail-monitor"
-import { dispatchInternalPrompt, isInternalPromptDispatchAccepted } from "../shared/prompt-async-gate"
+import {
+  dispatchInternalPrompt,
+  isInternalPromptDispatchAccepted,
+  releasePromptAsyncReservation,
+} from "../shared/prompt-async-gate"
+
+export function syncRecoveredSessionPromptState(
+  sessionID: string,
+  promptConfig: Pick<RecoveryPromptConfig, "agent"> & {
+    model?: RecoveryPromptConfig["model"]
+    tools?: RecoveryPromptConfig["tools"]
+  },
+): void {
+  updateSessionAgent(sessionID, promptConfig.agent)
+
+  if (promptConfig.model) {
+    setSessionModel(sessionID, promptConfig.model, promptConfig.agent)
+  } else {
+    clearSessionModel(sessionID)
+  }
+
+  if (promptConfig.tools) {
+    setSessionTools(sessionID, promptConfig.tools)
+  } else {
+    deleteSessionTools(sessionID)
+  }
+}
 
 export function createRecoveryLogic(
   ctx: CompactionContextClient | undefined,
   getTailState: (sessionID: string) => TailMonitorState,
 ) {
+  const isRecentSuccessfulRecoveryAfterCompaction = (tailState: TailMonitorState, now: number): boolean => {
+    if (!tailState.lastRecoveryAt || tailState.lastCompactedAt === undefined) {
+      return false
+    }
+
+    return (
+      tailState.lastRecoveryAt >= tailState.lastCompactedAt &&
+      now - tailState.lastRecoveryAt < RECENT_COMPACTION_WINDOW_MS
+    )
+  }
+
   const recoverCheckpointedAgentConfig = async (
     sessionID: string,
     reason: "compaction.autocontinue" | "session.compacted" | "no-text-tail",
@@ -40,7 +82,23 @@ export function createRecoveryLogic(
 
     const tailState = getTailState(sessionID)
     const now = Date.now()
-    if (tailState.lastRecoveryAt && now - tailState.lastRecoveryAt < RECOVERY_COOLDOWN_MS) {
+
+    if (isRecentSuccessfulRecoveryAfterCompaction(tailState, now)) {
+      return false
+    }
+
+    if (tailState.lastRecoveryAttemptAt && now - tailState.lastRecoveryAttemptAt < RECOVERY_COOLDOWN_MS) {
+      return false
+    }
+
+    if (tailState.consecutiveRecoveryFailures >= MAX_CONSECUTIVE_RECOVERY_FAILURES) {
+      log(
+        `[compaction-context-injector] Skipping recovery after ${tailState.consecutiveRecoveryFailures} consecutive failures`,
+        {
+          sessionID,
+          reason,
+        },
+      )
       return false
     }
 
@@ -73,6 +131,18 @@ export function createRecoveryLogic(
       }
     }
 
+    const input = {
+      path: { id: sessionID },
+      body: {
+        noReply: true,
+        agent: launchAgent ?? expectedPromptConfig.agent,
+        ...(model ? { model } : {}),
+        ...(tools ? { tools } : {}),
+        parts: [withInternalNoReplyMarker(createInternalAgentContinuationTextPart(AGENT_RECOVERY_PROMPT))],
+      },
+      query: { directory: ctx.directory },
+    }
+
     try {
       const promptResult = await dispatchInternalPrompt({
         mode: "async",
@@ -80,18 +150,28 @@ export function createRecoveryLogic(
         sessionID,
         source: "compaction-context-injector",
         queueBehavior: "defer",
-        input: {
-          path: { id: sessionID },
-          body: {
-            noReply: true,
-            agent: launchAgent ?? expectedPromptConfig.agent,
-            ...(model ? { model } : {}),
-            ...(tools ? { tools } : {}),
-            parts: [withInternalNoReplyMarker(createInternalAgentContinuationTextPart(AGENT_RECOVERY_PROMPT))],
-          },
-          query: { directory: ctx.directory },
-        },
+        input,
       })
+      if (promptResult.status === "reserved" || promptResult.status === "active") {
+        await dispatchInternalPrompt({
+          mode: "async",
+          client: ctx.client,
+          sessionID,
+          source: "compaction-context-injector",
+          queueBehavior: "enqueue",
+          input,
+        })
+        tailState.lastRecoveryAttemptAt = now
+        log(`[compaction-context-injector] Recovery queued after promptAsync gate`, {
+          sessionID,
+          reason,
+          status: promptResult.status,
+        })
+        return false
+      }
+
+      tailState.lastRecoveryAttemptAt = now
+
       if (!isInternalPromptDispatchAccepted(promptResult)) {
         if (promptResult.status === "failed" && isAmbiguousPostDispatchPromptFailure(promptResult)) {
           tailState.lastRecoveryAt = now
@@ -107,6 +187,7 @@ export function createRecoveryLogic(
 
       const recoveredPromptConfig = await resolveLatestSessionPromptConfig(ctx, sessionID)
       if (!isPromptConfigRecovered(recoveredPromptConfig, expectedPromptConfig)) {
+        tailState.consecutiveRecoveryFailures++
         log(`[compaction-context-injector] Re-injected agent config but recovery is still incomplete`, {
           sessionID,
           reason,
@@ -114,17 +195,14 @@ export function createRecoveryLogic(
           model,
           hasTools: !!tools,
           recoveredPromptConfig,
+          consecutiveFailures: tailState.consecutiveRecoveryFailures,
         })
         return false
       }
 
-      updateSessionAgent(sessionID, expectedPromptConfig.agent)
-      if (model) {
-        setSessionModel(sessionID, model)
-      }
-      if (tools) {
-        setSessionTools(sessionID, tools)
-      }
+      tailState.consecutiveRecoveryFailures = 0
+      syncRecoveredSessionPromptState(sessionID, expectedPromptConfig)
+      releasePromptAsyncReservation(sessionID, "compaction-context-injector")
 
       tailState.consecutiveNoTextMessages = 0
 
