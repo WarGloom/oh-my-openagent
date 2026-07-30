@@ -1,6 +1,7 @@
 import type { PluginInput } from "@opencode-ai/plugin"
 import {
   clearSessionAgent,
+  delegatedTaskSessions,
   handedBackSyncSessions,
   setSessionAgent,
   subagentSessions,
@@ -104,6 +105,7 @@ export async function executeSync(
     createdSessionForExecution = session.isNew
     subagentSessions.add(sessionID)
     syncSubagentSessions.add(sessionID)
+    delegatedTaskSessions.add(sessionID)
     handedBackSyncSessions.delete(sessionID)
 
     if (session.isNew) {

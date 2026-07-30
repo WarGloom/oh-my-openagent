@@ -1,6 +1,15 @@
 import { z } from "zod"
 import { DynamicContextPruningConfigSchema } from "./dynamic-context-pruning"
 
+const AnthropicAdvisorConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  advisor_model: z.string().optional(),
+  max_uses: z.number().int().min(1).optional(),
+  caching_ttl: z.enum(["5m", "1h"]).optional(),
+  agents: z.array(z.string()).optional(),
+  executor_models: z.array(z.string()).optional(),
+})
+
 export const ExperimentalConfigSchema = z.object({
   aggressive_truncation: z.boolean().optional(),
   preemptive_compaction: z.boolean().optional(),
@@ -15,6 +24,8 @@ export const ExperimentalConfigSchema = z.object({
   safe_hook_creation: z.boolean().optional(),
   /** Disable auto-injected <omo-env> context in prompts (experimental) */
   disable_omo_env: z.boolean().optional(),
+  /** Enable Anthropic advisor-tool injection for selected agents/models */
+  anthropic_advisor: AnthropicAdvisorConfigSchema.optional(),
   /** Enable hashline_edit tool for improved file editing with hash-based line anchors */
   hashline_edit: z.boolean().optional(),
   /** Append fallback model info to session title when a runtime fallback occurs (default: false) */
