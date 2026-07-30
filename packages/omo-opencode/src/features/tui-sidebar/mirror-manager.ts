@@ -1,15 +1,21 @@
 import { HEARTBEAT_MS, WRITE_DEBOUNCE_MS } from "./constants"
 import { log } from "../../shared/logger"
 import { writeMirror } from "./mirror-io"
+import { writeSessionJobsMirror } from "./session-jobs-mirror"
 import { buildTuiRuntimeSnapshot } from "./snapshot-builder"
 import type {
-  BuildTuiRuntimeSnapshotInput,
   SessionAgentResolver,
   SessionStatusMap,
-  TuiBackgroundSnapshotProvider,
   TuiMirrorClient,
 } from "./snapshot-builder"
 import type { TuiRuntimeSnapshot } from "./snapshot-schema"
+import type { JobRow } from "./state-types"
+import type { BackgroundTaskSnapshot } from "../background-agent/types"
+import type { TeamModeConfig } from "@oh-my-opencode/team-core/config"
+
+type TuiBackgroundSnapshotProvider = {
+  readonly getTasksSnapshot: () => readonly BackgroundTaskSnapshot[]
+}
 
 export type TuiStateMirrorInput = {
   readonly client: TuiMirrorClient
@@ -17,11 +23,12 @@ export type TuiStateMirrorInput = {
   readonly backgroundManager: TuiBackgroundSnapshotProvider
   readonly getStatuses?: () => Promise<SessionStatusMap>
   readonly sessionAgentResolver?: SessionAgentResolver
+  readonly teamModeConfig?: TeamModeConfig
   readonly reportFlushError?: (error: Error) => void
 }
 
 export class TuiStateMirror {
-  private readonly snapshotInput: BuildTuiRuntimeSnapshotInput
+  private readonly snapshotInput: TuiStateMirrorInput
   private readonly reportFlushError: (error: Error) => void
   private heartbeatID: ReturnType<typeof setInterval> | null = null
   private debounceID: ReturnType<typeof setTimeout> | null = null
@@ -121,11 +128,26 @@ export class TuiStateMirror {
 
   private async writeSnapshotNoThrow(): Promise<void> {
     try {
+      const tasks = this.snapshotInput.backgroundManager.getTasksSnapshot()
       const snapshot = await this.buildSnapshot()
       if (this.stopped) {
         return
       }
       writeMirror(this.snapshotInput.projectDir, snapshot)
+      const jobsByParentSession = new Map<string, JobRow[]>()
+      for (const task of tasks) {
+        const parentSessionId = task.parentSessionId
+        const job = toJobRow(task)
+        const sessionJobs = jobsByParentSession.get(parentSessionId)
+        if (sessionJobs) {
+          sessionJobs.push(job)
+        } else {
+          jobsByParentSession.set(parentSessionId, [job])
+        }
+      }
+      for (const [parentSessionId, jobs] of jobsByParentSession) {
+        writeSessionJobsMirror(this.snapshotInput.projectDir, parentSessionId, jobs, snapshot.updatedAt)
+      }
     } catch (error) {
       if (error instanceof Error) {
         this.reportFlushError(error)
@@ -133,5 +155,14 @@ export class TuiStateMirror {
       }
       throw error
     }
+  }
+}
+
+function toJobRow(task: BackgroundTaskSnapshot): JobRow {
+  return {
+    title: task.title || `${task.agent} background task`,
+    status: task.status,
+    toolCalls: task.toolCalls,
+    lastTool: task.lastTool,
   }
 }

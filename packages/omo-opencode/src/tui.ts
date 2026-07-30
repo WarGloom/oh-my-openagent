@@ -1,19 +1,19 @@
-import type { TuiPluginModule } from "@opencode-ai/plugin/tui"
+import type { TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
 
 import { registerBtwSideTui } from "./features/btw-side"
 import { computeView, viewKey } from "./features/tui-sidebar/compute-view"
 import { POLL_INTERVAL_MS } from "./features/tui-sidebar/constants"
-import { deriveAgents, deriveConfig, deriveJobBoard, deriveLoop, deriveRoster } from "./features/tui-sidebar/derivers"
+import { deriveAgents, deriveConfig, deriveCurrentSessionJobs, deriveLoop, deriveRoster, deriveTeams } from "./features/tui-sidebar/derivers"
 import type { ViewNode } from "./features/tui-sidebar/element-helpers"
 import { readMirror } from "./features/tui-sidebar/mirror-io"
 import { buildViewNodes } from "./features/tui-sidebar/render-view"
-import type { RosterRow } from "./features/tui-sidebar/state-types"
-import type { SidebarView } from "./features/tui-sidebar/state-types"
+import { TeamSessionCache } from "./features/tui-sidebar/team-session-cache"
+import type { RosterRow, SidebarView } from "./features/tui-sidebar/state-types"
 import { log } from "./shared/logger"
 
 type SolidRuntime<Node> = {
   readonly createElement: (tag: string) => Node
-  readonly insert: (parent: Node, child: Node | string) => unknown
+  readonly insert: (parent: Node, child: Node | string | (() => Node)) => unknown
   readonly setProp: (node: Node, name: string, value: unknown) => unknown
 }
 
@@ -50,6 +50,13 @@ function materialize<Node>(nodes: readonly ViewNode[], solid: SolidRuntime<Node>
   for (const node of nodes) {
     solid.insert(root, materializeNode(node, solid))
   }
+  return root
+}
+
+export function materializeReactive<Node>(nodes: () => readonly ViewNode[], solid: SolidRuntime<Node>): Node {
+  const root = solid.createElement("box")
+  solid.setProp(root, "flexDirection", "column")
+  solid.insert(root, () => materialize(nodes(), solid))
   return root
 }
 
@@ -91,17 +98,39 @@ async function loadRosterRows(directory: string): Promise<readonly RosterRow[]> 
   return resolver(directory)
 }
 
-async function readView(directory: string): Promise<SidebarView> {
+export async function readView(directory: string, sessionId: string | null, teamCache: TeamSessionCache): Promise<SidebarView> {
   const validation = await loadPluginValidation(directory)
   const mirror = readMirror(directory)
   const roster = await loadRosterRows(directory)
+  const freshTeams = deriveTeams(mirror)
+  teamCache.update(freshTeams)
   return computeView({
     config: deriveConfig(validation),
     roster: deriveRoster(roster),
     agents: deriveAgents(mirror),
-    jobs: deriveJobBoard(mirror),
+    jobs: deriveCurrentSessionJobs(directory, sessionId),
     loop: deriveLoop(mirror),
+    teams: teamCache.forSession(sessionId),
   })
+}
+
+export function currentTeamSessionId(route: Pick<TuiPluginApi["route"], "current">): string | null {
+  const current = route.current
+  switch (current.name) {
+    case "home":
+      return null
+    case "session":
+      return typeof current.params?.sessionID === "string" ? current.params.sessionID : null
+    default:
+      return null
+  }
+}
+
+export function navigateToTeamSession(
+  route: Pick<TuiPluginApi["route"], "navigate">,
+  sessionID: string,
+): void {
+  route.navigate("session", { sessionID })
 }
 
 export function handleTuiPollError(
@@ -134,8 +163,12 @@ const module: TuiPluginModule = {
       return
     }
 
-    let currentView = await readView(directory)
-    let currentKey = viewKey(currentView)
+    const { createSignal } = await import("solid-js")
+    const teamCache = new TeamSessionCache()
+    const initialView = await readView(directory, currentTeamSessionId(api.route), teamCache)
+    const [currentView, setCurrentView] = createSignal(initialView)
+    const [teamCollapsed, setTeamCollapsed] = createSignal(false)
+    let currentKey = viewKey(currentView())
     let disposed = false
     let inFlight = false
     let timer: ReturnType<typeof setTimeout> | null = null
@@ -147,7 +180,13 @@ const module: TuiPluginModule = {
       requestRender: () => {
         api.renderer.requestRender()
       },
-      renderSidebar: () => materialize(buildViewNodes(currentView, api.theme.current), solid),
+      renderSidebar: () => materializeReactive(() => buildViewNodes(currentView(), api.theme.current, {
+        collapsed: teamCollapsed(),
+        onToggle: () => {
+          setTeamCollapsed((collapsed) => !collapsed)
+        },
+        onNavigateSession: (sessionID) => navigateToTeamSession(api.route, sessionID),
+      }), solid),
     })
 
     const schedule = (): void => {
@@ -161,15 +200,18 @@ const module: TuiPluginModule = {
       }
       inFlight = true
       try {
-        const nextView = await readView(directory)
+        const nextView = await readView(directory, currentTeamSessionId(api.route), teamCache)
         const nextKey = viewKey(nextView)
         if (nextKey !== currentKey) {
-          currentView = nextView
+          setCurrentView(nextView)
           currentKey = nextKey
-          api.renderer.requestRender()
         }
       } catch (error) {
-        handleTuiPollError(error)
+        if (error instanceof Error) {
+          handleTuiPollError(error)
+        } else {
+          throw error
+        }
       } finally {
         inFlight = false
         if (!disposed) schedule()
