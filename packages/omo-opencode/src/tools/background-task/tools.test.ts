@@ -12,7 +12,7 @@ import { unsafeTestValue } from "../../../../../test-support/unsafe-test-value"
 
 const projectDir = "/Users/yeongyu/local-workspaces/oh-my-opencode"
 
-const mockContext: ToolContext = {
+const mockContext = unsafeTestValue<ToolContext>({
   sessionID: "test-session",
   messageID: "test-message",
   agent: "test-agent",
@@ -21,7 +21,7 @@ const mockContext: ToolContext = {
   abort: new AbortController().signal,
   metadata: () => {},
   ask: async () => {},
-}
+})
 
 function createMockManager(task: BackgroundTask): BackgroundOutputManager {
   return {
@@ -178,7 +178,7 @@ describe("background_output full_session", () => {
     }, mockContext)
 
     // #then
-    expect(output.includes("hello")).toBe(false)
+    expect(output).not.toContain("hello")
     expect(output).toContain("after")
   })
 
@@ -478,7 +478,7 @@ describe("background_cancel", () => {
     expect(output).toContain("| `task-b` | pending task | pending | (not started) |")
   })
 
-  test("passes skipNotification: true to cancelTask to prevent deadlock", async () => {
+  test("does not force skipNotification when cancelling all tasks", async () => {
     // #given
     const task = createTask({ id: "task-1", status: "running" })
     const cancelOptions: Array<{ taskId: string; options: unknown }> = []
@@ -497,14 +497,15 @@ describe("background_cancel", () => {
     // #when - cancel all tasks
     await tool.execute({ all: true }, mockContext)
 
-    // #then - skipNotification should be true to prevent self-deadlock
+    // #then - public cancellation should notify through the manager path
     expect(cancelOptions).toHaveLength(1)
     expect(cancelOptions[0].options).toEqual(
-      expect.objectContaining({ skipNotification: true })
+      expect.objectContaining({ source: "background_cancel", abortSession: true })
     )
+    expect(cancelOptions[0].options).not.toEqual(expect.objectContaining({ skipNotification: true }))
   })
 
-  test("passes skipNotification: true when cancelling single task", async () => {
+  test("does not force skipNotification when cancelling single task", async () => {
     // #given
     const task = createTask({ id: "task-1", status: "running" })
     const cancelOptions: Array<{ taskId: string; options: unknown }> = []
@@ -523,11 +524,12 @@ describe("background_cancel", () => {
     // #when - cancel single task
     await tool.execute({ taskId: task.id }, mockContext)
 
-    // #then - skipNotification should be true
+    // #then - public cancellation should notify through the manager path
     expect(cancelOptions).toHaveLength(1)
     expect(cancelOptions[0].options).toEqual(
-      expect.objectContaining({ skipNotification: true })
+      expect.objectContaining({ source: "background_cancel", abortSession: true })
     )
+    expect(cancelOptions[0].options).not.toEqual(expect.objectContaining({ skipNotification: true }))
   })
 })
 type BackgroundOutputMessage = {

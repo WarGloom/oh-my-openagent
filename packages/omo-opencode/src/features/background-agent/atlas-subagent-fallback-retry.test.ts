@@ -20,6 +20,7 @@ type SessionCreateArgs = {
   }
 }
 type PromptCall = { readonly path: { readonly id: string }; readonly body?: unknown }
+type FallbackRetryResultRecord = { waitForOutputUntil?: number }
 
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME
 const testDirectory = "/tmp/omo-atlas-fallback-test"
@@ -138,8 +139,18 @@ function emitUsageLimitError(manager: BackgroundManager, sessionID: string): voi
   })
 }
 
+function expireFallbackOutputWait(manager: BackgroundManager, sessionID: string): void {
+  const records = (manager as unknown as {
+    fallbackRetryResultsBySession?: Map<string, FallbackRetryResultRecord>
+  }).fallbackRetryResultsBySession
+  const record = records?.get(sessionID)
+  if (record) {
+    record.waitForOutputUntil = Date.now() - 1
+  }
+}
+
 describe("Atlas-spawned subagent runtime fallback", () => {
-  test("retries oracle subagent on OpenAI usage_limit_reached and registers the fallback session", async () => {
+  test("continues oracle subagent in the same session on OpenAI usage_limit_reached", async () => {
     //#given
     const { manager, createdSessions, promptCalls } = createAtlasHarness()
     const taskID = await launchAtlasOracleSubagent(manager)
@@ -151,15 +162,18 @@ describe("Atlas-spawned subagent runtime fallback", () => {
     //#then
     const task = manager.getTask(taskID)
     expect(task?.status).toBe("running")
-    expect(task?.sessionId).toBe("ses_fallback")
+    expect(task?.sessionId).toBe("ses_primary")
     expect(task?.model).toEqual({ providerID: "github-copilot", modelID: "claude-sonnet-4.6", variant: "high" })
     expect(task?.attemptCount).toBe(1)
-    expect(createdSessions).toHaveLength(2)
-    expect(createdSessions[1]?.body?.model).toEqual({ providerID: "github-copilot", id: "claude-sonnet-4.6", variant: "high" })
+    expect(createdSessions).toHaveLength(1)
     expect(promptCalls).toHaveLength(2)
-    expect(subagentSessions.has("ses_primary")).toBe(false)
-    expect(subagentSessions.has("ses_fallback")).toBe(true)
-    expect(getSessionAgent("ses_fallback")).toBe("oracle")
+    expect(promptCalls[1]?.path.id).toBe("ses_primary")
+    expect(promptCalls[1]?.body).toMatchObject({
+      model: { providerID: "github-copilot", modelID: "claude-sonnet-4.6" },
+      variant: "high",
+    })
+    expect(subagentSessions.has("ses_primary")).toBe(true)
+    expect(getSessionAgent("ses_primary")).toBe("oracle")
 
     manager.shutdown()
   })
@@ -195,10 +209,11 @@ describe("Atlas-spawned subagent runtime fallback", () => {
     const taskID = await launchAtlasOracleSubagent(manager)
     emitUsageLimitError(manager, "ses_primary")
     await flushAsyncWork(60)
-    markSessionMissing("ses_fallback")
+    expireFallbackOutputWait(manager, "ses_primary")
+    markSessionMissing("ses_primary")
 
     //#when
-    emitUsageLimitError(manager, "ses_fallback")
+    emitUsageLimitError(manager, "ses_primary")
     await flushAsyncWork(60)
 
     //#then
@@ -206,7 +221,7 @@ describe("Atlas-spawned subagent runtime fallback", () => {
     expect(task?.status).toBe("error")
     expect(task?.error).toBe("The usage limit has been reached")
     expect(task?.attemptCount).toBe(1)
-    expect(createdSessions).toHaveLength(2)
+    expect(createdSessions).toHaveLength(1)
 
     manager.shutdown()
   })

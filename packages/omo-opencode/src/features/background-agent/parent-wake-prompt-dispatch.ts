@@ -10,6 +10,7 @@ import { getErrorText } from "./error-classifier"
 import { createEmptyAssistantTurnRetryDedupeKey } from "./parent-wake-history-state"
 import { cloneParentWake, isRedundantParentWake, type PendingParentWake } from "./parent-wake-dedupe"
 import type { ToolWaitDeferralDecision } from "./parent-wake-session-history"
+import { limitParentVisibleNotification } from "./parent-visible-error-sanitizer"
 
 type ParentWakePromptDispatchInput = {
   readonly client: PromptDispatchClient
@@ -29,7 +30,7 @@ type ParentWakePromptDispatchInput = {
 }
 
 export async function sendParentWakePrompt(input: ParentWakePromptDispatchInput): Promise<void> {
-  const notificationContent = input.latestWake.notifications.join("\n\n")
+  const notificationContent = limitParentVisibleNotification(input.latestWake.notifications.join("\n\n"))
   let dispatchStartedAt = Date.now()
   try {
     dispatchStartedAt = Date.now()
@@ -127,5 +128,6 @@ function createTrackedDispatchedWake(wake: PendingParentWake, forceNoReply: bool
   return {
     ...cloneParentWake(wake),
     shouldReply: false,
+    replyRequiredNoReplyDispatch: true,
   }
 }

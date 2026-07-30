@@ -1,5 +1,4 @@
-import { getAgentToolRestrictions } from "../../../shared"
-import type { TaskPromptBody } from "./task-prompt-body"
+import { buildBackgroundTaskPromptTools, type TaskPromptBody } from "./task-prompt-body"
 
 export const FALLBACK_AGENT = "general"
 
@@ -29,14 +28,23 @@ export function buildFallbackBody(
   fallbackAgent: string,
   options: { includeTeamToolDenylist?: boolean } = {},
 ): TaskPromptBody {
+  const originalTools = originalBody.tools && typeof originalBody.tools === "object" && !Array.isArray(originalBody.tools)
+    ? originalBody.tools as Record<string, unknown>
+    : undefined
+  const preservedDenies: Record<string, "deny"> = {}
+  if (originalTools) {
+    for (const [tool, value] of Object.entries(originalTools)) {
+      if (value === false) preservedDenies[tool] = "deny"
+    }
+  }
+
   return {
     ...originalBody,
     agent: fallbackAgent,
-    tools: {
-      task: false,
-      call_omo_agent: true,
-      question: false,
-      ...getAgentToolRestrictions(fallbackAgent, options),
-    },
+    tools: buildBackgroundTaskPromptTools({
+      agent: fallbackAgent,
+      includeTeamToolDenylist: options.includeTeamToolDenylist ?? true,
+      userPermission: preservedDenies,
+    }),
   }
 }

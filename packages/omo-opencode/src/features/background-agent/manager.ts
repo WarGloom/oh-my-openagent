@@ -1,16 +1,17 @@
 import { join } from "node:path"
+import { isProviderExhaustionFallbackEligible } from "@oh-my-opencode/model-core"
 import type { PluginInput } from "@opencode-ai/plugin"
 import type { BackgroundTaskConfig, TmuxConfig } from "../../config/schema"
 import type { ModelFallbackControllerAccessor } from "../../hooks/model-fallback"
 import {
   dispatchInternalPrompt,
+  releasePromptAsyncReservation,
   type PromptAsyncGateResult,
 } from "../../hooks/shared/prompt-async-gate"
 import { isSessionActive as isOpenCodeSessionActive } from "../../hooks/shared/session-idle-settle"
 import { resolveDispatchClient } from "../../shared/live-server-route"
 import {
   createInternalAgentTextPart,
-  getAgentToolRestrictions,
   hasInternalInitiatorMarker,
   isAmbiguousPostDispatchPromptFailure,
   log,
@@ -32,7 +33,8 @@ import {
 import { SessionCategoryRegistry } from "../../shared/session-category-registry"
 import { applySessionPromptParams } from "../../shared/session-prompt-params-helpers"
 import { setSessionTools } from "../../shared/session-tools-store"
-import { clearSessionAgent, setSessionAgent, subagentSessions, updateSessionAgent } from "../claude-code-session-state"
+import { isInsideTmux } from "../../shared/tmux"
+import { clearSessionAgent, delegatedTaskSessions, setSessionAgent, subagentSessions, updateSessionAgent } from "../claude-code-session-state"
 import { MESSAGE_STORAGE } from "../hook-message-injector"
 import { getTaskToastManager } from "../task-toast-manager"
 import { abortWithTimeout } from "./abort-with-timeout"
@@ -49,6 +51,7 @@ import {
   buildBackgroundTaskNotificationText,
 } from "./background-task-notification-template"
 import { writeBackgroundTaskMarker } from "./background-task-marker"
+import { formatParentVisibleError, limitParentVisibleNotification } from "./parent-visible-error-sanitizer"
 import {
   findNearestMessageExcludingCompaction,
   resolvePromptContextFromSessionMessages,
@@ -70,9 +73,17 @@ import {
   isRecord,
   isTerminalSessionError,
 } from "./error-classifier"
+import {
+  formatInternalReminderData,
+  formatRetrySessionTitle,
+  tryFallbackRetry,
+} from "./fallback-retry-handler"
 import { isEmptyNoProgressAssistantTurnInfo } from "./empty-assistant-turn"
-import { tryFallbackRetry } from "./fallback-retry-handler"
-import { messageUpdatedInfoHasParentWakeOutput } from "./message-updated-parent-wake-output"
+import {
+  messageUpdatedInfoEndsParentWakeActivity,
+  messageUpdatedInfoHasParentWakeActivity,
+  messageUpdatedInfoHasParentWakeOutput,
+} from "./message-updated-parent-wake-output"
 import {
   type CircuitBreakerSettings,
   detectRepetitiveToolUse,
@@ -81,13 +92,18 @@ import {
 } from "./loop-detector"
 import { ParentWakeNotifier, type ParentWakePromptContext } from "./parent-wake-notifier"
 import type { PendingParentWake } from "./parent-wake-dedupe"
+import {
+  clearProviderAutoRetryDeferral,
+  getProviderAutoRetryDeferral,
+  type RetryStatusInfo,
+} from "./provider-auto-retry-deferral"
 import { registerManagerForCleanup, unregisterManagerForCleanup } from "./process-cleanup"
 import { removeTaskToastTracking } from "./remove-task-toast-tracking"
 import {
   MIN_SESSION_GONE_POLLS,
   verifySessionExists as verifySessionStillExists,
 } from "./session-existence"
-import { handleSessionIdleBackgroundEvent } from "./session-idle-event-handler"
+import { handleSessionIdleBackgroundEvent, type SessionOutputClassification } from "./session-idle-event-handler"
 import {
   hasOutputSignalFromPart,
   isInternalInitiatorTextPart,
@@ -97,7 +113,13 @@ import {
   SESSION_NEXT_EVENT_PREFIX,
 } from "./session-stream-activity"
 import { isActiveSessionStatus, isTerminalSessionStatus } from "./session-status-classifier"
-import { buildFallbackBody, FALLBACK_AGENT, isAgentNotFoundError } from "./spawner"
+import {
+  buildFallbackBody,
+  buildTaskPromptBody,
+  cloneBackgroundTaskUserPermission,
+  FALLBACK_AGENT,
+  isAgentNotFoundError,
+} from "./spawner"
 import { invokeTmuxSessionCreatedCallback } from "./spawner/tmux-callback-invoker"
 import {
   createSubagentDepthLimitError,
@@ -139,6 +161,15 @@ type ResumeTaskSnapshot = {
   parentTools?: Record<string, boolean>
   concurrencyKey?: string
   concurrencyGroup?: string
+  prompt: string
+  skillContent?: string
+}
+
+type FallbackRetryResultRecord = {
+  readonly promise: Promise<boolean>
+  cleanupTimer?: ReturnType<typeof setTimeout>
+  waitForOutputUntil?: number
+  result?: boolean
 }
 
 const TERMINAL_BACKGROUND_TASK_STATUSES = new Set<BackgroundTask["status"]>([
@@ -161,6 +192,56 @@ const PARENT_WAKE_TOOL_CALL_DEFER_MAX_MS = 5_000
  */
 const PARENT_WAKE_USER_MESSAGE_IN_PROGRESS_WINDOW_MS = 2_000
 const PARENT_WAKE_SESSION_ACTIVITY_IN_PROGRESS_WINDOW_MS = PARENT_WAKE_TOOL_CALL_DEFER_MAX_MS
+const FALLBACK_RETRY_RESULT_RETENTION_MS = 1_000
+const FALLBACK_RETRY_RESULT_SUCCESS_RETENTION_MS = 60_000
+const FALLBACK_RETRY_OUTPUT_SETTLE_MS = 15_000
+const MODEL_DISPATCH_RESERVATION_SOURCES = ["model-suggestion-retry", "model-suggestion-retry:retry"] as const
+const NO_OUTPUT_IDLE_FALLBACK_ERROR_INFO = {
+  name: "NoOutputIdleFallback",
+  message: "Session became idle without assistant/tool output; treating as service unavailable for fallback recovery",
+}
+
+const TERMINAL_PROVIDER_ERROR_NAME_FRAGMENTS = [
+  "authenticationerror",
+  "authorizationerror",
+  "autherror",
+  "invalidapikeyerror",
+  "loadapikeyerror",
+  "missingapikeyerror",
+  "modelnotfounderror",
+  "providermodelnotfounderror",
+  "unknownprovidererror",
+]
+
+const TERMINAL_PROVIDER_ERROR_MESSAGE_PATTERNS = [
+  /all credentials for model/i,
+  /api.?key/i,
+  /auth(?:entication|orization)? failed/i,
+  /invalid credentials/i,
+  /permission denied/i,
+  /unauthorized/i,
+  /forbidden provider/i,
+  /model(?:\s+is)?\s+not\s+supported/i,
+  /model\s+not\s+found/i,
+  /provider\s+(?:is\s+)?forbidden/i,
+  /provider\s+not\s+found/i,
+  /selected provider is forbidden/i,
+  /unknown provider/i,
+]
+
+function isTerminalProviderModelOrAuthError(errorInfo: { name?: string; message?: string; statusCode?: number }): boolean {
+  if (errorInfo.statusCode === 401 || errorInfo.statusCode === 403) {
+    return true
+  }
+
+  const normalizedName = errorInfo.name?.toLowerCase().replace(/[^a-z0-9]/g, "") ?? ""
+  if (TERMINAL_PROVIDER_ERROR_NAME_FRAGMENTS.some((fragment) => normalizedName.includes(fragment))) {
+    return true
+  }
+
+  const message = errorInfo.message ?? ""
+  return TERMINAL_PROVIDER_ERROR_MESSAGE_PATTERNS.some((pattern) => pattern.test(message))
+}
 
 interface EventProperties {
   sessionID?: string
@@ -178,6 +259,105 @@ interface Todo {
   status: string
   priority: string
   id: string
+}
+
+type SessionPartWithContent = {
+  readonly type?: string
+  readonly text?: string
+  readonly content?: string | readonly unknown[]
+}
+
+type SessionOutputClassificationContext = {
+  readonly sessionStatusType?: string
+}
+
+type SessionMessageTime = {
+  readonly created?: number | string
+  readonly completed?: number | string
+}
+
+type SessionMessageWithContent = {
+  readonly info?: {
+    readonly role?: string
+    readonly finish?: string | true
+    readonly time?: SessionMessageTime
+    readonly error?: unknown
+  }
+  readonly role?: string
+  readonly finish?: string | true
+  readonly time?: SessionMessageTime
+  readonly error?: unknown
+  readonly parts?: readonly SessionPartWithContent[]
+}
+
+const EMPTY_SESSION_MESSAGES: readonly SessionMessageWithContent[] = []
+
+function getSessionMessageRole(message: SessionMessageWithContent): string | undefined {
+  return message.info?.role ?? message.role
+}
+
+function getSessionMessageFinish(message: SessionMessageWithContent): string | true | undefined {
+  return message.info?.finish ?? message.finish
+}
+
+function getSessionMessageCreated(message: SessionMessageWithContent): number | undefined {
+  const created = message.info?.time?.created ?? message.time?.created
+  if (typeof created === "number" && Number.isFinite(created)) {
+    return created
+  }
+  if (typeof created === "string" && created.length > 0) {
+    const parsed = Date.parse(created)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  return undefined
+}
+
+function getLatestAssistantMessage(messages: readonly SessionMessageWithContent[]): SessionMessageWithContent | undefined {
+  let latest: { readonly message: SessionMessageWithContent; readonly index: number; readonly created?: number } | undefined
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index]
+    if (!message || getSessionMessageRole(message) !== "assistant") {
+      continue
+    }
+    const created = getSessionMessageCreated(message)
+    if (!latest) {
+      latest = { message, index, created }
+      continue
+    }
+    if (created !== undefined && latest.created !== undefined) {
+      if (created >= latest.created) {
+        latest = { message, index, created }
+      }
+      continue
+    }
+    if (created !== undefined || (latest.created === undefined && index >= latest.index)) {
+      latest = { message, index, created }
+    }
+  }
+  return latest?.message
+}
+
+function latestAssistantTurnIsIncomplete(message: SessionMessageWithContent): boolean {
+  const finish = getSessionMessageFinish(message)
+  return finish === "unknown" || finish === "tool-calls"
+}
+
+function sessionMessageHasToolEvidence(message: SessionMessageWithContent): boolean {
+  const parts = message.parts ?? []
+  return parts.some((part) => part.type === "tool" || part.type === "tool_result")
+}
+
+function sessionMessageHasMeaningfulOutput(message: SessionMessageWithContent): boolean {
+  const parts = message.parts ?? []
+  return parts.some((part) =>
+    (part.type === "text" && typeof part.text === "string" && part.text.trim().length > 0) ||
+    (part.type === "reasoning" && typeof part.text === "string" && part.text.trim().length > 0) ||
+    part.type === "tool" ||
+    (part.type === "tool_result" &&
+      (typeof part.content === "string"
+        ? part.content.trim().length > 0
+        : Array.isArray(part.content) && part.content.length > 0))
+  )
 }
 
 function formatAttemptModelSummary(attempt: Pick<BackgroundTaskAttempt, "providerId" | "modelId"> | undefined): string | undefined {
@@ -207,11 +387,6 @@ function cloneAttempts(task: BackgroundTask): BackgroundTaskAttempt[] | undefine
   }
 
   return task.attempts.map((attempt) => ({ ...attempt }))
-}
-
-function buildLocalSessionUrl(directory: string, sessionID: string): string {
-  const encodedDirectory = Buffer.from(directory).toString("base64url")
-  return `http://127.0.0.1:4096/${encodedDirectory}/session/${sessionID}`
 }
 
 export interface SubagentSessionCreatedEvent {
@@ -275,6 +450,7 @@ export class BackgroundManager {
   private parentWakeTextDeltaBuffers: Map<string, string> = new Map()
   private observedOutputSessions: Set<string> = new Set()
   private observedIncompleteTodosBySession: Map<string, boolean> = new Map()
+  private fallbackRetryResultsBySession: Map<string, FallbackRetryResultRecord> = new Map()
   private rootDescendantCounts: Map<string, number>
   private preStartDescendantReservations: Set<string>
   private enableParentSessionNotifications: boolean
@@ -452,6 +628,7 @@ export class BackgroundManager {
   }
 
   private removeTask(task: BackgroundTask): void {
+    this.clearFallbackRetryResultsForTask(task)
     this.archiveCompletedTask(task)
     archiveBackgroundTask(task)
     this.tasks.delete(task.id)
@@ -520,6 +697,8 @@ export class BackgroundManager {
       parentTools: task.parentTools,
       concurrencyKey: task.concurrencyKey,
       concurrencyGroup: task.concurrencyGroup,
+      prompt: task.prompt,
+      skillContent: task.skillContent,
     }
   }
 
@@ -551,6 +730,8 @@ export class BackgroundManager {
     task.parentTools = snapshot.parentTools
     task.concurrencyKey = snapshot.concurrencyKey
     task.concurrencyGroup = snapshot.concurrencyGroup
+    task.prompt = snapshot.prompt
+    task.skillContent = snapshot.skillContent
     this.updateTaskParent(task, snapshot.parentSessionId)
 
     removeTaskToastTracking(task.id)
@@ -588,7 +769,11 @@ export class BackgroundManager {
       throw new Error("Agent parameter is required")
     }
 
-    input = { ...input, agent: input.agent.trim().replace(/^[\\/"']+|[\\/"']+$/g, "").trim() }
+    input = {
+      ...input,
+      agent: input.agent.trim().replace(/^[\\/"']+|[\\/"']+$/g, "").trim(),
+      userPermission: cloneBackgroundTaskUserPermission(input.userPermission),
+    }
 
     if (!input.agent) {
       throw new Error("Agent parameter is required after sanitization")
@@ -626,6 +811,7 @@ export class BackgroundManager {
         fallbackChain: input.fallbackChain,
         skillContent: input.skillContent,
         sessionPermission: input.sessionPermission,
+        userPermission: input.userPermission,
         attemptCount: 0,
         category: input.category,
         onSessionCreated: input.onSessionCreated,
@@ -725,6 +911,7 @@ export class BackgroundManager {
             item.task.error = error instanceof Error ? error.message : String(error)
             item.task.completedAt = new Date()
           }
+          this.clearFallbackRetryResultsForTask(item.task)
 
           if (item.task.concurrencyKey) {
             this.concurrencyManager.release(item.task.concurrencyKey)
@@ -745,6 +932,12 @@ export class BackgroundManager {
           this.updateBackgroundTaskMarker(item.task.parentSessionId)
 
           this.markForNotification(item.task)
+          // Schedule removal directly rather than relying on notifyParentSession's
+          // tail call. If the async notification chain throws before reaching that
+          // tail, the task would be pinned in both `tasks` and `notifications`
+          // maps forever by the prune trap at task-poller.ts:47. This mirrors the
+          // pattern used by handleSessionErrorEvent / cancelTask / failCrashedTask.
+          this.scheduleTaskRemoval(item.task.id)
           this.enqueueNotificationForParent(item.task.parentSessionId, () => this.notifyParentSession(item.task)).catch(err => {
             log("[background-agent] Failed to notify on startTask error:", err)
           })
@@ -777,10 +970,20 @@ export class BackgroundManager {
     const parentDirectory = parentSession?.data?.directory ?? this.directory
     log(`[background-agent] Parent dir: ${parentSession?.data?.directory}, using: ${parentDirectory}`)
 
+    const pendingRetryAttempt = task.retryNotification
+      ? task.attempts?.find((attempt) => attempt.attemptId === attemptID)
+      : undefined
+    const pendingRetryModel = pendingRetryAttempt?.providerId && pendingRetryAttempt.modelId
+      ? ` on ${pendingRetryAttempt.providerId}/${pendingRetryAttempt.modelId}`
+      : ""
+    const sessionTitle = pendingRetryAttempt
+      ? formatRetrySessionTitle(input.description, `retry ${pendingRetryAttempt.attemptNumber}${pendingRetryModel} (@${input.agent} subagent)`)
+      : formatRetrySessionTitle(input.description, `(@${input.agent} subagent)`)
+
     const createResult = await this.client.session.create({
       body: {
         parentID: input.parentSessionId,
-        title: `${input.description} (@${input.agent} subagent)`,
+        title: sessionTitle,
         ...(input.sessionPermission ? { permission: input.sessionPermission } : {}),
         ...(input.model
           ? {
@@ -814,9 +1017,10 @@ export class BackgroundManager {
       return
     }
 
-    await input.onSessionCreated?.(sessionID)
+    await input.onSessionCreated?.(sessionID, input.model)
     this.settlePreStartDescendantReservation(task)
     subagentSessions.add(sessionID)
+    delegatedTaskSessions.add(sessionID)
     setSessionAgent(sessionID, input.agent)
 
     if (this.tasks.get(task.id)?.status === "cancelled") {
@@ -852,39 +1056,6 @@ export class BackgroundManager {
     task.concurrencyGroup = concurrencyKey
 
     if (task.retryNotification) {
-      const attemptNumber = boundAttempt.attemptNumber
-      const retrySessionUrl = buildLocalSessionUrl(parentDirectory, sessionID)
-      const previousAttempt = getPreviousAttempt(task, boundAttempt.attemptId)
-      const failedSessionID = previousAttempt?.sessionId ?? task.retryNotification.previousSessionID
-      const failedSessionLine = failedSessionID
-        ? `\n- Failed session: \`${failedSessionID}\``
-        : ""
-      const failedModel = formatAttemptModelSummary(previousAttempt) ?? task.retryNotification.failedModel
-      const failedModelLine = failedModel
-        ? `\n- Failed model: \`${failedModel}\``
-        : ""
-      const failedError = previousAttempt?.error ?? task.retryNotification.failedError
-      const failedErrorLine = failedError
-        ? `\n- Error: ${failedError}`
-        : ""
-      const retryModel = formatAttemptModelSummary(boundAttempt) ?? task.retryNotification.nextModel
-      const parentPromptContext = await this.resolveParentWakePromptContext(task)
-      this.queuePendingParentWake(
-        task.parentSessionId,
-        `<system-reminder>
-[BACKGROUND TASK RETRY SESSION READY]
-**ID:** \`${task.id}\`
-**Description:** ${task.description}
-**Retry attempt:** ${attemptNumber}
-**Retry session:** \`${sessionID}\`
-**Retry link:** ${retrySessionUrl}${failedSessionLine}${failedModelLine}${failedErrorLine}${retryModel ? `\n- Model: \`${retryModel}\`` : ""}
-
-The fallback retry session is now created and can be inspected directly.
-</system-reminder>`,
-        parentPromptContext,
-        false,
-        PENDING_PARENT_WAKE_DEBOUNCE_MS,
-      )
       task.retryNotification = undefined
     }
 
@@ -894,34 +1065,20 @@ The fallback retry session is now created and can be inspected directly.
     // Fire-and-forget prompt via promptAsync (no response body needed)
     // OpenCode prompt payload accepts model provider/model IDs and top-level variant only.
     // Temperature/topP and provider-specific options are applied through chat.params.
-    const launchModel = input.model
-      ? {
-          providerID: input.model.providerID,
-          modelID: input.model.modelID,
-        }
-      : undefined
-    const launchVariant = input.model?.variant
-
     if (input.model) {
       applySessionPromptParams(sessionID, input.model)
     }
 
-    const userDenied: Record<string, boolean> = {}
-    if (input.userPermission) {
-      for (const [tool, value] of Object.entries(input.userPermission)) {
-        if (value === "deny") userDenied[tool] = false
-      }
-    }
-
-    const launchTools = {
-      task: false,
-      call_omo_agent: true,
-      question: false,
-      ...userDenied,
-      ...getAgentToolRestrictions(input.agent, {
-        includeTeamToolDenylist: input.teamRunId === undefined,
-      }),
-    }
+    const promptBody = buildTaskPromptBody({
+      kind: "launch",
+      agent: input.agent,
+      model: input.model,
+      system: input.skillContent,
+      prompt: input.prompt,
+      includeTeamToolDenylist: input.teamRunId === undefined,
+      userPermission: task.userPermission ?? input.userPermission,
+    })
+    const launchTools = promptBody.tools
     setSessionTools(sessionID, launchTools)
 
     log("[background-agent] Launching task:", { taskId: task.id, sessionID, agent: input.agent })
@@ -947,15 +1104,6 @@ The fallback retry session is now created and can be inspected directly.
       hasSkillContent: !!input.skillContent,
       promptLength: input.prompt.length,
     })
-
-    const promptBody = {
-      agent: input.agent,
-      ...(launchModel ? { model: launchModel } : {}),
-      ...(launchVariant ? { variant: launchVariant } : {}),
-      system: input.skillContent,
-      tools: launchTools,
-      parts: [createInternalAgentTextPart(input.prompt)],
-    }
 
     promptWithRetryInDirectory(this.client, {
       path: { id: sessionID },
@@ -1027,6 +1175,7 @@ The fallback retry session is now created and can be inspected directly.
           existingTask.error = terminalError
           existingTask.completedAt = new Date()
         }
+        this.clearFallbackRetryResultsForTask(existingTask)
         if (existingTask.rootSessionId) {
           this.unregisterRootDescendant(existingTask.rootSessionId)
         }
@@ -1169,6 +1318,104 @@ The fallback retry session is now created and can be inspected directly.
     return undefined
   }
 
+  getFallbackRetryResult(sessionID: string): Promise<boolean> | undefined {
+    return this.fallbackRetryResultsBySession.get(sessionID)?.promise
+  }
+
+  consumeFallbackRetryResult(sessionID: string): Promise<boolean> | undefined {
+    const record = this.fallbackRetryResultsBySession.get(sessionID)
+    if (!record) return undefined
+    if (record.result !== undefined) {
+      this.clearFallbackRetryResult(sessionID, record)
+      return record.promise
+    }
+    void record.promise.finally(() => {
+      this.clearFallbackRetryResult(sessionID, record)
+    })
+    return record.promise
+  }
+
+  async hasValidSessionOutput(sessionID: string): Promise<boolean> {
+    return await this.classifySessionOutput(sessionID) === "ready"
+  }
+
+  private rememberFallbackRetryResult(sessionID: string | undefined, result: Promise<boolean>): void {
+    if (!sessionID) return
+    const task = this.findBySession(sessionID)
+    if (!task) return
+    const existing = this.fallbackRetryResultsBySession.get(sessionID)
+    if (existing) {
+      this.clearFallbackRetryResult(sessionID, existing)
+    }
+    const record: FallbackRetryResultRecord = {
+      promise: result,
+      waitForOutputUntil: Date.now() + FALLBACK_RETRY_OUTPUT_SETTLE_MS,
+    }
+    this.fallbackRetryResultsBySession.set(sessionID, record)
+    void result.then(
+      (retried) => {
+        record.result = retried
+        if (retried) {
+          record.waitForOutputUntil = Date.now() + FALLBACK_RETRY_OUTPUT_SETTLE_MS
+        } else {
+          record.waitForOutputUntil = undefined
+        }
+        this.scheduleFallbackRetryResultCleanup(sessionID, record)
+      },
+      () => {
+        record.waitForOutputUntil = undefined
+        this.scheduleFallbackRetryResultCleanup(sessionID, record)
+      },
+    )
+  }
+
+  private shouldWaitForFallbackRetryOutput(task: BackgroundTask, source: string): boolean {
+    const sessionID = task.sessionId
+    if (!sessionID) return false
+    const record = this.fallbackRetryResultsBySession.get(sessionID)
+    if (!record || record.result === false) return false
+    const waitForOutputUntil = record.waitForOutputUntil
+    const now = Date.now()
+    if (waitForOutputUntil === undefined || now >= waitForOutputUntil) return false
+    log("[background-agent] Waiting for same-session fallback output before consuming another fallback:", {
+      taskId: task.id,
+      sessionID,
+      source,
+      retryResult: record.result,
+      waitMs: waitForOutputUntil - now,
+    })
+    return true
+  }
+
+  private scheduleFallbackRetryResultCleanup(sessionID: string, record: FallbackRetryResultRecord): void {
+    const retentionMs = record.result === true
+      ? FALLBACK_RETRY_RESULT_SUCCESS_RETENTION_MS
+      : FALLBACK_RETRY_RESULT_RETENTION_MS
+    record.cleanupTimer = setTimeout(() => {
+      this.clearFallbackRetryResult(sessionID, record)
+    }, retentionMs)
+  }
+
+  private clearFallbackRetryResult(sessionID: string, record?: FallbackRetryResultRecord): void {
+    const current = this.fallbackRetryResultsBySession.get(sessionID)
+    if (!current || (record && current !== record)) return
+    if (current.cleanupTimer) {
+      clearTimeout(current.cleanupTimer)
+    }
+    this.fallbackRetryResultsBySession.delete(sessionID)
+  }
+
+  private clearFallbackRetryResultsForTask(task: BackgroundTask): void {
+    if (task.sessionId) {
+      this.clearFallbackRetryResult(task.sessionId)
+    }
+    for (const attempt of task.attempts ?? []) {
+      if (attempt.sessionId) {
+        this.clearFallbackRetryResult(attempt.sessionId)
+      }
+    }
+  }
+
   private resolveTaskAttemptBySession(sessionID: string): { task: BackgroundTask; attemptID?: string; isCurrent: boolean } | undefined {
     const task = this.findBySession(sessionID)
     if (!task) {
@@ -1235,9 +1482,7 @@ The fallback retry session is now created and can be inspected directly.
         existingTask.parentAgent = input.parentAgent
       }
       if (!existingTask.concurrencyGroup) {
-        existingTask.concurrencyGroup = input.concurrencyKey
-          ? this.concurrencyManager.getConcurrencyKey(input.concurrencyKey)
-          : existingTask.agent
+        existingTask.concurrencyGroup = input.concurrencyKey ?? existingTask.agent
       }
 
       if (existingTask.sessionId) {
@@ -1260,14 +1505,11 @@ The fallback retry session is now created and can be inspected directly.
       return existingTask
     }
 
-    const concurrencyKey = input.concurrencyKey
-      ? this.concurrencyManager.getConcurrencyKey(input.concurrencyKey)
-      : undefined
-    const concurrencyGroup = concurrencyKey ?? input.agent ?? "task"
+    const concurrencyGroup = input.concurrencyKey ?? input.agent ?? "task"
 
     // Acquire concurrency slot if a key is provided
-    if (concurrencyKey) {
-      await this.concurrencyManager.acquire(concurrencyKey)
+    if (input.concurrencyKey) {
+      await this.concurrencyManager.acquire(input.concurrencyKey)
     }
 
     const task: BackgroundTask = {
@@ -1285,7 +1527,7 @@ The fallback retry session is now created and can be inspected directly.
         lastUpdate: new Date(),
       },
       parentAgent: input.parentAgent,
-      concurrencyKey,
+      concurrencyKey: input.concurrencyKey,
       concurrencyGroup,
     }
 
@@ -1315,6 +1557,15 @@ The fallback retry session is now created and can be inspected directly.
       throw new Error(`Task has no sessionID: ${existingTask.id}`)
     }
 
+    if (existingTask.parentSessionId !== input.parentSessionId) {
+      log("[background-agent] Resume rejected - foreign parent session:", {
+        taskId: existingTask.id,
+        expectedParent: existingTask.parentSessionId,
+        providedParent: input.parentSessionId,
+      })
+      throw new Error("Resume forbidden: task belongs to a different parent session")
+    }
+
     if (existingTask.status === "running") {
       throw new Error(
         `Task ${existingTask.id} is currently running and cannot accept a continuation prompt. ` +
@@ -1330,24 +1581,21 @@ The fallback retry session is now created and can be inspected directly.
     }
 
     // Re-acquire concurrency using the persisted concurrency group
-    const concurrencyKey = this.concurrencyManager.getConcurrencyKey(
-      existingTask.concurrencyGroup ?? existingTask.agent,
-    )
+    const concurrencyKey = existingTask.concurrencyGroup ?? existingTask.agent
     await this.concurrencyManager.acquire(concurrencyKey)
     existingTask.concurrencyKey = concurrencyKey
     existingTask.concurrencyGroup = concurrencyKey
-
-
     existingTask.status = "running"
     existingTask.completedAt = undefined
     existingTask.error = undefined
-    this.updateTaskParent(existingTask, input.parentSessionId)
     existingTask.parentMessageId = input.parentMessageId
     existingTask.parentModel = input.parentModel
     existingTask.parentAgent = input.parentAgent
     if (input.parentTools) {
       existingTask.parentTools = input.parentTools
     }
+    existingTask.prompt = input.prompt
+    existingTask.skillContent = input.system
     // Reset startedAt on resume to prevent immediate completion
     // The MIN_IDLE_TIME_MS check uses startedAt, so resumed tasks need fresh timing
     existingTask.startedAt = new Date()
@@ -1391,17 +1639,20 @@ The fallback retry session is now created and can be inspected directly.
 
     // Fire-and-forget prompt via promptAsync (no response body needed)
     // Resume uses the same PromptInput contract as launch: model IDs plus top-level variant.
-    const resumeModel = existingTask.model
-      ? {
-          providerID: existingTask.model.providerID,
-          modelID: existingTask.model.modelID,
-        }
-      : undefined
-    const resumeVariant = existingTask.model?.variant
-
     if (existingTask.model) {
       applySessionPromptParams(existingTask.sessionId!, existingTask.model)
     }
+
+    const resumePromptBody = buildTaskPromptBody({
+      kind: "resume",
+      agent: existingTask.agent,
+      model: existingTask.model,
+      prompt: input.prompt,
+      system: input.system,
+      includeTeamToolDenylist: existingTask.teamRunId === undefined,
+      userPermission: existingTask.userPermission,
+    })
+    setSessionTools(existingTask.sessionId!, resumePromptBody.tools)
 
     dispatchInternalPrompt({
       mode: "async",
@@ -1412,24 +1663,7 @@ The fallback retry session is now created and can be inspected directly.
       queueBehavior: "defer",
       input: {
         path: { id: existingTask.sessionId },
-        body: {
-          agent: existingTask.agent,
-          ...(resumeModel ? { model: resumeModel } : {}),
-          ...(resumeVariant ? { variant: resumeVariant } : {}),
-          tools: (() => {
-            const tools = {
-              task: false,
-              call_omo_agent: true,
-              question: false,
-              ...getAgentToolRestrictions(existingTask.agent, {
-                includeTeamToolDenylist: existingTask.teamRunId === undefined,
-              }),
-            }
-            setSessionTools(existingTask.sessionId!, tools)
-            return tools
-          })(),
-          parts: [createInternalAgentTextPart(input.prompt)],
-        },
+        body: resumePromptBody,
         query: { directory: this.directory },
       },
     }).then((promptResult) => {
@@ -1475,6 +1709,7 @@ The fallback retry session is now created and can be inspected directly.
       const errorMessage = errorInfo.message ?? (error instanceof Error ? error.message : String(error))
       existingTask.error = errorMessage
       existingTask.completedAt = new Date()
+      this.clearFallbackRetryResultsForTask(existingTask)
       if (existingTask.rootSessionId) {
         this.unregisterRootDescendant(existingTask.rootSessionId)
       }
@@ -1551,10 +1786,13 @@ The fallback retry session is now created and can be inspected directly.
     this.observedOutputSessions.delete(sessionID)
   }
 
+  invalidateSessionTodoObservation(sessionID: string): void {
+    this.clearSessionTodoObservation(sessionID)
+  }
+
   private clearSessionTodoObservation(sessionID: string): void {
     this.observedIncompleteTodosBySession.delete(sessionID)
   }
-
 
   private shouldHoldDispatchedParentWakeForTextDelta(
     eventType: string,
@@ -1636,7 +1874,11 @@ The fallback retry session is now created and can be inspected directly.
           return
         }
       }
-      this.parentWakeNotifier.recordParentSessionActivity(sessionID)
+      if (messageUpdatedInfoEndsParentWakeActivity(info, role)) {
+        this.parentWakeNotifier.clearParentSessionActivity(sessionID)
+      } else if (messageUpdatedInfoHasParentWakeActivity(info, role)) {
+        this.parentWakeNotifier.recordParentSessionActivity(sessionID)
+      }
 
       if (messageUpdatedInfoHasParentWakeOutput(info, role)) {
         this.clearDispatchedParentWake(sessionID)
@@ -1813,9 +2055,11 @@ The fallback retry session is now created and can be inspected directly.
           return resolved?.isCurrent ? resolved.task : undefined
         },
         idleDeferralTimers: this.idleDeferralTimers,
-        validateSessionHasOutput: (id) => this.validateSessionHasOutput(id),
+        classifySessionOutput: (id) => this.classifySessionOutput(id, { sessionStatusType: "idle" }),
         checkSessionTodos: (id) => this.checkSessionTodos(id),
         tryCompleteTask: (task, source) => this.tryCompleteTask(task, source),
+        tryFallbackForNoOutputIdle: (task, source) => this.tryNoOutputIdleFallback(task, source),
+        failNoOutputIdle: (task, source) => this.failNoOutputTask(task, source),
         emitIdleEvent: (sessionID) => this.handleEvent({ type: "session.idle", properties: { sessionID } }),
       })
     }
@@ -1842,8 +2086,9 @@ The fallback retry session is now created and can be inspected directly.
       const errorObj = props?.error as { name?: string; message?: string } | undefined
       const errorName = errorObj?.name
       const errorMessage = props ? getSessionErrorMessage(props) : undefined
+      const errorStatusCode = extractErrorStatusCode(errorObj)
 
-      const errorInfo = { name: errorName, message: errorMessage }
+      const errorInfo = { name: errorName, message: errorMessage, statusCode: errorStatusCode }
       void this.handleSessionErrorEvent({
         errorInfo,
         errorMessage,
@@ -1922,23 +2167,38 @@ The fallback retry session is now created and can be inspected directly.
 
     if (event.type === "session.status") {
       const sessionID = resolveSessionEventID(props)
-      const status = props?.status as { type?: string; message?: string } | undefined
+      const status = props?.status as { type?: string; message?: string; attempt?: unknown; next?: unknown } | undefined
       if (!sessionID || !status?.type) return
 
-      if (status.type === "idle") {
-        this.handleEvent({ type: "session.idle", properties: { sessionID } })
+      const resolved = this.resolveTaskAttemptBySession(sessionID)
+      if (status.type !== "retry") {
+        if (resolved?.isCurrent) {
+          clearProviderAutoRetryDeferral(resolved.task)
+        }
+
+        if (status.type === "idle") {
+          this.handleEvent({ type: "session.idle", properties: { sessionID } })
+        }
         return
       }
 
-      if (status.type !== "retry") return
-
-      const resolved = this.resolveTaskAttemptBySession(sessionID)
       if (!resolved?.isCurrent) return
 
       const { task } = resolved
       if (task.status !== "running") return
 
       const errorMessage = typeof status.message === "string" ? status.message : undefined
+      const autoRetryDeferral = getProviderAutoRetryDeferral(task, status)
+      if (autoRetryDeferral) {
+        log("[background-agent] session.status retry deferred to provider auto-retry", {
+          taskId: task.id,
+          sessionID,
+          retryAttempt: autoRetryDeferral.retryAttempt,
+          providerRetryAttemptsBeforeFallback: autoRetryDeferral.providerRetryAttemptsBeforeFallback,
+          retryMessage: errorMessage,
+        })
+        return
+      }
       const errorInfo = { name: "SessionRetry", message: errorMessage }
       void this.tryFallbackRetry(task, errorInfo, "session.status").catch((error) => {
         log("[background-agent] Error handling session.status fallback retry:", {
@@ -1978,6 +2238,7 @@ The fallback retry session is now created and can be inspected directly.
       task.error = errorMessage
       task.completedAt = new Date()
     }
+    this.clearFallbackRetryResultsForTask(task)
 
     if (task.rootSessionId) {
       this.unregisterRootDescendant(task.rootSessionId)
@@ -2033,8 +2294,9 @@ The fallback retry session is now created and can be inspected directly.
     errorInfo: { name?: string; message?: string; statusCode?: number }
     errorName: string | undefined
     errorMessage: string | undefined
+    source?: string
   }): Promise<void> {
-    const { task, errorInfo, errorMessage, errorName } = args
+    const { task, errorInfo, errorMessage, errorName, source = "session.error" } = args
 
     if (!task.fallbackChain && task.sessionId) {
       const sessionFallbackChain = this.modelFallbackControllerAccessor?.getSessionFallbackChain(task.sessionId)
@@ -2056,7 +2318,7 @@ The fallback retry session is now created and can be inspected directly.
       return
     }
 
-    if (await this.tryFallbackRetry(task, errorInfo, "session.error")) {
+    if (await this.tryFallbackRetry(task, errorInfo, source)) {
       return
     }
 
@@ -2074,7 +2336,10 @@ The fallback retry session is now created and can be inspected directly.
     })
 
     const sessionId = task.sessionId
-    if (sessionId) {
+    const terminalProviderErrorWithoutRetry = isTerminalProviderModelOrAuthError(errorInfo)
+    const retryStatusWithoutFallback = errorInfo.name === "SessionRetry"
+    const fallbackEligibleErrorWithoutFallback = shouldRetryError(errorInfo) || isProviderExhaustionFallbackEligible(errorInfo)
+    if (sessionId && !terminalProviderErrorWithoutRetry && !retryStatusWithoutFallback && !fallbackEligibleErrorWithoutFallback) {
       const sessionStillAlive = await this.verifySessionExists(sessionId)
       if (sessionStillAlive && !isTerminalSessionError(errorInfo)) {
         this.logger("[background-agent] session.error received but session still alive, treating as transient:", {
@@ -2093,6 +2358,18 @@ The fallback retry session is now created and can be inspected directly.
         })
       }
     }
+    if (terminalProviderErrorWithoutRetry || retryStatusWithoutFallback || fallbackEligibleErrorWithoutFallback) {
+      this.logger("[background-agent] terminal session error has no viable fallback, failing task:", {
+        taskId: task.id,
+        sessionId,
+        errorName,
+        errorMessage: errorMsg?.slice(0, 200),
+        source,
+      })
+      if (sessionId) {
+        await this.abortSessionWithLogging(sessionId, `${source} without fallback`)
+      }
+    }
 
     if (task.currentAttemptID) {
       finalizeAttempt(task, task.currentAttemptID, "error", errorMsg)
@@ -2101,6 +2378,7 @@ The fallback retry session is now created and can be inspected directly.
       task.error = errorMsg
       task.completedAt = new Date()
     }
+    this.clearFallbackRetryResultsForTask(task)
     if (task.rootSessionId) {
       this.unregisterRootDescendant(task.rootSessionId)
     }
@@ -2146,13 +2424,71 @@ The fallback retry session is now created and can be inspected directly.
     })
   }
 
+  private async tryNoOutputIdleFallback(task: BackgroundTask, source: string): Promise<boolean> {
+    return this.tryFallbackRetry(task, NO_OUTPUT_IDLE_FALLBACK_ERROR_INFO, source)
+  }
+
+  private async failNoOutputTask(task: BackgroundTask, source: string): Promise<void> {
+    const errorMessage = "Subagent session became idle without assistant/tool output and no fallback retry was available."
+    if (task.sessionId) {
+      await this.abortSessionWithLogging(task.sessionId, `${source} without output`)
+    }
+    await this.failCrashedTask(task, errorMessage)
+  }
+
   private async tryFallbackRetry(
     task: BackgroundTask,
     errorInfo: { name?: string; message?: string; statusCode?: number },
     source: string,
   ): Promise<boolean> {
+    if (this.shouldWaitForFallbackRetryOutput(task, source)) {
+      return true
+    }
+
     const previousSessionID = task.sessionId
     let retryingNotification: string | undefined
+    const sameSessionRetry = async ({ task, sessionID, nextModel }: {
+      task: BackgroundTask
+      sessionID: string
+      nextModel: NonNullable<BackgroundTask["model"]>
+    }): Promise<boolean> => {
+      const promptBody = buildTaskPromptBody({
+        kind: "launch",
+        agent: task.agent,
+        model: nextModel,
+        system: task.skillContent,
+        prompt: task.prompt,
+        includeTeamToolDenylist: task.teamRunId === undefined,
+        userPermission: task.userPermission,
+      })
+      setSessionTools(sessionID, promptBody.tools)
+      applySessionPromptParams(sessionID, nextModel)
+      registerDelegatedChildSessionBootstrap({
+        sessionID,
+        promptText: task.prompt,
+        fallbackChain: task.fallbackChain,
+        category: task.category,
+        system: task.skillContent,
+        tools: promptBody.tools,
+        modelFallbackControllerAccessor: this.modelFallbackControllerAccessor,
+      })
+
+      releasePromptAsyncReservation(sessionID, "background-agent:same-session-fallback", {
+        reservedBy: MODEL_DISPATCH_RESERVATION_SOURCES,
+        logOnMismatch: false,
+      })
+
+      await promptWithRetryInDirectory(this.client, {
+        path: { id: sessionID },
+        body: promptBody,
+      }, this.directory, {
+        queueBehavior: "defer",
+        checkStatus: false,
+        checkToolState: false,
+      })
+
+      return true
+    }
     const result = tryFallbackRetry({
       task,
       errorInfo,
@@ -2162,24 +2498,29 @@ The fallback retry session is now created and can be inspected directly.
       idleDeferralTimers: this.idleDeferralTimers,
       queuesByKey: this.queuesByKey,
       processKey: (key: string) => this.processKey(key),
-      onRetrying: ({ task, source }) => {
+      directory: this.directory,
+      onSameSessionRetry: sameSessionRetry,
+      onRetrying: ({ task, source, previousSessionID, failedModel: retryFailedModel, failedError: retryFailedError }) => {
         const currentAttempt = getCurrentAttempt(task)
         const previousAttempt = getPreviousAttempt(task, currentAttempt?.attemptId)
-        const sourceText = source ? ` via ${source}` : ""
-        const failedSessionLine = previousAttempt?.sessionId ? `\n- Failed session: \`${previousAttempt.sessionId}\`` : ""
-        const failedModel = formatAttemptModelSummary(previousAttempt)
+        const sourceLine = source ? `\n- Source: ${formatInternalReminderData(source, 120)}` : ""
+        const failedSessionID = previousAttempt?.sessionId ?? previousSessionID
+        const failedSessionLine = failedSessionID ? `\n- Failed session: \`${failedSessionID}\`` : ""
+        const failedModel = formatAttemptModelSummary(previousAttempt) ?? retryFailedModel
         const failedModelLine = failedModel ? `\n- Failed model: \`${failedModel}\`` : ""
-        const failedErrorLine = previousAttempt?.error ? `\n- Error: ${previousAttempt.error}` : ""
+        const failedError = previousAttempt?.error ?? retryFailedError
+        const failedErrorLine = failedError ? `\n- Error: ${formatParentVisibleError(failedError)}` : ""
         const nextModel = formatAttemptModelSummary(currentAttempt)
-        retryingNotification = `<system-reminder>
+        retryingNotification = limitParentVisibleNotification(`<system-reminder>
 [BACKGROUND TASK RETRYING]
 **ID:** \`${task.id}\`
-**Description:** ${task.description}${sourceText}${failedSessionLine}${failedModelLine}${failedErrorLine}${nextModel ? `\n- Next model: \`${nextModel}\`` : ""}
+**Description:** ${formatInternalReminderData(task.description)}${sourceLine}${failedSessionLine}${failedModelLine}${failedErrorLine}${nextModel ? `\n- Next model: \`${nextModel}\`` : ""}
 
-The task was re-queued on a fallback model after a retryable failure.
-</system-reminder>`
+The task is retrying on a fallback model after a retryable failure.
+</system-reminder>`)
       },
     })
+    this.rememberFallbackRetryResult(previousSessionID, result)
     const retried = await result
     if (retried && retryingNotification) {
       const parentPromptContext = await this.resolveParentWakePromptContext(task)
@@ -2191,7 +2532,7 @@ The task was re-queued on a fallback model after a retryable failure.
         PENDING_PARENT_WAKE_DEBOUNCE_MS,
       )
     }
-    if (retried && previousSessionID) {
+    if (retried && previousSessionID && task.sessionId !== previousSessionID) {
       this.clearSessionOutputObserved(previousSessionID)
       this.clearSessionTodoObservation(previousSessionID)
       clearDelegatedChildSessionBootstrap(previousSessionID)
@@ -2233,30 +2574,43 @@ The task was re-queued on a fallback model after a retryable failure.
   }
 
   /**
-   * Validates that a session has actual assistant/tool output before marking complete.
+   * Classifies assistant/tool output before marking complete.
    * Prevents premature completion when session.idle fires before agent responds.
    */
-  private async validateSessionHasOutput(sessionID: string): Promise<boolean> {
-    if (this.observedOutputSessions.has(sessionID)) {
-      return true
-    }
-
+  private async classifySessionOutput(
+    sessionID: string,
+    context: SessionOutputClassificationContext = {},
+  ): Promise<SessionOutputClassification> {
     try {
       const response = await messagesInDirectory(this.client, {
         path: { id: sessionID },
       }, this.directory)
 
-      const messages = normalizeSDKResponse(response, [] as Array<{ info?: { role?: string } }>, { preferResponseOnMissingData: true })
+      const messages = normalizeSDKResponse(response, EMPTY_SESSION_MESSAGES, { preferResponseOnMissingData: true })
+
+      const latestAssistantMessage = getLatestAssistantMessage(messages)
+      if (latestAssistantMessage && latestAssistantTurnIsIncomplete(latestAssistantMessage)) {
+        const terminalOrIdle = context.sessionStatusType === "idle"
+          || (context.sessionStatusType !== undefined && isTerminalSessionStatus(context.sessionStatusType))
+        if (terminalOrIdle && !sessionMessageHasToolEvidence(latestAssistantMessage)) {
+          log("[background-agent] Latest assistant turn is idle and incomplete, treating as no-output:", sessionID)
+          return "no-output"
+        }
+        log("[background-agent] Latest assistant turn is incomplete, waiting:", sessionID)
+        return "incomplete-latest-assistant"
+      }
 
       // Check for at least one assistant or tool message
       const hasAssistantOrToolMessage = messages.some(
-        (m: { info?: { role?: string } }) =>
-          m.info?.role === "assistant" || m.info?.role === "tool"
+        (message) => {
+          const role = getSessionMessageRole(message)
+          return role === "assistant" || role === "tool"
+        }
       )
 
       if (!hasAssistantOrToolMessage) {
         log("[background-agent] No assistant/tool messages found in session:", sessionID)
-        return false
+        return this.observedOutputSessions.has(sessionID) ? "ready" : "no-output"
       }
 
       // OpenCode API uses different part types than Anthropic's API:
@@ -2264,35 +2618,23 @@ The task was re-queued on a fallback model after a retryable failure.
       // - "tool" with .state.output property (tool call results)
       // - "text" with .text property (final text output)
       // - "step-start"/"step-finish" (metadata, no content)
-      type SessionPart = { type?: string; text?: string; content?: string | unknown[] }
-      type SessionMessage = { info?: { role?: string }; parts?: SessionPart[] }
-      const hasContent = messages.some((m: SessionMessage) => {
-        if (m.info?.role !== "assistant" && m.info?.role !== "tool") return false
-        const parts = m.parts ?? []
-      return parts.some((p: SessionPart) =>
-        // Text content (final output)
-        (p.type === "text" && p.text && p.text.trim().length > 0) ||
-        // Reasoning content (thinking blocks)
-        (p.type === "reasoning" && p.text && p.text.trim().length > 0) ||
-        // Tool calls (indicates work was done)
-        p.type === "tool" ||
-        // Tool results (output from executed tools) - important for tool-only tasks
-        (p.type === "tool_result" && p.content &&
-          (typeof p.content === "string" ? p.content.trim().length > 0 : p.content.length > 0))
-      )
+      const hasContent = messages.some((m) => {
+        const role = getSessionMessageRole(m)
+        if (role !== "assistant" && role !== "tool") return false
+        return sessionMessageHasMeaningfulOutput(m)
       })
 
       if (!hasContent) {
         log("[background-agent] Messages exist but no content found in session:", sessionID)
-        return false
+        return this.observedOutputSessions.has(sessionID) ? "ready" : "no-output"
       }
 
       this.markSessionOutputObserved(sessionID)
-      return true
+      return "ready"
     } catch (error) {
       log("[background-agent] Error validating session output:", error)
       // On error, allow completion to proceed (don't block indefinitely)
-      return true
+      return "ready"
     }
   }
 
@@ -2422,6 +2764,7 @@ The task was re-queued on a fallback model after a retryable failure.
         task.error = reason
       }
     }
+    this.clearFallbackRetryResultsForTask(task)
     if (wasRunning && task.rootSessionId) {
       this.unregisterRootDescendant(task.rootSessionId)
     }
@@ -2554,6 +2897,7 @@ The task was re-queued on a fallback model after a retryable failure.
         task.completedAt = new Date()
       }
       this.taskHistory.record(task.parentSessionId, { id: task.id, sessionID: task.sessionId, agent: task.agent, description: task.description, status: "completed", category: task.category, startedAt: task.startedAt, completedAt: task.completedAt })
+      this.clearFallbackRetryResultsForTask(task)
 
       if (task.rootSessionId) {
         this.unregisterRootDescendant(task.rootSessionId)
@@ -2568,6 +2912,14 @@ The task was re-queued on a fallback model after a retryable failure.
       }
 
       this.markForNotification(task)
+      // Schedule removal directly rather than relying on notifyParentSession's
+      // tail call. If the notification chain throws before reaching that tail
+      // (e.g. from the unprotected setup region at the top of notifyParentSession,
+      // the toast manager, or the notification text builder), the task would be
+      // pinned in both `tasks` and `notifications` maps forever by the prune trap
+      // at task-poller.ts:47. This mirrors the pattern used by
+      // handleSessionErrorEvent / cancelTask / failCrashedTask.
+      this.scheduleTaskRemoval(task.id)
 
       const idleTimer = this.idleDeferralTimers.get(task.id)
       if (idleTimer) {
@@ -2658,6 +3010,11 @@ The task was re-queued on a fallback model after a retryable failure.
       allComplete = remainingCount === 0
     }
 
+    const activeTaskCountForParent = Array.from(this.tasks.values())
+      .filter(t => t.parentSessionId === task.parentSessionId && t.id !== task.id && (t.status === "running" || t.status === "pending"))
+      .length
+    const allTasksComplete = allComplete && activeTaskCountForParent === 0
+
     const completedTasks = allComplete
       ? (this.completedTaskSummaries.get(task.parentSessionId) ?? [{ id: task.id, description: task.description, status: task.status, error: task.error, attempts: cloneAttempts(task) }])
       : []
@@ -2678,7 +3035,8 @@ The task was re-queued on a fallback model after a retryable failure.
       duration,
       statusText,
       allComplete,
-      remainingCount,
+      allTasksComplete,
+      remainingCount: allTasksComplete ? remainingCount : activeTaskCountForParent,
       completedTasks,
     })
 
@@ -2885,6 +3243,7 @@ The task was re-queued on a fallback model after a retryable failure.
         task.status = "error"
         task.error = errorMessage
         task.completedAt = new Date()
+        this.clearFallbackRetryResultsForTask(task)
         if (!wasPending && task.rootSessionId) {
           this.unregisterRootDescendant(task.rootSessionId)
         }
@@ -2941,6 +3300,10 @@ The task was re-queued on a fallback model after a retryable failure.
       concurrencyManager: this.concurrencyManager,
       notifyParentSession: (task) => this.enqueueNotificationForParent(task.parentSessionId, () => this.notifyParentSession(task)),
       sessionStatuses: allStatuses,
+      onTaskInterrupted: (task) => {
+        this.clearFallbackRetryResultsForTask(task)
+        removeTaskToastTracking(task.id)
+      },
     })
   }
 
@@ -2956,6 +3319,7 @@ The task was re-queued on a fallback model after a retryable failure.
       task.error = errorMessage
       task.completedAt = new Date()
     }
+    this.clearFallbackRetryResultsForTask(task)
     if (task.rootSessionId) {
       this.unregisterRootDescendant(task.rootSessionId)
     }
@@ -3033,19 +3397,43 @@ The task was re-queued on a fallback model after a retryable failure.
 
         try {
           const sessionStatus = allStatuses?.[sessionID]
+          if (allStatuses !== undefined && sessionStatus?.type !== "retry") {
+            clearProviderAutoRetryDeferral(task)
+          }
           // Handle retry before checking running state
           if (sessionStatus?.type === "retry") {
-            const retryMessage = typeof (sessionStatus as { message?: string }).message === "string"
-              ? (sessionStatus as { message?: string }).message
+            const retryMessage = typeof sessionStatus.message === "string"
+              ? sessionStatus.message
               : undefined
-            const errorInfo = { name: "SessionRetry", message: retryMessage }
-            if (await this.tryFallbackRetry(task, errorInfo, "polling:session.status")) {
+            const retryStatusInfo: RetryStatusInfo = {
+              attempt: sessionStatus.attempt,
+              message: retryMessage,
+              next: sessionStatus.next,
+            }
+            const autoRetryDeferral = getProviderAutoRetryDeferral(task, retryStatusInfo)
+            if (autoRetryDeferral) {
+              log("[background-agent] polling session.status retry deferred to provider auto-retry", {
+                taskId: task.id,
+                sessionID,
+                retryAttempt: autoRetryDeferral.retryAttempt,
+                providerRetryAttemptsBeforeFallback: autoRetryDeferral.providerRetryAttemptsBeforeFallback,
+                retryMessage,
+              })
               continue
             }
+            const errorInfo = { name: "SessionRetry", message: retryMessage }
+            await this.handleSessionErrorEvent({
+              task,
+              errorInfo,
+              errorName: "SessionRetry",
+              errorMessage: retryMessage ?? "Session entered retry state and no fallback retry was available.",
+              source: "polling:session.status",
+            })
+            continue
           }
 
           // Only skip completion when session status is actively running.
-          // Unknown or terminal statuses (like "interrupted") fall through to completion.
+          // Unknown or terminal statuses still need output/todo validation before completion.
           if (sessionStatus && isActiveSessionStatus(sessionStatus.type)) {
             log("[background-agent] Session still running, relying on event-based progress:", {
               taskId: task.id,
@@ -3056,12 +3444,7 @@ The task was re-queued on a fallback model after a retryable failure.
             continue
           }
 
-          if (sessionStatus && isTerminalSessionStatus(sessionStatus.type)) {
-            await this.tryCompleteTask(task, `polling (terminal session status: ${sessionStatus.type})`)
-            continue
-          }
-
-          if (sessionStatus && sessionStatus.type !== "idle") {
+          if (sessionStatus && sessionStatus.type !== "idle" && !isTerminalSessionStatus(sessionStatus.type)) {
             log("[background-agent] Unknown session status, treating as potentially idle:", {
               taskId: task.id,
               sessionID,
@@ -3079,21 +3462,61 @@ The task was re-queued on a fallback model after a retryable failure.
             && (task.consecutiveMissedPolls ?? 0) >= MIN_SESSION_GONE_POLLS
           const completionSource = sessionStatus?.type === "idle"
             ? "polling (idle status)"
-            : "polling (session gone from status)"
-          const hasValidOutput = await this.validateSessionHasOutput(sessionID)
-          if (!hasValidOutput) {
-            if (sessionGoneThresholdReached) {
-              const sessionExists = await this.verifySessionExists(sessionID)
-              if (!sessionExists) {
-                log("[background-agent] Session no longer exists (crashed), marking task as error:", task.id)
-                await this.failCrashedTask(task, "Subagent session no longer exists (process likely crashed). The session disappeared without producing any output.")
+            : sessionStatus && isTerminalSessionStatus(sessionStatus.type)
+              ? `polling (terminal session status: ${sessionStatus.type})`
+              : "polling (session gone from status)"
+          const sessionOutput = await this.classifySessionOutput(sessionID, { sessionStatusType: sessionStatus?.type })
+          switch (sessionOutput) {
+            case "ready":
+              break
+            case "no-output": {
+              if (sessionGoneThresholdReached) {
+                const sessionExists = await this.verifySessionExists(sessionID)
+                if (!sessionExists) {
+                  log("[background-agent] Session no longer exists (crashed), marking task as error:", task.id)
+                  await this.failCrashedTask(task, "Subagent session no longer exists (process likely crashed). The session disappeared without producing any output.")
+                  continue
+                }
+
+                task.consecutiveMissedPolls = 0
+              }
+              if (sessionStatus?.type === "idle" || (sessionStatus && isTerminalSessionStatus(sessionStatus.type))) {
+                const retried = await this.tryNoOutputIdleFallback(task, `polling:session.${sessionStatus.type} no-output`)
+                if (retried) {
+                  log("[background-agent] Polling no-output fallback retry started:", task.id)
+                  continue
+                }
+                await this.failNoOutputTask(task, `polling:session.${sessionStatus.type} no-output`)
                 continue
               }
-
-              task.consecutiveMissedPolls = 0
+              log("[background-agent] Polling idle/gone but no output yet, waiting:", task.id)
+              continue
             }
-            log("[background-agent] Polling idle/gone but no valid output yet, waiting:", task.id)
-            continue
+            case "incomplete-latest-assistant": {
+              if (sessionGoneThresholdReached) {
+                const sessionExists = await this.verifySessionExists(sessionID)
+                if (!sessionExists) {
+                  log("[background-agent] Session no longer exists (crashed), marking task as error:", task.id)
+                  await this.failCrashedTask(task, "Subagent session no longer exists (process likely crashed) while the latest assistant turn was incomplete.")
+                  continue
+                }
+
+                task.consecutiveMissedPolls = 0
+              }
+              if (sessionStatus?.type === "idle" || (sessionStatus && isTerminalSessionStatus(sessionStatus.type))) {
+                const retried = await this.tryNoOutputIdleFallback(task, `polling:session.${sessionStatus.type} incomplete-latest-assistant`)
+                if (retried) {
+                  log("[background-agent] Polling incomplete-latest-assistant fallback retry started:", task.id)
+                  continue
+                }
+              }
+              log("[background-agent] Polling found incomplete latest assistant turn, waiting:", task.id)
+              continue
+            }
+            default: {
+              const exhaustive: never = sessionOutput
+              return exhaustive
+            }
           }
 
           // Re-check status after async operation
@@ -3206,6 +3629,12 @@ The task was re-queued on a fallback model after a retryable failure.
     this.pendingNotifications.clear()
     this.pendingByParent.clear()
     this.notificationQueueByParent.clear()
+    for (const record of this.fallbackRetryResultsBySession.values()) {
+      if (record.cleanupTimer) {
+        clearTimeout(record.cleanupTimer)
+      }
+    }
+    this.fallbackRetryResultsBySession.clear()
     this.rootDescendantCounts.clear()
     this.queuesByKey.clear()
     this.processingKeys.clear()

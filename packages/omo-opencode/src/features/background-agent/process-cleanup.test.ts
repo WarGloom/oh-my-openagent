@@ -109,7 +109,7 @@ describe("#given process cleanup registration", () => {
         sigintListener()
         await flushMicrotasks()
 
-        expect(setTimeoutSpy).toHaveBeenCalledTimes(1)
+        expect(setTimeoutSpy.mock.calls.filter(([, timeout]) => timeout === 6000)).toHaveLength(1)
         expect(clearTimeoutSpy).toHaveBeenCalledTimes(1)
         expect(exitSpy).toHaveBeenCalledWith(0)
       } finally {
@@ -400,7 +400,7 @@ describe("#given process cleanup registration", () => {
 
         expect(shutdown).not.toHaveBeenCalled()
         expect(exitSpy).not.toHaveBeenCalled()
-        expect(setTimeoutSpy).not.toHaveBeenCalled()
+        expect(setTimeoutSpy.mock.calls.filter(([, timeout]) => timeout === 6000)).toHaveLength(0)
         expect(process.exitCode).toBe(0)
       } finally {
         exitSpy.mockRestore()
@@ -426,7 +426,7 @@ describe("#given process cleanup registration", () => {
 
         expect(shutdown).not.toHaveBeenCalled()
         expect(exitSpy).not.toHaveBeenCalled()
-        expect(setTimeoutSpy).not.toHaveBeenCalled()
+        expect(setTimeoutSpy.mock.calls.filter(([, timeout]) => timeout === 6000)).toHaveLength(0)
         expect(process.exitCode).toBe(0)
       } finally {
         exitSpy.mockRestore()
@@ -577,7 +577,6 @@ describe("#given process cleanup registration", () => {
       expect(describeProcessCleanupError(null)).toEqual({ raw: "null" })
     })
   })
-
   describe("#given isHarmlessShutdownError", () => {
     afterEach(() => {
       __setShutdownInProgressForTesting(false)

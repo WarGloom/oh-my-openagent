@@ -1,3 +1,5 @@
+/// <reference path="../../../../../bun-test.d.ts" />
+
 import { describe, test, expect, beforeEach, afterEach } from "bun:test"
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs"
 import { join } from "node:path"
@@ -281,6 +283,33 @@ describe("resolvePromptContextFromSessionMessages", () => {
       agent: "atlas",
       model: { providerID: "anthropic", modelID: "claude-opus-4-1" },
       tools: { bash: true },
+    })
+  })
+
+  test("preserves top-level SDK message variant in prompt context", () => {
+    // given
+    const messages = [
+      {
+        info: {
+          agent: "Prometheus - Plan Builder",
+          providerID: "anthropic",
+          modelID: "claude-opus-4-8",
+          variant: "max",
+        },
+      },
+    ]
+
+    // when
+    const result = resolvePromptContextFromSessionMessages(messages)
+
+    // then
+    expect(result).toEqual({
+      agent: "Prometheus - Plan Builder",
+      model: {
+        providerID: "anthropic",
+        modelID: "claude-opus-4-8",
+        variant: "max",
+      },
     })
   })
 

@@ -1,6 +1,11 @@
 import { log } from "../../shared"
 import { isSessionActive as isOpenCodeSessionActive, settleAfterSessionIdle } from "../../hooks/shared/session-idle-settle"
-import { isFailureParentWake, isRedundantParentWake, type PendingParentWake } from "./parent-wake-dedupe"
+import {
+  isBackgroundTaskRetryNotification,
+  isFailureParentWake,
+  isRedundantParentWake,
+  type PendingParentWake,
+} from "./parent-wake-dedupe"
 import type { ParentWakeDispatchedTracker } from "./parent-wake-dispatched-tracker"
 import type { ParentWakePendingQueue } from "./parent-wake-pending-queue"
 import { sendParentWakePrompt } from "./parent-wake-prompt-dispatch"
@@ -50,6 +55,24 @@ export class ParentWakeFlushRunner {
     const emptyAssistantTurnRetry = latestWake.allowEmptyAssistantTurnRetry === true
     const forceDispatchAfterActiveDefer = sessionActive && this.shouldForceDispatchAfterActiveDefer(latestWake)
     if (sessionActive && !forceDispatchAfterActiveDefer) {
+      if (!latestWake.shouldReply && wakeHasRetryNotification(latestWake)) {
+        this.deps.pendingQueue.deleteWake(sessionID)
+        log("[background-agent] Dropped retry parent wake because parent session is active:", {
+          sessionID,
+        })
+        return
+      }
+      if (!latestWake.shouldReply) {
+        await this.sendParentWakePrompt(sessionID, latestWake, {
+          emptyAssistantTurnRetry: false,
+          toolWaitDecision: { defer: false, skipPromptGateToolStateCheck: true },
+          forceNoReply: true,
+        })
+        log("[background-agent] Recorded admit-only parent wake because parent session is active:", {
+          sessionID,
+        })
+        return
+      }
       this.schedulePendingParentWakeFlush(sessionID)
       log("[background-agent] Deferred parent wake because parent session is active:", {
         sessionID,
@@ -78,6 +101,13 @@ export class ParentWakeFlushRunner {
 
     const toolWaitDecision = await this.shouldDeferParentWakeForSessionHistory(sessionID, latestWake)
     if (toolWaitDecision.defer) {
+      if (!latestWake.shouldReply && wakeHasRetryNotification(latestWake)) {
+        this.deps.pendingQueue.deleteWake(sessionID)
+        log("[background-agent] Dropped retry parent wake because latest assistant turn still blocks internal prompts:", {
+          sessionID,
+        })
+        return
+      }
       if (this.deferReplyWakeWhileUnsafe(sessionID, latestWake)) {
         return
       }
@@ -290,4 +320,8 @@ export class ParentWakeFlushRunner {
   private requeueWake(sessionID: string, latestWake: PendingParentWake): void {
     this.deps.pendingQueue.requeueWake(sessionID, latestWake)
   }
+}
+
+function wakeHasRetryNotification(wake: PendingParentWake): boolean {
+  return wake.notifications.some(isBackgroundTaskRetryNotification)
 }
