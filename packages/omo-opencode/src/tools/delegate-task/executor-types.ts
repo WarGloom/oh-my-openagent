@@ -46,5 +46,15 @@ export interface SessionMessage {
     providerID?: string
     variant?: string
   }
-  parts?: Array<{ type?: string; text?: string }>
+  parts?: Array<{
+    type?: string
+    text?: string
+    synthetic?: boolean
+    tool?: string
+    state?: {
+      status?: string
+      output?: string
+      error?: string
+    }
+  }>
 }

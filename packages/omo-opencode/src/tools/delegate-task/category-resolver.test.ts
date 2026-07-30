@@ -6,6 +6,7 @@ import type { DelegatedModelConfig } from "./types"
 import type { CategoryConfig } from "../../config/schema"
 import type { ExecutorContext } from "./executor-types"
 import * as connectedProvidersCache from "../../shared/connected-providers-cache"
+import { CATEGORY_MODEL_REQUIREMENTS } from "../../shared/model-requirements"
 import { unsafeTestValue } from "../../../../../test-support/unsafe-test-value"
 import { DEEP_LOW_CATEGORY_PROMPT_APPEND, DEEP_LOW_CATEGORY_PROMPT_APPEND_GPT } from "./openai-categories"
 
@@ -120,6 +121,7 @@ describe("resolveCategoryExecution", () => {
     expect(result.fallbackChain).toEqual([
       { providers: ["quotio"], model: "kimi-k2.5", variant: undefined },
       { providers: ["openai"], model: "gpt-5.5", variant: "high" },
+      ...CATEGORY_MODEL_REQUIREMENTS["deep-low"].fallbackChain,
     ])
   })
 
@@ -168,6 +170,66 @@ describe("resolveCategoryExecution", () => {
         thinking: undefined,
       },
     ])
+  })
+
+  test("keeps built-in GPT fallback when category fallback_models override omits OpenAI", async () => {
+    //#given
+    const cacheSpy = spyOn(connectedProvidersCache, "readProviderModelsCache").mockReturnValue({
+      models: {
+        "github-copilot": ["gemini-3.1-pro-preview"],
+        openai: ["gpt-6.1-sol"],
+        anthropic: ["claude-opus-4-8"],
+        opencode: ["qwen3.6-plus", "nemotron-3-super-free"],
+      },
+      connected: ["github-copilot", "openai", "anthropic", "opencode"],
+      updatedAt: "2026-06-01T00:00:00.000Z",
+    })
+    const agentsSpy = spyOn(connectedProvidersCache, "readConnectedProvidersCache").mockReturnValue([
+      "github-copilot",
+      "openai",
+      "anthropic",
+      "opencode",
+    ])
+    const args = {
+      category: "deep-low",
+      prompt: "test prompt",
+      description: "Test task",
+      run_in_background: true,
+      load_skills: [],
+      blockedBy: undefined,
+      enableSkillTools: false,
+    }
+    const executorCtx = createMockExecutorContext()
+    executorCtx.userCategories = {
+      "deep-low": {
+        model: "github-copilot/gemini-3.1-pro-preview",
+        variant: "high",
+        fallback_models: [
+          { model: "anthropic/claude-opus-4.8", variant: "max" },
+          { model: "opencode/qwen3.6-plus-free", variant: "high" },
+          { model: "github-copilot/claude-opus-4.8", variant: "max" },
+          { model: "opencode/nemotron-3-super-free", variant: "high" },
+        ],
+      },
+    }
+
+    //#when
+    const result = await resolveCategoryExecution(args, executorCtx, undefined, "anthropic/claude-sonnet-4-6")
+
+    //#then
+    expect(result.error).toBeUndefined()
+    expect(result.actualModel).toBe("github-copilot/gemini-3.1-pro-preview")
+    const gptIndex = result.fallbackChain?.findIndex(
+      (entry) => entry.providers.includes("openai") && entry.model === "gpt-6.1-sol",
+    )
+    const freeIndex = result.fallbackChain?.findIndex(
+      (entry) => entry.providers.includes("opencode") && entry.model === "qwen3.6-plus-free",
+    )
+    expect(gptIndex).toBeGreaterThan(-1)
+    expect(freeIndex).toBeGreaterThan(-1)
+    expect(freeIndex).toBeLessThan(gptIndex ?? Number.POSITIVE_INFINITY)
+    cacheSpy.mockRestore()
+    agentsSpy.mockRestore()
   })
 
   test("promotes object-style fallback model settings to categoryModel when fallback becomes initial model", async () => {
@@ -569,6 +631,44 @@ describe("resolveCategoryExecution", () => {
     expect(result.fallbackChain).toBeUndefined()
   })
 
+  test("uses sisyphus-junior fallback_models when its model override drives category routing", async () => {
+    //#given
+    const args = {
+      category: "quick",
+      prompt: "test prompt",
+      description: "Test task",
+      run_in_background: false,
+      load_skills: [],
+      blockedBy: undefined,
+      enableSkillTools: false,
+    }
+    const executorCtx = createMockExecutorContext()
+    executorCtx.sisyphusJuniorModel = "anthropic/claude-sonnet-4-6"
+    executorCtx.agentOverrides = {
+      "sisyphus-junior": {
+        model: "anthropic/claude-sonnet-4-6",
+        fallback_models: ["openai/gpt-5.5(high)"],
+      },
+    }
+
+    //#when
+    const result = await resolveCategoryExecution(args, executorCtx, undefined, "anthropic/claude-sonnet-4-6")
+
+    //#then
+    expect(result.error).toBeUndefined()
+    expect(result.actualModel).toBe("anthropic/claude-sonnet-4-6")
+    expect(result.categoryModel).toEqual({
+      providerID: "anthropic",
+      modelID: "claude-sonnet-4-6",
+      variant: "low",
+    })
+    expect(result.fallbackChain?.[0]).toEqual({
+      providers: ["openai"],
+      model: "gpt-5.5",
+      variant: "high",
+    })
+  })
+
   test("routes gpt-5.5 family models to the deep-low GPT append", async () => {
     //#given - the shipped family appends anchor the routing decision;
     //#given the resolver under test must not be reused as its own oracle
@@ -698,6 +798,42 @@ describe("resolveCategoryExecution", () => {
     //#then - the legacy family append carries the dynamic user payload
     expect(result.error).toBeUndefined()
     expect(result.categoryPromptAppend).toBe(`${DEEP_LOW_CATEGORY_PROMPT_APPEND}\n\n${userPromptAppend}`)
+  })
+
+  test("appends routine verification policy to custom category prompt append", async () => {
+    //#given
+    const args = {
+      category: "repo-check",
+      prompt: "test prompt",
+      description: "Test task",
+      run_in_background: false,
+      load_skills: [],
+      blockedBy: undefined,
+      enableSkillTools: false,
+    }
+    const executorCtx = createMockExecutorContext()
+    executorCtx.userCategories = {
+      "repo-check": {
+        model: "openai/gpt-5.4",
+        prompt_append: "CUSTOM_CATEGORY_INSTRUCTION_XYZ",
+      },
+    }
+
+    //#when
+    const result = await resolveCategoryExecution(args, executorCtx, undefined, "anthropic/claude-sonnet-4-6")
+
+    //#then
+    expect(result.error).toBeUndefined()
+    expect(result.actualModel).toBe("openai/gpt-5.4")
+    expect(result.categoryPromptAppend).toBeDefined()
+    const promptAppend = result.categoryPromptAppend ?? ""
+    expect(promptAppend).toContain("CUSTOM_CATEGORY_INSTRUCTION_XYZ")
+    expect(promptAppend).toContain("Routine Verification Routing")
+    expect(promptAppend).toContain('category="quick"')
+    expect(promptAppend).toContain("If quick verification fails")
+    expect(promptAppend.indexOf("CUSTOM_CATEGORY_INSTRUCTION_XYZ")).toBeLessThan(
+      promptAppend.indexOf("Routine Verification Routing"),
+    )
   })
 
   test("applyCategoryParams propagates category tools config (issue #5182)", () => {
