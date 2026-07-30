@@ -20,6 +20,7 @@ export async function registerSyncSessionSideEffects(input: {
   readonly categoryModel: DelegatedModelConfig | undefined
   readonly fallbackChain: import("../../shared/model-requirements").FallbackEntry[] | undefined
   readonly systemContent: string | undefined
+  readonly notifySessionCreated?: boolean
 }): Promise<void> {
   subagentSessions.add(input.sessionID)
   syncSubagentSessions.add(input.sessionID)
@@ -38,7 +39,7 @@ export async function registerSyncSessionSideEffects(input: {
     modelFallbackControllerAccessor: input.executorCtx.modelFallbackControllerAccessor,
   })
 
-  if (input.executorCtx.onSyncSessionCreated) {
+  if (input.notifySessionCreated !== false && input.executorCtx.onSyncSessionCreated) {
     log("[task] Invoking onSyncSessionCreated callback (fire-and-forget)", {
       sessionID: input.sessionID,
       parentID: input.parentContext.sessionID,

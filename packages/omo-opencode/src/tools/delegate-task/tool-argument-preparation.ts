@@ -1,10 +1,11 @@
 import type { DelegateTaskArgs, ToolContextWithMetadata } from "./types"
 import { SISYPHUS_JUNIOR_AGENT } from "./sisyphus-junior-agent"
 import { log } from "../../shared/logger"
+import { stripInternalInitiatorMarkers } from "../../shared/internal-initiator-marker"
 
 export async function prepareDelegateTaskArgs(args: Record<string, unknown>, ctx: ToolContextWithMetadata): Promise<DelegateTaskArgs> {
-  const category = typeof args.category === "string" ? args.category : undefined
-  const prompt = typeof args.prompt === "string" ? args.prompt : ""
+  let category = typeof args.category === "string" ? args.category : undefined
+  const prompt = stripInternalInitiatorMarkers(typeof args.prompt === "string" ? args.prompt : "")
   const originalSubagentType = typeof args.subagent_type === "string" ? args.subagent_type : undefined
   let subagentType = originalSubagentType
 

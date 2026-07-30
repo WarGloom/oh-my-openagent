@@ -1,0 +1,9 @@
+{
+  "passed": true,
+  "hostSessionCountBefore": 7200,
+  "hostSessionCountAfter": 7200,
+  "childAgent": "project-worker",
+  "taskSchemaType": "string",
+  "taskSchemaEnum": null,
+  "sandboxRemovedByExitTrap": true
+}

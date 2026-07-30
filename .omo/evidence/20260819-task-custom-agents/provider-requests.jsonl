@@ -1,0 +1,4 @@
+{"branch":"title","model":"gpt-5.4-nano","taskSchemaType":null,"taskSchemaEnum":null}
+{"branch":"parent-task","model":"gpt-fake","taskSchemaType":"string","taskSchemaEnum":null}
+{"branch":"project-agent-child","model":"gpt-fake","taskSchemaType":null,"taskSchemaEnum":null}
+{"branch":"parent-complete","model":"gpt-fake","taskSchemaType":"string","taskSchemaEnum":null}

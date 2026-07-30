@@ -656,6 +656,54 @@ describe("sisyphus-task", () => {
       expect(requireCapturedLaunchInput(launchInput).agent).toBe("Sisyphus-Junior")
     }, { timeout: 10000 })
 
+    test("category overrides stale plan subagent during tool execution", async () => {
+      //#given
+      const { createDelegateTask } = require("./tools")
+      const mockManager = {
+        launch: async (_input: unknown) => ({
+          id: "task-plan",
+          status: "pending",
+          description: "Plan handoff",
+          agent: "plan",
+          sessionID: "plan-session",
+        }),
+      }
+      const mockClient = {
+        app: { agents: async () => ({ data: [{ name: "plan", mode: "subagent" }] }) },
+        config: { get: async () => ({}) },
+        provider: { list: async () => ({ data: { connected: ["openai"] } }) },
+        model: { list: async () => ({ data: [{ provider: "openai", id: "gpt-5.3-codex" }] }) },
+        session: { messages: async () => ({ data: [] }) },
+      }
+      const tool = createDelegateTask({
+        manager: mockManager,
+        client: mockClient,
+        connectedProvidersOverride: TEST_CONNECTED_PROVIDERS,
+        availableModelsOverride: createTestAvailableModels(),
+      })
+      const toolContext = {
+        sessionID: "parent-session",
+        messageID: "parent-message",
+        agent: "sisyphus",
+        abort: new AbortController().signal,
+      }
+      const args = {
+        description: "Plan handoff",
+        prompt: "Formalize this plan",
+        category: "project_manager",
+        subagent_type: "plan",
+        run_in_background: true,
+        load_skills: [],
+      }
+
+      //#when
+      await tool.execute(args, toolContext)
+
+      //#then
+      expect(args.subagent_type).toBe("Sisyphus-Junior")
+      expect(args.category).toBe("project_manager")
+    }, { timeout: 10000 })
+
     test("proceeds without error when systemDefaultModel is undefined", async () => {
       // given a mock client with no model in config
       const { createDelegateTask } = require("./tools")
@@ -2893,6 +2941,7 @@ describe("sisyphus-task", () => {
       // given - custom category with is_unstable_agent=true but non-gemini model
       const { createDelegateTask } = require("./tools")
       let launchCalled = false
+      let launchInput: unknown
       
       const launchedTask = {
         id: "task-custom-unstable",
@@ -2902,8 +2951,9 @@ describe("sisyphus-task", () => {
         status: "running",
       }
       const mockManager = {
-        launch: async () => {
+        launch: async (input: unknown) => {
           launchCalled = true
+          launchInput = input
           return launchedTask
         },
         getTask: () => launchedTask,
@@ -2932,6 +2982,7 @@ describe("sisyphus-task", () => {
         userCategories: {
           "my-unstable-cat": {
             model: "openai/gpt-5.5",
+            fallback_models: ["anthropic/claude-haiku-4-5", "github-copilot/claude-haiku-4.5(high)"],
             is_unstable_agent: true,
           },
         },
@@ -2958,6 +3009,12 @@ describe("sisyphus-task", () => {
       
       // then - should launch as background BUT wait for and return actual result
       expect(launchCalled).toBe(true)
+      expect(launchInput).toMatchObject({
+        fallbackChain: [
+          { providers: ["anthropic"], model: "claude-haiku-4-5", variant: undefined },
+          { providers: ["github-copilot"], model: "claude-haiku-4.5", variant: "high" },
+        ],
+      })
       expect(result).toContain("SUPERVISED TASK COMPLETED")
       expect(result).toContain("custom-unstable-result-sentinel")
     }, { timeout: 20000 })
@@ -3582,7 +3639,8 @@ describe("sisyphus-task", () => {
       const result = buildSystemContent({ skillContent, categoryPromptAppend: undefined })
 
       // then
-      expect(result).toBe(skillContent)
+      expect(result).toContain(skillContent)
+      expect(result).not.toContain("<serena_navigation>")
     })
 
     test("returns category promptAppend only when no skills", () => {
@@ -3594,7 +3652,8 @@ describe("sisyphus-task", () => {
       const result = buildSystemContent({ skillContent: undefined, categoryPromptAppend })
 
       // then
-      expect(result).toBe(categoryPromptAppend)
+      expect(result).toContain(categoryPromptAppend)
+      expect(result).not.toContain("<serena_navigation>")
     })
 
     test("combines skill content and category promptAppend with separator", () => {
@@ -3643,7 +3702,8 @@ describe("sisyphus-task", () => {
       // category is listed and the excluded skill is absent
       expect(result).toContain("`deep`")
       expect(result).not.toContain("prompt-engineer")
-      expect(result).toBe(buildPlanAgentSystemPrepend(availableCategories, availableSkills))
+      expect(result).toContain(buildPlanAgentSystemPrepend(availableCategories, availableSkills))
+      expect(result).not.toContain("<serena_navigation>")
     })
 
     test("does not prepend plan agent prompt for prometheus agent", () => {
@@ -3722,7 +3782,8 @@ describe("sisyphus-task", () => {
       const result = buildSystemContent({ skillContent, agentName: "oracle" })
 
       // then
-      expect(result).toBe(skillContent)
+      expect(result).toContain(skillContent)
+      expect(result).not.toContain("<serena_navigation>")
       expect(result).not.toContain("<system>")
     })
 
@@ -3735,7 +3796,8 @@ describe("sisyphus-task", () => {
       const result = buildSystemContent({ skillContent, agentName: undefined })
 
       // then
-      expect(result).toBe(skillContent)
+      expect(result).toContain(skillContent)
+      expect(result).not.toContain("<serena_navigation>")
       expect(result).not.toContain("<system>")
     })
   })
@@ -3994,8 +4056,8 @@ describe("sisyphus-task", () => {
       )
       
       //#then
-      expect(result).toContain("plan-family")
-      expect(result).toContain("directly")
+      expect(result).toContain("OpenCode runtime plan agent is disabled")
+      expect(result).toContain("metis")
     })
 
     test("prometheus cannot delegate to plan (cross-blocking)", async () => {
@@ -4015,7 +4077,7 @@ describe("sisyphus-task", () => {
       )
       
       //#then
-      expect(result).toContain("plan-family")
+      expect(result).toContain("OpenCode runtime plan agent is disabled")
     })
 
     test("prometheus display name cannot delegate to plan (cross-blocking)", async () => {
@@ -4035,7 +4097,7 @@ describe("sisyphus-task", () => {
       )
 
       //#then
-      expect(result).toContain("plan-family")
+      expect(result).toContain("OpenCode runtime plan agent is disabled")
     })
 
     test("plan cannot delegate to prometheus even when it is exposed as a primary agent", async () => {
@@ -4058,7 +4120,7 @@ describe("sisyphus-task", () => {
       expect(result).toContain("plan-family")
     })
 
-    test("sisyphus CAN delegate to plan (not in plan family)", async () => {
+    test("sisyphus cannot delegate to the OpenCode runtime plan agent", async () => {
       //#given
       const { createDelegateTask } = require("./tools")
       const mockClient = {
@@ -4082,8 +4144,8 @@ describe("sisyphus-task", () => {
       )
       
       //#then
-      expect(result).not.toContain("plan-family")
-      expect(result).toContain("plan-created-sentinel")
+      expect(result).toContain("OpenCode runtime plan agent is disabled")
+      expect(result).not.toContain("Plan created")
     }, { timeout: 20000 })
   })
 
@@ -4480,8 +4542,8 @@ describe("sisyphus-task", () => {
   })
 
   describe("subagent task permission", () => {
-    test("plan subagent should have task permission enabled", async () => {
-      //#given - sisyphus delegates to plan agent
+    test("plan subagent is rejected before task permission setup", async () => {
+      //#given - sisyphus tries to delegate to plan agent
       const { createDelegateTask } = require("./tools")
       let promptBody: CapturedPromptBody = {}
       
@@ -4519,8 +4581,8 @@ describe("sisyphus-task", () => {
         abort: new AbortController().signal,
       }
       
-      //#when - sisyphus delegates to plan
-      await tool.execute(
+      //#when - sisyphus tries to delegate to plan
+      const result = await tool.execute(
         {
           description: "Test plan task permission",
           prompt: "Create a plan",
@@ -4531,8 +4593,9 @@ describe("sisyphus-task", () => {
         toolContext
       )
       
-      //#then - plan agent should have task permission
-      expect(promptBody.tools.task).toBe(true)
+      //#then - no plan session is created
+      expect(result).toContain("OpenCode runtime plan agent is disabled")
+      expect(promptBody).toBeUndefined()
     }, { timeout: 20000 })
 
     test("prometheus primary agent should not be callable via task", async () => {

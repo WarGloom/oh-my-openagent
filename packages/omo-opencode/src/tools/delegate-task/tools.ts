@@ -15,9 +15,13 @@ import {
 } from "./executor"
 import { prepareDelegateTaskArgs } from "./tool-argument-preparation"
 import { createDelegateTaskPresentation } from "./tool-description"
+import { BUILTIN_SUBAGENT_TYPES, isDirectSubagentTypeDisabled } from "./builtin-subagent-types"
+import { isPlanAgent } from "./constants"
 import type { AvailableSkill } from "../../agents/dynamic-agent-prompt-builder"
 import { mergeNativeSkillInfos, type NativeSkillEntry } from "../skill/native-skills"
 import type { SkillInfo } from "../skill/types"
+
+const RUNTIME_PLAN_AGENT_DISABLED_MESSAGE = `OpenCode runtime plan agent is disabled in OMO task routing. Use metis for pre-plan sanity, momus for saved .omo/plans/*.md review, oracle for hard architecture/debugging, or a category for execution.`
 
 async function loadNativeSkillEntries(
   nativeSkills: DelegateTaskToolOptions["nativeSkills"] | undefined,
@@ -58,28 +62,45 @@ export { resolveCategoryConfig } from "./categories"
 export type { SyncSessionCreatedEvent, DelegateTaskToolOptions, BuildSystemContentInput } from "./types"
 export { buildSystemContent, buildTaskPrompt } from "./prompt-builder"
 
-const delegateTaskArgsSchema = {
-  load_skills: tool.schema
-    .array(tool.schema.string())
+function buildSubagentTypeSchema(availableSubagentNames?: readonly string[]) {
+  const describe = "REQUIRED if category not provided. Do NOT provide both category and subagent_type."
+  if (!availableSubagentNames?.length) return tool.schema.string().optional().describe(describe)
+
+  const subagentNames = availableSubagentNames.filter((name) => !isPlanAgent(name) && !isDirectSubagentTypeDisabled(name))
+  const schemaSubagentNames = subagentNames.length > 0
+    ? subagentNames
+    : BUILTIN_SUBAGENT_TYPES.map((subagent) => subagent.name).filter((name) => !isPlanAgent(name) && !isDirectSubagentTypeDisabled(name))
+  return tool.schema
+    .enum(schemaSubagentNames as unknown as [string, ...string[]])
     .optional()
-    .describe("Skill names to inject. Optional; defaults to [] when omitted. Pass an explicit array (e.g. [\"git-master\"]) for skill-specific tasks."),
-  description: tool.schema.string().optional().describe("Short task description (3-5 words). Auto-generated from prompt if omitted."),
-  prompt: tool.schema.string().describe("Full detailed prompt for the agent"),
-  run_in_background: tool.schema
-    .boolean()
-    .optional()
-    .describe("Optional; defaults to false (sync). true=async (returns background task ID `bg_...` for background_output), false=sync (waits). Use true ONLY for parallel exploration; otherwise omit or pass false for task delegation."),
-  category: tool.schema.string().optional().describe("REQUIRED if subagent_type not provided. Do NOT provide both category and subagent_type."),
-  subagent_type: tool.schema.string().optional().describe("REQUIRED if category not provided. Do NOT provide both category and subagent_type."),
-  task_id: tool.schema
-    .string()
-    .optional()
-    .describe("Continuation session id (`ses_...`) from task metadata; not a background task id (`bg_...`)."),
-  command: tool.schema.string().optional().describe("The command that triggered this task"),
+    .describe(describe)
+}
+
+function buildDelegateTaskArgsSchema(availableSubagentNames?: readonly string[]) {
+  return {
+    load_skills: tool.schema
+      .array(tool.schema.string())
+      .optional()
+      .describe("Skill names to inject. Optional; defaults to [] when omitted. Pass an explicit array (e.g. [\"git-master\"]) for skill-specific tasks."),
+    description: tool.schema.string().optional().describe("Short task description (3-5 words). Auto-generated from prompt if omitted."),
+    prompt: tool.schema.string().describe("Full detailed prompt for the agent"),
+    run_in_background: tool.schema
+      .boolean()
+      .optional()
+      .describe("Optional; defaults to false (sync). true=async (returns background task ID `bg_...` for background_output), false=sync (waits). Use true ONLY for parallel exploration; otherwise omit or pass false for task delegation."),
+    category: tool.schema.string().optional().describe("REQUIRED if subagent_type not provided. Do NOT provide both category and subagent_type."),
+    subagent_type: buildSubagentTypeSchema(availableSubagentNames),
+    task_id: tool.schema
+      .string()
+      .optional()
+      .describe("Continuation session id (`ses_...`) from task metadata; not a background task id (`bg_...`)."),
+    command: tool.schema.string().optional().describe("The command that triggered this task"),
+  }
 }
 
 export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefinition {
   const { availableCategories, availableSkills, categoryExamples, description } = createDelegateTaskPresentation(options)
+  const delegateTaskArgsSchema = buildDelegateTaskArgsSchema(options.availableSubagentNames)
 
   return tool({
     description,
@@ -87,6 +108,10 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
     async execute(args, toolContext) {
       const ctx = toolContext as ToolContextWithMetadata
       const delegateTaskArgs = await prepareDelegateTaskArgs(args, ctx)
+
+      if (!delegateTaskArgs.category && isPlanAgent(delegateTaskArgs.subagent_type)) {
+        return RUNTIME_PLAN_AGENT_DISABLED_MESSAGE
+      }
 
       const runInBackground = delegateTaskArgs.run_in_background === true
 
@@ -196,7 +221,7 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
             availableSkills,
             nativeSkillInfos,
           })
-          return executeUnstableAgentTask(delegateTaskArgs, ctx, options, parentContext, agentToUse, categoryModel, systemContent, actualModel)
+          return executeUnstableAgentTask(delegateTaskArgs, ctx, options, parentContext, agentToUse, categoryModel, systemContent, actualModel, fallbackChain)
         }
       } else {
         const resolution = await resolveSubagentExecution(delegateTaskArgs, modelOptions, parentContext.agent, categoryExamples)

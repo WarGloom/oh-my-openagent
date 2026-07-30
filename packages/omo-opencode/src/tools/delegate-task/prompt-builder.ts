@@ -80,7 +80,7 @@ export function buildSystemContent(input: BuildSystemContentInput): string | und
   const effectiveMaxPromptTokens = maxPromptTokens
     ?? (usesFreeOrLocalModel(model) ? FREE_OR_LOCAL_PROMPT_TOKEN_LIMIT : undefined)
 
-  return buildSystemContentWithTokenLimit(
+  const content = buildSystemContentWithTokenLimit(
     {
       skillContent,
       skillContents,
@@ -90,6 +90,8 @@ export function buildSystemContent(input: BuildSystemContentInput): string | und
     },
     effectiveMaxPromptTokens
   )
+
+  return content
 }
 
 export function buildTaskPrompt(prompt: string, agentName: string | undefined, tddEnabled?: boolean): string {
