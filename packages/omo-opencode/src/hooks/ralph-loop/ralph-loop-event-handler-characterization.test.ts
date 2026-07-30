@@ -1,8 +1,12 @@
 /// <reference path="../../../../../bun-test.d.ts" />
 
 import { afterEach, describe, expect, test } from "bun:test"
+import { existsSync, readFileSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { unsafeTestValue } from "../../../../../test-support/unsafe-test-value"
-import { releaseAllPromptAsyncReservationsForTesting, releasePromptAsyncReservation } from "../shared/prompt-async-gate"
+import { _flushForTesting, _resetLoggerForTesting, _setLoggerForTesting } from "../../shared/logger"
+import { dispatchInternalPrompt, releaseAllPromptAsyncReservationsForTesting, releasePromptAsyncReservation } from "../shared/prompt-async-gate"
 import { latestUserMessageIsInProgress } from "./event-handler-activity"
 import { createRalphLoopEventHandler } from "./ralph-loop-event-handler"
 import type { IterationCommitExpectation, RalphLoopState } from "./types"
@@ -204,5 +208,64 @@ describe("ralph-loop event handler characterization", () => {
 			{ iteration: 2, sessionID: "session-123" },
 		])
 		expect(state?.iteration).toBe(3)
+	})
+
+	test("#given a foreign reservation #when Ralph observes activity #then it preserves the reservation without mismatch log spam", async () => {
+		// given
+		const logPath = join(tmpdir(), `ralph-loop-foreign-reservation-${Date.now()}.log`)
+		_setLoggerForTesting({ filePath: logPath })
+		try {
+			const sessionID = "session-foreign-reservation"
+			const client = {
+				session: {
+					status: async () => ({ status: "idle" }),
+					messages: async () => ({ data: [] }),
+					promptAsync: async () => ({}),
+				},
+				tui: {
+					showToast: async () => ({}),
+				},
+			}
+			await dispatchInternalPrompt({
+				mode: "async",
+				client,
+				sessionID,
+				source: "background-agent-parent-wake",
+				input: { path: { id: sessionID }, body: { parts: [{ type: "text", text: "wake" }] } },
+				settleMs: 0,
+			})
+
+			const handler = createRalphLoopEventHandler(unsafeTestValue({ client }), {
+				directory: "/tmp/ralph-loop-event-handler-characterization",
+				apiTimeoutMs: 5000,
+				idleSettleMs: 0,
+				getTranscriptPath: () => undefined,
+				loopState: unsafeTestValue({}),
+			})
+
+			// when
+			await handler({
+				event: { type: "message.part.updated", properties: { sessionID } },
+			})
+			const next = await dispatchInternalPrompt({
+				mode: "async",
+				client,
+				sessionID,
+				source: "ralph-loop",
+				input: { path: { id: sessionID }, body: { parts: [{ type: "text", text: "continue" }] } },
+				settleMs: 0,
+				queueBehavior: "defer",
+			})
+			_flushForTesting()
+
+			// then
+			expect(next).toEqual({ status: "reserved", reservedBy: "background-agent-parent-wake" })
+			const logContents = existsSync(logPath) ? readFileSync(logPath, "utf8") : ""
+			expect(logContents).not.toContain("promptAsync reservation release skipped for different source")
+		} finally {
+			releaseAllPromptAsyncReservationsForTesting()
+			_resetLoggerForTesting()
+			rmSync(logPath, { force: true })
+		}
 	})
 })
