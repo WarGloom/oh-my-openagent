@@ -137,6 +137,39 @@ describe("createToolExecuteBeforeHandler", () => {
     expect(called).toBe(false)
   })
 
+  test("runs runtime fallback progress hook before downstream tool execution", async () => {
+    const callOrder: string[] = []
+    const ctx = {
+      client: {
+        session: {
+          messages: async () => ({ data: [] }),
+        },
+      },
+    }
+
+    const hooks = {
+      runtimeFallback: {
+        "tool.execute.before": async (_input: unknown, _output: unknown) => {
+          callOrder.push("runtimeFallback")
+        },
+      },
+      serenaNavigationGuard: {
+        "tool.execute.before": async (_input: unknown, _output: unknown) => {
+          callOrder.push("serena")
+        },
+      },
+    }
+
+    const handler = createToolExecuteBeforeHandler({ ctx, hooks })
+
+    await handler(
+      { tool: "grep", sessionID: "ses_guard", callID: "call_guard" },
+      { args: { pattern: "foo" } as Record<string, unknown> },
+    )
+
+    expect(callOrder).toEqual(["runtimeFallback", "serena"])
+  })
+
   test("runs compaction todo preserver before hook for todowrite", async () => {
     //#given
     let called = false
@@ -226,6 +259,21 @@ describe("createToolExecuteBeforeHandler", () => {
 
       //#then
       expect(output.args.subagent_type).toBe("sisyphus-junior")
+    })
+
+    test("routes stale category plus plan subagent through category", async () => {
+      //#given
+      const ctx = createCtxWithSessionMessages()
+      const handler = createToolExecuteBeforeHandler({ ctx, hooks: emptyHooks })
+      const input = { tool: "task", sessionID: "ses_123", callID: "call_1" }
+      const output = { args: { category: "project_manager", subagent_type: "plan", description: "Plan handoff" } as Record<string, unknown> }
+
+      //#when
+      await handler(input, output)
+
+      //#then
+      expect(output.args.subagent_type).toBe("sisyphus-junior")
+      expect(output.args.category).toBe("project_manager")
     })
 
     test("resolves subagent_type from session first message when task_id is provided without subagent_type", async () => {

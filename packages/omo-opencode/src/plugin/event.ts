@@ -4,6 +4,7 @@ import type { CreatedHooks } from "../create-hooks";
 import type { Managers } from "../create-managers";
 import type { PluginContext } from "./types";
 
+import { isActiveSessionStatus } from "../features/background-agent/session-status-classifier";
 import { getMainSessionID, subagentSessions, syncSubagentSessions } from "../features/claude-code-session-state";
 import { invalidateContextWindowUsageCache } from "../shared/dynamic-truncator";
 import { resolveSessionEventID } from "../shared/event-session-id";
@@ -112,6 +113,7 @@ export function createEventHandler(args: {
       dedupWindowMs,
     });
     const syntheticIdle = normalizeSessionStatusToIdle(input) as EventInput | undefined;
+    let idleOnlyHooksDispatched = false;
 
     if (input.event.type === "session.idle") {
       const sessionID = getEventSessionID(input);
@@ -121,6 +123,8 @@ export function createEventHandler(args: {
         const emittedAt = recentSyntheticIdles.get(sessionID);
         if (emittedAt !== undefined && now - emittedAt < dedupWindowMs) recentSyntheticIdles.delete(sessionID);
       }
+      await dispatchIdleOnlyHooks(input);
+      idleOnlyHooksDispatched = true;
       if (sessionID) {
         const now = Date.now();
         recentRealIdles.set(sessionID, now);
@@ -172,7 +176,7 @@ export function createEventHandler(args: {
       if (sessionID) {
         await dispatchOpenClawSessionEvent({ pluginConfig, pluginContext, managers, rawEvent: event.type, sessionID });
       }
-      await dispatchIdleOnlyHooks(input);
+      if (!idleOnlyHooksDispatched) await dispatchIdleOnlyHooks(input);
       await Promise.resolve().then(() => managers.monitorManager?.handleEvent({
         type: "session.idle",
         sessionId: resolveSessionEventID(props) ?? "",
@@ -207,6 +211,13 @@ export function createEventHandler(args: {
     if (event.type === "session.status") {
       const sessionID = resolveSessionEventID(props);
       const status = props?.status as { type?: string; attempt?: number; message?: string; next?: number } | undefined;
+      if (
+        teamHandlers.teamMemberStatusHandler
+        && status?.type
+        && isActiveSessionStatus(status.type)
+      ) {
+        await runEventHookSafely("teamMemberStatusHandler", teamHandlers.teamMemberStatusHandler, input);
+      }
       if (sessionID) {
         try {
           if (await modelFallbackHandler.handleSessionStatus({ sessionID, status })) return;

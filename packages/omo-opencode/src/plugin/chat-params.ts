@@ -1,6 +1,6 @@
 import { isRecord } from "@oh-my-opencode/utils"
 import { getSessionPromptParams } from "../shared/session-prompt-params-state"
-import { getModelCapabilities, log, resolveCompatibleModelSettings } from "../shared"
+import { getModelCapabilities, isProviderUsingOAuth, log, resolveCompatibleModelSettings } from "../shared"
 
 const SAFE_MAX_OUTPUT_TOKENS_FALLBACK = 4096
 
@@ -24,7 +24,57 @@ export type ChatParamsOutput = {
   options: Record<string, unknown>
 }
 
+type ExperimentalAnthropicAdvisorConfig = {
+  enabled?: boolean
+  advisor_model?: string
+  max_uses?: number
+  caching_ttl?: "5m" | "1h"
+  agents?: string[]
+  executor_models?: string[]
+}
 
+const DEFAULT_ADVISOR_MODEL = "claude-opus-4-7"
+const DEFAULT_EXECUTOR_PATTERNS = [
+  "claude-haiku-4-5",
+  "claude-sonnet-4-6",
+  "claude-opus-4-6",
+  "claude-opus-4-7",
+] as const
+
+function shouldDisableAnthropicThinking(providerID: string): boolean {
+  return providerID === "anthropic" && isProviderUsingOAuth(providerID)
+}
+
+function stripProviderPrefix(modelID: string): string {
+  const parts = modelID.split("/")
+  return parts.length > 1 ? parts.slice(1).join("/") : modelID
+}
+
+function shouldEnableAnthropicAdvisor(
+  input: ChatParamsInput,
+  config: ExperimentalAnthropicAdvisorConfig | undefined,
+): boolean {
+  if (!config) return false
+  if (config.enabled === false) return false
+  if (input.model.providerID !== "anthropic") return false
+  if (shouldDisableAnthropicThinking(input.model.providerID)) return false
+
+  if (config.agents?.length && !config.agents.includes(input.agent.name ?? "")) {
+    return false
+  }
+
+  const executorPatterns = config.executor_models?.length ? config.executor_models : DEFAULT_EXECUTOR_PATTERNS
+  const modelID = stripProviderPrefix(input.model.modelID)
+  return executorPatterns.some((pattern) => modelID.includes(stripProviderPrefix(pattern)))
+}
+
+function buildAnthropicAdvisorOptions(config: ExperimentalAnthropicAdvisorConfig): Record<string, unknown> {
+  return {
+    model: config.advisor_model ?? DEFAULT_ADVISOR_MODEL,
+    ...(config.max_uses !== undefined ? { maxUses: config.max_uses } : {}),
+    ...(config.caching_ttl ? { caching: { ttl: config.caching_ttl } } : {}),
+  }
+}
 
 function buildChatParamsInput(raw: unknown): ChatParamsHookInput | null {
   if (!isRecord(raw)) return null
@@ -80,9 +130,15 @@ function isChatParamsOutput(raw: unknown): raw is ChatParamsOutput {
   return isRecord(raw.options)
 }
 
-export function createChatParamsHandler(_args: {
+type ChatParamsHandlerArgs = {
+  anthropicEffort?: { "chat.params"?: (input: ChatParamsHookInput, output: ChatParamsOutput) => Promise<void> } | null
   client?: unknown
-} = {}): (input: unknown, output: unknown) => Promise<void> {
+  experimental?: {
+    anthropicAdvisor?: ExperimentalAnthropicAdvisorConfig
+  }
+}
+
+export function createChatParamsHandler(args: ChatParamsHandlerArgs = {}): (input: unknown, output: unknown) => Promise<void> {
   return async (input, output): Promise<void> => {
     const normalizedInput = buildChatParamsInput(input)
     if (!normalizedInput) return
@@ -186,6 +242,22 @@ export function createChatParamsHandler(_args: {
       } else {
         delete output.options.thinking
       }
+    }
+    if (output.options.thinking !== undefined && shouldDisableAnthropicThinking(normalizedInput.model.providerID)) {
+      delete output.options.thinking
+      log("chat-params: dropped thinking for anthropic oauth session", {
+        sessionID: normalizedInput.sessionID,
+        provider: normalizedInput.model.providerID,
+        model: normalizedInput.model.modelID,
+      })
+    }
+
+    if (
+      output.options.anthropicAdvisor === undefined
+      && shouldEnableAnthropicAdvisor(normalizedInput, args.experimental?.anthropicAdvisor)
+      && args.experimental?.anthropicAdvisor
+    ) {
+      output.options.anthropicAdvisor = buildAnthropicAdvisorOptions(args.experimental.anthropicAdvisor)
     }
   }
 }

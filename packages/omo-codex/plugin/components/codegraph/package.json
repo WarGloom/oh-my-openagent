@@ -14,7 +14,7 @@
 		"NOTICE"
 	],
 	"scripts": {
-		"build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && bun build src/serve.ts --target node --format esm --outfile dist/serve.js && bun build src/cli.ts --target node --format esm --outfile dist/cli.js",
+		"build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && bun build src/serve.ts --target node --format esm --outfile dist/serve.js && bun build src/cli.ts --target node --format esm --outfile dist/cli.js && node -e \"require('node:fs').chmodSync('dist/serve.js',0o644)\"",
 		"test": "bun test ./test",
 		"typecheck": "tsc --noEmit"
 	},

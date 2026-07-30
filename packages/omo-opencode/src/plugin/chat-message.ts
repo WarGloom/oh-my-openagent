@@ -123,11 +123,13 @@ export function createChatMessageHandler(args: {
 
     const storedMainSessionModel = getStoredMainSessionModel(
       input,
-      pluginConfig,
       isFirstMessage,
     )
     if (storedMainSessionModel) {
-      output.message.model = storedMainSessionModel
+      output.message.model = storedMainSessionModel.model
+      if (storedMainSessionModel.variant && output.message["variant"] === undefined) {
+        output.message["variant"] = storedMainSessionModel.variant
+      }
     }
 
     await runChatMessageHooks({

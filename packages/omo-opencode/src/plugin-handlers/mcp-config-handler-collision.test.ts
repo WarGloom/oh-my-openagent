@@ -138,4 +138,52 @@ describe("applyMcpConfig collision handling", () => {
       'warning: MCP server "sharedServer" from user config overrides Claude Code .mcp.json'
     )
   })
+
+  test("keeps user-configured MCP keys first while preserving collision winners", async () => {
+    //#given
+    const userMcp = {
+      sharedServer: { type: "remote", url: "https://user.example.com", enabled: true },
+      userOnly: { type: "remote", url: "https://user-only.example.com", enabled: true },
+    }
+
+    createBuiltinMcpsSpy.mockReturnValue({
+      builtinServer: { type: "remote", url: "https://builtin.example.com", enabled: true },
+    })
+
+    loadMcpConfigsSpy.mockResolvedValue({
+      servers: {
+        sharedServer: { type: "remote", url: "https://claude.example.com", enabled: true },
+        claudeOnly: { type: "remote", url: "https://claude-only.example.com", enabled: true },
+      },
+      loadedServers: [],
+    })
+
+    const config: Record<string, unknown> = { mcp: userMcp }
+    const pluginConfig = createPluginConfig()
+
+    //#when
+    const { applyMcpConfig } = await import("./mcp-config-handler")
+    await applyMcpConfig({
+      config,
+      ctx: TEST_CTX,
+      pluginConfig,
+      pluginComponents: {
+        ...EMPTY_PLUGIN_COMPONENTS,
+        mcpServers: {
+          pluginOnly: { type: "local", command: ["npx", "plugin-mcp"], enabled: true },
+        },
+      },
+    })
+
+    //#then
+    const mergedMcp = config.mcp as Record<string, Record<string, unknown>>
+    expect(Object.keys(mergedMcp)).toEqual([
+      "sharedServer",
+      "userOnly",
+      "builtinServer",
+      "claudeOnly",
+      "pluginOnly",
+    ])
+    expect(mergedMcp.sharedServer.url).toBe("https://user.example.com")
+  })
 })

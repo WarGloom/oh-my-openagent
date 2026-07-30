@@ -1,6 +1,10 @@
 /// <reference path="../../../../bun-test.d.ts" />
 import { describe, it, expect, afterEach, mock, spyOn } from "bun:test"
 import type { PluginInput } from "@opencode-ai/plugin"
+import { randomUUID } from "node:crypto"
+import { mkdtemp, mkdir, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import path from "node:path"
 
 import { createEventHandler, extractErrorMessage } from "./event"
 import { createChatMessageHandler } from "./chat-message"
@@ -8,6 +12,17 @@ import * as openclawRuntimeDispatch from "../openclaw/runtime-dispatch"
 import { _resetForTesting, setMainSession, subagentSessions } from "../features/claude-code-session-state"
 import { clearPendingModelFallback, createModelFallbackHook } from "../hooks/model-fallback/hook"
 import { getSessionPromptParams, setSessionPromptParams } from "../shared/session-prompt-params-state"
+import * as sharedTmuxOriginal from "../shared/tmux"
+import { TeamModeConfigSchema } from "../config/schema/team-mode"
+import type { TeamModeConfig } from "../config/schema/team-mode"
+import { sendMessage } from "../features/team-mode/team-mailbox/send"
+import { clearTeamSessionRegistry } from "../features/team-mode/team-session-registry"
+import { loadRuntimeState, saveRuntimeState } from "../features/team-mode/team-state-store/store"
+import type { RuntimeState } from "../features/team-mode/types"
+import { releaseAllPromptAsyncReservationsForTesting } from "../hooks/shared/prompt-async-gate"
+
+const sharedTmuxSnapshot = { ...sharedTmuxOriginal }
+const temporaryDirectories: string[] = []
 
 type EventInput = { event: { type: string; properties?: unknown } }
 type EventHandlerArgs = Parameters<typeof createEventHandler>[0]
@@ -143,9 +158,95 @@ async function flushMicrotasks(turns: number = 5): Promise<void> {
 	}
 }
 
-afterEach(() => {
+async function createTemporaryTeamBaseDir(): Promise<string> {
+	const baseDir = await mkdtemp(path.join(tmpdir(), "event-team-order-"))
+	temporaryDirectories.push(baseDir)
+	return baseDir
+}
+
+function createTeamRuntimeState(
+	teamRunId: string,
+	memberStatus: RuntimeState["members"][number]["status"] = "idle",
+): RuntimeState {
+	return {
+		version: 1,
+		teamRunId,
+		teamName: "team-alpha",
+		specSource: "project",
+		createdAt: 1,
+		status: "active",
+		leadSessionId: "lead-session",
+		members: [
+			{
+				name: "worker",
+				sessionId: "member-session",
+				agentType: "general-purpose",
+				status: memberStatus,
+				pendingInjectedMessageIds: [],
+			},
+		],
+		shutdownRequests: [],
+		bounds: {
+			maxMembers: 8,
+			maxParallelMembers: 4,
+			maxMessagesPerRun: 10000,
+			maxWallClockMinutes: 120,
+			maxMemberTurns: 500,
+		},
+	}
+}
+
+async function saveTeamRuntimeStatus(
+	teamRunId: string,
+	teamConfig: TeamModeConfig,
+	memberStatus: RuntimeState["members"][number]["status"],
+): Promise<void> {
+	await mkdir(path.join(teamConfig.base_dir ?? "", "runtime", teamRunId), { recursive: true })
+	await saveRuntimeState(createTeamRuntimeState(teamRunId, memberStatus), teamConfig)
+}
+
+async function loadTeamMemberStatus(
+	teamRunId: string,
+	teamConfig: TeamModeConfig,
+): Promise<RuntimeState["members"][number]["status"] | undefined> {
+	const runtimeState = await loadRuntimeState(teamRunId, teamConfig)
+	return runtimeState.members[0]?.status
+}
+
+function createTeamStatusEventHandler(
+	teamConfig: TeamModeConfig,
+	hooks: EventHandlerArgs["hooks"] = createEventHandlerHooks({}),
+): ReturnType<typeof createEventHandler> {
+	return createEventHandler({
+		ctx: asEventHandlerContext({
+			directory: "/tmp/project",
+			client: {
+				session: {
+					abort: async () => ({}),
+					prompt: async () => ({}),
+					promptAsync: async () => ({}),
+				},
+				tui: { showToast: async () => ({}) },
+			},
+		}),
+		pluginConfig: asPluginConfig({ team_mode: teamConfig }),
+		firstMessageVariantGate: {
+			markSessionCreated: () => {},
+			clear: () => {},
+		},
+		managers: createEventHandlerManagers(),
+		hooks,
+	})
+}
+
+afterEach(async () => {
 	mock.restore()
 	_resetForTesting()
+	clearTeamSessionRegistry()
+	releaseAllPromptAsyncReservationsForTesting()
+	await Promise.all(temporaryDirectories.splice(0).map(async (directoryPath) => {
+		await rm(directoryPath, { recursive: true, force: true })
+	}))
 })
 
 describe("event error extraction", () => {
@@ -416,6 +517,61 @@ describe("createEventHandler - idle deduplication", () => {
 		expect((dispatchCalls[0]?.event.properties as { sessionID?: string } | undefined)?.sessionID).toBe(sessionId)
 	})
 
+	it("#given unread team mail #when a member becomes idle #then the mailbox wake runs before continuation hooks", async () => {
+		const callOrder: string[] = []
+		const baseDir = await createTemporaryTeamBaseDir()
+		const teamConfig = TeamModeConfigSchema.parse({ base_dir: baseDir, enabled: true })
+		const teamRunId = randomUUID()
+		await mkdir(path.join(baseDir, "runtime", teamRunId), { recursive: true })
+		await saveRuntimeState(createTeamRuntimeState(teamRunId), teamConfig)
+		await sendMessage({
+			version: 1,
+			messageId: randomUUID(),
+			from: "lead",
+			to: "worker",
+			kind: "message",
+			body: "please continue",
+			timestamp: 100,
+		}, teamRunId, teamConfig, { isLead: true, activeMembers: ["worker"] })
+
+		const eventHandler = createEventHandler({
+			ctx: asEventHandlerContext({
+				directory: "/tmp/project",
+				client: {
+					session: {
+						promptAsync: async () => {
+							callOrder.push("teamIdleWakeHint")
+							return {}
+						},
+					},
+				},
+			}),
+			pluginConfig: asPluginConfig({ team_mode: teamConfig }),
+			firstMessageVariantGate: {
+				markSessionCreated: () => {},
+				clear: () => {},
+			},
+			managers: createEventHandlerManagers(),
+			hooks: createEventHandlerHooks({
+				todoContinuationEnforcer: {
+					handler: async (input: EventInput) => {
+						if (input.event.type === "session.idle") {
+							callOrder.push("todoContinuationEnforcer")
+						}
+					},
+				},
+			}),
+		})
+
+		await eventHandler(asEventHandlerInput({
+			event: {
+				type: "session.idle",
+				properties: { sessionID: "member-session" },
+			},
+		}))
+
+		expect(callOrder).toEqual(["teamIdleWakeHint", "todoContinuationEnforcer"])
+	})
 	it("keeps other session dedup state untouched when suppressing real-idle-after-synthetic-idle", async () => {
 		//#given
 		const originalDateNow = Date.now
@@ -515,7 +671,7 @@ describe("createEventHandler - idle deduplication", () => {
 			}))
 
 			//#then
-			expect(onEvent).toHaveBeenCalledTimes(1)
+			expect(onEvent).toHaveBeenCalledTimes(2)
 			expect(sessionNotification).toHaveBeenCalledTimes(1)
 
 			//#when
@@ -530,7 +686,7 @@ describe("createEventHandler - idle deduplication", () => {
 			}))
 
 			//#then
-			expect(onEvent).toHaveBeenCalledTimes(2)
+			expect(onEvent).toHaveBeenCalledTimes(3)
 			expect(sessionNotification).toHaveBeenCalledTimes(2)
 		} finally {
 			Date.now = originalDateNow
@@ -803,6 +959,89 @@ describe("createEventHandler - idle deduplication", () => {
 		expect(dispatchCalls.length).toBe(2)
 		expect(dispatchCalls[0].event.type).toBe("session.idle")
 		expect(dispatchCalls[1].event.type).toBe("session.idle")
+	})
+})
+
+describe("createEventHandler - Team member status ordering", () => {
+	it("persists running before duplicate retry model fallback returns early", async () => {
+		//#given
+		const baseDir = await createTemporaryTeamBaseDir()
+		const teamConfig = TeamModeConfigSchema.parse({ base_dir: baseDir, enabled: true })
+		const teamRunId = randomUUID()
+		await saveTeamRuntimeStatus(teamRunId, teamConfig, "idle")
+		const modelFallback = createModelFallbackHook()
+		const eventHandler = createTeamStatusEventHandler(teamConfig, createEventHandlerHooks({
+			modelFallback,
+			stopContinuationGuard: { isStopped: () => false },
+		}))
+		const retryEvent = asEventHandlerInput({
+			event: {
+				type: "session.status",
+				properties: {
+					sessionID: "member-session",
+					status: { type: "retry", attempt: 1, message: "fixture", next: 1 },
+				},
+			},
+		})
+		await eventHandler(retryEvent)
+		await saveTeamRuntimeStatus(teamRunId, teamConfig, "idle")
+
+		//#when
+		await eventHandler(retryEvent)
+
+		//#then
+		expect(await loadTeamMemberStatus(teamRunId, teamConfig)).toBe("running")
+	})
+
+	it("ends running after active idle active status flapping", async () => {
+		//#given
+		const baseDir = await createTemporaryTeamBaseDir()
+		const teamConfig = TeamModeConfigSchema.parse({ base_dir: baseDir, enabled: true })
+		const teamRunId = randomUUID()
+		await saveTeamRuntimeStatus(teamRunId, teamConfig, "idle")
+		const eventHandler = createTeamStatusEventHandler(teamConfig)
+
+		//#when
+		for (const statusType of ["busy", "idle", "running"] as const) {
+			await eventHandler(asEventHandlerInput({
+				event: {
+					type: "session.status",
+					properties: { sessionID: "member-session", status: { type: statusType } },
+				},
+			}))
+		}
+
+		//#then
+		expect(await loadTeamMemberStatus(teamRunId, teamConfig)).toBe("running")
+	})
+
+	it("does not apply the idle dedup window to repeated active statuses", async () => {
+		//#given
+		const originalDateNow = Date.now
+		Date.now = () => 40_000
+		const baseDir = await createTemporaryTeamBaseDir()
+		const teamConfig = TeamModeConfigSchema.parse({ base_dir: baseDir, enabled: true })
+		const teamRunId = randomUUID()
+		await saveTeamRuntimeStatus(teamRunId, teamConfig, "idle")
+		const eventHandler = createTeamStatusEventHandler(teamConfig)
+		const busyEvent = asEventHandlerInput({
+			event: {
+				type: "session.status",
+				properties: { sessionID: "member-session", status: { type: "busy" } },
+			},
+		})
+
+		try {
+			//#when
+			await eventHandler(busyEvent)
+			await saveTeamRuntimeStatus(teamRunId, teamConfig, "idle")
+			await eventHandler(busyEvent)
+
+			//#then
+			expect(await loadTeamMemberStatus(teamRunId, teamConfig)).toBe("running")
+		} finally {
+			Date.now = originalDateNow
+		}
 	})
 })
 

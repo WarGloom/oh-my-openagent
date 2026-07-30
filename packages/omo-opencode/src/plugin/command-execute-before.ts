@@ -11,6 +11,7 @@ type CommandExecuteBeforeInput = {
 
 type CommandExecuteBeforeOutput = {
   parts: Array<{ type: string; text?: string; [key: string]: unknown }>
+  message?: Record<string, unknown>
 }
 
 const NATIVE_GOAL_COMMAND_MARKER = "<omo-native-goal-command>"
