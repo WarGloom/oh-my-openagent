@@ -2,6 +2,7 @@ import type {
   AvailableCategory,
   AvailableSkill,
 } from "./dynamic-agent-prompt-types"
+import { ROUTINE_VERIFICATION_ROUTING_POLICY } from "../shared/routine-verification-routing-policy"
 
 function buildSkillsSection(skills: AvailableSkill[]): string {
   const builtinSkills = skills.filter((skill) => skill.location === "plugin")
@@ -75,6 +76,8 @@ export function buildCategorySkillsDelegationGuide(
 Each category is configured with a model optimized for that domain. Read the description to understand when to use it.
 
 ${categoryRows.join("\n")}
+
+${ROUTINE_VERIFICATION_ROUTING_POLICY}
 
 ${skillsSection}
 

@@ -653,4 +653,38 @@ describe("buildSisyphusJuniorPrompt", () => {
       cases.map(([, source]) => source),
     )
   })
+
+  test("all prompt variants forbid shell waits for background tasks", () => {
+    // given
+    const models = [
+      "openai/gpt-5.5",
+      "openai/gpt-5.4",
+      "openai/gpt-5.3-codex",
+      "openai/gpt-5",
+      "google/gemini-3-pro",
+      "moonshotai/kimi-k2.6",
+      "anthropic/claude-sonnet-4-6",
+    ]
+
+    for (const model of models) {
+      // when
+      const prompt = buildSisyphusJuniorPrompt(model, false)
+
+      // then
+      expect(prompt).toContain("shell `sleep`")
+      expect(prompt).toContain("`timeout`")
+      expect(prompt).toContain("polling loops")
+      expect(prompt).toContain("blocking commands")
+    }
+  })
+
+  test("GPT 5.5 prompt gates background output on all-complete notifications", () => {
+    // given
+    const prompt = buildSisyphusJuniorPrompt("openai/gpt-5.5", false)
+
+    // then
+    expect(prompt).toContain("all-complete notification")
+    expect(prompt).toContain("partial notifications")
+    expect(prompt).toContain("background_output")
+  })
 })

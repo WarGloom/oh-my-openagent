@@ -156,7 +156,7 @@ export function buildGeminiToolCallExamples(): string {
 **User**: "Look into why the tests are failing"
 **CORRECT**:
 \`\`\`
-→ Call Bash(command="npm test")  // see actual failures
+→ Call Bash(command="npm test", description="Run test suite")  // see actual failures
 → Call Read on failing test files
 → Call Read on source files under test
 → Report: "Tests fail because X. Root cause: Y. Proposed fix: Z."

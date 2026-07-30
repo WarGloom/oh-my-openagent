@@ -79,7 +79,7 @@ Exploration is cheap; assumption is expensive. Over-exploration is also failure.
 
 **Don't stop at the surface.** When uncertain whether to call a tool, call it. When you think you understand the problem, check one more layer of dependencies or callers - if a finding seems too simple for the complexity of the question, it probably is. Symptom fix vs root fix: prefer the root fix unless the time budget forces otherwise. Resolve prerequisite lookups before any action that depends on them.
 
-**Don't duplicate delegated searches.** Once you delegate exploration to background agents, do not search the same thing yourself. Do non-overlapping prep, or end your response and wait for the completion notification. Do not poll \`background_output\` on running tasks.
+**Don't duplicate delegated searches.** Once you delegate exploration to background agents, do not search the same thing yourself. Do non-overlapping prep, or end your response and wait for the all-complete notification. Do not collect after partial notifications that say sibling background tasks are still running. Do not poll \`background_output\` on running tasks. Never use shell \`sleep\`, \`timeout\`, polling loops, or blocking commands to wait for background tasks.
 
 **Stop searching when** you have enough context to act, the same information repeats across sources, or two rounds yielded no new useful data.
 
@@ -183,7 +183,7 @@ Each sub-agent prompt should include four fields:
 - **DOWNSTREAM**: how you will use the results.
 - **REQUEST**: what to find, what format to return, what to skip.
 
-**Background tasks.** Collect with background task IDs (\`bg_...\`) via \`background_output(task_id="bg_...")\` once they complete. Use continuation IDs (\`ses_...\`) only for \`task(task_id="ses_...")\` follow-ups. Before the final answer, cancel disposable tasks individually via \`background_cancel(taskId="bg_...")\`. Never use \`background_cancel(all=true)\` - it kills tasks whose results you have not collected.
+**Background tasks.** Collect with background task IDs (\`bg_...\`) via \`background_output(task_id="bg_...")\` after the all-complete notification. Use continuation IDs (\`ses_...\`) only for \`task(task_id="ses_...")\` follow-ups. If no independent work remains, end the response and wait for the all-complete system reminder. Do not collect after partial notifications that say sibling background tasks are still running. Never use shell \`sleep\`, \`timeout\`, polling loops, or blocking commands to wait for background tasks. Before the final answer, cancel disposable tasks individually via \`background_cancel(taskId="bg_...")\`. Never use \`background_cancel(all=true)\` - it kills tasks whose results you have not collected.
 
 **\`skill\`** loads specialized instruction packs. Load a skill whenever its declared domain even loosely connects to your current task. Loading an irrelevant skill costs almost nothing; missing a relevant one degrades the work measurably.
 

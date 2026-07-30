@@ -26,7 +26,7 @@ export function buildAntiPatternsSection(): string {
     '- **Testing**: Deleting failing tests to "pass"',
     "- **Search**: Firing agents for single-line typos or obvious syntax errors",
     "- **Debugging**: Shotgun debugging, random changes",
-    "- **Background Tasks**: Polling `background_output` on running tasks - end response and wait for notification",
+    "- **Background Tasks**: Polling `background_output`, collecting after partial notifications, shell `sleep`, `timeout`, wait loops, or blocking commands to wait for running tasks - end response and wait for the all-complete notification",
     "- **Delegation Duplication**: Delegating exploration to explore/librarian and then manually doing the same search yourself",
     "- **Oracle**: Delivering answer without collecting Oracle results",
   ]
@@ -147,9 +147,11 @@ Once you delegate exploration to explore/librarian agents, **DO NOT perform the 
 When you need the delegated results but they're not ready:
 
 1. **End your response** - do NOT continue with work that depends on those results
-2. **Wait for the completion notification** - the system will trigger your next turn
+2. **Wait for the all-complete notification** - the system will trigger your next turn after every sibling background task finishes
 3. **Then** collect results via \`background_output(task_id="bg_...")\`
-4. **Do NOT** impatiently re-search the same topics while waiting
+4. **Do NOT** use shell \`sleep\`, \`timeout\`, polling loops, or blocking commands to wait for background tasks
+5. **Do NOT** collect after partial notifications that say sibling background tasks are still running
+6. **Do NOT** impatiently re-search the same topics while waiting
 
 ### Why This Matters:
 
@@ -168,6 +170,7 @@ task(subagent_type="explore", run_in_background=true, ...)
 task(subagent_type="explore", run_in_background=true, ...)
 // Work on a different, unrelated file while they search
 // End your response and wait for the notification
+// Do not use shell sleep, timeout, polling loops, or blocking commands to wait
 \`\`\`
 </Anti_Duplication>`
 }

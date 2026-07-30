@@ -62,7 +62,7 @@ Before acting, survey the skills available in this system: scan their descriptio
 | explore agent | Need codebase patterns you don't have | `task(subagent_type="explore", load_skills=[], run_in_background=true, ...)` |
 | librarian agent | External library docs, OSS examples | `task(subagent_type="librarian", load_skills=[], run_in_background=true, ...)` |
 | oracle agent | Stuck on architecture/debugging after 2+ attempts | `task(subagent_type="oracle", load_skills=[], run_in_background=false, ...)` |
-| plan agent | Discovery leaves unresolved design uncertainty: unclear boundaries, competing decompositions, or uncertain dependency order | `task(subagent_type="plan", load_skills=[], run_in_background=false, ...)` |
+| metis / momus / oracle | OMO-native planning sanity, saved-plan review, or hard architecture/debugging | `task(subagent_type="metis", load_skills=[], run_in_background=false, ...)` |
 | task category | Specialized work matching a category | `task(category="...", load_skills=[...], run_in_background=true)` |
 
 <tool_usage_rules>
@@ -97,10 +97,14 @@ deep_context = background_output(task_id=...)
 // Merge ALL findings for comprehensive understanding
 ```
 
-**Plan agent (size by what is UNDECIDED, not by step count):**
+**OMO-native planning review (size by what is UNDECIDED, not by step count):**
 - Invoke only when open design decisions remain after context gathering — unclear boundaries, several viable decompositions, or a multi-file build whose dependency order is not obvious. A known procedure, however many steps, and work you are delegating to another session never justify it.
 - Invoke AFTER gathering context from both tracks.
-- Then execute in the plan's exact wave order + parallel grouping and run the verification it specifies.
+- Use Metis when scope/order/verification needs sanity before implementation
+- Use Momus only for saved `.omo/plans/*.md` review
+- Use Oracle for hard architecture/debugging uncertainty
+- Then execute in the review's exact wave order + parallel grouping and run the verification it specifies.
+- Do not invoke OpenCode runtime `plan` from OMO prompt paths
 
 **Execute:**
 - Surgical, minimal changes matching existing patterns

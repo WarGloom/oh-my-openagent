@@ -313,11 +313,12 @@ Background result collection:
 2. Continue only with non-overlapping work
    - If you have DIFFERENT independent work → do it now
    - Otherwise → **END YOUR RESPONSE.**
-3. **STOP. END YOUR RESPONSE.** The system will send \`<system-reminder>\` when tasks complete.
-4. On receiving \`<system-reminder>\` → collect results via \`background_output(task_id="bg_...")\`
-5. **NEVER call \`background_output\` before receiving \`<system-reminder>\`.** This is a BLOCKING anti-pattern.
-6. Cancel disposable tasks individually via \`background_cancel(taskId="...")\`
-7. Use \`task(task_id="ses_...")\` only to continue the same sub-agent session
+3. **STOP. END YOUR RESPONSE.** The system may send partial reminders while sibling background tasks are still running.
+4. Collect results via \`background_output(task_id="bg_...")\` only after the all-complete \`<system-reminder>\` says every sibling background task has finished.
+5. **NEVER call \`background_output\` after launch or after a partial reminder.** This is a BLOCKING anti-pattern.
+6. **NEVER use shell \`sleep\`, \`timeout\`, polling loops, or blocking commands to wait for background tasks.** If no independent work remains, end the response and wait for the all-complete system reminder.
+7. Cancel disposable tasks individually via \`background_cancel(taskId="...")\`
+8. Use \`task(task_id="ses_...")\` only to continue the same sub-agent session
 
 ${buildAntiDuplicationSection()}
 
@@ -334,7 +335,7 @@ Every implementation task follows this cycle. No exceptions.
    Follow \`<explore>\` protocol for tool usage and agent prompts.
 
 2. PLAN - List files to modify, specific changes, dependencies, complexity estimate.
-   Multi-step (2+) → consult Plan Agent via \`task(subagent_type="plan", ...)\`.
+   Multi-step (2+) → use OMO-native planning/review agents: \`metis\` for scope sanity, \`momus\` for saved-plan review, \`oracle\` for hard architecture/debugging. Full plan creation belongs to Prometheus primary planner; never call runtime \`plan\`.
    Single-step → mental plan is sufficient.
 
    <dependency_checks>

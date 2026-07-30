@@ -191,16 +191,17 @@ export function buildNonClaudePlannerSection(model: string): string {
     return ""
   }
 
-  return `### Plan Agent Dependency (Non-Claude)
+  return `### OMO-Native Planner Dependency (Non-Claude)
 
-Multi-step task? **ALWAYS consult Plan Agent first.** Do NOT start implementation without a plan.
+Multi-step task? Use OMO-native planning/review agents before implementation. Do NOT route OMO planning to OpenCode's runtime \`plan\` agent.
 
 - Single-file fix or trivial change → proceed directly
-- Anything else (2+ steps, unclear scope, architecture) → \`task(subagent_type="plan", ...)\` FIRST
-- Use \`task_id\` to resume the same Plan Agent - ask follow-up questions aggressively
-- If ANY part of the task is ambiguous, ask Plan Agent before guessing
+- Unclear scope or pre-plan sanity → \`task(subagent_type="metis", ...)\` FIRST
+- Saved \`.omo/plans/*.md\` review → \`task(subagent_type="momus", prompt="<path-only>", ...)\` before execution
+- Hard architecture/debugging/root-cause sanity → \`task(subagent_type="oracle", ...)\` before implementation
+- Full plan creation belongs to Prometheus primary planner or \`/start-work\`; do not call OpenCode runtime \`plan\` from Sisyphus
 
-Plan Agent returns a structured work breakdown with parallel execution opportunities. Follow it.`
+Metis, Momus, and Oracle are OMO-native subagents. Prometheus is the OMO-native primary planner.`
 }
 
 export function buildParallelDelegationSection(
@@ -223,9 +224,11 @@ export function buildParallelDelegationSection(
 **MANDATORY - for ANY implementation task:**
 
 1. **ALWAYS decompose** the task into independent work units. No exceptions. Even if the task "feels small", decompose it.
-2. **ALWAYS delegate** EACH unit to a \`deep\` or \`unspecified-high\` agent in parallel (\`run_in_background=true\`).
+2. **ALWAYS delegate** implementation and fix units to a \`deep\` or \`unspecified-high\` agent in parallel (\`run_in_background=true\`), or to the specific domain category when one fits better.
 3. **NEVER work sequentially.** If 4 independent units exist, spawn 4 agents simultaneously. Not 1 at a time. Not 2 then 2.
 4. **NEVER implement directly** when delegation is possible. You write prompts, not code.
+
+**ROUTINE VERIFICATION ROUTING:** Verification-only test/typecheck/build/log-collection work goes to \`category="quick"\`. \`quick\` may run and summarize verification, but it must not make autonomous fixes. If quick verification fails, report concise failures and escalate the fix to \`deep\`, \`unspecified-high\`, or the specific domain category. Never route UI/design, architecture, hard debugging, or non-trivial implementation/fixes to \`quick\`.
 
 **YOUR PROMPT TO EACH AGENT MUST INCLUDE:**
 - GOAL with explicit success criteria (what "done" looks like)
@@ -237,9 +240,11 @@ export function buildParallelDelegationSection(
 
 | You Want To Do | You MUST Do Instead |
 |---|---|
-| Write code yourself | Delegate to \`deep\` or \`unspecified-high\` agent |
+| Write code yourself | Delegate to \`deep\` or \`unspecified-high\` agent, or the specific domain category |
 | Handle 3 changes sequentially | Spawn 3 agents in parallel |
-| "Quickly fix this one thing" | Still delegate - your "quick fix" is slower and worse than a subagent's |
+| Run tests/typecheck/build or collect logs only | Delegate to \`category="quick"\`; summarize failures, do not fix in quick |
+| Fix failing verification | Delegate the fix to \`deep\`, \`unspecified-high\`, or the specific domain category |
+| "Quickly fix this one thing" | Still delegate to the proper implementation category - your "quick fix" is slower and worse than a subagent's |
 
 **Your value is orchestration, decomposition, and quality control. Delegating with crystal-clear prompts IS your work.**`
 }

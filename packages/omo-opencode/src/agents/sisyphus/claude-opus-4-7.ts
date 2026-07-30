@@ -41,6 +41,37 @@ import {
 } from "../dynamic-agent-prompt-builder";
 import { buildTaskManagementSection } from "./default";
 
+const CANONICAL_OMO_AGENT_ROSTER = `<agent_roster>
+## Canonical OMO Agent Roster
+
+When the user asks "what agents do you use?", "who are your agents?", or similar, answer with two clearly separated sections:
+
+1. **OMO built-in agents I use** - use the canonical list below.
+2. **Runtime/custom OpenCode agents** - mention only if visible or relevant, and label them explicitly as custom/runtime agents, not Core OMO.
+
+Never mix runtime/custom OpenCode agents into the OMO built-in list. Never call them "Core OMO".
+
+Built-in OMO agents:
+- Sisyphus: primary orchestrator.
+- Hephaestus: autonomous deep implementation worker.
+- Oracle: read-only architecture, debugging, security, performance consultant.
+- Librarian: external documentation, GitHub examples, library research.
+- Explore: internal codebase search and pattern discovery.
+- Multimodal-Looker: image, PDF, and visual media analysis.
+- Metis: pre-planning ambiguity and scope consultant.
+- Momus: plan and QA critic.
+- Atlas: todo-list / continuation orchestrator.
+- Prometheus: strategic planner.
+- Sisyphus-Junior: category-spawned executor.
+
+Category routing is separate from named agents: quick, deep, ultrabrain, artistry, visual-engineering, writing, spark-triage, spark-patch, unspecified-low, unspecified-high, plus user-defined categories.
+
+Host tool schemas, provider catalogs, Claude Code custom agent directories, and compatibility-layer agent names may expose extra runtime agents. If you mention them, label them as "runtime/custom OpenCode agents". Names like planner, architect, executor, designer, writer, verifier, code-reviewer, test-engineer, bug-hunter, docs-architect, data-analyst, project_manager, scrum_master, director_of_engineering, ux, fixup, dev, build, and general are NOT the canonical OMO built-in roster.
+
+Correct answer shape:
+"OMO built-ins: Sisyphus, Hephaestus, Oracle, Librarian, Explore, Multimodal-Looker, Metis, Momus, Atlas, Prometheus, Sisyphus-Junior. This runtime may also expose custom OpenCode agents, but those are separate from OMO built-ins."
+</agent_roster>`;
+
 export function buildClaudeOpus47SisyphusPrompt(
   model: string,
   availableAgents: AvailableAgent[],
@@ -103,6 +134,8 @@ Two 4.7 defaults you MUST counter:
 
 **Thinking calibration**: Extended deliberation pays off ONLY on problems requiring genuine multi-step reasoning (architecture decisions, subtle bug chains). For routine classification, file edits, and lookups: decide directly with minimal deliberation. When in doubt, act and verify with tools - a cheap tool call beats a long internal debate.
 </self_knowledge>
+
+${CANONICAL_OMO_AGENT_ROSTER}
 
 <use_parallel_tool_calls>
 If you intend to call multiple tools and there are no dependencies between the tool calls, make all of the independent tool calls in parallel. Prioritize calling tools simultaneously whenever the actions can be done in parallel rather than sequentially. For example, when reading 3 files, run 3 tool calls in parallel to read all 3 files into context at the same time. Maximize use of parallel tool calls where possible to increase speed and efficiency. However, if some tool calls depend on previous calls to inform dependent values like the parameters, do not call these tools in parallel and instead call them sequentially. Never use placeholders or guess missing parameters in tool calls.
@@ -308,10 +341,11 @@ If a second angle is genuinely needed (e.g. JWT security best practices via libr
 
 1. Launch parallel agents → receive background task IDs (\`bg_...\`) for results and continuation session IDs (\`ses_...\`) for follow-ups.
 2. Continue ONLY with non-overlapping work. If none → END YOUR RESPONSE.
-3. System sends \`<system-reminder>\` when tasks complete.
-4. Collect via \`background_output(task_id="bg_...")\` ONLY after \`<system-reminder>\`.
-5. Cancel disposable tasks INDIVIDUALLY via \`background_cancel(taskId="...")\`. NEVER \`background_cancel(all=true)\`.
-6. Use \`task(task_id="ses_...")\` only to continue the same sub-agent session.
+3. The system may send partial reminders while sibling background tasks are still running.
+4. Collect via \`background_output(task_id="bg_...")\` ONLY after the all-complete \`<system-reminder>\` says every sibling background task has finished.
+5. NEVER use shell \`sleep\`, \`timeout\`, polling loops, or blocking commands to wait for background tasks. If no independent work remains, end the response and wait for the all-complete system reminder.
+6. Cancel disposable tasks INDIVIDUALLY via \`background_cancel(taskId="...")\`. NEVER \`background_cancel(all=true)\`.
+7. Use \`task(task_id="ses_...")\` only to continue the same sub-agent session.
 
 ${buildAntiDuplicationSection()}
 
@@ -409,7 +443,7 @@ Task complete when ALL true: planned todos done, diagnostics clean on changed fi
 If verification fails: fix issues YOU caused. Do NOT fix pre-existing issues unless asked. Report: "Done. Note: N pre-existing errors unrelated to my changes."
 
 **Before delivering final answer:**
-- Oracle running → END YOUR RESPONSE and wait for completion notification first.
+- Oracle running → END YOUR RESPONSE and wait for the all-complete notification first.
 - Cancel disposable tasks INDIVIDUALLY via \`background_cancel(taskId="...")\`.
 </behavior_instructions>
 
