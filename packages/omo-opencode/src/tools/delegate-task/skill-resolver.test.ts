@@ -72,6 +72,18 @@ describe("resolveSkillContent — nativeSkills integration", () => {
     expect(result.content).toContain("Write a failing test first")
   })
 
+  it("#given customize-opencode is requested #when no native skills are exposed #then resolves from OMO builtins", async () => {
+    // when
+    const result = await resolveSkillContent(["customize-opencode"], {
+      directory: TEST_DIR,
+    })
+
+    // then
+    expect(result.error).toBeNull()
+    expect(result.content).toContain("opencode.json")
+    expect(result.content).toContain(".opencode/")
+  })
+
   it("#given a plugin runtime skill reachable through getLoadedSkills #when delegate load_skills resolves #then returns its content without native fallback", async () => {
     const nativeSkills = {
       all: mock(() => [makeNativeSkill("native-only", "Native only", "NATIVE_ONLY_BODY")]),

@@ -10,6 +10,21 @@ export type AgentInfo = {
   model?: string | { providerID: string; modelID: string }
 }
 
+const BUILTIN_AGENT_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  explore: ["explorer"],
+}
+
+function normalizeComparableName(name: string): string {
+  return stripAgentListSortPrefix(name).trim().toLowerCase()
+}
+
+function expandBuiltinAliases(agentName: string): string[] {
+  const normalized = normalizeComparableName(agentName)
+  return Object.entries(BUILTIN_AGENT_ALIASES)
+    .filter(([builtinName, aliases]) => normalized === builtinName || aliases.includes(normalized))
+    .map(([builtinName]) => builtinName)
+}
+
 export function sanitizeSubagentType(subagentType: string): string {
   return subagentType
     .trim()
@@ -18,6 +33,8 @@ export function sanitizeSubagentType(subagentType: string): string {
 }
 
 export function mergeWithClaudeCodeAgents(serverAgents: AgentInfo[], directory: string | undefined): AgentInfo[] {
+  if (serverAgents.length > 0) return serverAgents
+
   const userAgentsRecord = loadUserAgents()
   const projectAgentsRecord = loadProjectAgents(directory)
 
@@ -39,7 +56,6 @@ export function mergeWithClaudeCodeAgents(serverAgents: AgentInfo[], directory: 
     }
   }
 
-  for (const agent of serverAgents) addIfAbsent(agent)
   for (const agent of toAgentInfoList(projectAgentsRecord)) addIfAbsent(agent)
   for (const agent of toAgentInfoList(userAgentsRecord)) addIfAbsent(agent)
 
@@ -47,10 +63,16 @@ export function mergeWithClaudeCodeAgents(serverAgents: AgentInfo[], directory: 
 }
 
 function buildComparableNames(agentName: string): Set<string> {
+  const aliasExpansions = expandBuiltinAliases(agentName)
   return new Set(
-    [agentName, getAgentDisplayName(agentName), getAgentConfigKey(agentName)].map((name) =>
-      stripAgentListSortPrefix(name).trim().toLowerCase(),
-    ),
+    [
+      agentName,
+      getAgentDisplayName(agentName),
+      getAgentConfigKey(agentName),
+      ...aliasExpansions,
+      ...aliasExpansions.map((name) => getAgentDisplayName(name)),
+      ...aliasExpansions.map((name) => getAgentConfigKey(name)),
+    ].map(normalizeComparableName),
   )
 }
 

@@ -102,6 +102,8 @@ export async function executeSyncContinuation(
   systemContent?: string,
 ): Promise<string> {
   const { client, syncPollTimeoutMs, taskCleanupDelayMs, sisyphusAgentConfig } = executorCtx
+  const hasActiveChildBackgroundTasks = executorCtx.manager?.hasActiveChildTasks?.bind(executorCtx.manager)
+  const hasPendingParentWake = executorCtx.manager?.hasPendingParentWake?.bind(executorCtx.manager)
   const toastManager = getTaskToastManager()
   const continuationID = getTaskID(args)
   if (!continuationID) {
@@ -214,6 +216,8 @@ export async function executeSyncContinuation(
         taskId,
         anchorMessageCount,
         anchorMessageID,
+        hasActiveChildBackgroundTasks,
+        hasPendingParentWake,
       },
       syncPollTimeoutMs,
     )

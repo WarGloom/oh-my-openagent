@@ -4,22 +4,17 @@ import { extractErrorMessage } from "../../features/background-agent/error-class
 
 const NON_TERMINAL_FINISH_REASONS = new Set(["tool-calls", "unknown"])
 const PENDING_TOOL_PART_TYPES = new Set(["tool", "tool_use", "tool-call"])
-const ALL_BACKGROUND_TASKS_COMPLETE_MARKER = "[ALL BACKGROUND TASKS COMPLETE]"
 
 type LastSessionTurns = {
   readonly lastAssistant: SessionMessage | undefined
   readonly lastRelevantUser: SessionMessage | undefined
 }
 
-function getTextParts(message: SessionMessage): string {
-  return (message.parts ?? [])
-    .filter((part) => part.type === "text")
-    .map((part) => part.text ?? "")
-    .join("\n")
-}
-
-function isInternalAllCompleteWake(message: SessionMessage): boolean {
-  return isTerminalNoReplyUserMessage(message) && getTextParts(message).includes(ALL_BACKGROUND_TASKS_COMPLETE_MARKER)
+function isSyntheticNoReplyUserMessage(message: SessionMessage): boolean {
+  return (
+    isTerminalNoReplyUserMessage(message) &&
+    (message.parts ?? []).some((part) => part.type === "text" && part.synthetic === true)
+  )
 }
 
 function getLastSessionTurns(messages: readonly SessionMessage[]): LastSessionTurns {
@@ -30,7 +25,7 @@ function getLastSessionTurns(messages: readonly SessionMessage[]): LastSessionTu
     const msg = messages[i]
     if (msg === undefined) continue
     if (!lastAssistant && msg.info?.role === "assistant") lastAssistant = msg
-    if (!lastRelevantUser && msg.info?.role === "user" && !isInternalAllCompleteWake(msg)) {
+    if (!lastRelevantUser && msg.info?.role === "user" && !isSyntheticNoReplyUserMessage(msg)) {
       lastRelevantUser = msg
     }
     if (lastRelevantUser && lastAssistant) break
