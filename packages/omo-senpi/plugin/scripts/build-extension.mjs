@@ -29,6 +29,13 @@ export {
 }
 export { toPortableBuildPath } from "./build-artifact.mjs"
 
+export async function ensureExtensionCurrent(options = {}) {
+  const current = await checkExtensionCurrent(options)
+  if (current.ok) return { ...current, rebuilt: false }
+  const outputs = await buildExtension(options)
+  return { ...outputs, ...current, ok: true, rebuilt: true }
+}
+
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const {
     scriptDir,
@@ -55,9 +62,11 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.a
     }
     console.log(`omo-senpi extension build is current: ${result.output}`)
   } else {
-    await buildExtension()
+    const result = await ensureExtensionCurrent()
     console.log(
-      `Built omo-senpi extensions: ${outputPath}, ${taskOutputPath}, ${memberOutputPath}, ${supervisorOutputPath}, ${advisorRuntimeOutputPath}, ${sidePanelRuntimeOutputPath}, ${computerUseOutputPath}, ${gatewayStoreWorkerOutputPath}, ${threadSdkOutputPath}`,
+      result.rebuilt
+        ? `Built omo-senpi extensions: ${outputPath}, ${taskOutputPath}, ${memberOutputPath}, ${supervisorOutputPath}, ${advisorRuntimeOutputPath}, ${sidePanelRuntimeOutputPath}, ${computerUseOutputPath}, ${gatewayStoreWorkerOutputPath}, ${threadSdkOutputPath}`
+        : `omo-senpi extension build is current: ${result.output}`,
     )
   }
 }
