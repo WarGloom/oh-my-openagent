@@ -480,6 +480,98 @@ describe("executeSyncContinuation - toast cleanup error paths", () => {
     expect(result).toContain("Result")
   })
 
+  test("passes bound child and parent-wake gates when resuming a sync session", async () => {
+    //#given
+    const resumedSessionID = "ses_test_12345678"
+    const activeChildCalls: string[] = []
+    const parentWakeCalls: string[] = []
+    const manager = {
+      resumedSessionID,
+      hasActiveChildTasks(sessionID: string) {
+        activeChildCalls.push(sessionID)
+        return this.resumedSessionID === sessionID
+      },
+      hasPendingParentWake(sessionID: string) {
+        parentWakeCalls.push(sessionID)
+        return this.resumedSessionID === sessionID
+      },
+    }
+    const mockClient = {
+      session: {
+        messages: async () => ({
+          data: [
+            { info: { id: "msg_001", role: "user", time: { created: 1000 } } },
+            {
+              info: { id: "msg_002", role: "assistant", time: { created: 2000 }, finish: "end_turn" },
+              parts: [{ type: "text", text: "Response" }],
+            },
+          ],
+        }),
+        prompt: async () => ({}),
+        promptAsync: async () => ({}),
+        status: async () => ({
+          data: { ses_test: { type: "idle" } },
+        }),
+      },
+    }
+    let polledSessionID: string | undefined
+    let polledAnchorMessageCount: number | undefined
+    let activeChildCallback: ((sessionID: string) => boolean) | undefined
+    let parentWakeCallback: ((sessionID: string) => boolean) | undefined
+    let activeChildResult: boolean | undefined
+    let parentWakeResult: boolean | undefined
+    const { executeSyncContinuation } = require("./sync-continuation")
+    const deps = {
+      pollSyncSession: async (
+        _ctx: unknown,
+        _client: unknown,
+        input: Parameters<import("./sync-continuation-deps").SyncContinuationDeps["pollSyncSession"]>[2]
+      ) => {
+        polledSessionID = input.sessionID
+        polledAnchorMessageCount = input.anchorMessageCount
+        activeChildCallback = input.hasActiveChildBackgroundTasks
+        parentWakeCallback = input.hasPendingParentWake
+        activeChildResult = activeChildCallback?.(resumedSessionID)
+        parentWakeResult = parentWakeCallback?.(resumedSessionID)
+        return null
+      },
+      fetchSyncResult: async () => ({ ok: true as const, textContent: "Result" }),
+    }
+    const mockCtx = {
+      sessionID: "parent-session",
+      callID: "call-123",
+      metadata: () => {},
+    }
+    const mockExecutorCtx = {
+      client: mockClient,
+      manager,
+      syncPollTimeoutMs: 100,
+    }
+    const args = {
+      task_id: resumedSessionID,
+      prompt: "continue working",
+      description: "resume sync task",
+      load_skills: [],
+      run_in_background: false,
+    }
+
+    //#when
+    await executeSyncContinuation(args, mockCtx, mockExecutorCtx, {
+      sessionID: "parent-session",
+      messageID: "parent-message",
+    }, deps)
+
+    //#then
+    expect(activeChildCallback).toBeFunction()
+    expect(parentWakeCallback).toBeFunction()
+    expect(activeChildResult).toBe(true)
+    expect(parentWakeResult).toBe(true)
+    expect(polledSessionID).toBe(resumedSessionID)
+    expect(activeChildCalls).toEqual([resumedSessionID])
+    expect(parentWakeCalls).toEqual([resumedSessionID])
+    expect(polledAnchorMessageCount).toBe(2)
+  })
+
   test("marks and aborts resumed sync session after successful handback", async () => {
     //#given - a resumed sync continuation completes successfully
     const { handedBackSyncSessions } = require("../../features/claude-code-session-state")

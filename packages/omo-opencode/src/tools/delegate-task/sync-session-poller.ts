@@ -1,8 +1,10 @@
+import { isProviderExhaustionFallbackEligible } from "@oh-my-opencode/model-core"
 import type { ToolContextWithMetadata, OpencodeClient } from "./types"
 import type { SessionMessage } from "./executor-types"
 import { getDefaultSyncPollTimeoutMs, getTimingConfig } from "./timing"
 import { getTerminalSessionError, isSessionComplete } from "./sync-session-turns"
 import { log } from "../../shared/logger"
+import { shouldRetryError } from "../../shared/model-error-classifier"
 import { normalizeSDKResponse } from "../../shared"
 
 export { isSessionComplete } from "./sync-session-turns"
@@ -18,13 +20,15 @@ function wait(milliseconds: number): Promise<void> {
   return result.async ? result.value.then(() => undefined) : Promise.resolve()
 }
 
-function abortSyncSession(client: OpencodeClient, sessionID: string, reason: string): void {
+async function abortSyncSession(client: OpencodeClient, sessionID: string, reason: string): Promise<void> {
   log("[task] Aborting sync session", { sessionID, reason })
-  void client.session.abort({
-    path: { id: sessionID },
-  }).catch((error: unknown) => {
+  try {
+    await client.session.abort({
+      path: { id: sessionID },
+    })
+  } catch (error) {
     log("[task] Failed to abort sync session", { sessionID, reason, error: String(error) })
-  })
+  }
 }
 
 function isActiveSessionStatus(status: { type: string } | undefined): boolean {
@@ -43,6 +47,17 @@ function hasMessagesAfterAnchor(
   return anchorMessageCount === undefined || messages.length > anchorMessageCount
 }
 
+function getRetryStatusError(status: SessionStatusSnapshot | undefined): string | null {
+  if (status?.type !== "retry") return null
+
+  const retryMessage = status.message?.trim()
+  if (!retryMessage) return null
+  const errorInfo = { message: retryMessage }
+  if (!shouldRetryError(errorInfo) && !isProviderExhaustionFallbackEligible(errorInfo)) return null
+
+  return `Subagent entered retry status: ${retryMessage}`
+}
+
 async function fetchSessionMessages(
   client: OpencodeClient,
   sessionID: string
@@ -52,7 +67,74 @@ async function fetchSessionMessages(
   return Array.isArray(rawData) ? (rawData as SessionMessage[]) : []
 }
 
+function getSessionProgressSignature(
+  messages: SessionMessage[],
+  anchorMessageCount: number | undefined,
+): string | null {
+  const observedMessages = anchorMessageCount === undefined ? messages : messages.slice(anchorMessageCount)
+  if (observedMessages.length === 0) {
+    return null
+  }
+
+  let partCount = 0
+  let partTextLength = 0
+  let partStateLength = 0
+  let lastPartSignature = ""
+
+  for (const message of observedMessages) {
+    for (const part of message.parts ?? []) {
+      const text = part.text ?? ""
+      const output = part.state?.output ?? ""
+      const error = part.state?.error ?? ""
+
+      partCount++
+      partTextLength += text.length
+      partStateLength += output.length + error.length
+      lastPartSignature = [
+        part.type ?? "",
+        part.tool ?? "",
+        part.state?.status ?? "",
+        text.length,
+        output.length,
+        error.length,
+      ].join(":")
+    }
+  }
+
+  const lastMessage = observedMessages[observedMessages.length - 1]
+  const lastInfo = lastMessage?.info
+  return [
+    observedMessages.length,
+    lastInfo?.id ?? "",
+    lastInfo?.role ?? "",
+    lastInfo?.finish ?? "",
+    partCount,
+    partTextLength,
+    partStateLength,
+    lastPartSignature,
+  ].join("|")
+}
+
+function hasRunningToolPart(
+  messages: SessionMessage[],
+  anchorMessageCount: number | undefined,
+): boolean {
+  const observedMessages = anchorMessageCount === undefined ? messages : messages.slice(anchorMessageCount)
+  return observedMessages.some((message) =>
+    (message.parts ?? []).some((part) => part.type === "tool" && part.state?.status === "running")
+  )
+}
 const DEFAULT_MAX_ASSISTANT_TURNS = 300
+
+type SessionStatusSnapshot = {
+  type: string
+  attempt?: number
+  message?: string
+  next?: number
+  updatedAt?: string | number
+  revision?: string | number
+  messageCount?: string | number
+}
 
 export async function pollSyncSession(
   ctx: ToolContextWithMetadata,
@@ -65,6 +147,7 @@ export async function pollSyncSession(
     anchorMessageCount?: number
     anchorMessageID?: string
     maxAssistantTurns?: number
+    activeNoProgressTimeoutMs?: number
     hasActiveChildBackgroundTasks?: (sessionID: string) => boolean
     hasPendingParentWake?: (sessionID: string) => boolean
     childWakeGraceMs?: number
@@ -73,14 +156,17 @@ export async function pollSyncSession(
 ): Promise<string | null> {
   const syncTiming = getTimingConfig()
   const maxPollTimeMs = Math.max(timeoutMs ?? getDefaultSyncPollTimeoutMs(), 50)
+  const activeNoProgressTimeoutMs = Math.max(input.activeNoProgressTimeoutMs ?? 5 * 60 * 1000, 50)
   const maxTurns = input.maxAssistantTurns ?? DEFAULT_MAX_ASSISTANT_TURNS
   const pollStart = Date.now()
   let inactiveStart = pollStart
+  let activeNoProgressStart: number | undefined
+  let lastProgressSignature: string | null = null
   let pollCount = 0
   let nonActivePollsSinceMessageFetch = 0
   let lastStatusRevision: string | undefined
   let hasFetchedNonActiveMessages = false
-  let timedOut = false
+  let timeoutReason: "inactive" | "active_no_progress" | "missing_status_no_progress" | null = null
   let assistantTurnCount = 0
   let lastSeenAssistantId: string | undefined
   let lastObservedAssistantId: string | undefined
@@ -115,12 +201,18 @@ export async function pollSyncSession(
     return Date.now() - childSettleStartedAt < childSettleMs
   }
 
-  log("[task] Starting poll loop", { sessionID: input.sessionID, agentToUse: input.agentToUse, maxTurns })
+  log("[task] Starting poll loop", {
+    sessionID: input.sessionID,
+    agentToUse: input.agentToUse,
+    maxTurns,
+    maxPollTimeMs,
+    activeNoProgressTimeoutMs,
+  })
 
   while (true) {
     const inactiveElapsedMs = Date.now() - inactiveStart
-    if (inactiveElapsedMs >= maxPollTimeMs) {
-      timedOut = true
+    if (activeNoProgressStart === undefined && inactiveElapsedMs >= maxPollTimeMs) {
+      timeoutReason = "inactive"
       break
     }
 
@@ -158,7 +250,7 @@ export async function pollSyncSession(
       }
 
       log("[task] Aborted by user", { sessionID: input.sessionID })
-      abortSyncSession(client, input.sessionID, "parent_abort")
+      await abortSyncSession(client, input.sessionID, "parent_abort")
       if (input.toastManager && input.taskId) input.toastManager.removeTask(input.taskId)
       return `Task aborted.\n\nSession ID: ${input.sessionID}`
     }
@@ -166,51 +258,112 @@ export async function pollSyncSession(
     await wait(syncTiming.POLL_INTERVAL_MS)
     pollCount++
 
-    let sessionStatus: ({ type: string; updatedAt?: string | number; revision?: string | number; messageCount?: number } & Record<string, unknown>) | undefined
+    let sessionStatus: SessionStatusSnapshot | undefined
     try {
       const statusResult = await client.session.status()
-      const allStatuses = normalizeSDKResponse(statusResult, {} as Record<string, { type: string }>)
-      sessionStatus = allStatuses[input.sessionID] as typeof sessionStatus
-
+      const allStatuses = normalizeSDKResponse(statusResult, {} as Record<string, SessionStatusSnapshot>)
+      sessionStatus = allStatuses[input.sessionID]
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
       log("[task] Poll status fetch failed, checking messages", { sessionID: input.sessionID, error: errorMessage })
     }
-
-    if (pollCount % 10 === 0) {
-      log("[task] Poll status", {
-        sessionID: input.sessionID,
-        pollCount,
-        elapsed: Math.floor((Date.now() - pollStart) / 1000) + "s",
-        inactiveElapsed: Math.floor(inactiveElapsedMs / 1000) + "s",
-        sessionStatus: sessionStatus?.type ?? "not_in_status",
-      })
-    }
-
-    const isActive = isActiveSessionStatus(sessionStatus)
-    const statusRevision = sessionStatus && (sessionStatus.updatedAt ?? sessionStatus.revision ?? sessionStatus.messageCount ?? sessionStatus.type)
-    const statusChanged = statusRevision !== undefined && String(statusRevision) !== lastStatusRevision
-    if (statusChanged) inactiveStart = Date.now()
-
-    // An active status (busy/retry/running) is not progress by itself: a child that hit a
-    // terminal provider error can sit in "busy" forever with an unchanged message set.
-    // Keep inspecting messages on the same staleness cadence so the error surfaces and the
-    // inactivity timer only resets on observable change.
-    nonActivePollsSinceMessageFetch++
-    if (hasFetchedNonActiveMessages && !statusChanged && nonActivePollsSinceMessageFetch < MAX_NON_ACTIVE_STATUS_STALENESS_POLLS) {
-      continue
-    }
-    lastStatusRevision = statusRevision === undefined ? lastStatusRevision : String(statusRevision)
-    nonActivePollsSinceMessageFetch = 0
-    hasFetchedNonActiveMessages = true
+    const isActiveStatus = isActiveSessionStatus(sessionStatus)
 
     let messages: SessionMessage[]
-    try {
-      messages = await fetchSessionMessages(client, input.sessionID)
-    } catch (error) {
-      const errorMessage = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
-      log("[task] Poll messages fetch failed, retrying", { sessionID: input.sessionID, error: errorMessage })
-      continue
+    if (isActiveStatus) {
+      try {
+        messages = await fetchSessionMessages(client, input.sessionID)
+      } catch (error) {
+        const errorMessage = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+        log("[task] Poll messages fetch failed, retrying", { sessionID: input.sessionID, error: errorMessage })
+        continue
+      }
+
+      const progressSignature = getSessionProgressSignature(messages, input.anchorMessageCount)
+      const hasProgress =
+        (progressSignature !== null && progressSignature !== lastProgressSignature) ||
+        hasRunningToolPart(messages, input.anchorMessageCount)
+      if (progressSignature !== null) lastProgressSignature = progressSignature
+      if (hasProgress) {
+        inactiveStart = Date.now()
+        activeNoProgressStart = inactiveStart
+      }
+
+      if (pollCount % 10 === 0) {
+        log("[task] Poll status", {
+          sessionID: input.sessionID,
+          pollCount,
+          elapsed: Math.floor((Date.now() - pollStart) / 1000) + "s",
+          inactiveElapsed: Math.floor((Date.now() - inactiveStart) / 1000) + "s",
+          activeNoProgressElapsed: activeNoProgressStart === undefined
+            ? undefined
+            : Math.floor((Date.now() - activeNoProgressStart) / 1000) + "s",
+          sessionStatus: sessionStatus?.type ?? "not_in_status",
+          statusAttempt: sessionStatus?.attempt,
+          statusNext: sessionStatus?.next,
+          statusMessage: sessionStatus?.message,
+          hasProgress,
+        })
+      }
+
+      const retryStatusError = getRetryStatusError(sessionStatus)
+      if (retryStatusError) {
+        log("[task] Poll detected retry status error", {
+          sessionID: input.sessionID,
+          retryAttempt: sessionStatus?.attempt,
+          retryNext: sessionStatus?.next,
+          retryMessage: sessionStatus?.message,
+        })
+        await abortSyncSession(client, input.sessionID, "retry_status_error")
+        if (input.toastManager && input.taskId) input.toastManager.removeTask(input.taskId)
+        return retryStatusError
+      }
+
+      activeNoProgressStart ??= Date.now()
+      if (Date.now() - activeNoProgressStart >= activeNoProgressTimeoutMs) {
+        timeoutReason = "active_no_progress"
+        break
+      }
+    } else {
+      nonActivePollsSinceMessageFetch++
+      const statusRevision = sessionStatus && (sessionStatus.updatedAt ?? sessionStatus.revision ?? sessionStatus.messageCount)
+      const statusChanged = statusRevision !== undefined && String(statusRevision) !== lastStatusRevision
+      if (statusChanged) inactiveStart = Date.now()
+      if (hasFetchedNonActiveMessages && !statusChanged && nonActivePollsSinceMessageFetch < MAX_NON_ACTIVE_STATUS_STALENESS_POLLS) {
+        continue
+      }
+      lastStatusRevision = statusRevision === undefined ? lastStatusRevision : String(statusRevision)
+      nonActivePollsSinceMessageFetch = 0
+      hasFetchedNonActiveMessages = true
+
+      try {
+        messages = await fetchSessionMessages(client, input.sessionID)
+      } catch (error) {
+        const errorMessage = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+        log("[task] Poll messages fetch failed, retrying", { sessionID: input.sessionID, error: errorMessage })
+        continue
+      }
+
+      const progressSignature = getSessionProgressSignature(messages, input.anchorMessageCount)
+      const hasProgress = progressSignature !== null && progressSignature !== lastProgressSignature
+      if (progressSignature !== null) lastProgressSignature = progressSignature
+      if (hasProgress) inactiveStart = Date.now()
+
+      if (pollCount % 10 === 0) {
+        log("[task] Poll status", {
+          sessionID: input.sessionID,
+          pollCount,
+          elapsed: Math.floor((Date.now() - pollStart) / 1000) + "s",
+          inactiveElapsed: Math.floor((Date.now() - inactiveStart) / 1000) + "s",
+          sessionStatus: sessionStatus?.type ?? "not_in_status",
+          hasProgress,
+        })
+      }
+
+      if (sessionStatus === undefined && Date.now() - inactiveStart >= activeNoProgressTimeoutMs) {
+        timeoutReason = "missing_status_no_progress"
+        break
+      }
     }
 
     if (!hasMessagesAfterAnchor(messages, input.anchorMessageID, input.anchorMessageCount)) continue
@@ -229,9 +382,9 @@ export async function pollSyncSession(
       return sessionError
     }
 
-    // Completion is only judged once the session has left its active status; a busy child
-    // whose last assistant turn merely looks finished is still working.
-    if (!isActive && isSessionComplete(messages)) {
+    const lastAssistant = [...messages].reverse().find((m) => m.info?.role === "assistant")
+
+    if (!isActiveStatus && isSessionComplete(messages)) {
       if (isAwaitingChildContinuation(currentAssistantId)) {
         continue
       }
@@ -239,10 +392,6 @@ export async function pollSyncSession(
       break
     }
 
-    // Count new assistant turns to circuit-break infinite loops. This runs while the status
-    // is still active too: a child looping through tool calls never leaves "busy", and every
-    // new turn resets the inactivity timer above, so the turn budget is its only bound.
-    const lastAssistant = [...messages].reverse().find((m) => m.info?.role === "assistant")
     if (lastAssistant?.info?.id && lastAssistant.info.id !== lastSeenAssistantId) {
       lastSeenAssistantId = lastAssistant.info.id
       assistantTurnCount++
@@ -252,28 +401,23 @@ export async function pollSyncSession(
           assistantTurnCount,
           maxTurns,
         })
-        abortSyncSession(client, input.sessionID, "max_turns_exceeded")
+        await abortSyncSession(client, input.sessionID, "max_turns_exceeded")
         if (input.toastManager && input.taskId) input.toastManager.removeTask(input.taskId)
         return `Task aborted: subagent exceeded ${maxTurns} assistant turns without completing. This usually indicates an infinite tool-call loop. Session ID: ${input.sessionID}`
       }
     }
 
-    if (isActive) continue
+    if (isActiveStatus) continue
 
     const hasAssistantText = messages.some((m) => {
       if (m.info?.role !== "assistant") return false
-      const parts = m.parts ?? []
-      return parts.some((p) => {
+      return (m.parts ?? []).some((p) => {
         if (p.type !== "text" && p.type !== "reasoning") return false
-        const text = (p.text ?? "").trim()
-        return text.length > 0
+        return (p.text ?? "").trim().length > 0
       })
     })
-
     if (!lastAssistant?.info?.finish && hasAssistantText) {
-      if (isAwaitingChildContinuation(lastAssistant?.info?.id)) {
-        continue
-      }
+      if (isAwaitingChildContinuation(lastAssistant?.info?.id)) continue
       log("[task] Poll complete - assistant text detected (fallback)", {
         sessionID: input.sessionID,
         pollCount,
@@ -282,12 +426,25 @@ export async function pollSyncSession(
     }
   }
 
-  if (timedOut) {
-    log("[task] Poll inactivity timeout reached", { sessionID: input.sessionID, pollCount })
-    abortSyncSession(client, input.sessionID, "poll_timeout")
+  if (timeoutReason !== null) {
+    log("[task] Poll timeout reached", { sessionID: input.sessionID, pollCount, timeoutReason })
+    const abortReason = timeoutReason === "active_no_progress"
+      ? "active_no_progress_timeout"
+      : timeoutReason === "missing_status_no_progress"
+        ? "missing_status_no_progress_timeout"
+        : "poll_timeout"
+    await abortSyncSession(client, input.sessionID, abortReason)
   }
 
-  return timedOut
+  if (timeoutReason === "active_no_progress") {
+    return `Poll no-progress timeout reached after ${activeNoProgressTimeoutMs}ms without message or part progress for active session ${input.sessionID}`
+  }
+
+  if (timeoutReason === "missing_status_no_progress") {
+    return `Poll no-progress timeout reached after ${activeNoProgressTimeoutMs}ms without message or part progress while OpenCode status was unavailable for session ${input.sessionID}`
+  }
+
+  return timeoutReason === "inactive"
     ? `Poll inactivity timeout reached after ${maxPollTimeMs}ms without active OpenCode status for session ${input.sessionID}`
     : null
 }
