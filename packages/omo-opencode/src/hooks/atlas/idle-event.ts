@@ -23,6 +23,16 @@ import {
 } from "./tool-progress"
 import type { AtlasHookOptions, SessionState } from "./types"
 
+const ATLAS_COMPACTION_GUARD_MS = 60_000
+
+function getCompactionGuardRemaining(sessionState: SessionState, now: number): number {
+  if (!sessionState.lastCompactedAt) {
+    return 0
+  }
+
+  return Math.max(0, ATLAS_COMPACTION_GUARD_MS - (now - sessionState.lastCompactedAt))
+}
+
 export async function handleAtlasSessionIdle(input: {
   ctx: PluginInput
   options?: AtlasHookOptions
@@ -116,6 +126,17 @@ export async function handleAtlasSessionIdle(input: {
   if (sessionState.skipNextIdleAfterRuntimeErrorRetry) {
     sessionState.skipNextIdleAfterRuntimeErrorRetry = false
     log(`[${HOOK_NAME}] Skipped: stale idle after runtime error retry`, { sessionID })
+    return
+  }
+
+  const compactionGuardRemaining = getCompactionGuardRemaining(sessionState, now)
+  if (compactionGuardRemaining > 0) {
+    scheduleRetry({ ctx, sessionID, sessionState, options, delayMs: compactionGuardRemaining })
+    log(`[${HOOK_NAME}] Skipped: compaction guard active`, {
+      sessionID,
+      guardRemaining: compactionGuardRemaining,
+      pendingRetry: !!sessionState.pendingRetryTimer,
+    })
     return
   }
 

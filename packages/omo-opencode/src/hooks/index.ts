@@ -57,6 +57,7 @@ export { createCompactionTodoPreserverHook } from "./compaction-todo-preserver";
 export { createUnstableAgentBabysitterHook } from "./unstable-agent-babysitter";
 export { createPreemptiveCompactionHook } from "./preemptive-compaction";
 export { createTasksTodowriteDisablerHook } from "./tasks-todowrite-disabler";
+export { createSerenaNavigationGuardHook } from "./serena-navigation-guard"
 export { createRuntimeFallbackHook, type RuntimeFallbackHook, type RuntimeFallbackOptions } from "./runtime-fallback";
 export { createWriteExistingFileGuardHook } from "./write-existing-file-guard";
 export { createBashFileReadGuardHook } from "./bash-file-read-guard";

@@ -2,6 +2,7 @@ import { describe, expect, test, beforeEach, afterEach } from "bun:test"
 import { createKeywordDetectorHook } from "./index"
 import { _resetForTesting, setMainSession } from "../../features/claude-code-session-state"
 import { unsafeTestValue } from "../../../../../test-support/unsafe-test-value"
+import { buildContinuationPrompt, buildVerificationFailurePrompt } from "../ralph-loop/continuation-prompt-builder"
 
 type StartLoopCall = {
   sessionID: string
@@ -227,6 +228,60 @@ describe("keyword-detector ultrawork routing", () => {
 The system mentions ulw mode in passing.
 </system-reminder>`,
       }],
+    }
+
+    // when
+    await hook["chat.message"]({ sessionID: "main-session", agent: "sisyphus" }, output)
+
+    // then
+    expect(startLoopCalls).toHaveLength(0)
+  })
+
+  test("#given ultrawork continuation system directive #when chat.message fires #then ralph-loop is not re-armed", async () => {
+    // given
+    setMainSession("main-session")
+    const startLoopCalls: StartLoopCall[] = []
+    const ralphLoop = createMockRalphLoop(startLoopCalls)
+    const hook = createKeywordDetectorHook(createMockPluginInput(), undefined, ralphLoop)
+    const continuationPrompt = buildContinuationPrompt({
+      active: true,
+      iteration: 2,
+      max_iterations: 100,
+      completion_promise: "DONE",
+      started_at: new Date().toISOString(),
+      prompt: "Build API",
+      ultrawork: true,
+    })
+    const output = {
+      message: {} as Record<string, unknown>,
+      parts: [{ type: "text", text: continuationPrompt }],
+    }
+
+    // when
+    await hook["chat.message"]({ sessionID: "main-session", agent: "sisyphus" }, output)
+
+    // then
+    expect(startLoopCalls).toHaveLength(0)
+  })
+
+  test("#given ultrawork verification failure directive #when chat.message fires #then ralph-loop is not re-armed", async () => {
+    // given
+    setMainSession("main-session")
+    const startLoopCalls: StartLoopCall[] = []
+    const ralphLoop = createMockRalphLoop(startLoopCalls)
+    const hook = createKeywordDetectorHook(createMockPluginInput(), undefined, ralphLoop)
+    const continuationPrompt = buildVerificationFailurePrompt({
+      active: true,
+      iteration: 3,
+      max_iterations: 100,
+      completion_promise: "DONE",
+      started_at: new Date().toISOString(),
+      prompt: "Build API",
+      ultrawork: true,
+    })
+    const output = {
+      message: {} as Record<string, unknown>,
+      parts: [{ type: "text", text: continuationPrompt }],
     }
 
     // when

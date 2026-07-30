@@ -21,6 +21,10 @@ import { isNonOmoAgent, isPlannerAgent } from "./constants"
 import type { DetectedKeyword } from "./detector"
 import { detectKeywordsWithType, extractPromptText, looksLikeSlashCommand } from "./detector"
 
+function hasModeMarker(text: string, type: string): boolean {
+  return text.includes(`[${type}-mode]`)
+}
+
 const defaultModeUltraworkInjectedSessions = new Set<string>()
 const DEFAULT_MODE_ULTRAWORK_SESSION_CAP = 256
 
@@ -45,13 +49,6 @@ function suppressComboStandalones(detected: DetectedKeyword[]): DetectedKeyword[
   const hasCombo = detected.some((k) => k.type === "hyperplan-ultrawork")
   if (!hasCombo) return detected
   return detected.filter((k) => k.type !== "ultrawork" && k.type !== "hyperplan")
-}
-
-function filterAlreadyInjectedKeywords(
-  detected: DetectedKeyword[],
-  text: string,
-): DetectedKeyword[] {
-  return detected.filter((keyword) => !text.includes(keyword.message.trim()))
 }
 
 export function createKeywordDetectorHook(
@@ -173,12 +170,6 @@ export function createKeywordDetectorHook(
         }
       }
 
-      detectedKeywords = filterAlreadyInjectedKeywords(detectedKeywords, cleanText)
-      if (detectedKeywords.length === 0) {
-        log(`[keyword-detector] Skipping already injected keyword messages`, { sessionID: input.sessionID })
-        return
-      }
-
       const hasUltrawork = detectedKeywords.some((k) => k.type === "ultrawork")
       if (hasUltrawork) {
         const runtimeVariant = getRuntimeVariant(input, output.message)
@@ -253,14 +244,24 @@ export function createKeywordDetectorHook(
         return
       }
 
-      const allMessages = detectedKeywords.map((k) => k.message).join("\n\n")
       const originalText = output.parts[textPartIndex].text ?? ""
+      const dedupedKeywords = detectedKeywords.filter((keyword) => !hasModeMarker(originalText, keyword.type))
+
+      if (dedupedKeywords.length === 0) {
+        log(`[keyword-detector] Skipping duplicate mode injection`, {
+          sessionID: input.sessionID,
+          types: detectedKeywords.map((k) => k.type),
+        })
+        return
+      }
+
+      const allMessages = dedupedKeywords.map((k) => k.message).join("\n\n")
 
       output.parts[textPartIndex].text = `${originalText}\n\n---\n\n${allMessages}`
 
-      log(`[keyword-detector] Detected ${detectedKeywords.length} keywords`, {
+      log(`[keyword-detector] Detected ${dedupedKeywords.length} keywords`, {
         sessionID: input.sessionID,
-        types: detectedKeywords.map((k) => k.type),
+        types: dedupedKeywords.map((k) => k.type),
       })
     },
     event: ({ event }: { event: { type: string; properties?: unknown } }): void => {

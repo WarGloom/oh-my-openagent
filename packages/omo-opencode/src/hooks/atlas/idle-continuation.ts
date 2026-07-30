@@ -160,9 +160,11 @@ export function scheduleRetry(input: {
   sessionID: string
   sessionState: SessionState
   options?: AtlasHookOptions
+  delayMs?: number
 }): void {
   const { ctx, sessionID, sessionState, options } = input
   if (sessionState.lifecycleActive === false) return
+  const delayMs = input.delayMs ?? RETRY_DELAY_MS
   if (sessionState.pendingRetryTimer) {
     return
   }
@@ -223,5 +225,5 @@ export function scheduleRetry(input: {
       sessionState.lastFailureAt = Date.now()
       scheduleRetry({ ctx, sessionID, sessionState, options })
     }
-  }, RETRY_DELAY_MS)
+  }, delayMs)
 }

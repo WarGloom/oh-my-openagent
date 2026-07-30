@@ -117,8 +117,10 @@ export async function injectContinuation(args: {
   let agentName = resolvedInfo?.agent ?? getSessionAgent(sessionID)
   let model = resolvedInfo?.model
   let tools = resolvedInfo?.tools
+  const modelSuppressed = resolvedInfo?.modelSuppressed === true
 
-  if (!agentName || !model) {
+  const shouldBackfillModel = !model && !modelSuppressed
+  if (!agentName || shouldBackfillModel) {
     let previousMessage = null
     if (isSqliteBackend()) {
       previousMessage = await findNearestMessageWithFieldsFromSDK(ctx.client, sessionID)
@@ -127,9 +129,8 @@ export async function injectContinuation(args: {
       previousMessage = messageDir ? findNearestMessageWithFields(messageDir) : null
     }
     agentName = agentName ?? previousMessage?.agent
-    model =
-      model ??
-      (previousMessage?.model?.providerID && previousMessage?.model?.modelID
+    if (shouldBackfillModel) {
+      model = previousMessage?.model?.providerID && previousMessage?.model?.modelID
         ? {
             providerID: previousMessage.model.providerID,
             modelID: previousMessage.model.modelID,
@@ -137,7 +138,8 @@ export async function injectContinuation(args: {
               ? { variant: previousMessage.model.variant }
               : {}),
           }
-        : undefined)
+        : undefined
+    }
     tools = tools ?? previousMessage?.tools
   }
 
@@ -146,6 +148,7 @@ export async function injectContinuation(args: {
   const promptAgent = registeredAgentName !== undefined && registeredAgentName !== agentConfigKey
     ? registeredAgentName
     : normalizeAgentForPrompt(agentName)
+  const launchAgent = promptAgent
 
   if (promptAgent && skipAgents.some(s => getAgentConfigKey(s) === getAgentConfigKey(promptAgent))) {
     log(`[${HOOK_NAME}] Skipped: agent in skipAgents list`, { sessionID, agent: agentName })
@@ -205,7 +208,7 @@ ${todoList}`
   try {
     log(`[${HOOK_NAME}] Injecting continuation`, {
       sessionID,
-      agent: promptAgent,
+      agent: launchAgent ?? promptAgent,
       model,
       incompleteCount: freshIncompleteCount,
     })
@@ -216,6 +219,17 @@ ${todoList}`
       ? { providerID: model.providerID, modelID: model.modelID }
       : undefined
     const launchVariant = model?.variant
+    const input = {
+      path: { id: sessionID },
+      body: {
+        agent: launchAgent ?? promptAgent,
+        ...(launchModel ? { model: launchModel } : {}),
+        ...(launchVariant ? { variant: launchVariant } : {}),
+        ...(inheritedTools ? { tools: inheritedTools } : {}),
+        parts: [createInternalAgentContinuationTextPart(prompt)],
+      },
+      query: { directory: ctx.directory },
+    }
 
     const promptResult = await dispatchInternalPrompt({
       mode: "async",
@@ -225,17 +239,7 @@ ${todoList}`
       settleMs: 0,
       queueBehavior: "defer",
       semanticDedupeHoldMs: CONTINUATION_COOLDOWN_MS,
-      input: {
-        path: { id: sessionID },
-        body: {
-          agent: promptAgent,
-          ...(launchModel ? { model: launchModel } : {}),
-          ...(launchVariant ? { variant: launchVariant } : {}),
-          ...(inheritedTools ? { tools: inheritedTools } : {}),
-          parts: [createInternalAgentContinuationTextPart(prompt)],
-        },
-        query: { directory: ctx.directory },
-      },
+      input,
     })
     if (promptResult.status === "failed") {
       if (isAmbiguousPostDispatchPromptFailure(promptResult)) {
@@ -248,11 +252,26 @@ ${todoList}`
           injectionState.pendingUserMessageID = undefined
           injectionState.consecutiveFailures = 0
         }
+        backgroundManager?.invalidateSessionTodoObservation(sessionID)
         return
       }
       throw promptResult.error
     }
     if (!isInternalPromptDispatchAccepted(promptResult)) {
+      if (promptResult.status === "reserved" || promptResult.status === "active") {
+        const queuedResult = await dispatchInternalPrompt({
+          mode: "async",
+          client: ctx.client,
+          sessionID,
+          source: HOOK_NAME,
+          settleMs: 0,
+          queueBehavior: "enqueue",
+          input,
+        })
+        if (isInternalPromptDispatchAccepted(queuedResult)) {
+          backgroundManager?.invalidateSessionTodoObservation(sessionID)
+        }
+      }
       log(`[${HOOK_NAME}] Injection skipped by promptAsync gate`, { sessionID, status: promptResult.status })
       if (injectionState) {
         injectionState.inFlight = false
@@ -261,6 +280,7 @@ ${todoList}`
     }
 
     log(`[${HOOK_NAME}] Injection successful`, { sessionID, status: promptResult.status })
+    backgroundManager?.invalidateSessionTodoObservation(sessionID)
     if (injectionState) {
       injectionState.inFlight = false
       injectionState.lastInjectedAt = Date.now()

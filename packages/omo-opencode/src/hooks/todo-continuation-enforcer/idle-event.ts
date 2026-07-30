@@ -6,16 +6,64 @@ import { getAgentConfigKey } from "../../shared/agent-display-names"
 import { log } from "../../shared/logger"
 import { latestAssistantTurnBlocksInternalPrompt } from "@oh-my-opencode/utils/prompt-async-gate/pending-tool-turn"
 
+import { ABORT_WINDOW_MS, COMPACTION_GUARD_MS, CONTINUATION_COOLDOWN_MS, DEFAULT_SKIP_AGENTS, FAILURE_RESET_WINDOW_MS, HOOK_NAME, MAX_CONSECUTIVE_FAILURES } from "./constants"
 import { isLastAssistantMessageAborted } from "./abort-detection"
 import { acknowledgeCompactionGuard, isCompactionGuardActive } from "./compaction-guard"
-import { ABORT_WINDOW_MS, CONTINUATION_COOLDOWN_MS, DEFAULT_SKIP_AGENTS, FAILURE_RESET_WINDOW_MS, HOOK_NAME, MAX_CONSECUTIVE_FAILURES } from "./constants"
 import { startCountdown } from "./countdown"
 import { hasUnansweredQuestion } from "./pending-question-detection"
 import { resolveLatestMessageInfo } from "./resolve-message-info"
 import type { SessionStateStore } from "./session-state"
 import { shouldStopForStagnation } from "./stagnation-detection"
 import { getIncompleteCount } from "./todo"
-import type { MessageWithInfo, ResolvedMessageInfo, Todo } from "./types"
+import type { MessageWithInfo, ResolvedMessageInfo, SessionState, Todo } from "./types"
+
+function getCompactionGuardRemaining(state: SessionState, now: number): number {
+  if (state.recentCompactionAt === undefined) {
+    return 0
+  }
+
+  return Math.max(0, COMPACTION_GUARD_MS - (now - state.recentCompactionAt))
+}
+
+function scheduleCompactionGuardRetry(args: {
+  ctx: PluginInput
+  sessionID: string
+  sessionStateStore: SessionStateStore
+  backgroundManager?: BackgroundManager
+  skipAgents?: string[]
+  isContinuationStopped?: (sessionID: string) => boolean
+  delayMs: number
+}): void {
+  const {
+    ctx,
+    sessionID,
+    sessionStateStore,
+    backgroundManager,
+    skipAgents,
+    isContinuationStopped,
+    delayMs,
+  } = args
+  const state = sessionStateStore.getState(sessionID)
+  if (state.countdownTimer) {
+    return
+  }
+
+  state.countdownTimer = setTimeout(() => {
+    state.countdownTimer = undefined
+    void handleSessionIdle({
+      ctx,
+      sessionID,
+      sessionStateStore,
+      backgroundManager,
+      skipAgents,
+      isContinuationStopped,
+    }).catch((error) => {
+      log(`[${HOOK_NAME}] Compaction guard retry failed`, { sessionID, error: String(error) })
+    })
+  }, delayMs)
+
+  log(`[${HOOK_NAME}] Scheduled compaction guard retry`, { sessionID, delayMs })
+}
 
 export async function handleSessionIdle(args: {
   ctx: PluginInput
@@ -38,6 +86,7 @@ export async function handleSessionIdle(args: {
 
   const state = sessionStateStore.getState(sessionID)
   const observedCompactionEpoch = state.recentCompactionEpoch
+  const compactionGuardInitiallyCheckedAt = Date.now()
 
   if (state.allTodosCompletedAt) {
     log(`[${HOOK_NAME}] Skipped: all todos were already completed`, { sessionID, allTodosCompletedAt: state.allTodosCompletedAt })
@@ -105,6 +154,20 @@ export async function handleSessionIdle(args: {
       return
     }
     if (latestAssistantTurnBlocksInternalPrompt(prefetchedMessages)) {
+      if (isCompactionGuardActive(state, compactionGuardInitiallyCheckedAt)) {
+        const guardRemaining = getCompactionGuardRemaining(state, compactionGuardInitiallyCheckedAt)
+        scheduleCompactionGuardRetry({
+          ctx,
+          sessionID,
+          sessionStateStore,
+          backgroundManager,
+          skipAgents,
+          isContinuationStopped,
+          delayMs: guardRemaining,
+        })
+        log(`[${HOOK_NAME}] Skipped: pending internal continuation response during compaction guard`, { sessionID, guardRemaining })
+        return
+      }
       log(`[${HOOK_NAME}] Skipped: pending internal continuation response`, { sessionID })
       return
     }
@@ -187,8 +250,11 @@ export async function handleSessionIdle(args: {
     resolvedInfo = { ...resolvedInfo, agent: sessionAgent }
   }
 
-  const acknowledgedCompaction = resolvedInfo?.agent ? acknowledgeCompactionGuard(state, observedCompactionEpoch) : false
-  const compactionGuardActive = isCompactionGuardActive(state, Date.now())
+  const compactionGuardCheckedAt = Date.now()
+  const acknowledgedCompaction = resolvedInfo?.agent
+    ? acknowledgeCompactionGuard(state, observedCompactionEpoch, compactionGuardCheckedAt)
+    : false
+  const compactionGuardActive = isCompactionGuardActive(state, compactionGuardCheckedAt)
 
   log(`[${HOOK_NAME}] Agent check`, {
     sessionID,
@@ -206,11 +272,41 @@ export async function handleSessionIdle(args: {
     return
   }
   if ((compactionGuardActive || encounteredCompaction) && !resolvedInfo?.agent) {
+    if (compactionGuardActive) {
+      const guardRemaining = getCompactionGuardRemaining(state, compactionGuardCheckedAt)
+      scheduleCompactionGuardRetry({
+        ctx,
+        sessionID,
+        sessionStateStore,
+        backgroundManager,
+        skipAgents,
+        isContinuationStopped,
+        delayMs: guardRemaining,
+      })
+      log(`[${HOOK_NAME}] Skipped: compaction occurred but no agent info resolved`, { sessionID, guardRemaining })
+      return
+    }
+
     log(`[${HOOK_NAME}] Skipped: compaction occurred but no agent info resolved`, { sessionID })
     return
   }
   if (compactionGuardActive) {
-    log(`[${HOOK_NAME}] Skipped: compaction guard still armed for current epoch`, { sessionID, observedCompactionEpoch, currentCompactionEpoch: state.recentCompactionEpoch })
+    const guardRemaining = getCompactionGuardRemaining(state, compactionGuardCheckedAt)
+    scheduleCompactionGuardRetry({
+      ctx,
+      sessionID,
+      sessionStateStore,
+      backgroundManager,
+      skipAgents,
+      isContinuationStopped,
+      delayMs: guardRemaining,
+    })
+    log(`[${HOOK_NAME}] Skipped: compaction guard still armed for current epoch`, {
+      sessionID,
+      observedCompactionEpoch,
+      currentCompactionEpoch: state.recentCompactionEpoch,
+      guardRemaining,
+    })
     return
   }
 

@@ -57,7 +57,7 @@ Assume the work is broken until YOU prove otherwise.
 
 Do NOT run tests yet. Read the code FIRST so you know what you're testing.
 
-1. \`Bash("git diff --stat -- ':!node_modules'")\` - see exactly which files changed. Any file outside expected scope = scope creep.
+1. \`Bash(command="git diff --stat -- ':!node_modules'", description="Show changed file summary")\` - see exactly which files changed. Any file outside expected scope = scope creep.
 2. \`Read\` EVERY changed file - no exceptions, no skimming.
 3. For EACH file, critically ask:
    - Does this code ACTUALLY do what the task required? (Re-read the task, compare line by line)
@@ -89,7 +89,7 @@ Tests and linters CANNOT catch: visual bugs, wrong CLI output, broken user flows
 
 - **Frontend/UI**: \`/playwright\` skill - load the page, click through the flow, check console. Verify: page loads, interactions work, console clean, responsive.
 - **TUI/CLI**: \`interactive_bash\` - run the command, try good input, try bad input, try --help. Verify: command runs, output correct, error messages helpful, edge inputs handled.
-- **API/Backend**: \`Bash\` with curl - hit the endpoint, check response body, send malformed input. Verify: returns 200, body correct, error cases return proper errors.
+- **API/Backend**: \`Bash(command="curl ...", description="Check API endpoint")\` - hit the endpoint, check response body, send malformed input. Verify: returns 200, body correct, error cases return proper errors.
 - **Config/Build**: Actually start the service or import the config. Verify: loads without error, backward compatible.
 
 This is NOT optional "if applicable". If the deliverable is user-facing and you did not run it, you are shipping untested work.
