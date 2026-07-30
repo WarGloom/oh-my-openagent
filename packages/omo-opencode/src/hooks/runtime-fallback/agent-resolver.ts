@@ -42,7 +42,9 @@ export function normalizeAgentName(agent: string | undefined): string | undefine
   if (match) {
     return match[1].toLowerCase()
   }
-  return undefined
+  // Pass through non-built-in names so project-defined agents
+  // (e.g. secmvp-worker-host) can be looked up in pluginConfig.agents.
+  return normalized
 }
 
 export function resolveAgentForSession(sessionID: string, eventAgent?: string): string | undefined {
