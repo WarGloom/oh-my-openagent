@@ -12,6 +12,10 @@ import { tmpdir } from "os"
 let TEST_DIR = ""
 let TEST_HOME = ""
 
+async function importFreshLoaderModule(): Promise<typeof import("./loader")> {
+  return await import(`./loader?test=${Date.now()}-${Math.random()}`)
+}
+
 describe("getSystemMcpServerNames", () => {
   beforeEach(() => {
     TEST_DIR = mkdtempSync(join(tmpdir(), "mcp-loader-test-"))
@@ -33,7 +37,7 @@ describe("getSystemMcpServerNames", () => {
 
     try {
       // when
-      const { getSystemMcpServerNames } = await import("./loader")
+      const { getSystemMcpServerNames } = await importFreshLoaderModule()
       const names = getSystemMcpServerNames()
 
       // then
@@ -65,7 +69,7 @@ describe("getSystemMcpServerNames", () => {
 
     try {
       // when
-      const { getSystemMcpServerNames } = await import("./loader")
+      const { getSystemMcpServerNames } = await importFreshLoaderModule()
       const names = getSystemMcpServerNames()
 
       // then
@@ -95,7 +99,7 @@ describe("getSystemMcpServerNames", () => {
 
     try {
       // when
-      const { getSystemMcpServerNames } = await import("./loader")
+      const { getSystemMcpServerNames } = await importFreshLoaderModule()
       const names = getSystemMcpServerNames()
 
       // then
@@ -127,7 +131,7 @@ describe("getSystemMcpServerNames", () => {
 
     try {
       // when
-      const { getSystemMcpServerNames } = await import("./loader")
+      const { getSystemMcpServerNames } = await importFreshLoaderModule()
       const names = getSystemMcpServerNames()
 
       // then
@@ -163,7 +167,7 @@ describe("getSystemMcpServerNames", () => {
 
     try {
       // when
-      const { getSystemMcpServerNames } = await import("./loader")
+      const { getSystemMcpServerNames } = await importFreshLoaderModule()
       const names = getSystemMcpServerNames()
 
       // then
@@ -196,7 +200,7 @@ describe("getSystemMcpServerNames", () => {
 
      try {
        // when
-       const { getSystemMcpServerNames } = await import("./loader")
+       const { getSystemMcpServerNames } = await importFreshLoaderModule()
        const names = getSystemMcpServerNames()
 
        // then
@@ -225,7 +229,7 @@ describe("getSystemMcpServerNames", () => {
 
       try {
         // when
-        const { getSystemMcpServerNames } = await import("./loader")
+        const { getSystemMcpServerNames } = await importFreshLoaderModule()
         const names = getSystemMcpServerNames()
 
         // then
@@ -257,7 +261,7 @@ describe("getSystemMcpServerNames", () => {
 
       try {
         // when
-        const { getSystemMcpServerNames } = await import("./loader")
+        const { getSystemMcpServerNames } = await importFreshLoaderModule()
         const names = getSystemMcpServerNames()
 
         // then
@@ -301,7 +305,7 @@ describe("getSystemMcpServerNames", () => {
 
       try {
         //#when
-        const { getSystemMcpServerNames } = await import("./loader")
+        const { getSystemMcpServerNames } = await importFreshLoaderModule()
         const names = getSystemMcpServerNames()
 
         //#then
@@ -346,7 +350,7 @@ describe("loadMcpConfigs", () => {
 
     try {
       //#when
-      const { loadMcpConfigs } = await import("./loader")
+      const { loadMcpConfigs } = await importFreshLoaderModule()
       const result = await loadMcpConfigs(["playwright", "sqlite"])
 
       //#then

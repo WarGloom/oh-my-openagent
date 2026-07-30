@@ -85,7 +85,22 @@ describe("createBuiltinSkills", () => {
 		expect(playwrightSkill).toBeUndefined()
 	})
 
-	test("always includes frontend, git-master, review-work, shared skills, and runtime security skills", () => {
+	test("agent-browser skill template exposes bundled command documentation", () => {
+		// given
+		const options = { browserProvider: "agent-browser" as const }
+
+		// when
+		const skills = createBuiltinSkills(options)
+		const agentBrowserSkill = skills.find((s) => s.name === "agent-browser")
+
+		// then
+		expect(agentBrowserSkill?.template).toContain("## Quick start")
+		expect(agentBrowserSkill?.template).toContain("## Commands")
+		expect(agentBrowserSkill?.template).toContain("agent-browser open")
+		expect(agentBrowserSkill?.template).toContain("agent-browser snapshot")
+	})
+
+	test("always includes frontend-ui-ux, git-master, review-work, customize-opencode, shared skills, and runtime security skills", () => {
 		// given - both provider options
 
 		// when
@@ -98,6 +113,7 @@ describe("createBuiltinSkills", () => {
 			expect(skills.find((s) => s.name === "frontend")).toBeDefined()
 			expect(skills.find((s) => s.name === "git-master")).toBeDefined()
 			expect(skills.find((s) => s.name === "review-work")).toBeDefined()
+			expect(skills.find((s) => s.name === "customize-opencode")).toBeDefined()
 			expect(skills.find((s) => s.name === "remove-ai-slops")).toBeDefined()
 			expect(skills.find((s) => s.name === "init-deep")).toBeDefined()
 			expect(skills.find((s) => s.name === "debugging")).toBeDefined()
@@ -118,7 +134,7 @@ describe("createBuiltinSkills", () => {
 		expect(gitMaster).toBeDefined()
 	})
 
-	test("returns exactly 10 skills regardless of provider", () => {
+	test("returns exactly 11 skills regardless of provider", () => {
 		// given
 
 		// when
@@ -127,9 +143,9 @@ describe("createBuiltinSkills", () => {
 		const devBrowserSkills = createBuiltinSkills({ browserProvider: "dev-browser" })
 
 		// then
-		expect(defaultSkills).toHaveLength(10)
-		expect(agentBrowserSkills).toHaveLength(10)
-		expect(devBrowserSkills).toHaveLength(10)
+		expect(defaultSkills).toHaveLength(11)
+		expect(agentBrowserSkills).toHaveLength(11)
+		expect(devBrowserSkills).toHaveLength(11)
 	})
 
 	test("should exclude playwright when it is in disabledSkills", () => {
@@ -145,13 +161,14 @@ describe("createBuiltinSkills", () => {
 		expect(skills.map((s) => s.name)).toContain("git-master")
 		expect(skills.map((s) => s.name)).not.toContain("dev-browser")
 		expect(skills.map((s) => s.name)).toContain("review-work")
+		expect(skills.map((s) => s.name)).toContain("customize-opencode")
 		expect(skills.map((s) => s.name)).toContain("remove-ai-slops")
 		expect(skills.map((s) => s.name)).toContain("init-deep")
 		expect(skills.map((s) => s.name)).toContain("debugging")
 		expect(skills.map((s) => s.name)).toContain("security-research")
 		expect(skills.map((s) => s.name)).toContain("security-review")
 		expect(skills.map((s) => s.name)).toContain("visual-qa")
-		expect(skills.length).toBe(9)
+		expect(skills.length).toBe(10)
 	})
 
 	test("should exclude multiple skills when they are in disabledSkills", () => {
@@ -167,13 +184,14 @@ describe("createBuiltinSkills", () => {
 		expect(skills.map((s) => s.name)).toContain("frontend")
 		expect(skills.map((s) => s.name)).not.toContain("dev-browser")
 		expect(skills.map((s) => s.name)).toContain("review-work")
+		expect(skills.map((s) => s.name)).toContain("customize-opencode")
 		expect(skills.map((s) => s.name)).toContain("remove-ai-slops")
 		expect(skills.map((s) => s.name)).toContain("init-deep")
 		expect(skills.map((s) => s.name)).toContain("debugging")
 		expect(skills.map((s) => s.name)).toContain("security-research")
 		expect(skills.map((s) => s.name)).toContain("security-review")
 		expect(skills.map((s) => s.name)).toContain("visual-qa")
-		expect(skills.length).toBe(8)
+		expect(skills.length).toBe(9)
 	})
 
 	test("should return an empty array when all skills are disabled", () => {
@@ -184,6 +202,7 @@ describe("createBuiltinSkills", () => {
 				"frontend",
 				"git-master",
 				"review-work",
+				"customize-opencode",
 				"remove-ai-slops",
 				"init-deep",
 				"debugging",
@@ -200,7 +219,7 @@ describe("createBuiltinSkills", () => {
 		expect(skills.length).toBe(0)
 	})
 
-	test("should return all 10 skills when disabledSkills set is empty", () => {
+	test("should return all 11 skills when disabledSkills set is empty", () => {
 		// #given
 		const options = { disabledSkills: new Set<string>() }
 
@@ -208,7 +227,21 @@ describe("createBuiltinSkills", () => {
 		const skills = createBuiltinSkills(options)
 
 		// #then
-		expect(skills.length).toBe(10)
+		expect(skills.length).toBe(11)
+	})
+
+	test("customize-opencode skill documents opencode configuration scope", () => {
+		// #given - default options
+
+		// #when
+		const skills = createBuiltinSkills()
+		const customize = skills.find((skill) => skill.name === "customize-opencode")
+
+		// #then
+		expect(customize).toBeDefined()
+		expect(customize?.description).toContain("opencode")
+		expect(customize?.template).toContain("opencode.json")
+		expect(customize?.template).toContain(".opencode/")
 	})
 
 	test("#given disabled_skills with debugging and visual-qa #when creating builtin skills #then both are filtered out", () => {
@@ -264,6 +297,17 @@ describe("createBuiltinSkills", () => {
 		// #then
 		expect(reviewWork).toBeDefined()
 		expect(reviewWork?.description).toContain("review")
+	})
+
+	test("review-work skill waits for all background reviews before collecting results", () => {
+		// #given
+		const skills = createBuiltinSkills()
+		const reviewWork = skills.find((s) => s.name === "review-work")
+
+		// #then
+		expect(reviewWork!.template).toContain("Wait for the all-complete system notification")
+		expect(reviewWork!.template).toContain("Do NOT deliver the final report until ALL 5 lanes have a terminal state")
+		expect(reviewWork!.template).toContain("timeout, ack-only reply, or empty child result")
 	})
 
 	test("review-work skill explains Codex tool compatibility before OpenCode orchestration examples", () => {

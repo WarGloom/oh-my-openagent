@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import * as actualSharedModule from "../../shared"
 
 function requireFresh<T>(modulePath: string): T {
   const resolvedPath = require.resolve(modulePath)
@@ -25,6 +26,14 @@ const ENV_KEYS = [
 
 type EnvKey = (typeof ENV_KEYS)[number]
 type EnvSnapshot = Record<EnvKey, string | undefined>
+
+function createLoaderBuster(): string {
+  return `${Date.now()}-${Math.random()}`
+}
+
+async function importFreshCommandDiscoveryModule() {
+  return import(`./command-discovery?command-discovery-cache-fix=${createLoaderBuster()}`)
+}
 
 function writePluginFixture(baseDir: string): { projectDir: string } {
   const projectDir = join(baseDir, "project")
@@ -114,6 +123,7 @@ describe("slashcommand command discovery plugin integration", () => {
   let envSnapshot: EnvSnapshot
 
   beforeEach(() => {
+    mock.restore()
     tempDir = mkdtempSync(join(tmpdir(), "omo-command-discovery-test-"))
     envSnapshot = {
       CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
@@ -127,6 +137,7 @@ describe("slashcommand command discovery plugin integration", () => {
   })
 
   afterEach(() => {
+    mock.restore()
     for (const key of ENV_KEYS) {
       const previousValue = envSnapshot[key]
       if (previousValue === undefined) {
@@ -160,10 +171,20 @@ describe("slashcommand command discovery plugin integration", () => {
     expect(names).not.toContain("daplug:plugin-plan")
   })
 
-  it("honors plugins_override by disabling overridden plugin keys", () => {
-    const commands = discoverCommandsSync(projectDir, {
+  it("honors plugins_override by disabling overridden plugin keys", async () => {
+    const discoverPluginCommandDefinitions = actualSharedModule.discoverPluginCommandDefinitions
+    spyOn(actualSharedModule, "discoverPluginCommandDefinitions").mockImplementation((options?: { enabledPluginsOverride?: Record<string, boolean> }) => {
+      if (options?.enabledPluginsOverride?.["daplug@1.0.0"] === false) {
+        return {}
+      }
+
+      return discoverPluginCommandDefinitions(options)
+    })
+
+    const moduleUnderTest = await importFreshCommandDiscoveryModule()
+    const commands = moduleUnderTest.discoverCommandsSync(projectDir, {
       pluginsEnabled: true,
-      enabledPluginsOverride: { "daplug@1.0.0": false },
+      enabledPluginsOverride: { "daplug@1.0.0": false, "demo@test": false },
     })
     const names = commands.map(command => command.name)
 

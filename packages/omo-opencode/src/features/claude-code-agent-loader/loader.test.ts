@@ -1,7 +1,8 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
-import { join } from "path";
-import { tmpdir } from "os";
+import { describe, test, expect, afterEach } from "bun:test";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import process from "node:process";
 
 import {
   loadUserAgents,
@@ -221,6 +222,7 @@ describe("claude-code-agent-loader", () => {
     test("returns empty object when pointed at dir without agents/", () => {
       const root = trackDir(mkdtempSync(join(tmpdir(), "agent-loader-test-")))
       process.env.OPENCODE_CONFIG_DIR = root
+      process.env.XDG_CONFIG_HOME = join(root, "xdg")
       const result = loadOpencodeGlobalAgents()
       expect(result).toEqual({})
     })
