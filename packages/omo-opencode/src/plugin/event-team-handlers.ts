@@ -17,9 +17,16 @@ export function createEventTeamHandlers(args: {
     ? createTeamLeadOrphanHandler(teamModeConfig, args.managers.tmuxSessionManager, args.managers.backgroundManager)
     : undefined
   const teamMemberErrorHandler = teamModeConfig
-    ? createTeamMemberErrorHandler(teamModeConfig, { client: args.pluginContext.client })
+    ? createTeamMemberErrorHandler(teamModeConfig, {
+        client: args.pluginContext.client,
+        backgroundManager: args.managers.backgroundManager,
+      })
     : undefined
-  const teamMemberStatusHandler = teamModeConfig ? createTeamMemberStatusHandler(teamModeConfig) : undefined
+  const teamMemberStatusHandler = teamModeConfig
+    ? createTeamMemberStatusHandler(teamModeConfig, {
+        backgroundManager: args.managers.backgroundManager,
+      })
+    : undefined
   const teamIdleWakeHint = teamModeConfig
     ? createTeamIdleWakeHint(
         {
