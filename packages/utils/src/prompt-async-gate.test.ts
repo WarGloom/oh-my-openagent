@@ -21,6 +21,18 @@ async function waitForPromise<T>(promise: Promise<T>, label: string): Promise<T>
 }
 
 describe("dispatchInternalPrompt", () => {
+  test("corrective: settlement errors preserve accepted results and unblock the queue", async () => {
+    // given
+    let dispatches = 0
+    const client = { session: { promptAsync: async () => ++dispatches } }
+    const input = { mode: "async" as const, client, sessionID: "settlement", source: "settlement", input: {}, settleMs: 0, postDispatchHoldMs: 0, onDispatchResult: async () => { throw new Error("settlement failed") } }
+    // when / then: queued, direct and defer all retain the provider result.
+    expect((await dispatchInternalPrompt({ ...input, dedupeKey: "queued" })).status).toBe("dispatched")
+    expect((await dispatchInternalPrompt({ ...input, dedupeKey: "direct", queue: false })).status).toBe("dispatched")
+    expect((await dispatchInternalPrompt({ ...input, dedupeKey: "defer", queueBehavior: "defer" })).status).toBe("dispatched")
+    expect((await dispatchInternalPrompt({ ...input, dedupeKey: "next", onDispatchResult: undefined })).status).toBe("dispatched")
+    expect(dispatches).toBe(4)
+  })
   afterEach(() => {
     // then
     _setPromptGateMessagesFetchTimeoutMsForTesting(undefined)

@@ -32,7 +32,7 @@ import { clearTeamSessionRegistry, registerTeamSession } from "../team-session-r
 import type { Message } from "@oh-my-opencode/team-core/types"
 import { MessageSchema } from "@oh-my-opencode/team-core/types"
 import { createTeamIdleWakeHint } from "../../../hooks/team-session-events/team-idle-wake-hint"
-import { createTeamSendMessageTool as createProductionTeamSendMessageTool } from "./messaging"
+import { createTeamSendMessageTool as createProductionTeamSendMessageTool, TEAM_SEND_MESSAGE_CORRELATION_ID_DESCRIPTION } from "./messaging"
 import { defaultTeamSendMessageToolDeps, resolveTeamRuntimeDetails } from "./messaging-runtime"
 
 type PromptAsyncCall = {
@@ -205,6 +205,14 @@ function parseToolResult(result: string | ToolResult): TeamSendToolResult {
   return TeamSendToolResultSchema.parse(JSON.parse(typeof result === "string" ? result : result.output))
 }
 
+function getToolArgumentDescription(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null || !("description" in value)) {
+    return undefined
+  }
+
+  return typeof value.description === "string" ? value.description : undefined
+}
+
 async function createTeamFixture() {
   const baseDir = await createFixtureBaseDir()
   const config = createConfig(baseDir)
@@ -251,6 +259,34 @@ async function createTeamFixture() {
 }
 
 describe("createTeamSendMessageTool", () => {
+  test("corrective: post-reservation EIO releases the fallback batch without dispatch or acknowledgement", async () => {
+    // given
+    const fixture = await createTeamFixture()
+    const { sendMessage } = await import("../team-mailbox/send")
+    const { enqueueFallbackMailboxWake } = await import("./messaging-fallback-wake")
+    const store = await import("@oh-my-opencode/team-core/team-state-store/store")
+    const originalLoad = store.loadRuntimeState
+    const recipient = (await originalLoad(fixture.teamRunId, fixture.config)).members.find((m) => m.name === "m2")
+    if (!recipient) throw new Error("missing fixture recipient")
+    const messageId = randomUUID()
+    await sendMessage({ version: 1, messageId, from: "m1", to: "m2", kind: "message", body: "recover this payload", timestamp: Date.now() }, fixture.teamRunId, fixture.config, { isLead: false, activeMembers: ["m2"] })
+    let reads = 0
+    const loadSpy = spyOn(store, "loadRuntimeState").mockImplementation(async (...args) => {
+      if (++reads === 2) throw Object.assign(new Error("injected state read failure"), { code: "EIO" })
+      return originalLoad(...args)
+    })
+    const { client, calls } = createRecordingClient()
+    try {
+      // when
+      await enqueueFallbackMailboxWake({ client, recipientMember: recipient, recipientSessionId: fixture.memberTwoSessionId, directory: resolveBaseDir(fixture.config), teamRunId: fixture.teamRunId, recipientName: "m2", messageId, config: fixture.config, dispatchTiming: { fallbackWakeSettleMs: 0, postDispatchHoldMs: 0, queueRetryMs: 60_000 } })
+      // then
+      expect(calls).toHaveLength(0)
+      expect((await listUnreadMessages(fixture.teamRunId, "m2", fixture.config)).map((m) => m.messageId)).toEqual([messageId])
+      expect((await originalLoad(fixture.teamRunId, fixture.config)).members.find((m) => m.name === "m2")?.pendingInjectedMessageIds).toEqual([])
+    } finally {
+      loadSpy.mockRestore()
+    }
+  })
   test("resolveTeamRuntimeDetails preserves Error fallback for missing runtime state", async () => {
     // given
     const config = createConfig(await createFixtureBaseDir())
@@ -312,6 +348,27 @@ describe("createTeamSendMessageTool", () => {
     expect(message.from).toBe("m1")
   })
 
+  test("#given the runtime leader is not named lead #when a member sends to lead #then it routes to the leader member", async () => {
+    // given
+    const fixture = await createTeamFixture()
+
+    // when
+    const result = await fixture.tool.execute({
+      teamRunId: fixture.teamRunId,
+      to: "lead",
+      body: "closure-ready",
+    }, fixture.toolContext(fixture.memberOneSessionId))
+    const parsedResult = parseToolResult(result)
+
+    // then
+    expect(parsedResult.deliveredTo).toEqual(["team-lead"])
+    const inboxDir = getInboxDir(resolveBaseDir(fixture.config), fixture.teamRunId, "team-lead")
+    const [messageFile] = (await readdir(inboxDir)).filter((entry) => entry.endsWith(".json"))
+    const message = MessageSchema.parse(JSON.parse(await readFile(path.join(inboxDir, messageFile), "utf8")))
+    expect(message.from).toBe("m1")
+    expect(message.to).toBe("team-lead")
+  })
+
   test("#given recipient tries path traversal #when team_send_message runs #then it rejects without creating an escaped inbox", async () => {
     // given
     const fixture = await createTeamFixture()
@@ -325,8 +382,8 @@ describe("createTeamSendMessageTool", () => {
     }, fixture.toolContext(fixture.memberOneSessionId))
 
     // then
-    await expect(result).rejects.toThrow("unknown or inactive team recipient")
-    await expect(readdir(escapedInboxRoot)).rejects.toThrow()
+    expect(result).rejects.toThrow("unknown or inactive team recipient")
+    expect(readdir(escapedInboxRoot)).rejects.toThrow()
   })
 
   test("treats a host-injected empty correlationId as omitted", async () => {
@@ -549,9 +606,11 @@ describe("createTeamSendMessageTool", () => {
     const fixture = await createTeamFixture()
     const fallbackWakeDispatched = createDeferred<void>()
     let promptCalls = 0
+    const promptTexts: string[] = []
     const client = {
       session: {
-        promptAsync: async () => {
+        promptAsync: async (input: Parameters<LiveDeliveryClient["session"]["promptAsync"]>[0]) => {
+          promptTexts.push(input.body.parts.map((part) => part.text ?? "").join("\n"))
           promptCalls += 1
           if (promptCalls === 2) fallbackWakeDispatched.resolve(undefined)
         },
@@ -583,18 +642,12 @@ describe("createTeamSendMessageTool", () => {
     // when
     expect(releasePromptAsyncReservation(fixture.memberTwoSessionId, "test-blocker")).toBe(true)
     await waitForEvent(fallbackWakeDispatched.promise, "queued fallback mailbox wake")
-    const injection = await pollAndBuildInjection(
-      fixture.memberTwoSessionId,
-      "m2",
-      fixture.teamRunId,
-      fixture.config,
-      "turn-after-fallback-wake",
-    )
 
     // then
     expect(promptCalls).toBe(2)
-    expect(injection.injected).toBe(true)
-    expect(injection.content).toContain("fallback ping")
+    expect(promptTexts[1]).toContain("fallback ping")
+    expect(promptTexts[1]).toContain(unread[0]!.messageId)
+    expect(await listUnreadMessages(fixture.teamRunId, "m2", fixture.config)).toHaveLength(0)
   })
 
   test("#given a message waits behind pending live delivery #when that prompt clears #then a queued wake exposes the waiting message", async () => {
@@ -987,7 +1040,12 @@ describe("createTeamSendMessageTool", () => {
 
     const wakeHint = createTeamIdleWakeHint({
       directory: resolveBaseDir(fixture.config),
-      client,
+      client: {
+        session: {
+          ...client.session,
+          status: async () => ({ data: { [fixture.memberTwoSessionId]: { type: "busy" } } }),
+        },
+      },
     }, fixture.config, { idleSettleMs: 0 })
 
     // when
@@ -1581,6 +1639,7 @@ describe("createTeamSendMessageTool", () => {
             fixture.teamRunId,
             fixture.config,
             "turn-race",
+            { resolvedSessionID: fixture.memberTwoSessionId, insertContent: () => {} },
           )
           return staleIdleSnapshot
         }
@@ -1666,7 +1725,20 @@ describe("createTeamSendMessageTool", () => {
     }, fixture.toolContext(fixture.memberOneSessionId))
 
     // then
-    await expect(result).rejects.toThrow("correlationId")
-    await expect(readdir(getInboxDir(resolveBaseDir(fixture.config), fixture.teamRunId, "m2"))).rejects.toThrow()
+    expect(result).rejects.toThrow("correlationId")
+    expect(readdir(getInboxDir(resolveBaseDir(fixture.config), fixture.teamRunId, "m2"))).rejects.toThrow()
+  })
+
+  test("describes correlationId as omit-unless-existing-UUID guidance", async () => {
+    // given
+    const fixture = await createTeamFixture()
+
+    // when
+    const correlationIdDescription = getToolArgumentDescription(fixture.tool.args.correlationId)
+
+    // then
+    expect(correlationIdDescription).toBe(TEAM_SEND_MESSAGE_CORRELATION_ID_DESCRIPTION)
+    expect(correlationIdDescription).toContain("Omit this field")
+    expect(correlationIdDescription).toContain("do not invent slugs or task IDs")
   })
 })

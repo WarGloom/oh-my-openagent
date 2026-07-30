@@ -6,6 +6,7 @@ import { listActiveTeams, loadRuntimeState } from "./team-state-store/store"
 export type ResolvedMemberSession = {
   teamRunId: string
   memberName: string
+  sessionId: string | undefined
 }
 
 export async function findResolvedMemberSession(
@@ -26,6 +27,7 @@ export async function findResolvedMemberSession(
         return {
           teamRunId: runtimeState.teamRunId,
           memberName: memberEntry.name,
+          sessionId: memberEntry.sessionId,
         }
       }
     } catch (error) {
@@ -47,6 +49,7 @@ export async function findResolvedMemberSession(
         return {
           teamRunId: runtimeState.teamRunId,
           memberName: memberEntry.name,
+          sessionId: memberEntry.sessionId,
         }
       }
     } catch (error) {

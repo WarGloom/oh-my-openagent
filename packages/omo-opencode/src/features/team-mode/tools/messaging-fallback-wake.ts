@@ -5,6 +5,13 @@ import {
 } from "../../../hooks/shared/prompt-async-gate"
 import { isPreSendConnectionFailure } from "../../../shared/live-server-route"
 import { log } from "../../../shared/logger"
+import { isAmbiguousPostDispatchPromptFailure } from "../../../shared/prompt-failure-classifier"
+import {
+  reserveUnreadMailboxBatch,
+  releaseReservedMailboxBatch,
+  recordReservedMailboxBatchPending,
+  type ReservedMailboxBatch,
+} from "../../../hooks/team-session-events/reserved-mailbox-batch"
 import { buildMemberPromptBody } from "../member-session-routing"
 import { readUnreadMessageById } from "@oh-my-opencode/team-core/team-mailbox/inbox"
 import { loadRuntimeState } from "@oh-my-opencode/team-core/team-state-store/store"
@@ -25,6 +32,13 @@ export async function enqueueFallbackMailboxWake(input: {
   readonly config: TeamModeConfig
   readonly dispatchTiming?: TeamSendMessageDispatchTiming
 }): Promise<void> {
+  let batch: ReservedMailboxBatch | null = null
+  let admissionGeneration = 0
+  const promptInput = {
+    path: { id: input.recipientSessionId },
+    body: buildMemberPromptBody(input.recipientMember, ""),
+    query: { directory: input.recipientMember.worktreePath ?? input.directory },
+  }
   const promptResult = await dispatchInternalPrompt({
     mode: "async",
     client: input.client,
@@ -36,13 +50,53 @@ export async function enqueueFallbackMailboxWake(input: {
     settleMs: input.dispatchTiming?.fallbackWakeSettleMs,
     postDispatchHoldMs: input.dispatchTiming?.postDispatchHoldMs,
     queueRetryMs: input.dispatchTiming?.queueRetryMs,
-    shouldDispatch: () => shouldDispatchFallbackMailboxWake(input),
-    retryDispatchFailure: isPreSendConnectionFailure,
-    input: {
-      path: { id: input.recipientSessionId },
-      body: buildMemberPromptBody(input.recipientMember, "You have a new team message in your mailbox."),
-      query: { directory: input.recipientMember.worktreePath ?? input.directory },
+    shouldDispatch: async () => {
+      const generation = admissionGeneration
+      if (!await shouldDispatchFallbackMailboxWake(input)) return false
+      const reserved = await reserveUnreadMailboxBatch({
+        teamRunId: input.teamRunId,
+        memberName: input.recipientName,
+        config: input.config,
+      })
+      if (!reserved) return false
+      let handedOff = false
+      try {
+        const stillEligible = await shouldDispatchFallbackMailboxWake(input, false)
+        if (generation !== admissionGeneration || !stillEligible) return false
+        promptInput.body = buildMemberPromptBody(input.recipientMember, reserved.promptText)
+        batch = reserved
+        handedOff = true
+        return true
+      } finally {
+        if (!handedOff) await releaseReservedMailboxBatch(reserved)
+      }
     },
+    onDispatchResult: async (result) => {
+      admissionGeneration += 1
+      const reserved = batch
+      if (!reserved) return
+      try {
+        if (result.status === "dispatched" || (result.status === "failed" && isAmbiguousPostDispatchPromptFailure(result))) {
+          await recordReservedMailboxBatchPending({
+            teamRunId: input.teamRunId,
+            memberName: input.recipientName,
+            expectedSessionID: input.recipientSessionId,
+            sessionID: input.recipientSessionId,
+            messageIds: reserved.messageIds,
+            config: input.config,
+          }, reserved)
+        } else {
+          await releaseReservedMailboxBatch(reserved)
+        }
+      } catch (error) {
+        await releaseReservedMailboxBatch(reserved)
+        throw error
+      } finally {
+        if (batch === reserved) batch = null
+      }
+    },
+    retryDispatchFailure: isPreSendConnectionFailure,
+    input: promptInput,
   })
   if (isInternalPromptDispatchAccepted(promptResult)) return
 
@@ -61,7 +115,7 @@ async function shouldDispatchFallbackMailboxWake(input: {
   readonly recipientSessionId: string
   readonly messageId: string
   readonly config: TeamModeConfig
-}): Promise<boolean> {
+}, requireUnread = true): Promise<boolean> {
   try {
     const runtimeState = await loadRuntimeState(input.teamRunId, input.config)
     const recipient = runtimeState.members.find((member) => member.name === input.recipientName)
@@ -78,6 +132,7 @@ async function shouldDispatchFallbackMailboxWake(input: {
       return false
     }
 
+    if (!requireUnread) return true
     const unread = await readUnreadMessageById(
       input.teamRunId,
       input.recipientName,

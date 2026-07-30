@@ -21,6 +21,22 @@ const MAX_QUEUED_RETRYABLE_FAILURES = 3
 const MAX_DURABLE_RETRY_BACKOFF_MS = 30_000
 let promptQueueSequence = 0
 
+export async function settlePromptDispatchResult(
+  owner: Pick<QueuedInternalPrompt, "sessionID" | "source" | "onDispatchResult">,
+  result: InternalPromptDispatchResult,
+): Promise<void> {
+  try {
+    await owner.onDispatchResult?.(result)
+  } catch (error) {
+    log("[prompt-async-gate] dispatch settlement callback failed; provider result preserved", {
+      sessionID: owner.sessionID,
+      source: owner.source,
+      status: result.status,
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
+}
+
 setExpiredReservationHandler((sessionID) => {
   schedulePromptQueueDrain(sessionID, 0)
 })
@@ -180,6 +196,7 @@ async function drainPromptQueue(sessionID: string, awaitedEntry?: QueuedInternal
         retryDispatchFailure: entry.retryDispatchFailure,
         dispatch: entry.dispatch,
       })
+      await settlePromptDispatchResult(entry, result)
       if (promptQueueInFlight.get(sessionID)?.id === entry.id) {
         promptQueueInFlight.delete(sessionID)
       }
