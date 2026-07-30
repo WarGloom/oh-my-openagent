@@ -30,6 +30,11 @@ For blocks/blockedBy: use addBlocks/addBlockedBy to append (additive, not replac
 For metadata: merge with existing, set key to null to delete.
 Syncs to OpenCode Todo API after update.
 
+**IMPORTANT - Always pass \`subject\`:** Include the task's current subject on every call,
+even when only \`status\` is changing. The subject is not persisted from a prior call, and
+omitting it makes the tool-call summary shown to the user show only the id and status with
+no readable label.
+
 **IMPORTANT - Dependency Management:**
 Use \`addBlockedBy\` to declare dependencies on other tasks.
 Properly managed dependencies enable maximum parallel execution.`,
