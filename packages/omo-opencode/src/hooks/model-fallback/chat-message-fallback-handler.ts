@@ -1,11 +1,13 @@
 import { log } from "../../shared/logger"
 import { getTaskToastManager } from "../../features/task-toast-manager"
 import type { ChatMessageHandlerOutput, ChatMessageInput } from "../../plugin/chat-message"
+import { applySessionPromptParams } from "../../shared/session-prompt-params-helpers"
+import type { ResolvedFallbackModel } from "./hook"
 
 export async function applyFallbackToChatMessage(params: {
   input: ChatMessageInput
   output: ChatMessageHandlerOutput
-  fallback: { providerID: string; modelID: string; variant?: string }
+  fallback: ResolvedFallbackModel
   toast?: (input: {
     title: string
     message: string
@@ -28,17 +30,19 @@ export async function applyFallbackToChatMessage(params: {
     providerID: fallback.providerID,
     modelID: fallback.modelID,
   }
-  if (fallback.variant !== undefined) {
-    output.message["variant"] = fallback.variant
+  const loweredReasoning = applySessionPromptParams(sessionID, fallback)
+  const variant = fallback.variant ?? loweredReasoning.variant
+  if (variant !== undefined) {
+    output.message["variant"] = variant
   } else {
     delete output.message["variant"]
   }
 
   if (toast) {
-    const key = `${sessionID}:${fallback.providerID}/${fallback.modelID}:${fallback.variant ?? ""}`
+    const key = `${sessionID}:${fallback.providerID}/${fallback.modelID}:${variant ?? ""}`
     if (lastToastKey.get(sessionID) !== key) {
       lastToastKey.set(sessionID, key)
-      const variantLabel = fallback.variant ? ` (${fallback.variant})` : ""
+      const variantLabel = variant ? ` (${variant})` : ""
       await Promise.resolve(
         toast({
           title: "Model fallback",
@@ -56,14 +60,14 @@ export async function applyFallbackToChatMessage(params: {
         sessionID,
         providerID: fallback.providerID,
         modelID: fallback.modelID,
-        variant: fallback.variant,
+        variant,
       }),
     )
   }
 
   const toastManager = getTaskToastManager()
   if (toastManager) {
-    const variantLabel = fallback.variant ? ` (${fallback.variant})` : ""
+    const variantLabel = variant ? ` (${variant})` : ""
     toastManager.updateTaskModelBySession(sessionID, {
       model: `${fallback.providerID}/${fallback.modelID}${variantLabel}`,
       type: "runtime-fallback",

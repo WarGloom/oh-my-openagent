@@ -6,9 +6,10 @@ import { AgentPermissionSchema } from "./internal/permission"
 export const AgentOverrideConfigSchema = z.object({
   /** @deprecated Use `category` instead. Model is inherited from category defaults. */
   model: z.string().optional(),
-  /** Ordered model chain; the first entry is primary and the rest are fallbacks. */
+  /** Ordered model chain; the first entry is the primary model and the rest are fallbacks. */
   models: z.array(z.union([z.string(), FallbackModelObjectSchema])).optional(),
   models_distribution: z.enum(["sequential", "round_robin"]).optional(),
+  /** @deprecated Use `models` instead. */
   fallback_models: FallbackModelsSchema.optional(),
   reasoning: OmoReasoningSchema.optional(),
   /** @deprecated Use `reasoning` instead. */
