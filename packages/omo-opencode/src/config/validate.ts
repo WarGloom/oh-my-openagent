@@ -104,7 +104,6 @@ function materializeAgentModelChains(config: OhMyOpenCodeConfig): OhMyOpenCodeCo
 
     const [primary, ...fallbacks] = agent.models
     const {
-      models: _models,
       model: _model,
       fallback_models: _fallbackModels,
       reasoning: _reasoning,
@@ -114,6 +113,8 @@ function materializeAgentModelChains(config: OhMyOpenCodeConfig): OhMyOpenCodeCo
       top_p: _topP,
       maxTokens: _maxTokens,
       thinking: _thinking,
+      providerOptions: _providerOptions,
+      textVerbosity: _textVerbosity,
       ...rest
     } = agent
     const primarySettings = primary === undefined
@@ -129,6 +130,8 @@ function materializeAgentModelChains(config: OhMyOpenCodeConfig): OhMyOpenCodeCo
     }]
   })) as typeof config.agents
 
+  // Older execution paths still consume `model` and `fallback_models`. Keep the
+  // canonical `models` chain intact while providing an equivalent runtime view.
   return changed ? { ...config, agents } : config
 }
 
@@ -189,7 +192,7 @@ export function validatePluginConfig(
   const firstFailingView = views.find((view) => view.messages.length > 0)
   const firstView = views[0]
   const userConfig = parseConfig(chain.protectedUserView)
-  const config = applyDisabledProviders(materializeAgentModelChains(
+  const config = materializeAgentModelChains(applyDisabledProviders(
     protectUserFields(mergeViews(views), userConfig),
   ))
   warnLegacyUlwExecuteKey(chain.views)
