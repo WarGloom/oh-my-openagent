@@ -21,6 +21,18 @@ type FallbackCallback = (input: {
   variant?: string
 }) => void | Promise<void>
 
+export type ResolvedFallbackModel = {
+  providerID: string
+  modelID: string
+  variant?: string
+  reasoning?: string
+  reasoningEffort?: string
+  temperature?: number
+  top_p?: number
+  maxTokens?: number
+  thinking?: { type: "enabled" | "disabled"; budgetTokens?: number }
+}
+
 export type ModelFallbackState = {
   providerID: string
   modelID: string
@@ -104,7 +116,7 @@ export function setPendingModelFallback(
 export function getNextFallback(
   controller: Pick<ModelFallbackStateController, "getNextFallback">,
   sessionID: string,
-): { providerID: string; modelID: string; variant?: string } | null {
+): ResolvedFallbackModel | null {
   return controller.getNextFallback(sessionID)
 }
 
