@@ -208,6 +208,20 @@ describe("model-error-classifier", () => {
     expect(result).toBe(true)
   })
 
+  test("treats weekly-limit reset message as retryable", () => {
+    //#given
+    const error = {
+      name: "SessionRetry",
+      message: "Claude Code returned an error result: You've hit your weekly limit · resets Aug 11, 2pm (Asia/Jerusalem)",
+    }
+
+    //#when
+    const result = shouldRetryError(error)
+
+    //#then
+    expect(result).toBe(true)
+  })
+
   test("treats usage-limit reset message with retrying countdown as retryable", () => {
     //#given
     const error = {

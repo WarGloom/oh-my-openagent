@@ -130,6 +130,7 @@ const AUTO_RETRY_GATE_PATTERNS = [
 const PROVIDER_LIMIT_RESET_PATTERNS = [
   "hit your limit",
   "hit your session limit",
+  "hit your weekly limit",
   "reached your limit",
   "reached your session limit",
 ]
