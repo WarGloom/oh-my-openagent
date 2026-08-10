@@ -49,6 +49,7 @@ function hasProviderResetWindowSignal(message: string): boolean {
     && (
       message.includes("hit your limit") ||
       message.includes("hit your session limit") ||
+      message.includes("hit your weekly limit") ||
       message.includes("reached your limit") ||
       message.includes("reached your session limit")
     )
