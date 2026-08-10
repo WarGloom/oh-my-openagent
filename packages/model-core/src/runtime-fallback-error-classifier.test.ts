@@ -63,6 +63,16 @@ describe("runtime fallback error classifier", () => {
         expectedStatusCode: undefined,
       },
       {
+        label: "claude code weekly limit reset window",
+        error: {
+          name: "SessionRetry",
+          message: "Claude Code returned an error result: You've hit your weekly limit · resets Aug 11, 2pm (Asia/Jerusalem)",
+        },
+        expectedType: "quota_exceeded",
+        expectedRetryable: true,
+        expectedStatusCode: undefined,
+      },
+      {
         label: "github copilot pro plus five-hour session limit",
         error: {
           name: "SessionRetry",
