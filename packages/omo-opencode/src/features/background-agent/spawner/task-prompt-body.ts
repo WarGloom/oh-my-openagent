@@ -1,4 +1,4 @@
-import { createInternalAgentTextPart, getAgentToolRestrictions } from "../../../shared"
+import { createInternalAgentTextPart, getAgentToolRestrictions, lowerReasoningForModel } from "../../../shared"
 import type { BackgroundTaskUserPermission, LaunchInput } from "../types"
 
 type PromptModel = LaunchInput["model"]
@@ -76,7 +76,9 @@ export function buildTaskPromptBody(options: TaskPromptBodyOptions): TaskPromptB
         modelID: options.model.modelID,
       }
     : undefined
-  const promptVariant = options.model?.variant
+  const promptVariant = options.model?.reasoning !== undefined
+    ? lowerReasoningForModel(options.model.reasoning, options.model).variant
+    : options.model?.variant
 
   return {
     agent: options.agent,

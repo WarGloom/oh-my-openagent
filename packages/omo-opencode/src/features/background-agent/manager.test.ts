@@ -9550,6 +9550,63 @@ describe("BackgroundManager - tool permission spread order", () => {
     manager.shutdown()
   })
 
+  test("startTask gives canonical reasoning precedence when creating and launching a child session", async () => {
+    //#given
+    const createCalls: Array<{ body: { model?: { variant?: string } } }> = []
+    const promptCalls: Array<{ body: Record<string, unknown> }> = []
+    const client = {
+      session: {
+        get: async () => ({ data: { directory: "/test/dir" } }),
+        create: async (args: { body: { model?: { variant?: string } } }) => {
+          createCalls.push(args)
+          return { data: { id: "session-reasoning-precedence" } }
+        },
+        promptAsync: async (args: { body: Record<string, unknown> }) => {
+          promptCalls.push(args)
+          return {}
+        },
+      },
+    }
+    const manager = new BackgroundManager({ pluginContext: createPluginInput(client) })
+    const model = {
+      providerID: "openai",
+      modelID: "gpt-5.6-sol",
+      variant: "max",
+      reasoning: "high",
+    }
+    const task: BackgroundTask = {
+      id: "task-reasoning-precedence",
+      status: "pending",
+      queuedAt: new Date(),
+      description: "test task",
+      prompt: "test prompt",
+      agent: "sisyphus-junior",
+      parentSessionId: "parent-session",
+      parentMessageId: "parent-message",
+      model,
+    }
+    const input: import("./types").LaunchInput = {
+      description: task.description,
+      prompt: task.prompt,
+      agent: task.agent,
+      parentSessionId: task.parentSessionId,
+      parentMessageId: task.parentMessageId,
+      model,
+    }
+
+    //#when
+    await (cast<{ startTask: (item: { task: BackgroundTask; input: import("./types").LaunchInput }) => Promise<void> }>(manager))
+      .startTask({ task, input })
+
+    //#then
+    expect(createCalls).toHaveLength(1)
+    expect(createCalls[0].body.model?.variant).toBe("high")
+    expect(promptCalls).toHaveLength(1)
+    expect(promptCalls[0].body.variant).toBe("high")
+
+    manager.shutdown()
+  })
+
   test("startTask updates tracked session agent when launch falls back to general", async () => {
     //#given
     const promptCalls: Array<{ path: { id: string }; body: Record<string, unknown> }> = []
