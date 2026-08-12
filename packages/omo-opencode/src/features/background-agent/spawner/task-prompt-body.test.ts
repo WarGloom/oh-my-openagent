@@ -62,4 +62,28 @@ describe("buildTaskPromptBody - resume kind", () => {
     expect(body.system).toBe("<available_skills>\nskill1\n</available_skills>")
     expect(body.parts[0].text).toBe(`initial prompt\n${OMO_INTERNAL_INITIATOR_MARKER}`)
   })
+
+  test("#given canonical reasoning and a stale legacy variant #when building a background prompt #then reasoning wins", () => {
+    //#given
+    const options = {
+      kind: "launch" as const,
+      agent: "sisyphus-junior",
+      model: {
+        providerID: "openai",
+        modelID: "gpt-5.6-sol",
+        variant: "max",
+        reasoning: "high",
+        runtimeModel: { variants: { high: {} } },
+      },
+      prompt: "review the change",
+      includeTeamToolDenylist: true,
+      system: undefined,
+    }
+
+    //#when
+    const body = buildTaskPromptBody(options)
+
+    //#then
+    expect(body.variant).toBe("high")
+  })
 })

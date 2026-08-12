@@ -15,6 +15,7 @@ import {
   hasInternalInitiatorMarker,
   isAmbiguousPostDispatchPromptFailure,
   log,
+  lowerReasoningForModel,
   messagesInDirectory,
   normalizePromptTools,
   normalizeSDKResponse,
@@ -982,6 +983,9 @@ export class BackgroundManager {
     const sessionTitle = pendingRetryAttempt
       ? formatRetrySessionTitle(input.description, `retry ${pendingRetryAttempt.attemptNumber}${pendingRetryModel} (@${input.agent} subagent)`)
       : formatRetrySessionTitle(input.description, `(@${input.agent} subagent)`)
+    const launchSessionVariant = input.model?.reasoning !== undefined
+      ? lowerReasoningForModel(input.model.reasoning, input.model).variant
+      : input.model?.variant
 
     const createResult = await this.client.session.create({
       body: {
@@ -993,7 +997,7 @@ export class BackgroundManager {
               model: {
                 id: input.model.modelID,
                 providerID: input.model.providerID,
-                ...(input.model.variant ? { variant: input.model.variant } : {}),
+                ...(launchSessionVariant ? { variant: launchSessionVariant } : {}),
               },
             }
           : {}),
