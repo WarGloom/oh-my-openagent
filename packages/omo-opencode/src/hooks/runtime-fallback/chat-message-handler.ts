@@ -227,7 +227,7 @@ export function createChatMessageHandler(deps: HookDeps) {
 
     if (currentIdentity === originalIdentity) return
 
-    const activeModel = stringifyRuntimeModelWithVariant(state.currentModel)
+    const activeModel = stringifyRuntimeModelWithVariant(state.currentModel, undefined)
     if (!activeModel || activeModel === state.originalModel) return
 
     log(`[${HOOK_NAME}] Applying fallback model override`, {

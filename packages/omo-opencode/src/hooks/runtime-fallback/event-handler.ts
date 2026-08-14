@@ -194,14 +194,14 @@ export function createEventHandler(deps: HookDeps, helpers: AutoRetryHelpers) {
     const sessionID = resolveSessionEventID(props)
     if (!sessionID) return
 
-    if (cancelledSessions.has(sessionID)) {
-      resetRetryState(sessionID)
-      log(`[${HOOK_NAME}] Cleared fallback retry state for cancelled session on idle`, { sessionID })
+    if (sessionAwaitingFallbackResult.has(sessionID)) {
+      log(`[${HOOK_NAME}] session.idle while awaiting fallback result; keeping timeout armed`, { sessionID })
       return
     }
 
-    if (sessionAwaitingFallbackResult.has(sessionID)) {
-      log(`[${HOOK_NAME}] session.idle while awaiting fallback result; keeping timeout armed`, { sessionID })
+    if (cancelledSessions.has(sessionID)) {
+      resetRetryState(sessionID)
+      log(`[${HOOK_NAME}] Cleared fallback retry state for cancelled session on idle`, { sessionID })
       return
     }
 

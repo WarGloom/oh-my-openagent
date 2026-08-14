@@ -79,7 +79,7 @@ function createHelpers(deps: HookDeps, abortCalls: string[], clearCalls: string[
     },
     scheduleSessionFallbackTimeout: () => {},
     refreshSessionFallbackTimeout: () => false,
-    autoRetryWithFallback: async () => {},
+    autoRetryWithFallback: async () => ({ accepted: true, status: "dispatched" }),
     resolveAgentForSessionFromContext: async () => undefined,
     cleanupStaleSessions: () => {},
   }
@@ -119,6 +119,7 @@ describe("createEventHandler", () => {
     const helpers = createHelpers(deps, abortCalls, clearCalls)
     helpers.autoRetryWithFallback = async (retrySessionID: string, newModel: string, _resolvedAgent, source: string) => {
       retryCalls.push({ sessionID: retrySessionID, model: newModel, source })
+      return { accepted: true, status: "dispatched" }
     }
     deps.sessionStates.set(sessionID, createFallbackState("github-copilot/claude-haiku-4.5"))
     const handler = createEventHandler(deps, helpers)
@@ -294,6 +295,7 @@ describe("createEventHandler", () => {
       deps.sessionRetryInFlight.add(retrySessionID)
       deps.sessionAwaitingFallbackResult.add(retrySessionID)
       deps.sessionFallbackTimeouts.set(retrySessionID, 1)
+      return { accepted: true, status: "dispatched" }
     }
     const handler = createEventHandler(deps, helpers)
 
@@ -309,6 +311,7 @@ describe("createEventHandler", () => {
 
     await handler({ event: { type: "session.error", properties: { sessionID, error: { name: "AbortError" } } } })
     deps.sessionRetryInFlight.delete(sessionID)
+    deps.sessionAwaitingFallbackResult.delete(sessionID)
 
     await handler({ event: { type: "session.idle", properties: { sessionID } } })
 
@@ -382,6 +385,53 @@ describe("createEventHandler", () => {
     expect(resetState?.attemptCount).toBe(0)
     expect(clearCalls).toEqual([sessionID])
     expect(abortCalls).toEqual([])
+  })
+
+  it("#given a stale cancellation marker and a newer awaiting fallback #when session.idle fires #then the newer fallback state is preserved", async () => {
+    // given
+    const sessionID = "session-stale-cancellation-newer-fallback"
+    const deps = createDeps()
+    const abortCalls: string[] = []
+    const clearCalls: string[] = []
+    const handler = createEventHandler(deps, createHelpers(deps, abortCalls, clearCalls))
+
+    await handler({ event: { type: "session.error", properties: { sessionID, error: { name: "MessageAbortedError" } } } })
+    clearCalls.length = 0
+
+    const state = createFallbackState("anthropic/claude-opus-5")
+    state.currentModel = "github-copilot/claude-sonnet-4.6"
+    state.fallbackIndex = 1
+    state.attemptCount = 2
+    state.pendingFallbackModel = "github-copilot/claude-sonnet-4.6"
+    deps.sessionStates.set(sessionID, state)
+    deps.sessionAwaitingFallbackResult.add(sessionID)
+    deps.sessionStatusRetryKeys.set(sessionID, "retry:2")
+    deps.sessionFallbackTimeouts.set(sessionID, 7)
+
+    // when
+    await handler({ event: { type: "session.idle", properties: { sessionID } } })
+
+    // then
+    const preservedState = deps.sessionStates.get(sessionID)
+    expect({
+      currentModel: preservedState?.currentModel,
+      fallbackIndex: preservedState?.fallbackIndex,
+      attemptCount: preservedState?.attemptCount,
+      pendingFallbackModel: preservedState?.pendingFallbackModel,
+      awaitingFallbackResult: deps.sessionAwaitingFallbackResult.has(sessionID),
+      retryKey: deps.sessionStatusRetryKeys.get(sessionID),
+      timeout: deps.sessionFallbackTimeouts.get(sessionID),
+      clearCalls,
+    }).toEqual({
+      currentModel: "github-copilot/claude-sonnet-4.6",
+      fallbackIndex: 1,
+      attemptCount: 2,
+      pendingFallbackModel: "github-copilot/claude-sonnet-4.6",
+      awaitingFallbackResult: true,
+      retryKey: "retry:2",
+      timeout: 7,
+      clearCalls: [],
+    })
   })
 
   it("#given a session we aborted ourselves (internal abort flag set) #when session.error fires with isAbort #then fallback retry state is preserved (issue #4006)", async () => {
@@ -458,10 +508,7 @@ describe("createEventHandler", () => {
     expect(deps.sessionStates.get(sessionID)?.attemptCount).toBe(1)
 
     // simulate the next retry signal advancing the counter
-    const advanced = deps.sessionStates.get(sessionID)
-    expect(advanced).toBeDefined()
-    if (!advanced) return
-    advanced.attemptCount = 2
+    state.attemptCount = 2
 
     // iteration 2: another internal abort
     deps.internallyAbortedSessions.add(sessionID)
