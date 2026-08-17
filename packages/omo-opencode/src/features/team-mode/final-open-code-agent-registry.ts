@@ -172,8 +172,10 @@ export async function resolveFinalProjectAgent(
     ...getAgentToolRestrictions(agent.name, { includeTeamToolDenylist: false }),
   }
   for (const [tool, allowed] of Object.entries(launchToolPermissions)) {
-    const expectedAction = allowed ? "allow" : "deny"
-    if (!hasUnconditionalFinalAction(agent, tool, expectedAction)) {
+    const hasAllowedFinalAction = hasUnconditionalFinalAction(agent, tool, "allow")
+    const hasCompatibleFinalAction = hasAllowedFinalAction
+      || (!allowed && hasUnconditionalFinalAction(agent, tool, "deny"))
+    if (!hasCompatibleFinalAction) {
       throw new ProjectAgentResolutionError(
         `Project agent '${agent.name}' must already agree with the launch permission '${tool}: ${allowed}' in its final permission rules.`,
       )
