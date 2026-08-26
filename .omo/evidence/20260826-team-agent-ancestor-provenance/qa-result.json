@@ -2,11 +2,11 @@
   "passed": true,
   "assertionCount": 29,
   "assertions": {
-    "exactSourceManifestHas3Files": true,
-    "sourceManifestMatchesCurrentUncommittedSourceTree": true,
+    "exactSourceManifestHas16Files": true,
+    "sourceTreeCleanAtQaHead": true,
     "evidenceSourceManifestHasReadmeAndBothScripts": true,
     "evidenceArtifactSetRemainsExactlySevenFiles": true,
-    "hostSessionCountUnchanged": true,
+    "hostDbContainsNoQaSessions": true,
     "acceptedRunExitedSuccessfully": true,
     "acceptedHasExactEventAndProviderRequestCounts": true,
     "acceptedTeamCreateCompleted": true,
@@ -32,44 +32,100 @@
     "providersStoppedAndSandboxesRemoved": true,
     "allPersistedOutputsRemainSanitized": true
   },
-  "gitHead": "31077ea79f1a33df10a6c81da655af1caca77fdd",
+  "gitHead": "a0933934ac1a21167e5c6b1a6cac98a29467fbb3",
   "gitStatusShort": [
-    " M docs/guide/team-mode.md",
-    " M packages/omo-opencode/src/features/team-mode/final-open-code-agent-registry.test.ts",
-    " M packages/omo-opencode/src/features/team-mode/final-open-code-agent-registry.ts"
+    " M .omo/evidence/20260816-remove-omo-telemetry-command/disclosure-tui/terminal-ansi.txt",
+    " M .omo/evidence/20260816-remove-omo-telemetry-command/tui-pass/terminal-ansi.txt",
+    " M .omo/evidence/20260826-team-agent-ancestor-provenance/opencode-run-accepted.jsonl",
+    " M .omo/evidence/20260826-team-agent-ancestor-provenance/opencode-run-rejected.jsonl",
+    " M .omo/evidence/20260826-team-agent-ancestor-provenance/provider-requests.jsonl",
+    " M .omo/evidence/20260826-team-agent-ancestor-provenance/qa-result.json"
   ],
   "sourceManifest": [
     {
       "file": "docs/guide/team-mode.md",
-      "sha256": "f83ec6d2798979c4fdc469de1d1d42269f908b2af0119fbb3e9a813b9635afe9"
+      "sha256": "ef2265052196dd1037c3f3bfaa88b3e17e7046e552bd43fac8250bce10f6d689"
     },
     {
       "file": "packages/omo-opencode/src/features/team-mode/final-open-code-agent-registry.test.ts",
-      "sha256": "3c20debab4c38e93c1c8baa0bbb0f3594e275ce1ddce4b22519878a846fb0f9f"
+      "sha256": "5c65ddb5a09ab7f1a388563980525296d29151315cd752484d16b43ec29aba88"
     },
     {
       "file": "packages/omo-opencode/src/features/team-mode/final-open-code-agent-registry.ts",
-      "sha256": "b09bccfc688e7f8dac5d2a34b844c986091bd4723357f516bed78c20abfc1cb9"
+      "sha256": "b128214324cb99f0b73dfeb75c45a0ccd1e39afcbc26abf2445135f10d6186b8"
+    },
+    {
+      "file": "packages/omo-opencode/src/features/team-mode/team-registry/project-agent-loader.test.ts",
+      "sha256": "3484844adced89fce0060af748b42b1d2e202fe1647b1d39240462740f7c2942"
+    },
+    {
+      "file": "packages/omo-opencode/src/features/team-mode/team-runtime/resolve-member.test.ts",
+      "sha256": "e69a0fd5acdb267dee5b96e96ee82f68737450634f3ccd7652d9653134d07cca"
+    },
+    {
+      "file": "packages/omo-opencode/src/features/team-mode/team-runtime/resolve-member.ts",
+      "sha256": "5b8efca9d388ea2c8248c4a85c3a6f22f0edbfb1db3e952cf7eb73c7c183732d"
+    },
+    {
+      "file": "packages/omo-opencode/src/features/team-mode/tools/lifecycle-create-tool.ts",
+      "sha256": "8fca28debafd27be740693bd3d08a19eb9ec0bf2204aa1ea859b0a69589c8efa"
+    },
+    {
+      "file": "packages/omo-opencode/src/features/team-mode/tools/lifecycle-inline-project-agent.test.ts",
+      "sha256": "fa8ff5778730a99cd9b190c295d3378c7865ba71bdad36da9a1f7350cf95c6dc"
+    },
+    {
+      "file": "packages/omo-opencode/src/features/team-mode/tools/lifecycle-inline-spec.ts",
+      "sha256": "6518f12c7c3913f589ffae1c8bf37fb6840d4253b116a3b1a27f424640eda3a6"
+    },
+    {
+      "file": "packages/omo-opencode/src/features/team-mode/tools/query.ts",
+      "sha256": "dcae028646863b0ac642c41cc848f2e9d468f53232225a0b399753b8f6954a53"
+    },
+    {
+      "file": "packages/omo-opencode/src/plugin-handlers/agent-config-handler.ts",
+      "sha256": "d649aa09faf54254ff5356a3ad0eac04a140976c9cb016252e9ec05751cfaf43"
+    },
+    {
+      "file": "packages/omo-opencode/src/plugin-handlers/config-handler.ts",
+      "sha256": "5ce21f68115c7d7505aee7394b934973b3f952cc113ff3f28b1d0f612bf3a57f"
+    },
+    {
+      "file": "packages/omo-opencode/src/plugin-handlers/project-agent-provenance-cache.test.ts",
+      "sha256": "1f664bb002e397d2961a1573701e7967700f9d9ff0bab59c33d9647ade439136"
+    },
+    {
+      "file": "packages/team-core/src/team-registry/loader.ts",
+      "sha256": "1f95ffa056ddfa87be40f8bb68675869a63fadea12560aef258d5f410f8fd8d5"
+    },
+    {
+      "file": "packages/team-core/src/team-registry/validator-options.test.ts",
+      "sha256": "fdee7dd4ccec0b819efc77a4e6d11f7267e93868a6687add175ad2bd40fb9a42"
+    },
+    {
+      "file": "packages/team-core/src/team-registry/validator.ts",
+      "sha256": "cb4140bdf53800ca77cbde3f835b369dce8457c2affb8113e309edd05cce87dc"
     }
   ],
   "evidenceSourceManifest": [
     {
-      "file": ".omo/evidence/20260716-minimal-project-agent-members/README.md",
-      "sha256": "89e616800e3147d80444548a083ba6e829ac1e3d708984e12e725ad3ff47e790"
+      "file": ".omo/evidence/20260826-team-agent-ancestor-provenance/README.md",
+      "sha256": "69c4cacd1271935776e175eed89c7642a3a531394ac51299bc2ddb0cc3685846"
     },
     {
-      "file": ".omo/evidence/20260716-minimal-project-agent-members/fake-provider.mjs",
+      "file": ".omo/evidence/20260826-team-agent-ancestor-provenance/fake-provider.mjs",
       "sha256": "ca0bf42f4487d57384b9d502c6562cbe5d6fda0aff87948c3598a9ea45d8ef9c"
     },
     {
-      "file": ".omo/evidence/20260716-minimal-project-agent-members/run-qa.mjs",
-      "sha256": "ad44a54373522b01aba09464a0204e10fd3f9dbf487ea0df122490e818afe35c"
+      "file": ".omo/evidence/20260826-team-agent-ancestor-provenance/run-qa.mjs",
+      "sha256": "7fceef6223a2ef2a92ad9c7b995c22c951abce2c7c36874631f8162fdb6a40e2"
     }
   ],
   "hostIsolation": {
-    "sessionCountBefore": 8523,
-    "sessionCountAfter": 8523,
-    "unchanged": true
+    "sessionCountBefore": 8542,
+    "sessionCountAfter": 8542,
+    "unchanged": true,
+    "qaSessionCount": 0
   },
   "scenarios": {
     "accepted": {
@@ -128,8 +184,6 @@
           "lsp_rename",
           "lsp_status",
           "lsp_symbols",
-          "mcp_background_cancel",
-          "mcp_background_output",
           "read",
           "read_mcp_resource",
           "session_info",
@@ -158,6 +212,7 @@
       },
       "childRequestCount": 1,
       "childSessionCount": 1,
+      "hostQaSessionCount": 0,
       "projectAgentPresentBeforeTeamCreateResponse": true,
       "projectAgentExistsAfterRun": true,
       "outputsSanitized": true,
@@ -186,6 +241,7 @@
         "childRequest": null,
         "childRequestCount": 0,
         "childSessionCount": 0,
+        "hostQaSessionCount": 0,
         "projectAgentPresentBeforeTeamCreateResponse": false,
         "projectAgentExistsAfterRun": true,
         "outputsSanitized": true,
@@ -213,6 +269,7 @@
         "childRequest": null,
         "childRequestCount": 0,
         "childSessionCount": 0,
+        "hostQaSessionCount": 0,
         "projectAgentPresentBeforeTeamCreateResponse": false,
         "projectAgentExistsAfterRun": true,
         "outputsSanitized": true,
@@ -240,6 +297,7 @@
         "childRequest": null,
         "childRequestCount": 0,
         "childSessionCount": 0,
+        "hostQaSessionCount": 0,
         "projectAgentPresentBeforeTeamCreateResponse": false,
         "projectAgentExistsAfterRun": true,
         "outputsSanitized": true,
@@ -267,6 +325,7 @@
         "childRequest": null,
         "childRequestCount": 0,
         "childSessionCount": 0,
+        "hostQaSessionCount": 0,
         "projectAgentPresentBeforeTeamCreateResponse": false,
         "projectAgentExistsAfterRun": true,
         "outputsSanitized": true,
