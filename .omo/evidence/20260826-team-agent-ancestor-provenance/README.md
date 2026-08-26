@@ -92,7 +92,7 @@ bun run build
 PASS
 
 isolated real OpenCode QA
-29 assertions passed; host session count 8541 -> 8541; host QA sessions 0
+29 assertions passed; host QA sessions 0; total host counts recorded as informational
 ```
 
 This evidence directory contains the exact tracked `run-qa.mjs` and `fake-provider.mjs` used for PR-head verification. The generator records SHA-256 hashes for itself, the provider, the README, and all 16 non-evidence product paths changed by the PR. `sourceTreeCleanAtQaHead` excludes only this evidence directory and the two known historical line-ending-only evidence paths. Host isolation is concurrency-safe: the assertion requires zero host-database sessions under every QA sandbox path; before/after total session counts remain informational because unrelated live OpenCode sessions may create rows during the run. Both evidence and product manifests pass `sha256sum --check`.
