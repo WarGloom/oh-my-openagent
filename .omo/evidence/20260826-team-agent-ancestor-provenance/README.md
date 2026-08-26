@@ -74,6 +74,29 @@ Artifacts:
 - `opencode-run-rejected.jsonl`: sanitized rejected-run event streams.
 - `provider-requests.jsonl`: allowlisted provider metadata only.
 
+## PR Head Revalidation
+
+After merging current `base/dev` into PR #6145 and aligning nullable registry fields plus member `task` narrowing, the source head `99a243291` was revalidated:
+
+```text
+bun test packages/omo-opencode/src/features/team-mode/final-open-code-agent-registry.test.ts
+6 pass
+
+bun test packages/omo-opencode/src/plugin-handlers/project-agent-provenance-cache.test.ts packages/omo-opencode/src/features/team-mode/team-runtime/resolve-member.test.ts
+31 pass
+
+bun run typecheck
+PASS
+
+bun run build
+PASS
+
+isolated real OpenCode QA
+29 assertions passed; host session count 8532 -> 8532
+```
+
+`pr-head-qa-result.json` contains the sanitized machine result for this merged PR-head run. Its raw `gitStatusShort` records the temporary historical-harness outputs and the two pre-existing line-ending-only evidence paths; the `sourceTreeCleanAtQaHead` assertion excludes those known paths and proves no product source drift. The historical PR QA directory was restored byte-for-byte after the temporary harness adaptation.
+
 ## Why This Is Enough
 
 The unit regression proves the new ancestor-selection rule and its fail-closed boundaries. The real OpenCode run proves the unchanged final-registry, permission, lead, and child-launch behavior through the actual `team_create` surface. Typecheck and build cover integration with the current package layout.
