@@ -104,6 +104,18 @@ function hostSessionCount() {
   return Number(exec("sqlite3", ["-readonly", path.join(dataRoot, "opencode", "opencode.db"), "SELECT count(*) FROM session;"]))
 }
 
+function hostSessionCountForDirectory(directory) {
+  const home = process.env.HOME
+  if (!home) throw new Error("HOME is required for the read-only host DB guard")
+  const dataRoot = process.env.XDG_DATA_HOME ?? path.join(home, ".local", "share")
+  const escapedDirectory = directory.replaceAll("'", "''")
+  return Number(exec("sqlite3", [
+    "-readonly",
+    path.join(dataRoot, "opencode", "opencode.db"),
+    `SELECT count(*) FROM session WHERE directory = '${escapedDirectory}' OR instr(directory, '${escapedDirectory}/') = 1;`,
+  ]))
+}
+
 function isolatedEnvironment(sandbox) {
   const environment = { ...process.env }
   for (const key of Object.keys(environment)) {
@@ -349,6 +361,7 @@ async function runScenario(scenario) {
       childRequest: childRequest ?? null,
       childRequestCount: providerEntries.filter((entry) => entry.branch === "project-agent-child").length,
       childSessionCount,
+      hostQaSessionCount: hostSessionCountForDirectory(sandbox),
       projectAgentPresentBeforeTeamCreateResponse: sourcePresence,
       projectAgentExistsAfterRun: existsSync(agentFile),
       outputsSanitized: !JSON.stringify(persistedEvents).includes(sandbox)
@@ -392,6 +405,10 @@ try {
 }
 
 const hostSessionCountAfter = hostSessionCount()
+const hostQaSessionCount = [...scenarioResults.values()].reduce(
+  (total, scenario) => total + scenario.hostQaSessionCount,
+  0,
+)
 const accepted = scenarioResults.get(acceptedScenario)
 const rejected = new Map(rejectedScenarios.map((scenario) => [scenario, scenarioResults.get(scenario)]))
 const combinedRejectedEvents = readJsonLines(path.join(evidenceDir, "opencode-run-rejected.jsonl"))
@@ -425,7 +442,7 @@ const assertions = accepted && rejectedScenarios.every((scenario) => rejected.ge
   evidenceSourceManifestHasReadmeAndBothScripts: evidenceSourceManifest.length === 3,
   evidenceArtifactSetRemainsExactlySevenFiles: artifactNames.length === expectedEvidenceFiles.length
     && expectedEvidenceFiles.every((file, index) => file === artifactNames[index]),
-  hostSessionCountUnchanged: hostSessionCountBefore === hostSessionCountAfter,
+  hostDbContainsNoQaSessions: hostQaSessionCount === 0,
   acceptedRunExitedSuccessfully: accepted.exitCode === 0,
   acceptedHasExactEventAndProviderRequestCounts: accepted.eventCount === 6 && accepted.providerRequestCount === 4,
   acceptedTeamCreateCompleted: accepted.teamCreateStatus === "completed",
@@ -473,7 +490,12 @@ const result = {
   gitStatusShort: [],
   sourceManifest,
   evidenceSourceManifest,
-  hostIsolation: { sessionCountBefore: hostSessionCountBefore, sessionCountAfter: hostSessionCountAfter, unchanged: hostSessionCountBefore === hostSessionCountAfter },
+  hostIsolation: {
+    sessionCountBefore: hostSessionCountBefore,
+    sessionCountAfter: hostSessionCountAfter,
+    unchanged: hostSessionCountBefore === hostSessionCountAfter,
+    qaSessionCount: hostQaSessionCount,
+  },
   scenarios: {
     accepted: accepted ?? null,
     rejected: Object.fromEntries(rejectedScenarios.map((scenario) => [scenario, rejected.get(scenario) ?? null])),
