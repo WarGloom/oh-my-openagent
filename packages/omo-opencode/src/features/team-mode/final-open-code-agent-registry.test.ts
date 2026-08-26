@@ -91,4 +91,29 @@ describe("project agent provenance", () => {
     // then: the enforcing task false overlay may narrow the final allow
     expect(result).toEqual({ name: "opencode-agent", model: undefined })
   })
+
+  test("tolerates null hidden, variant, and model from OpenCode output", async () => {
+    // given: OpenCode serializes absent optional fields as null
+    const directory = "/tmp/test-registry-null-fields"
+    replaceProjectAgentProvenance(directory, ["opencode-agent"])
+    const mockClient: FinalOpenCodeAgentRegistryClient = {
+      app: {
+        agents: async () => [{
+          name: "opencode-agent",
+          mode: "subagent",
+          native: false,
+          hidden: null,
+          model: null,
+          variant: null,
+          permission: createPermissionRules(),
+        }],
+      },
+    }
+
+    // when: the nullable final registry entry is resolved
+    const result = await resolveFinalProjectAgent(mockClient, directory, "opencode-agent")
+
+    // then: null optional fields are accepted and null model is treated as absent
+    expect(result).toEqual({ name: "opencode-agent", model: undefined })
+  })
 })

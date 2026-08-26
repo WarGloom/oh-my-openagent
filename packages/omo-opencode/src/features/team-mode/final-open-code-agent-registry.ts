@@ -22,13 +22,13 @@ const FinalOpenCodeAgentSchema = z.object({
   name: z.string(),
   mode: z.string(),
   native: z.boolean(),
-  hidden: z.boolean().optional(),
+  hidden: z.boolean().nullish(),
   permission: z.array(PermissionRuleSchema),
   model: z.object({
     providerID: z.string(),
     modelID: z.string(),
-  }).optional(),
-  variant: z.string().optional(),
+  }).nullish(),
+  variant: z.string().nullish(),
 })
 const projectAgentNamesByDirectory = new Map<string, ReadonlySet<string>>()
 
@@ -187,9 +187,9 @@ export async function resolveFinalProjectAgent(
     }
   }
 
-  const model = agent.model === undefined
+  const model = agent.model == null
     ? undefined
-    : agent.variant === undefined
+    : agent.variant == null
       ? agent.model
       : { ...agent.model, variant: agent.variant }
   return { name: agent.name, model }
