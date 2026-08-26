@@ -76,7 +76,7 @@ Artifacts:
 
 ## PR Head Revalidation
 
-After merging current `base/dev`, aligning nullable registry fields plus member `task` narrowing, and committing the exact QA generator, PR #6145 source head `30a86d000` was revalidated:
+After merging current `base/dev`, aligning nullable registry fields plus member `task` narrowing, and committing the exact QA generator, the PR #6145 source head recorded in `qa-result.json` was revalidated:
 
 ```text
 bun test packages/omo-opencode/src/features/team-mode/final-open-code-agent-registry.test.ts
