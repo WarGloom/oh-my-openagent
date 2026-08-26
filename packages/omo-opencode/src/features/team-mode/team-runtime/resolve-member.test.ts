@@ -2,6 +2,7 @@
 
 import { beforeEach, describe, expect, mock, test } from "bun:test"
 import { randomUUID } from "node:crypto"
+import { readFileSync } from "node:fs"
 
 import type { Agent, PermissionRuleset } from "@opencode-ai/sdk/v2"
 
@@ -98,7 +99,7 @@ describe("resolveMember", () => {
       categoryModel: { providerID: "openai", modelID: "gpt-5.4" },
       categoryPromptAppend: "appendix",
       maxPromptTokens: 512,
-      fallbackChain: [{ providers: ["openai"], model: "gpt-5.4-mini" }],
+      fallbackChain: [{ providers: ["openai"], model: "gpt-5.6-luna-fast" }],
     })
 
     // when
@@ -173,7 +174,7 @@ describe("resolveMember", () => {
 
     resolveSubagentExecutionMock.mockResolvedValue({
       agentToUse: "atlas",
-      categoryModel: { providerID: "openai", modelID: "gpt-5.4-mini" },
+      categoryModel: { providerID: "openai", modelID: "gpt-5.6-luna-fast" },
       fallbackChain: [{ providers: ["openai"], model: "gpt-5.4-nano" }],
     })
 
@@ -253,6 +254,63 @@ describe("resolveMember", () => {
     })
     expect(resolveSubagentExecutionMock).not.toHaveBeenCalled()
     expect(buildSystemContentMock).not.toHaveBeenCalled()
+  })
+
+  test("reuses buildSystemContent for both resolution kinds without custom prompt concatenation", async () => {
+    // given
+    const categoryMember = {
+      backendType: "in-process",
+      isActive: true,
+      kind: "category",
+      name: "m1",
+      category: "deep",
+      prompt: "impl X",
+    } satisfies Member
+    const subagentMember = {
+      backendType: "in-process",
+      isActive: true,
+      kind: "subagent_type",
+      name: "m2",
+      subagent_type: "atlas",
+      prompt: "addendum",
+    } satisfies Member
+
+    resolveCategoryExecutionMock.mockResolvedValue({
+      agentToUse: "sisyphus-junior",
+      categoryModel: { providerID: "openai", modelID: "gpt-5.4" },
+      categoryPromptAppend: "appendix",
+      maxPromptTokens: 128,
+      fallbackChain: [],
+    })
+    resolveSubagentExecutionMock.mockResolvedValue({
+      agentToUse: "atlas",
+      categoryModel: { providerID: "openai", modelID: "gpt-5.6-luna-fast" },
+      fallbackChain: [],
+    })
+    const source = readFileSync(new URL("./resolve-member.ts", import.meta.url), "utf8")
+
+    // when
+    await resolveMember(categoryMember, createExecutorContext(), "deep, quick")
+    await resolveMember(subagentMember, createExecutorContext(), "deep, quick")
+
+    // then
+    expect(buildSystemContentMock).toHaveBeenCalledTimes(2)
+    expect(buildSystemContentMock).toHaveBeenNthCalledWith(1, {
+      agentName: "sisyphus-junior",
+      categoryPromptAppend: "appendix",
+      maxPromptTokens: 128,
+      model: { providerID: "openai", modelID: "gpt-5.4" },
+    })
+    expect(buildSystemContentMock).toHaveBeenNthCalledWith(2, {
+      agentName: "atlas",
+      categoryPromptAppend: undefined,
+      maxPromptTokens: undefined,
+      model: { providerID: "openai", modelID: "gpt-5.6-luna-fast" },
+    })
+    expect(source).toContain("buildSystemContent({")
+    expect(source).not.toContain("member.prompt +")
+    expect(source).not.toContain("+ member.prompt")
+    expect(source).not.toContain(".join(")
   })
 
   test("uses the last matching permission rule when later project rules override a global wildcard", async () => {

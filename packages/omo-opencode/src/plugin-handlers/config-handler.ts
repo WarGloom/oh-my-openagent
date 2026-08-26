@@ -5,6 +5,7 @@ import {
   replaceProjectAgentProvenance,
 } from "../features/team-mode/final-open-code-agent-registry";
 import { setAdditionalAllowedMcpEnvVars } from "../features/claude-code-mcp-loader";
+import { applyOpenGatewayProviderConfig } from "../features/opengateway-provider";
 import { loadOpencodeProjectAgents } from "../features/claude-code-agent-loader";
 import type { ModelCacheState } from "../plugin-state";
 import { log } from "../shared";
@@ -126,6 +127,7 @@ export function createConfigHandler(deps: ConfigHandlerDeps) {
     const formatterConfig = config.formatter;
 
     setAdditionalAllowedMcpEnvVars(pluginConfig.mcp_env_allowlist ?? [])
+    applyOpenGatewayProviderConfig(config);
     applyProviderConfig({
       config,
       modelCacheState,

@@ -28,11 +28,15 @@ export interface SessionState {
   isRecovering?: boolean
   wasCancelled?: boolean
   tokenLimitDetected?: boolean
+  unrecoverableErrorDetected?: boolean
   countdownStartedAt?: number
   abortDetectedAt?: number
   lastIncompleteCount?: number
   lastInjectedAt?: number
   awaitingPostInjectionProgressCheck?: boolean
+  continuationResponseObserved?: boolean
+  continuationBlockReason?: "directive-response" | "user-interruption"
+  pendingUserMessageID?: string
   inFlight?: boolean
   stagnationCount: number
   consecutiveFailures: number

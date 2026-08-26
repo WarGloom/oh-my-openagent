@@ -64,6 +64,11 @@ export async function handleSessionIdle(args: {
     return
   }
 
+  if (state.unrecoverableErrorDetected) {
+    log(`[${HOOK_NAME}] Skipped: non-retryable request error detected, re-injecting would rebuild the same request`, { sessionID })
+    return
+  }
+
   if (state.abortDetectedAt) {
     const timeSinceAbort = Date.now() - state.abortDetectedAt
     if (timeSinceAbort < ABORT_WINDOW_MS) {
@@ -219,6 +224,14 @@ export async function handleSessionIdle(args: {
     incompleteCount,
     todos,
   )
+  if (state.continuationBlockReason) {
+    log(`[${HOOK_NAME}] Skipped: continuation paused at turn boundary`, {
+      sessionID,
+      reason: state.continuationBlockReason,
+      hasProgressed: progressUpdate.hasProgressed,
+    })
+    return
+  }
   if (shouldStopForStagnation({ sessionID, incompleteCount, progressUpdate })) {
     return
   }
