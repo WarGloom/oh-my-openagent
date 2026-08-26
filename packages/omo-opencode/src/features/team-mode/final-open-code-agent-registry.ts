@@ -61,7 +61,15 @@ export function replaceProjectAgentProvenance(
 }
 
 export function hasProjectAgentProvenance(directory: string, name: string): boolean {
-  return projectAgentNamesByDirectory.get(path.resolve(directory))?.has(name) === true
+  let candidate = path.resolve(directory)
+  while (true) {
+    const snapshot = projectAgentNamesByDirectory.get(candidate)
+    if (snapshot !== undefined) return snapshot.has(name)
+
+    const parent = path.dirname(candidate)
+    if (parent === candidate) return false
+    candidate = parent
+  }
 }
 
 export function listProjectAgentProvenance(directory: string): readonly string[] {
@@ -133,7 +141,7 @@ export async function resolveFinalProjectAgent(
 ): Promise<ResolvedFinalProjectAgent> {
   if (!hasProjectAgentProvenance(directory, name)) {
     throw new ProjectAgentResolutionError(
-      `Project agent '${name}' has no config-time provenance for this exact directory.`,
+      `Project agent '${name}' has no config-time provenance in the nearest registered snapshot for this directory or its ancestors.`,
     )
   }
 
