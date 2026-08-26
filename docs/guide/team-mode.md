@@ -76,6 +76,8 @@ When both scopes define the same team name, project scope wins.
 
 Set `subagent_type` to the exact final name of an agent defined in the current project's `.opencode/agents/*.md`. Project-defined agents can be members, not team leads.
 
+OMO checks config-time provenance against the nearest registered snapshot for the active directory or one of its lexical ancestors, so descendant and member-worktree directories can use a project snapshot recorded at the project root. That nearest snapshot is authoritative: if it is empty or does not contain the agent, resolution fails closed without consulting older ancestors. Sibling paths do not qualify.
+
 The final agent must be visible, non-native, use mode `subagent` or `all`, and already agree with the Team launcher permissions: unconditionally allow `call_omo_agent`, `team_send_message`, `team_task_list`, `team_task_get`, `team_task_update`, and `team_status`; unconditionally deny `task`, `question`, and any agent-specific launcher denies. OMO uses the active configuration for that project directory as-is: it does not change permissions or add prompts, models, or fallback behavior. A same-name definition from another later source does not qualify; the agent must come from the current project's file.
 
 ## Eligible agents
