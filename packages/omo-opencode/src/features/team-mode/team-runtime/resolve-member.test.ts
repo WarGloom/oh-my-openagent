@@ -206,7 +206,7 @@ describe("resolveMember", () => {
       agentName: "atlas",
       categoryPromptAppend: undefined,
       maxPromptTokens: undefined,
-      model: { providerID: "openai", modelID: "gpt-5.4-mini" },
+      model: { providerID: "openai", modelID: "gpt-5.6-luna-fast" },
     })
   })
 
