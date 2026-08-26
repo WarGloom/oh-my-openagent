@@ -95,7 +95,7 @@ isolated real OpenCode QA
 29 assertions passed; host session count 8532 -> 8532
 ```
 
-`pr-head-qa-result.json` contains the sanitized machine result for this merged PR-head run. Its raw `gitStatusShort` records the temporary historical-harness outputs and the two pre-existing line-ending-only evidence paths; the `sourceTreeCleanAtQaHead` assertion excludes those known paths and proves no product source drift. The historical PR QA directory was restored byte-for-byte after the temporary harness adaptation.
+This evidence directory now contains the exact tracked `run-qa.mjs` and `fake-provider.mjs` used for PR-head verification. The generator records SHA-256 hashes for itself, the provider, the README, and all 16 non-evidence product paths changed by the PR. `sourceTreeCleanAtQaHead` excludes only this evidence directory and the two known historical line-ending-only evidence paths.
 
 ## Why This Is Enough
 
