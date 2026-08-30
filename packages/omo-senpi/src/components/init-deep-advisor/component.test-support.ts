@@ -13,6 +13,7 @@ import { processStartTime } from "./component"
 import {
   cleanupTempDirs,
   commitAll,
+  git,
   initRepo,
   makeDirWithSourceFiles,
   makeTempDir,
@@ -74,7 +75,10 @@ export function makeCoverageRepo(covered = false): string {
 export function makeStaleRepo(agentsMode?: "committed" | "local"): string {
   const root = initRepo()
   makeDirWithSourceFiles(root, "src", 8)
-  if (agentsMode === "committed") writeFileAt(root, "AGENTS.md", "# Guide\n")
+  if (agentsMode === "committed") {
+    writeFileAt(root, "AGENTS.md", "# Guide\n")
+    git(root, ["add", "-f", "--", "AGENTS.md"])
+  }
   commitAll(root, "fixture")
   if (agentsMode === "local") writeFileAt(root, "AGENTS.md", "# Guide\n")
   writeFileAt(
