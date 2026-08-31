@@ -87,6 +87,8 @@ export interface BackgroundTask {
   onSessionCreated?: (sessionId: string, model?: DelegatedModelConfig) => void | Promise<void>
   /** Last failed fallback retry token; prevents re-dispatching the same failed prompt. */
   failedFallbackRetryToken?: string
+  fallbackDispatchGeneration?: number
+  fallbackDispatchedAt?: number
   /** Pending retry notification details for the next spawned retry session */
   retryNotification?: {
     previousSessionID?: string
