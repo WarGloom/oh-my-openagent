@@ -6,7 +6,11 @@ import {
   setPendingModelFallback,
   type ModelFallbackHook,
 } from "../hooks/model-fallback/hook"
-import { shouldRetryError } from "../shared/model-error-classifier"
+import {
+  getRuntimeFallbackRetryableSignal,
+  getRuntimeFallbackStatusCode,
+  shouldRetryError,
+} from "../shared/model-error-classifier"
 import { AGENT_MODEL_REQUIREMENTS } from "../shared/model-requirements"
 import { extractRetryAttempt, normalizeRetryStatusMessage } from "../shared/retry-status-utils"
 import {
@@ -124,7 +128,15 @@ export function createModelFallbackEventHandler(args: {
 
     const errorName = extractErrorName(assistantError)
     const errorMessage = extractErrorMessage(assistantError)
-    if (!shouldRetryError({ name: errorName, message: errorMessage })) return false
+    if (
+      !shouldRetryError({
+        name: errorName,
+        message: errorMessage,
+        statusCode: getRuntimeFallbackStatusCode(assistantError),
+        isRetryable: getRuntimeFallbackRetryableSignal(assistantError),
+      })
+    )
+      return false
 
     const agentName = resolveFallbackAgentName({
       currentAgent: params.agent ?? getSessionAgent(params.sessionID),
@@ -215,7 +227,16 @@ export function createModelFallbackEventHandler(args: {
     errorName?: string
     props?: Record<string, unknown>
   }): Promise<void> => {
-    if (!shouldHandleModelFallback() || !shouldRetryError({ name: params.errorName, message: params.errorMessage }))
+    if (!shouldHandleModelFallback()) return
+    const providerError = params.props?.error
+    if (
+      !shouldRetryError({
+        name: params.errorName,
+        message: params.errorMessage,
+        statusCode: getRuntimeFallbackStatusCode(providerError),
+        isRetryable: getRuntimeFallbackRetryableSignal(providerError),
+      })
+    )
       return
 
     const agentName = resolveFallbackAgentName({
