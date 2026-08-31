@@ -457,11 +457,13 @@ describe("BackgroundManager pollRunningTasks", () => {
     test("#when idle task has no valid output and fallback is available #then retries through fallback instead of staying stuck", async () => {
       //#given
       const promptAsync = mock(async () => ({}))
-      const onSessionCreated = mock(async () => {})
       const manager = createManagerWithClient({
         status: async () => ({ data: { "ses-idle-no-output": { type: "idle" } } }),
         messages: async () => ({ data: [] }),
         promptAsync,
+      })
+      const onSessionCreated = mock(async () => {
+        manager["markSessionOutputObserved"]("ses-idle-no-output")
       })
       const task = createRunningTask("ses-idle-no-output", {
         model: { providerID: "provider-a", modelID: "original-model" },
@@ -488,6 +490,9 @@ describe("BackgroundManager pollRunningTasks", () => {
         variant: undefined,
       })
       expect(task.attemptCount).toBe(1)
+      expect(task.fallbackDispatchGeneration).toBe(1)
+      expect(typeof task.fallbackDispatchedAt).toBe("number")
+      expect(manager["observedOutputSessions"].has("ses-idle-no-output")).toBe(false)
       expect(onSessionCreated).toHaveBeenCalledWith("ses-idle-no-output", {
         providerID: "provider-a",
         modelID: "fallback-model-1",
@@ -497,12 +502,16 @@ describe("BackgroundManager pollRunningTasks", () => {
       await manager.shutdown()
     })
 
-    test("#when polling sees no output immediately after same-session fallback dispatch #then waits instead of consuming the next fallback", async () => {
+    test("#when polling sees only historical output after same-session fallback #then waits until attributable output arrives", async () => {
       //#given
       const promptAsync = mock(async () => ({}))
+      let messages: Array<{
+        info: { role: string; finish: string; id: string; time: { created: number } }
+        parts: Array<{ type: string; text: string }>
+      }> = []
       const manager = createManagerWithClient({
         status: async () => ({ data: { "ses-idle-repeat-after-fallback": { type: "idle" } } }),
-        messages: async () => ({ data: [] }),
+        messages: async () => ({ data: messages }),
         promptAsync,
       })
       const task = createRunningTask("ses-idle-repeat-after-fallback", {
@@ -522,6 +531,20 @@ describe("BackgroundManager pollRunningTasks", () => {
       //#when
       const poll = manager["pollRunningTasks"]
       await poll.call(manager)
+      expect(task.fallbackDispatchedAt).toBeDefined()
+      if (task.fallbackDispatchedAt === undefined) return
+      messages = [
+        {
+          info: {
+            role: "assistant",
+            finish: "end_turn",
+            id: "msg-historical",
+            time: { created: task.fallbackDispatchedAt },
+          },
+          parts: [{ type: "text", text: "stale result" }],
+        },
+      ]
+      await poll.call(manager)
       await poll.call(manager)
 
       //#then
@@ -534,6 +557,104 @@ describe("BackgroundManager pollRunningTasks", () => {
         variant: undefined,
       })
       expect(task.attemptCount).toBe(1)
+
+      //#when
+      messages = [
+        {
+          info: {
+            role: "assistant",
+            finish: "end_turn",
+            id: "msg-current",
+            time: { created: task.fallbackDispatchedAt + 1 },
+          },
+          parts: [{ type: "text", text: "current result" }],
+        },
+      ]
+      await poll.call(manager)
+
+      //#then
+      expect(task.status).toBe("completed")
+
+      await manager.shutdown()
+    })
+
+    test("#when session.idle sees historical output after fallback #then waits without aborting until current output arrives", async () => {
+      //#given
+      const sessionID = "ses-idle-event-after-fallback"
+      const fallbackDispatchedAt = 1_800_000_000_000
+      const messages = [
+        {
+          info: {
+            role: "assistant",
+            finish: "end_turn",
+            id: "msg-historical",
+            time: { created: fallbackDispatchedAt - 1 },
+          },
+          parts: [{ type: "text", text: "stale result" }],
+        },
+      ]
+      const getMessages = mock(async () => ({ data: messages }))
+      const abort = mock(async () => ({}))
+      const manager = createManagerWithClient({ messages: getMessages, abort })
+      const task = createRunningTask(sessionID, {
+        startedAt: new Date(0),
+        fallbackDispatchedAt,
+        fallbackDispatchGeneration: 1,
+      })
+      injectTask(manager, task)
+
+      try {
+        //#when
+        manager.handleEvent({ type: "session.idle", properties: { sessionID } })
+        await new Promise<void>((resolve) => setImmediate(resolve))
+
+        //#then
+        expect(getMessages).toHaveBeenCalledTimes(1)
+        expect(task.status).toBe("running")
+        expect(task.completedAt).toBeUndefined()
+        expect(abort).not.toHaveBeenCalled()
+
+        //#when
+        messages.push({
+          info: {
+            role: "assistant",
+            finish: "end_turn",
+            id: "msg-current",
+            time: { created: fallbackDispatchedAt + 1 },
+          },
+          parts: [{ type: "text", text: "current result" }],
+        })
+        manager.handleEvent({ type: "session.idle", properties: { sessionID } })
+        await new Promise<void>((resolve) => setImmediate(resolve))
+
+        //#then
+        expect(task.status).toBe("completed")
+        expect(task.completedAt).toBeDefined()
+        expect(abort).toHaveBeenCalledTimes(1)
+      } finally {
+        await manager.shutdown()
+      }
+    })
+
+    test("#when fallback generation changes during todo validation #then polling does not complete stale work", async () => {
+      //#given
+      const task = createRunningTask("ses-generation-change", { fallbackDispatchGeneration: 1 })
+      const manager = createManagerWithClient({
+        status: async () => ({ data: { "ses-generation-change": { type: "idle" } } }),
+        todo: async () => {
+          task.fallbackDispatchGeneration = 2
+          return { data: [] }
+        },
+      })
+      injectTask(manager, task)
+
+      //#when
+      const poll = manager["pollRunningTasks"]
+      await poll.call(manager)
+
+      //#then
+      expect(task.status).toBe("running")
+      expect(task.completedAt).toBeUndefined()
 
       await manager.shutdown()
     })

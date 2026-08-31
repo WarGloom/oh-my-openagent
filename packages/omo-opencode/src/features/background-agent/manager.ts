@@ -267,6 +267,7 @@ type SessionPartWithContent = {
 
 type SessionOutputClassificationContext = {
   readonly sessionStatusType?: string
+  readonly fallbackDispatchedAt?: number
 }
 
 type SessionMessageTime = {
@@ -2260,7 +2261,8 @@ export class BackgroundManager {
           return resolved?.isCurrent ? resolved.task : undefined
         },
         idleDeferralTimers: this.idleDeferralTimers,
-        classifySessionOutput: (id) => this.classifySessionOutput(id, { sessionStatusType: "idle" }),
+        classifySessionOutput: (id, fallbackDispatchedAt) =>
+          this.classifySessionOutput(id, { sessionStatusType: "idle", fallbackDispatchedAt }),
         checkSessionTodos: (id) => this.checkSessionTodos(id),
         tryCompleteTask: (task, source) => this.tryCompleteTask(task, source),
         tryFallbackForNoOutputIdle: (task, source) => this.tryNoOutputIdleFallback(task, source),
@@ -2754,6 +2756,9 @@ export class BackgroundManager {
         logOnMismatch: false,
       })
 
+      task.fallbackDispatchGeneration = (task.fallbackDispatchGeneration ?? 0) + 1
+      task.fallbackDispatchedAt = Date.now()
+      this.clearSessionOutputObserved(sessionID)
       await promptWithRetryInDirectory(
         this.client,
         {
@@ -2881,6 +2886,21 @@ The task is retrying on a fallback model after a retryable failure.
       )
 
       const messages = normalizeSDKResponse(response, EMPTY_SESSION_MESSAGES, { preferResponseOnMissingData: true })
+
+      const fallbackDispatchedAt = context.fallbackDispatchedAt
+      if (fallbackDispatchedAt !== undefined) {
+        const hasAttributableOutput = messages.some((message) => {
+          const role = getSessionMessageRole(message)
+          return (
+            (role === "assistant" || role === "tool") &&
+            sessionMessageHasMeaningfulOutput(message) &&
+            (getSessionMessageCreated(message) ?? fallbackDispatchedAt) > fallbackDispatchedAt
+          )
+        })
+        if (!hasAttributableOutput) {
+          return "awaiting-dispatch-output"
+        }
+      }
 
       const latestAssistantMessage = getLatestAssistantMessage(messages)
       const latestMessage = messages.at(-1)
@@ -3867,7 +3887,12 @@ The task is retrying on a fallback model after a retryable failure.
               : sessionStatus && isTerminalSessionStatus(sessionStatus.type)
                 ? `polling (terminal session status: ${sessionStatus.type})`
                 : "polling (session gone from status)"
-          const sessionOutput = await this.classifySessionOutput(sessionID, { sessionStatusType: sessionStatus?.type })
+          const fallbackDispatchGeneration = task.fallbackDispatchGeneration
+          const sessionOutput = await this.classifySessionOutput(sessionID, {
+            sessionStatusType: sessionStatus?.type,
+            fallbackDispatchedAt: task.fallbackDispatchedAt,
+          })
+          if (task.fallbackDispatchGeneration !== fallbackDispatchGeneration) continue
           switch (sessionOutput) {
             case "ready":
               break
@@ -3939,6 +3964,9 @@ The task is retrying on a fallback model after a retryable failure.
               log("[background-agent] Polling found incomplete latest assistant turn, waiting:", task.id)
               continue
             }
+            case "awaiting-dispatch-output":
+              log("[background-agent] Polling is awaiting output from the current fallback dispatch:", task.id)
+              continue
             default: {
               const exhaustive: never = sessionOutput
               return exhaustive
@@ -3946,9 +3974,10 @@ The task is retrying on a fallback model after a retryable failure.
           }
 
           // Re-check status after async operation
-          if (task.status !== "running") continue
+          if (task.status !== "running" || task.fallbackDispatchGeneration !== fallbackDispatchGeneration) continue
 
           const hasIncompleteTodos = await this.checkSessionTodos(sessionID)
+          if (task.status !== "running" || task.fallbackDispatchGeneration !== fallbackDispatchGeneration) continue
           if (hasIncompleteTodos) {
             log("[background-agent] Task has incomplete todos via polling, waiting:", task.id)
             continue
