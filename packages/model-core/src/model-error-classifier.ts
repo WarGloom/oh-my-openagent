@@ -9,7 +9,7 @@ import { classifyRuntimeFallbackError, isTerminalQuotaError } from "./runtime-fa
  */
 const RETRYABLE_ERROR_NAMES = new Set([
   "providermodelnotfounderror", "ratelimiterror", "modelunavailableerror", "providerconnectionerror",
-  "authenticationerror", "contextoverflowerror", "contextlengtherror",
+  "authenticationerror", "contextoverflowerror", "contextlengtherror", "timeout_error",
 ])
 
 /**
@@ -54,6 +54,7 @@ const RETRYABLE_MESSAGE_PATTERNS = [
   "connection error",
   "network error",
   "timeout",
+  "timed out",
   "service unavailable",
   "internal_server_error",
   "free usage",
@@ -118,6 +119,7 @@ export interface ErrorInfo {
   message?: string
   /** HTTP status code from the provider response (e.g., 429 for rate limit) */
   statusCode?: number
+  isRetryable?: boolean
 }
 
 /**
@@ -149,11 +151,15 @@ export function isRetryableModelError(error: ErrorInfo): boolean {
     return true
   }
 
+  if (error.isRetryable === true) {
+    return error.statusCode !== 401 && error.statusCode !== 403
+  }
+
   // HTTP status code check: catches rate-limit errors regardless of message format/language.
   // Uses the same codes as runtime-fallback config (400 excluded as it is a permanent client error).
   if (
     error.statusCode != null &&
-    (error.statusCode === 429 || error.statusCode === 503 || error.statusCode === 529)
+    (error.statusCode === 429 || error.statusCode === 503 || error.statusCode === 504 || error.statusCode === 529)
   ) {
     return true
   }
