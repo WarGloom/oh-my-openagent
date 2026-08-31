@@ -3,13 +3,13 @@ import { resolveSessionEventID } from "../../shared/event-session-id"
 import { MIN_IDLE_TIME_MS } from "./constants"
 import type { BackgroundTask } from "./types"
 
-export type SessionOutputClassification = "ready" | "no-output" | "incomplete-latest-assistant"
+export type SessionOutputClassification = "ready" | "no-output" | "incomplete-latest-assistant" | "awaiting-dispatch-output"
 
 export function handleSessionIdleBackgroundEvent(args: {
   properties: Record<string, unknown>
   findBySession: (sessionID: string) => BackgroundTask | undefined
   idleDeferralTimers: Map<string, ReturnType<typeof setTimeout>>
-  classifySessionOutput: (sessionID: string) => Promise<SessionOutputClassification>
+  classifySessionOutput: (sessionID: string, fallbackDispatchedAt?: number) => Promise<SessionOutputClassification>
   checkSessionTodos: (sessionID: string) => Promise<boolean>
   tryCompleteTask: (task: BackgroundTask, source: string) => Promise<boolean>
   tryFallbackForNoOutputIdle?: (task: BackgroundTask, source: string) => Promise<boolean>
@@ -57,8 +57,10 @@ export function handleSessionIdleBackgroundEvent(args: {
     return
   }
 
-  classifySessionOutput(sessionID)
+  const fallbackDispatchGeneration = task.fallbackDispatchGeneration
+  classifySessionOutput(sessionID, task.fallbackDispatchedAt)
     .then(async (sessionOutput) => {
+      if (task.fallbackDispatchGeneration !== fallbackDispatchGeneration) return
       if (task.status !== "running") {
         log("[background-agent] Task status changed during validation, skipping:", {
           taskId: task.id,
@@ -92,6 +94,9 @@ export function handleSessionIdleBackgroundEvent(args: {
           log("[background-agent] Session.idle with incomplete latest assistant turn, waiting:", task.id)
           return
         }
+        case "awaiting-dispatch-output":
+          log("[background-agent] Session.idle is awaiting output from the current fallback dispatch:", task.id)
+          return
         default: {
           const exhaustive: never = sessionOutput
           return exhaustive
@@ -100,6 +105,7 @@ export function handleSessionIdleBackgroundEvent(args: {
 
       const hasIncompleteTodos = await checkSessionTodos(sessionID)
 
+      if (task.fallbackDispatchGeneration !== fallbackDispatchGeneration) return
       if (task.status !== "running") {
         log("[background-agent] Task status changed during todo check, skipping:", {
           taskId: task.id,
