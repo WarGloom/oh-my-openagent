@@ -398,6 +398,40 @@ describe("model-error-classifier", () => {
     expect(result).toBe(true)
   })
 
+  test("treats provider timeout and retryable metadata as fallback signals", () => {
+    //#given
+    const errors = [
+      { name: "timeout_error" },
+      { message: "Request timed out" },
+      { statusCode: 504 },
+      { message: "Opaque provider failure", isRetryable: true },
+    ]
+
+    //#when
+    const results = errors.map((error) => isRetryableModelError(error))
+
+    //#then
+    expect(results).toEqual([true, true, true, true])
+  })
+
+  test("does not let provider retryable metadata override client or terminal failures", () => {
+    //#given
+    const errors = [
+      { name: "TimeoutError", isRetryable: true },
+      { name: "MessageAbortedError", isRetryable: true },
+      { name: "PermissionDeniedError", isRetryable: true },
+      { name: "QuotaExceededError", isRetryable: true },
+      { statusCode: 401, isRetryable: true },
+      { statusCode: 403, isRetryable: true },
+    ]
+
+    //#when
+    const results = errors.map((error) => isRetryableModelError(error))
+
+    //#then
+    expect(results).toEqual([false, false, false, false, false, false])
+  })
+
   test("HTTP 400 with statusCode does NOT trigger fallback via statusCode alone (400 excluded)", () => {
     //#given — message does NOT match any retryable pattern
     const error = { statusCode: 400, message: "Invalid parameter: model_name" }
