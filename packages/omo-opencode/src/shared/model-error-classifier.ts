@@ -5,6 +5,8 @@ export type { ErrorInfo } from "@oh-my-opencode/model-core"
 export {
   isRetryableModelError,
   shouldRetryError,
+  getRuntimeFallbackStatusCode,
+  getRuntimeFallbackRetryableSignal,
   getNextFallback,
   hasMoreFallbacks,
   selectFallbackProviderWithCache,
