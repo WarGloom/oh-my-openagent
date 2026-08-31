@@ -1290,6 +1290,44 @@ describe("createEventHandler - model fallback", () => {
     expect(output.message["variant"]).toBeUndefined()
   })
 
+  test("#given nested session.error retry metadata #when fallback handles it #then status and retryable signals each dispatch once", async () => {
+    //#given
+    const modelFallback = createModelFallbackHook()
+    const { handler, abortCalls, promptCalls } = createHandler({ hooks: { modelFallback } })
+    const cases = [
+      { sessionID: "ses_nested_status", statusCode: 504, isRetryable: false },
+      { sessionID: "ses_nested_retryable", statusCode: 418, isRetryable: true },
+    ]
+
+    //#when
+    for (const errorCase of cases) {
+      setMainSession(errorCase.sessionID)
+      clearPendingModelFallback(modelFallback, errorCase.sessionID)
+      await handler({
+        event: {
+          type: "session.error",
+          properties: {
+            sessionID: errorCase.sessionID,
+            providerID: "anthropic",
+            modelID: "claude-opus-4-8-thinking",
+            error: {
+              name: "OpaqueProviderError",
+              data: {
+                message: "Opaque provider failure",
+                statusCode: errorCase.statusCode,
+                isRetryable: errorCase.isRetryable,
+              },
+            },
+          },
+        },
+      })
+    }
+
+    //#then
+    expect(abortCalls).toEqual(cases.map(({ sessionID }) => sessionID))
+    expect(promptCalls).toEqual(cases.map(({ sessionID }) => sessionID))
+  })
+
   test("does not trigger model-fallback retry when modelFallback hook is not provided (disabled by default)", async () => {
     //#given
     const sessionID = "ses_disabled_by_default"
