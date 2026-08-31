@@ -390,6 +390,31 @@ describe("handleSessionIdleBackgroundEvent", () => {
       expect(tryCompleteTask).not.toHaveBeenCalled()
     })
 
+    it("#when fallback generation changes during output classification #then should not complete task", async () => {
+      //#given
+      const task = createRunningTask({ fallbackDispatchGeneration: 1 })
+      const tryCompleteTask = mock(() => Promise.resolve(true))
+
+      //#when
+      handleSessionIdleBackgroundEvent({
+        properties: { sessionID: task.sessionId },
+        findBySession: () => task,
+        idleDeferralTimers: new Map(),
+        classifySessionOutput: async () => {
+          task.fallbackDispatchGeneration = 2
+          return "ready"
+        },
+        checkSessionTodos: () => Promise.resolve(false),
+        tryCompleteTask,
+        emitIdleEvent: () => {},
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+
+      //#then
+      expect(tryCompleteTask).not.toHaveBeenCalled()
+    })
+
     it("#when task status changes during validation #then should not complete task", async () => {
       //#given
       const task = createRunningTask()
