@@ -1,19 +1,20 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp } from "node:fs/promises"
 import { realpathSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { rmEfaultTolerant } from "./teardown.test-support"
 
 import { buildIdentityPaths } from "@oh-my-opencode/memory-core"
 
 import { createMemoryIdentityContext, type MemoryIdentityContext } from "./context"
-import { MEMORY_STATUS_KEY, type GitRepoForStatus } from "./status"
-import { MEMORY_REFLECTING_FRAMES, type MemoryFooterTimers } from "./status-live"
+import { MEMORY_STATUS_KEY, refreshMemoryStatus, type GitRepoForStatus } from "./status"
+import { type MemoryFooterTimers } from "./status-live"
 import { createMemoryFooterStatusLive } from "./status-live-wiring"
 
 const roots: string[] = []
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })))
+  await Promise.all(roots.splice(0).map((root) => rmEfaultTolerant(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })))
 })
 
 interface FakeTimers extends MemoryFooterTimers {
@@ -94,9 +95,10 @@ describe("memory footer status live wiring", () => {
     live.syncActive("session-1", ui.ui)
     timers.advance(1)
 
+    // Literal glyphs: expectations built from MEMORY_REFLECTING_FRAMES would survive a corrupted table.
     expect(ui.calls).toEqual([
-      { key: MEMORY_STATUS_KEY, text: `mem:agent-test ${MEMORY_REFLECTING_FRAMES[0]} reflecting` },
-      { key: MEMORY_STATUS_KEY, text: `mem:agent-test ${MEMORY_REFLECTING_FRAMES[1]} reflecting` },
+      { key: MEMORY_STATUS_KEY, text: "mem:agent-test ⠋ reflecting" },
+      { key: MEMORY_STATUS_KEY, text: "mem:agent-test ⠙ reflecting" },
     ])
     live.dispose()
   })
@@ -225,6 +227,35 @@ describe("memory footer status live wiring", () => {
     expect(timers.live()).toBe(0)
     timers.advance(10)
     expect(ui.calls).toHaveLength(before)
+    live.dispose()
+  })
+
+  test("#given the same HEAD timestamp #when both footer surfaces render #then the live wiring uses the status.ts age string", async () => {
+    const context = await contextFixture()
+    const statusCalls: Array<{ key: string; text: string | undefined }> = []
+    await refreshMemoryStatus({
+      context,
+      ui: {
+        setStatus: (key, text) => statusCalls.push({ key, text }),
+        notify: () => {},
+      },
+      compileWarnTokens: 30000,
+      alreadyNotified: false,
+      gitRepo: stubRepo(),
+      now: () => NOW,
+    })
+
+    const ui = recorder()
+    const live = createMemoryFooterStatusLive({
+      resolveContext: () => context,
+      isActive: () => false,
+      timers: fakeTimers(),
+      now: () => NOW,
+      createGitRepo: () => stubRepo(),
+    })
+    await live.refresh("session-1", ui.ui)
+
+    expect(ui.calls).toEqual(statusCalls)
     live.dispose()
   })
 
