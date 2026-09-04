@@ -411,6 +411,21 @@ describe("model-error-classifier", () => {
     expect(result).toBe(true)
   })
 
+  test("treats exact Meridian expired-auth SessionRetry as retryable", () => {
+    //#given
+    const error = {
+      name: "SessionRetry",
+      message:
+        "Claude authentication expired or invalid. Run 'claude login' in your terminal to re-authenticate, then restart the proxy.",
+    }
+
+    //#when
+    const result = shouldRetryError(error)
+
+    //#then
+    expect(result).toBe(true)
+  })
+
   test("treats 'upstream request failed' provider error as retryable (issue #6313)", () => {
     //#given
     const error = { message: "Error from provider (Console Go): Upstream request failed" }

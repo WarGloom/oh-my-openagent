@@ -147,6 +147,14 @@ export function isRetryableModelError(error: ErrorInfo): boolean {
 
   const msg = error.message?.toLowerCase() ?? ""
 
+  if (
+    error.name?.toLowerCase() === "sessionretry" &&
+    msg ===
+      "claude authentication expired or invalid. run 'claude login' in your terminal to re-authenticate, then restart the proxy."
+  ) {
+    return true
+  }
+
   if (hasProviderAutoRetrySignal(msg) || hasProviderResetWindowSignal(msg)) {
     return true
   }
