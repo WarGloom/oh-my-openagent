@@ -1661,8 +1661,7 @@ export class BackgroundManager {
       promptLength: input.prompt.length,
     })
 
-    // Fire-and-forget prompt via promptAsync (no response body needed)
-    // Resume uses the same PromptInput contract as launch: model IDs plus top-level variant.
+    // Await promptAsync gate acknowledgment; model execution remains asynchronous.
     if (existingTask.model) {
       applySessionPromptParams(existingTask.sessionId!, existingTask.model)
     }
@@ -1678,7 +1677,7 @@ export class BackgroundManager {
     })
     setSessionTools(existingTask.sessionId!, resumePromptBody.tools)
 
-    dispatchInternalPrompt({
+    await dispatchInternalPrompt({
       mode: "async",
       client: this.client,
       sessionID: existingTask.sessionId,

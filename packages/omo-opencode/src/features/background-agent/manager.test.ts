@@ -3528,7 +3528,7 @@ describe("BackgroundManager.resume promptAsync gate state", () => {
     const task: BackgroundTask = {
       id: "task-active-resume-skip",
       sessionId: "session-1",
-      parentSessionId: "parent-session",
+      parentSessionId: "parent-session-original",
       parentMessageId: "msg-original",
       description: "completed task",
       prompt: "original prompt",
@@ -3544,26 +3544,25 @@ describe("BackgroundManager.resume promptAsync gate state", () => {
     getTaskMap(manager).set(task.id, task)
 
     //#when
-    await manager.resume({
+    const resumedTask = await manager.resume({
       sessionId: "session-1",
       prompt: "resume",
-      parentSessionId: "parent-session",
+      parentSessionId: "parent-session-original",
       parentMessageId: "msg-2",
     })
-    await flushBackgroundNotifications()
 
     //#then
     expect(promptCallCount).toBe(0)
-    expect(task.status).toBe("completed")
-    expect(task.completedAt).toBe(originalCompletedAt)
-    expect(task.error).toBe("previous-terminal-note-sentinel")
-    expect(task.parentSessionId).toBe("parent-session-original")
-    expect(task.parentMessageId).toBe("msg-original")
-    expect(task.prompt).toBe("original prompt")
-    expect(task.skillContent).toBe("original system")
-    expect(task.concurrencyKey).toBeUndefined()
+    expect(resumedTask.status).toBe("completed")
+    expect(resumedTask.completedAt).toBe(originalCompletedAt)
+    expect(resumedTask.error).toBe("previous-terminal-note-sentinel")
+    expect(resumedTask.parentSessionId).toBe("parent-session-original")
+    expect(resumedTask.parentMessageId).toBe("msg-original")
+    expect(resumedTask.prompt).toBe("original prompt")
+    expect(resumedTask.skillContent).toBe("original system")
+    expect(resumedTask.concurrencyKey).toBeUndefined()
     expect(getConcurrencyManager(manager).getCount("explore")).toBe(0)
-    expect(getPendingByParent(manager).get("parent-session")).toBeUndefined()
+    expect(getPendingByParent(manager).get("parent-session-original")).toBeUndefined()
 
     manager.shutdown()
   })
