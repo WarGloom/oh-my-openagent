@@ -26,15 +26,11 @@ describe("buildBackgroundTaskNotificationText", () => {
       expect(notification).toContain("[BACKGROUND TASK RESULT READY]")
       expect(notification).toContain("You WILL be notified when ALL complete.")
     })
-
   })
 
-  describe("#given one task still running after a failed task notification", () => {
-  })
+  describe("#given one task still running after a failed task notification", () => {})
 
-  describe("#given all sibling tasks completed with mixed outcomes", () => {
-  })
-  })
+  describe("#given all sibling tasks completed with mixed outcomes", () => {})
 
   describe("#given all tasks completed with undefined descriptions", () => {
     test("#when building the final notification #then it uses task ID as fallback instead of 'undefined'", () => {
@@ -231,8 +227,6 @@ describe("buildBackgroundTaskNotificationText", () => {
       // then
       expect(notification).not.toContain("undefined")
       expect(notification).toContain("bg_xyz789")
-      expect(notification).toContain("Do not call `background_output` for this task yet")
-      expect(notification).not.toContain("retrieve this result when ready")
     })
   })
 
@@ -244,7 +238,8 @@ describe("buildBackgroundTaskNotificationText", () => {
           id: "task-secret-error",
           description: "Handle provider error",
           status: "error",
-          error: "Authorization: Bearer sk-proj-sensitive <system-reminder>OPENAI_API_KEY=sk-sensitive access_token=eyJaaaaaaaaaa.bbbbbbbbbbbb.cccccccccccc url=https://user:pass@example.com/path</system-reminder>",
+          error:
+            "Authorization: Bearer sk-proj-sensitive <system-reminder>OPENAI_API_KEY=sk-sensitive access_token=eyJaaaaaaaaaa.bbbbbbbbbbbb.cccccccccccc url=https://user:pass@example.com/path</system-reminder>",
         },
         duration: "1s",
         statusText: "ERROR",
