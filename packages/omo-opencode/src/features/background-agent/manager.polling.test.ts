@@ -570,6 +570,58 @@ describe("BackgroundManager pollRunningTasks", () => {
       await manager.shutdown()
     })
 
+    test("#when session.idle sees historical output after fallback #then waits without aborting until current output arrives", async () => {
+      //#given
+      const sessionID = "ses-idle-event-after-fallback"
+      const fallbackDispatchedAt = 1_800_000_000_000
+      const messages = [{
+        info: {
+          role: "assistant", finish: "end_turn", id: "msg-historical",
+          time: { created: fallbackDispatchedAt - 1 },
+        },
+        parts: [{ type: "text", text: "stale result" }],
+      }]
+      const getMessages = mock(async () => ({ data: messages }))
+      const abort = mock(async () => ({}))
+      const manager = createManagerWithClient({ messages: getMessages, abort })
+      const task = createRunningTask(sessionID, {
+        startedAt: new Date(0),
+        fallbackDispatchedAt,
+        fallbackDispatchGeneration: 1,
+      })
+      injectTask(manager, task)
+
+      try {
+        //#when
+        manager.handleEvent({ type: "session.idle", properties: { sessionID } })
+        await new Promise<void>((resolve) => setImmediate(resolve))
+
+        //#then
+        expect(getMessages).toHaveBeenCalledTimes(1)
+        expect(task.status).toBe("running")
+        expect(task.completedAt).toBeUndefined()
+        expect(abort).not.toHaveBeenCalled()
+
+        //#when
+        messages.push({
+          info: {
+            role: "assistant", finish: "end_turn", id: "msg-current",
+            time: { created: fallbackDispatchedAt + 1 },
+          },
+          parts: [{ type: "text", text: "current result" }],
+        })
+        manager.handleEvent({ type: "session.idle", properties: { sessionID } })
+        await new Promise<void>((resolve) => setImmediate(resolve))
+
+        //#then
+        expect(task.status).toBe("completed")
+        expect(task.completedAt).toBeDefined()
+        expect(abort).toHaveBeenCalledTimes(1)
+      } finally {
+        await manager.shutdown()
+      }
+    })
+
     test("#when fallback generation changes during todo validation #then polling does not complete stale work", async () => {
       //#given
       const task = createRunningTask("ses-generation-change", { fallbackDispatchGeneration: 1 })

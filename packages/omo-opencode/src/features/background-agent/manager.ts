@@ -2078,7 +2078,7 @@ export class BackgroundManager {
           return resolved?.isCurrent ? resolved.task : undefined
         },
         idleDeferralTimers: this.idleDeferralTimers,
-        classifySessionOutput: (id) => this.classifySessionOutput(id, { sessionStatusType: "idle" }),
+        classifySessionOutput: (id, fallbackDispatchedAt) => this.classifySessionOutput(id, { sessionStatusType: "idle", fallbackDispatchedAt }),
         checkSessionTodos: (id) => this.checkSessionTodos(id),
         tryCompleteTask: (task, source) => this.tryCompleteTask(task, source),
         tryFallbackForNoOutputIdle: (task, source) => this.tryNoOutputIdleFallback(task, source),
