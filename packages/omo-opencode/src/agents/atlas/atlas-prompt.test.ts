@@ -140,8 +140,8 @@ describe("Atlas prompts use task_id (not session_id) for retries", () => {
     for (const [name, prompt] of ALL_VARIANTS) {
       expect(prompt, `${name}: missing bg result collection contract`).toContain('background_output(task_id="bg_...")')
       expect(prompt, `${name}: missing ses continuation contract`).toContain('task(task_id="ses_..."')
-      expect(prompt, `${name}: missing all-complete collection gate`).toContain("all-complete")
-      expect(prompt, `${name}: missing partial-reminder warning`).toContain("partial reminders")
+      expect(prompt, `${name}: session id used for result collection`).not.toContain('background_output(task_id="ses_...")')
+      expect(prompt, `${name}: background id used for continuation`).not.toContain('task(task_id="bg_...")')
     }
   })
 })

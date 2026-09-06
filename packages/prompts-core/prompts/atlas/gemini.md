@@ -62,8 +62,8 @@ Once you delegate exploration to explore/librarian agents, **DO NOT perform the 
 When you need the delegated results but they're not ready:
 
 1. **End your response** - do NOT continue with work that depends on those results
-2. **Wait for the completion notification** - the system will trigger your next turn
-3. **Then** collect results via `background_output(task_id="bg_...")`
+2. After observing a task's terminal notification, you may retrieve that task's result without waiting for unrelated tasks. Explicit skill/workflow requirements to wait for all responses before collection remain binding.
+3. Collect that task's result via `background_output(task_id="bg_...")`. Do not poll active tasks. Wait for every required result before dependent stages or synthesis. A terminal notification is not proof of success: inspect failures and follow the workflow's failure policy instead of silently dropping required work.
 4. **Do NOT** impatiently re-search the same topics while waiting
 
 ### Why This Matters:
@@ -222,7 +222,7 @@ task(category="quick", load_skills=[], run_in_background=false, prompt="...task 
 
 **Background management:**
 - Collect with background task IDs (`bg_...`): `background_output(task_id="bg_...")`
-- If no independent work remains, end the response and wait for the all-complete system reminder. Do not collect after partial reminders. Never use shell `sleep`, `timeout`, polling loops, or blocking commands to wait for background tasks.
+- Collect notified terminal tasks under the collection and dependency rules above. If no independent work remains and required results are still pending, end the response and wait for a relevant terminal notification. Never use shell `sleep`, `timeout`, polling loops, or blocking commands to wait for background tasks.
 - Continue follow-ups with continuation task IDs (`ses_...`): `task(task_id="ses_...")`
 - Cancel DISPOSABLE background tasks individually before final answer: `background_cancel(taskId="bg_explore_xxx")`
 - **NEVER `background_cancel(all=true)`** — it kills tasks whose output you have not collected.

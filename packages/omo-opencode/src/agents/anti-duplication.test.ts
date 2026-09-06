@@ -41,22 +41,15 @@ describe("buildAntiDuplicationSection", () => {
     expect(result).toContain("work that doesn't depend on the delegated research")
   })
 
-  it("#given no arguments #when building #then includes wait-for-results instructions", () => {
-    //#given: no special configuration
+  it("#given the shared section #when composing Metis #then ships the section unchanged", () => {
+    //#given
+    const section = buildAntiDuplicationSection()
 
-    //#when: building the section
-    const result = buildAntiDuplicationSection()
+    //#when
+    const result = METIS_SYSTEM_PROMPT.match(/<Anti_Duplication>[\s\S]*?<\/Anti_Duplication>/)?.[0]
 
-    //#then: should include instructions for waiting properly
-    expect(result).toContain("Wait for Results Properly")
-    expect(result).toContain("End your response")
-    expect(result).toContain("Wait for the all-complete notification")
-    expect(result).toContain('background_output(task_id="bg_...")')
-    expect(result).toContain("partial notifications")
-    expect(result).toContain("shell `sleep`")
-    expect(result).toContain("`timeout`")
-    expect(result).toContain("polling loops")
-    expect(result).toContain("blocking commands")
+    //#then
+    expect(result).toBe(section)
   })
 
   it("#given no arguments #when building #then explains why this matters", () => {

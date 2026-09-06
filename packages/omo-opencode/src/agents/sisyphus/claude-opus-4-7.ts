@@ -341,9 +341,9 @@ If a second angle is genuinely needed (e.g. JWT security best practices via libr
 
 1. Launch parallel agents → receive background task IDs (\`bg_...\`) for results and continuation session IDs (\`ses_...\`) for follow-ups.
 2. Continue ONLY with non-overlapping work. If none → END YOUR RESPONSE.
-3. The system may send partial reminders while sibling background tasks are still running.
-4. Collect via \`background_output(task_id="bg_...")\` ONLY after the all-complete \`<system-reminder>\` says every sibling background task has finished.
-5. NEVER use shell \`sleep\`, \`timeout\`, polling loops, or blocking commands to wait for background tasks. If no independent work remains, end the response and wait for the all-complete system reminder.
+3. After observing a task's terminal notification, you may retrieve that task's result without waiting for unrelated tasks. Use \`background_output(task_id="bg_...")\` for that task. Explicit skill/workflow requirements to wait for all responses before collection remain binding.
+4. Do not poll active tasks. Wait for every required result before dependent stages or synthesis. A terminal notification is not proof of success: inspect failures and follow the workflow's failure policy instead of silently dropping required work.
+5. NEVER use shell \`sleep\`, \`timeout\`, polling loops, or blocking commands to wait for background tasks. If no independent work remains and required results are still pending, end the response and wait for a relevant terminal notification.
 6. Cancel disposable tasks INDIVIDUALLY via \`background_cancel(taskId="...")\`. NEVER \`background_cancel(all=true)\`.
 7. Use \`task(task_id="ses_...")\` only to continue the same sub-agent session.
 
@@ -443,7 +443,7 @@ Task complete when ALL true: planned todos done, diagnostics clean on changed fi
 If verification fails: fix issues YOU caused. Do NOT fix pre-existing issues unless asked. Report: "Done. Note: N pre-existing errors unrelated to my changes."
 
 **Before delivering final answer:**
-- Oracle running → END YOUR RESPONSE and wait for the all-complete notification first.
+- Oracle running → END YOUR RESPONSE and wait for Oracle's terminal notification, then collect and inspect Oracle's result and every other result required for the answer. Follow the workflow's failure policy; never deliver the final answer before collecting and inspecting Oracle's result.
 - Cancel disposable tasks INDIVIDUALLY via \`background_cancel(taskId="...")\`.
 </behavior_instructions>
 

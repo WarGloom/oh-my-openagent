@@ -135,7 +135,7 @@ Before taking an action, resolve any prerequisite discovery or lookup that affec
 
 ### Anti-duplication
 
-Once you fire exploration sub-agents, do not manually perform the same search yourself while they run. Continue only with non-overlapping preparation, or end your response and wait for the all-complete notification. Do not collect after partial notifications that say sibling background tasks are still running. Do not poll \`background_output\` on a running task. Never use shell \`sleep\`, \`timeout\`, polling loops, or blocking commands to wait for background tasks.
+Once you fire exploration sub-agents, do not manually perform the same search yourself while they run. Continue only with non-overlapping preparation, or end your response if required results are still pending. After observing a task's terminal notification, you may retrieve that task's result without waiting for unrelated tasks. Explicit skill/workflow requirements to wait for all responses before collection remain binding. Do not poll active tasks. Wait for every required result before dependent stages or synthesis. A terminal notification is not proof of success: inspect failures and follow the workflow's failure policy instead of silently dropping required work. Retrieve the notified task via \`background_output(task_id="bg_...")\`, not its continuation session ID (\`ses_...\`). Never use shell \`sleep\`, \`timeout\`, polling loops, or blocking commands to wait for background tasks.
 
 ## Scope discipline
 

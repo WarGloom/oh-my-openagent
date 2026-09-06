@@ -26,7 +26,7 @@ export function buildAntiPatternsSection(): string {
     '- **Testing**: Deleting failing tests to "pass"',
     "- **Search**: Firing agents for single-line typos or obvious syntax errors",
     "- **Debugging**: Shotgun debugging, random changes",
-    "- **Background Tasks**: Polling `background_output`, collecting after partial notifications, shell `sleep`, `timeout`, wait loops, or blocking commands to wait for running tasks - end response and wait for the all-complete notification",
+    "- **Background Tasks**: Polling active tasks with `background_output`, ignoring explicit skill/workflow collection barriers, or starting dependent stages or synthesis while ignoring required results or leaving failures unhandled under the workflow's failure policy. Never use shell `sleep`, `timeout`, wait loops, or blocking commands to wait for running tasks - if no independent work remains, end the response and wait for a relevant terminal notification",
     "- **Delegation Duplication**: Delegating exploration to explore/librarian and then manually doing the same search yourself",
     "- **Oracle**: Delivering answer without collecting Oracle results",
   ]
@@ -147,10 +147,10 @@ Once you delegate exploration to explore/librarian agents, **DO NOT perform the 
 When you need the delegated results but they're not ready:
 
 1. **End your response** - do NOT continue with work that depends on those results
-2. **Wait for the all-complete notification** - the system will trigger your next turn after every sibling background task finishes
-3. **Then** collect results via \`background_output(task_id="bg_...")\`
-4. **Do NOT** use shell \`sleep\`, \`timeout\`, polling loops, or blocking commands to wait for background tasks
-5. **Do NOT** collect after partial notifications that say sibling background tasks are still running
+2. After observing a task's terminal notification, you may retrieve that task's result without waiting for unrelated tasks. Use \`background_output(task_id="bg_...")\` for that task.
+3. Explicit skill/workflow requirements to wait for all responses before collection remain binding.
+4. Do not poll active tasks. **Do NOT** use shell \`sleep\`, \`timeout\`, polling loops, or blocking commands to wait for background tasks
+5. Wait for every required result before dependent stages or synthesis. A terminal notification is not proof of success: inspect failures and follow the workflow's failure policy instead of silently dropping required work.
 6. **Do NOT** impatiently re-search the same topics while waiting
 
 ### Why This Matters:

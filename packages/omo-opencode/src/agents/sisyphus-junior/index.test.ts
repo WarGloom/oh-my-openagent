@@ -694,13 +694,14 @@ describe("buildSisyphusJuniorPrompt", () => {
     }
   })
 
-  test("GPT 5.5 prompt gates background output on all-complete notifications", () => {
+  test("GPT 5.5 agent ships the selected prompt unchanged", () => {
     // given
-    const prompt = buildSisyphusJuniorPrompt("openai/gpt-5.5", false)
+    const model = "openai/gpt-5.5"
+
+    // when
+    const agent = createSisyphusJuniorAgentWithOverrides({ model })
 
     // then
-    expect(prompt).toContain("all-complete notification")
-    expect(prompt).toContain("partial notifications")
-    expect(prompt).toContain("background_output")
+    expect(agent.prompt).toBe(buildSisyphusJuniorPrompt(model, false))
   })
 })
