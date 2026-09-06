@@ -128,6 +128,6 @@ ${header}
 
 **${remainingCount} task${remainingCount === 1 ? "" : "s"} still in progress.** You WILL be notified when ALL complete.
 ${isFailure ? "**ACTION REQUIRED:** This task failed. Check the error and decide whether to retry, cancel remaining tasks, or continue." : "Do NOT poll - continue productive work."}
-Do not call \`background_output\` for this task yet. Wait for the all-complete notification before collecting results.
+Use \`background_output(task_id="${task.id}")\` to retrieve this result when ready.
 </system-reminder>`)
 }
