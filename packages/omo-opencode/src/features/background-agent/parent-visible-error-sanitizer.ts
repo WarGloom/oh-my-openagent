@@ -282,12 +282,16 @@ export function formatParentVisibleError(error: string | undefined): string {
 
   const normalized = error.toLowerCase()
 
-  if (/\b(?:401|403)\b/.test(normalized) || /\b(?:auth|authorization|unauthori[sz]ed|forbidden|credential|api[_ -]?key|token)\b/.test(normalized)) {
+  if (/\b(?:401|403)\b/.test(normalized)) {
     return "Authentication or provider authorization failed."
   }
 
-  if (/\b(?:429|rate\s*limit|quota|too many requests|resource exhausted)\b/.test(normalized)) {
+  if (/\b(?:429|rate(?:\s*|-)limit(?:ed)?|quota|too many requests|resource exhausted)\b/.test(normalized)) {
     return "Provider rate limit or quota error."
+  }
+
+  if (/\b(?:auth|authorization|unauthori[sz]ed|forbidden|credential|api[_ -]?key|token)\b/.test(normalized)) {
+    return "Authentication or provider authorization failed."
   }
 
   if (/\b(?:model not found|unknown provider|provider not found|unsupported model|model unavailable)\b/.test(normalized)) {

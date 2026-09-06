@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
   MAX_PARENT_VISIBLE_NOTIFICATION_LENGTH,
+  formatParentVisibleError,
   limitParentVisibleNotification,
   sanitizeParentVisibleError,
 } from "./parent-visible-error-sanitizer"
@@ -559,6 +560,32 @@ describe("sanitizeParentVisibleError", () => {
     expect(sanitized).not.toMatch(/[\n\r\t]/)
     expect(sanitized).toContain("&lt;/system-reminder&gt;")
     expect(sanitized).toContain("&lt;tool_call&gt;")
+  })
+})
+
+describe("formatParentVisibleError", () => {
+  const rateLimitedError = "All 3 account(s) are rate-limited. Try again in 9s or add another account with `opencode auth login`"
+
+  test("#given account rate limits with auth login help #when formatting #then classifies as rate limit", () => {
+    // given
+    const rateLimitClassification = formatParentVisibleError("429")
+
+    // when
+    const formatted = formatParentVisibleError(rateLimitedError)
+
+    // then
+    expect(formatted).toBe(rateLimitClassification)
+  })
+
+  test.each([401, 403])("#given HTTP %i with rate-limit text #when formatting #then preserves auth classification", (status) => {
+    // given
+    const authClassification = formatParentVisibleError("Unauthorized")
+
+    // when
+    const formatted = formatParentVisibleError(`HTTP ${status}: ${rateLimitedError}`)
+
+    // then
+    expect(formatted).toBe(authClassification)
   })
 })
 
