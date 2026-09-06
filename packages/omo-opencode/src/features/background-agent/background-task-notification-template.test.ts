@@ -34,7 +34,6 @@ describe("buildBackgroundTaskNotificationText", () => {
 
   describe("#given all sibling tasks completed with mixed outcomes", () => {
   })
-  })
 
   describe("#given all tasks completed with undefined descriptions", () => {
     test("#when building the final notification #then it uses task ID as fallback instead of 'undefined'", () => {
@@ -231,8 +230,6 @@ describe("buildBackgroundTaskNotificationText", () => {
       // then
       expect(notification).not.toContain("undefined")
       expect(notification).toContain("bg_xyz789")
-      expect(notification).toContain("Do not call `background_output` for this task yet")
-      expect(notification).not.toContain("retrieve this result when ready")
     })
   })
 

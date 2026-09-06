@@ -331,10 +331,10 @@ result = task(..., run_in_background=false)  // Never wait synchronously for exp
 2. Continue only with non-overlapping work
    - If you have DIFFERENT independent work → do it now
    - Otherwise → **END YOUR RESPONSE.**
-3. **STOP. END YOUR RESPONSE.** The system may send partial reminders while sibling background tasks are still running.
-4. Collect results via \`background_output(task_id="bg_...")\` only after the all-complete \`<system-reminder>\` says every sibling background task has finished.
-5. **NEVER call \`background_output\` after launch or after a partial reminder.** This is a BLOCKING anti-pattern.
-6. **NEVER use shell \`sleep\`, \`timeout\`, polling loops, or blocking commands to wait for background tasks.** If no independent work remains, end the response and wait for the all-complete system reminder.
+3. After observing a task's terminal notification, you may retrieve that task's result without waiting for unrelated tasks. Use \`background_output(task_id="bg_...")\` for that task.
+4. Explicit skill/workflow requirements to wait for all responses before collection remain binding.
+5. Do not poll active tasks. Wait for every required result before dependent stages or synthesis. A terminal notification is not proof of success: inspect failures and follow the workflow's failure policy instead of silently dropping required work.
+6. **NEVER use shell \`sleep\`, \`timeout\`, polling loops, or blocking commands to wait for background tasks.** If no independent work remains and required results are still pending, end the response and wait for a relevant terminal notification.
 7. Cleanup: Cancel disposable tasks individually via \`background_cancel(taskId="...")\`
 8. Use \`task(task_id="ses_...")\` only to continue the same sub-agent session
 
@@ -479,7 +479,7 @@ If verification fails:
 3. Report: "Done. Note: found N pre-existing lint errors unrelated to my changes."
 
 ### Before Delivering Final Answer:
-- If Oracle is running: **end your response** and wait for the all-complete notification first.
+- If Oracle is running: **end your response** and wait for Oracle's terminal notification, then collect and inspect Oracle's result and every other result required for the answer. Follow the workflow's failure policy; never deliver the final answer before collecting and inspecting Oracle's result.
 - Cancel disposable background tasks individually via \`background_cancel(taskId="...")\`.
 </Behavior_Instructions>
 
