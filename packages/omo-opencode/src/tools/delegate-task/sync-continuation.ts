@@ -108,7 +108,11 @@ export async function executeSyncContinuation(
   if (!continuationID) {
     throw new Error("task_id is required to continue a sync task")
   }
-  cancelSyncSessionDeletion(continuationID)
+  const releaseSyncClaim = executorCtx.manager?.claimSyncContinuation(continuationID, parentContext.sessionID)
+  const isManagedContinuation = releaseSyncClaim !== undefined
+  if (!isManagedContinuation) {
+    cancelSyncSessionDeletion(continuationID)
+  }
   const taskId = `resume_sync_${continuationID.slice(0, 8)}`
   const startTime = new Date()
 
@@ -129,69 +133,72 @@ export async function executeSyncContinuation(
   let handedBackToParent = false
 
   try {
-    const resumeContext = await resolveResumeContext(client, continuationID)
-    resumeAgent = resumeContext.resumeAgent
-    resumeModel = resumeContext.resumeModel
-    resumeVariant = resumeContext.resumeVariant
-    anchorMessageCount = resumeContext.anchorMessageCount
-    anchorMessageID = resumeContext.anchorMessageID
+    try {
+      const resumeContext = await resolveResumeContext(client, continuationID)
+      resumeAgent = resumeContext.resumeAgent
+      resumeModel = resumeContext.resumeModel
+      resumeVariant = resumeContext.resumeVariant
+      anchorMessageCount = resumeContext.anchorMessageCount
+      anchorMessageID = resumeContext.anchorMessageID
 
-    const resumeModelForMetadata = resumeModel && resumeVariant !== undefined
-      ? { ...resumeModel, variant: resumeVariant }
-      : resumeModel
+      const resumeModelForMetadata = resumeModel && resumeVariant !== undefined
+        ? { ...resumeModel, variant: resumeVariant }
+        : resumeModel
 
-    const syncContMeta = {
-      title: args.description,
-      metadata: {
-        prompt: args.prompt,
-        ...(resumeAgent !== undefined ? { agent: resumeAgent } : {}),
-        ...(args.category !== undefined ? { category: args.category } : {}),
-        ...(args.requested_subagent_type !== undefined ? { requested_subagent_type: args.requested_subagent_type } : {}),
-        load_skills: args.load_skills,
-        description: args.description,
-        run_in_background: args.run_in_background,
-        taskId: continuationID,
-        sessionId: continuationID,
-        sync: true,
-        command: args.command,
-        model: resolveMetadataModel(resumeModelForMetadata, parentContext.model),
-      },
+      const syncContMeta = {
+        title: args.description,
+        metadata: {
+          prompt: args.prompt,
+          ...(resumeAgent !== undefined ? { agent: resumeAgent } : {}),
+          ...(args.category !== undefined ? { category: args.category } : {}),
+          ...(args.requested_subagent_type !== undefined ? { requested_subagent_type: args.requested_subagent_type } : {}),
+          load_skills: args.load_skills,
+          description: args.description,
+          run_in_background: args.run_in_background,
+          taskId: continuationID,
+          sessionId: continuationID,
+          sync: true,
+          command: args.command,
+          model: resolveMetadataModel(resumeModelForMetadata, parentContext.model),
+        },
+      }
+      await publishToolMetadata(ctx, syncContMeta)
+
+      const allowTask = isPlanFamily(resumeAgent)
+      const tddEnabled = sisyphusAgentConfig?.tdd
+      const effectivePrompt = buildTaskPrompt(args.prompt, resumeAgent, tddEnabled)
+      const tools = {
+        task: allowTask,
+        call_omo_agent: true,
+        question: false,
+        ...(resumeAgent ? getAgentToolRestrictions(resumeAgent) : {}),
+      }
+      setSessionTools(continuationID, tools)
+
+      await promptWithModelSuggestionRetry(client, {
+        path: { id: continuationID },
+        body: {
+          ...(resumeAgent !== undefined ? { agent: resumeAgent } : {}),
+          ...(resumeModel !== undefined ? { model: resumeModel } : {}),
+          ...(resumeVariant !== undefined ? { variant: resumeVariant } : {}),
+          system: systemContent,
+          tools,
+          parts: [{ type: "text", text: effectivePrompt }],
+        },
+      }, {
+        queueBehavior: "defer",
+        checkToolState: false,
+      })
+    } catch (promptError) {
+      if (toastManager) {
+        toastManager.removeTask(taskId)
+      }
+      const errorMessage = promptError instanceof Error ? promptError.message : String(promptError)
+      if (!isManagedContinuation) {
+        scheduleSyncSessionDeletion(client, continuationID)
+      }
+      return `Failed to send continuation prompt: ${errorMessage}\n\nTask ID: ${continuationID}`
     }
-    await publishToolMetadata(ctx, syncContMeta)
-
-    const allowTask = isPlanFamily(resumeAgent)
-    const tddEnabled = sisyphusAgentConfig?.tdd
-    const effectivePrompt = buildTaskPrompt(args.prompt, resumeAgent, tddEnabled)
-    const tools = {
-      task: allowTask,
-      call_omo_agent: true,
-      question: false,
-      ...(resumeAgent ? getAgentToolRestrictions(resumeAgent) : {}),
-    }
-    setSessionTools(continuationID, tools)
-
-    await promptWithModelSuggestionRetry(client, {
-      path: { id: continuationID },
-      body: {
-        ...(resumeAgent !== undefined ? { agent: resumeAgent } : {}),
-        ...(resumeModel !== undefined ? { model: resumeModel } : {}),
-        ...(resumeVariant !== undefined ? { variant: resumeVariant } : {}),
-        system: systemContent,
-        tools,
-        parts: [{ type: "text", text: effectivePrompt }],
-      },
-    }, {
-      queueBehavior: "defer",
-      checkToolState: false,
-    })
-   } catch (promptError) {
-     if (toastManager) {
-       toastManager.removeTask(taskId)
-     }
-     const errorMessage = promptError instanceof Error ? promptError.message : String(promptError)
-     scheduleSyncSessionDeletion(client, continuationID)
-     return `Failed to send continuation prompt: ${errorMessage}\n\nTask ID: ${continuationID}`
-   }
 
     try {
       const pollError = await deps.pollSyncSession(ctx, client, {
@@ -267,8 +274,11 @@ ${buildTaskMetadataBlock({
          })
        }
      }
-     // Every terminal continuation path must restore the cleanup grace timer,
-     // including prompt/poll failures after revival cancelled the old timer.
-     scheduleSyncSessionDeletion(client, continuationID)
-   }
+      if (!isManagedContinuation) {
+        scheduleSyncSessionDeletion(client, continuationID)
+      }
+    }
+  } finally {
+    releaseSyncClaim?.()
+  }
 }

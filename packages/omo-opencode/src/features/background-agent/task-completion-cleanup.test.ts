@@ -6,6 +6,7 @@ import { BackgroundManager } from "./manager"
 import type { BackgroundTask } from "./types"
 import { releaseAllPromptAsyncReservationsForTesting } from "../../hooks/shared/prompt-async-gate"
 import { OMO_INTERNAL_INITIATOR_MARKER } from "../../shared/internal-initiator-marker"
+import { executeSyncContinuation } from "../../tools/delegate-task/sync-continuation"
 
 type PromptAsyncCall = {
   path: { id: string }
@@ -29,6 +30,7 @@ type SessionMessageForTest = {
 
 type FakeTimers = {
   getDelay: (timer: ReturnType<typeof setTimeout>) => number | undefined
+  capture: (timer: ReturnType<typeof setTimeout>) => () => Promise<void>
   run: (timer: ReturnType<typeof setTimeout>) => Promise<void>
   advanceBy: (ms: number) => Promise<void>
   runNext: () => Promise<boolean>
@@ -71,7 +73,12 @@ function createTask(overrides: Partial<BackgroundTask> & { id: string; parentSes
   }
 }
 
-function createManager(enableParentSessionNotifications: boolean): {
+function createManager(
+  enableParentSessionNotifications: boolean,
+  sessionStatuses?: Record<string, { type: string }>,
+  promptAsyncImpl?: (call: PromptAsyncCall) => Promise<unknown>,
+  sessionMessages?: SessionMessageForTest[],
+): {
   manager: BackgroundManager
   promptAsyncCalls: PromptAsyncCall[]
 }
@@ -105,12 +112,13 @@ function createManager(
     },
   }
   const ctx: PluginInput = {
-    client: client as PluginInput["client"],
+    client: client as unknown as PluginInput["client"],
     project: {} as PluginInput["project"],
     directory: tmpdir(),
     worktree: tmpdir(),
     serverUrl: new URL("http://localhost"),
     $: {} as PluginInput["$"],
+    experimental_workspace: { register: () => {} },
   }
 
   const manager = new BackgroundManager(
@@ -154,6 +162,16 @@ function installFakeTimers(): FakeTimers {
   return {
     getDelay(timer) {
       return delays.get(timer)
+    },
+    capture(timer) {
+      const callback = callbacks.get(timer)
+      if (!callback) {
+        throw new Error(`Timer not found: ${String(timer)}`)
+      }
+      return async () => {
+        await callback()
+        await flushMicrotasks()
+      }
     },
     async run(timer) {
       const callback = callbacks.get(timer)
@@ -902,6 +920,211 @@ describe("BackgroundManager.notifyParentSession cleanup scheduling", () => {
       // then
       expect(getCompletionTimers(manager).has(task.id)).toBe(false)
       expect(getTasks(manager).has(task.id)).toBe(false)
+    })
+
+    test("#when an old cleanup callback fires during a sync continuation #then the claimed task survives until the continuation releases it", async () => {
+      // given
+      const promptDispatches: unknown[] = []
+      const deletedSessions: unknown[] = []
+      let pollStarted = false
+      let releasePoll: (value: string | null) => void = () => {}
+      const pollPromise = new Promise<string | null>((resolve) => {
+        releasePoll = resolve
+      })
+      const client = {
+        session: {
+          messages: async () => ({
+            data: [{
+              info: {
+                id: "message-1",
+                role: "assistant",
+                agent: "test-agent",
+                model: { providerID: "test-provider", modelID: "test-model" },
+              },
+            }],
+          }),
+          status: async () => ({ data: { "continuation-session": { type: "idle" } } }),
+          prompt: async () => ({}),
+          promptAsync: async (call: unknown) => {
+            promptDispatches.push(call)
+            return {}
+          },
+          abort: async () => ({}),
+          delete: async (call: unknown) => {
+            deletedSessions.push(call)
+            return {}
+          },
+        },
+      }
+      const pluginContext: PluginInput = {
+        client: client as unknown as PluginInput["client"],
+        project: {} as PluginInput["project"],
+        directory: tmpdir(),
+        worktree: tmpdir(),
+        serverUrl: new URL("http://localhost"),
+        $: {} as PluginInput["$"],
+        experimental_workspace: { register: () => {} },
+      }
+      const manager = new BackgroundManager({
+        pluginContext,
+        enableParentSessionNotifications: false,
+      })
+      managerUnderTest = manager
+      fakeTimers = installFakeTimers()
+      const task = createTask({
+        id: "task-a",
+        parentSessionId: "parent-1",
+        sessionId: "continuation-session",
+        status: "completed",
+        completedAt: new Date("2026-03-11T00:01:00.000Z"),
+      })
+      getTasks(manager).set(task.id, task)
+      await notifyParentSessionForTest(manager, task)
+      const oldTimer = getRequiredTimer(manager, task.id)
+      const oldCleanupCallback = fakeTimers.capture(oldTimer)
+      const continuation = executeSyncContinuation(
+        {
+          task_id: task.sessionId,
+          prompt: "continue task",
+          description: "continue task",
+          load_skills: [],
+          run_in_background: false,
+        },
+        {
+          sessionID: "parent-1",
+          messageID: "message-1",
+          agent: "test-agent",
+          abort: new AbortController().signal,
+          callID: "call-1",
+          metadata: () => {},
+        },
+        {
+          client: client as unknown as import("../../tools/delegate-task/types").OpencodeClient,
+          directory: pluginContext.directory,
+          manager,
+          syncPollTimeoutMs: 1_000,
+        },
+        { sessionID: "parent-1", messageID: "message-2" },
+        {
+          pollSyncSession: async () => {
+            pollStarted = true
+            return pollPromise
+          },
+          fetchSyncResult: async () => ({ ok: true as const, textContent: "continued" }),
+        },
+      )
+
+      for (let attempts = 0; attempts < 10 && !pollStarted; attempts += 1) {
+        await flushMicrotasks()
+      }
+      expect(pollStarted).toBe(true)
+
+      // when
+      await oldCleanupCallback()
+
+      // then
+      expect(deletedSessions).toHaveLength(0)
+      expect(manager.getTask(task.id)).toBe(task)
+      expect(promptDispatches).toHaveLength(1)
+
+      releasePoll(null)
+      await continuation
+      const replacementTimer = getRequiredTimer(manager, task.id)
+      expect(replacementTimer).not.toBe(oldTimer)
+      await oldCleanupCallback()
+      expect(deletedSessions).toHaveLength(0)
+      expect(getCompletionTimers(manager).get(task.id)).toBe(replacementTimer)
+      await fakeTimers.run(replacementTimer)
+      expect(deletedSessions).toHaveLength(1)
+    })
+
+    test("#when a sync continuation claim has a foreign parent or duplicate owner #then cleanup ownership is unchanged", async () => {
+      // given
+      const { manager } = createManager(false)
+      managerUnderTest = manager
+      fakeTimers = installFakeTimers()
+      const task = createTask({
+        id: "task-a",
+        parentSessionId: "parent-1",
+        sessionId: "continuation-session",
+        status: "completed",
+      })
+      getTasks(manager).set(task.id, task)
+      await notifyParentSessionForTest(manager, task)
+      const originalTimer = getRequiredTimer(manager, task.id)
+
+      // when
+      expect(() => manager.claimSyncContinuation(task.sessionId!, "foreign-parent")).toThrow()
+      const releaseClaim = manager.claimSyncContinuation(task.sessionId!, task.parentSessionId)
+      expect(() => manager.claimSyncContinuation(task.sessionId!, task.parentSessionId)).toThrow()
+      const resumeAttempt = manager.resume({
+        sessionId: task.sessionId!,
+        prompt: "resume task",
+        parentSessionId: task.parentSessionId,
+        parentMessageId: task.parentMessageId,
+      })
+      const resumeError = await resumeAttempt.then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+
+      // then
+      expect(resumeError).toBeInstanceOf(Error)
+      expect(getCompletionTimers(manager).has(task.id)).toBe(false)
+      releaseClaim?.()
+      const replacementTimer = getRequiredTimer(manager, task.id)
+      expect(replacementTimer).not.toBe(originalTimer)
+      releaseClaim?.()
+      expect(getCompletionTimers(manager).get(task.id)).toBe(replacementTimer)
+    })
+
+    test("#when sync continuation prompt dispatch fails #then the manager claim is released", async () => {
+      // given
+      const promptError = new Error("prompt failed")
+      const { manager } = createManager(false, undefined, async () => {
+        throw promptError
+      })
+      managerUnderTest = manager
+      const client = Reflect.get(manager, "client")
+      const task = createTask({
+        id: "task-a",
+        parentSessionId: "parent-1",
+        sessionId: "continuation-session",
+        status: "completed",
+      })
+      getTasks(manager).set(task.id, task)
+      await notifyParentSessionForTest(manager, task)
+
+      // when
+      const result = await executeSyncContinuation(
+        {
+          task_id: task.sessionId,
+          prompt: "continue task",
+          description: "continue task",
+          load_skills: [],
+          run_in_background: false,
+        },
+        {
+          sessionID: task.parentSessionId,
+          messageID: "message-1",
+          agent: "test-agent",
+          abort: new AbortController().signal,
+          callID: "call-1",
+          metadata: () => {},
+        },
+        {
+          client: client as unknown as import("../../tools/delegate-task/types").OpencodeClient,
+          directory: Reflect.get(manager, "directory") as string,
+          manager,
+        },
+        { sessionID: task.parentSessionId, messageID: "message-2" },
+      )
+
+      // then
+      expect(result).toContain("Failed to send continuation prompt")
+      const releaseClaim = manager.claimSyncContinuation(task.sessionId!, task.parentSessionId)
+      expect(releaseClaim).toBeDefined()
+      releaseClaim?.()
     })
   })
 })
