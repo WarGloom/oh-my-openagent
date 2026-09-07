@@ -450,6 +450,7 @@ export class BackgroundManager {
   private completionTimers: Map<string, ReturnType<typeof setTimeout>> = new Map()
   private readonly syncAttachedSessions = new Set<string>()
   private readonly resumesAwaitingAdmission = new Set<string>()
+  private activeSyncClaims: Map<string, symbol> = new Map()
   private completedTaskArchive: Map<string, BackgroundTask> = new Map()
   private completedTaskSummaries: Map<string, BackgroundTaskNotificationTask[]> = new Map()
   private idleDeferralTimers: Map<string, ReturnType<typeof setTimeout>> = new Map()
@@ -747,7 +748,6 @@ export class BackgroundManager {
     task.parentTools = snapshot.parentTools
     task.concurrencyKey = snapshot.concurrencyKey
     task.concurrencyGroup = snapshot.concurrencyGroup
-    task.prompt = snapshot.prompt
     task.skillContent = snapshot.skillContent
     this.updateTaskParent(task, snapshot.parentSessionId)
 
@@ -1239,6 +1239,47 @@ export class BackgroundManager {
     return this.tasks.get(id) ?? this.completedTaskArchive.get(id) ?? getRegisteredBackgroundTask(id)
   }
 
+  claimSyncContinuation(sessionID: string, parentSessionID: string): (() => void) | undefined {
+    const task = this.findBySession(sessionID)
+    if (!task) {
+      return undefined
+    }
+
+    if (task.parentSessionId !== parentSessionID) {
+      throw new Error(`Task ${task.id} belongs to a different parent session`)
+    }
+    if (!TERMINAL_BACKGROUND_TASK_STATUSES.has(task.status)) {
+      throw new Error(`Task ${task.id} is not terminal and cannot accept a sync continuation`)
+    }
+    if (this.activeSyncClaims.has(task.id)) {
+      throw new Error(`Task ${task.id} already has an active sync continuation`)
+    }
+
+    const completionTimer = this.completionTimers.get(task.id)
+    if (completionTimer) {
+      clearTimeout(completionTimer)
+      this.completionTimers.delete(task.id)
+    }
+
+    const claim = Symbol(task.id)
+    this.activeSyncClaims.set(task.id, claim)
+    let released = false
+    return () => {
+      if (released) {
+        return
+      }
+      released = true
+      if (this.activeSyncClaims.get(task.id) !== claim) {
+        return
+      }
+
+      this.activeSyncClaims.delete(task.id)
+      if (this.tasks.get(task.id) === task && TERMINAL_BACKGROUND_TASK_STATUSES.has(task.status)) {
+        this.scheduleTaskRemoval(task.id)
+      }
+    }
+  }
+
   getTasksSnapshot(): BackgroundTaskSnapshot[] { return toBackgroundTaskSnapshots(this.tasks.values()) }
 
   getTasksByParentSession(sessionID: string): BackgroundTask[] {
@@ -1606,6 +1647,9 @@ export class BackgroundManager {
         providedParent: input.parentSessionId,
       })
       throw new Error("Resume forbidden: task belongs to a different parent session")
+    }
+    if (this.activeSyncClaims.has(existingTask.id)) {
+      throw new Error(`Task ${existingTask.id} already has an active sync continuation`)
     }
 
     if (existingTask.status === "running") {
@@ -2843,10 +2887,13 @@ The task is retrying on a fallback model after a retryable failure.
       this.completionTimers.delete(taskId)
     }
 
-    const timer = setTimeout(async () => {
+    let timer: ReturnType<typeof setTimeout>
+    timer = setTimeout(async () => {
+      if (this.completionTimers.get(taskId) !== timer) return
       this.completionTimers.delete(taskId)
       const task = this.tasks.get(taskId)
       if (!task) return
+      if (this.activeSyncClaims.has(taskId)) return
 
       // A sync waiter is still polling this session; its detach re-arms removal.
       if (task.sessionId && this.syncAttachedSessions.has(task.sessionId)) return
@@ -3810,6 +3857,7 @@ The task is retrying on a fallback model after a retryable failure.
     }
     this.completionTimers.clear()
     this.syncAttachedSessions.clear()
+    this.activeSyncClaims.clear()
 
     for (const timer of this.idleDeferralTimers.values()) {
       clearTimeout(timer)
