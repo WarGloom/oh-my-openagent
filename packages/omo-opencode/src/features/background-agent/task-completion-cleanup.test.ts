@@ -538,7 +538,7 @@ describe("BackgroundManager.notifyParentSession cleanup scheduling", () => {
       await notifyParentSessionForTest(manager, taskA)
       sessionStatuses["parent-1"] = { type: "idle" }
       manager.handleEvent({ type: "session.idle", properties: { sessionID: "parent-1" } })
-      await waitForDeferredWake(promptAsyncCalls)
+      await waitForDeferredWake(manager, promptAsyncCalls)
 
       // then
       expect(promptAsyncCalls).toHaveLength(1)
@@ -1092,7 +1092,9 @@ describe("BackgroundManager.notifyParentSession cleanup scheduling", () => {
       expect(deletedSessions).toHaveLength(0)
       expect(getCompletionTimers(manager).get(task.id)).toBe(replacementTimer)
       await fakeTimers.run(replacementTimer)
-      expect(deletedSessions).toHaveLength(1)
+      expect(deletedSessions).toHaveLength(0)
+      expect(getTasks(manager).has(task.id)).toBe(false)
+      expect(getCompletionTimers(manager).has(task.id)).toBe(false)
     })
 
     test("#when a sync continuation claim has a foreign parent or duplicate owner #then cleanup ownership is unchanged", async () => {
