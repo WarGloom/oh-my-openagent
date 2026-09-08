@@ -16,12 +16,18 @@ import { buildTaskMetadataBlock } from "../../features/tool-metadata-store/task-
 import { getTaskID } from "./task-id"
 import { resolveMetadataModel } from "./resolve-metadata-model"
 import { log } from "../../shared/logger"
+import { extractErrorStatusCode } from "../../features/background-agent/error-classifier"
 import { cancelSyncSessionDeletion, scheduleSyncSessionDeletion } from "./sync-session-cleanup"
 import { formatDeletedSyncSessionError, isSyncSessionDeleted } from "./sync-session-existence"
+import type { BackgroundTask } from "../../features/background-agent/types"
+import { applySessionPromptParams } from "../../shared/session-prompt-params-helpers"
+import { z } from "zod"
+import { dispatchInternalPrompt } from "../../shared/prompt-async-gate"
 
 type ResumeModel = { providerID: string; modelID: string }
 
 type ResumeContext = {
+  missingSession?: true
   resumeAgent?: string
   resumeModel?: ResumeModel
   resumeVariant?: string
@@ -58,6 +64,7 @@ function shouldAttemptPollErrorRecovery(pollError: string): boolean {
 async function resolveResumeContext(client: ExecutorContext["client"], continuationID: string): Promise<ResumeContext> {
   try {
     const messagesResp = await client.session.messages({ path: { id: continuationID } })
+    if (extractErrorStatusCode(messagesResp) === 404) return { missingSession: true }
     const messages = normalizeSDKResponse(messagesResp, [] as SessionMessage[])
 
     for (let index = messages.length - 1; index >= 0; index--) {
@@ -77,6 +84,7 @@ async function resolveResumeContext(client: ExecutorContext["client"], continuat
 
     return { anchorMessageCount: messages.length, anchorMessageID: messages.at(-1)?.info?.id }
   } catch (error) {
+    if (extractErrorStatusCode(error) === 404) return { missingSession: true }
     if (!(error instanceof Error)) throw error
     const resumeMessageDir = getMessageDir(continuationID)
     const { prevMessage } = await resolveMessageContext(continuationID, client, resumeMessageDir)
@@ -100,6 +108,7 @@ export async function executeSyncContinuation(
   parentContext: ParentContext,
   deps: SyncContinuationDeps = syncContinuationDeps,
   systemContent?: string,
+  retainedTask?: BackgroundTask,
 ): Promise<string> {
   const { client, syncPollTimeoutMs, taskCleanupDelayMs, sisyphusAgentConfig } = executorCtx
   const hasActiveChildBackgroundTasks = executorCtx.manager?.hasActiveChildTasks?.bind(executorCtx.manager)
@@ -142,7 +151,28 @@ export async function executeSyncContinuation(
 
   try {
     try {
-      const resumeContext = await resolveResumeContext(client, continuationID)
+      const resumeContext: ResumeContext = retainedTask
+        ? {
+            resumeAgent: retainedTask.agent,
+            resumeModel: retainedTask.model,
+            resumeVariant: retainedTask.model?.variant,
+          }
+        : await resolveResumeContext(client, continuationID)
+      if (retainedTask) {
+        const messagesSchema = z.array(z.object({ info: z.object({ id: z.string().optional() }) }))
+        const messages = z
+          .union([
+            messagesSchema,
+            z.object({ data: messagesSchema, error: z.undefined().optional() }).transform((value) => value.data),
+          ])
+          .parse(await client.session.messages({ path: { id: continuationID } }))
+        resumeContext.anchorMessageCount = messages.length
+        resumeContext.anchorMessageID = messages.at(-1)?.info.id
+      }
+      if (resumeContext.missingSession) {
+        toastManager?.removeTask(taskId)
+        return `Session ${continuationID} no longer exists; cannot resume this session. Start a new task using saved task context.`
+      }
       resumeAgent = resumeContext.resumeAgent
       resumeModel = resumeContext.resumeModel
       resumeVariant = resumeContext.resumeVariant
@@ -182,26 +212,37 @@ export async function executeSyncContinuation(
         question: false,
         ...(resumeAgent ? getAgentToolRestrictions(resumeAgent) : {}),
       }
-      setSessionTools(continuationID, tools)
+      if (!retainedTask) setSessionTools(continuationID, tools)
+      if (retainedTask?.model) applySessionPromptParams(continuationID, retainedTask.model)
 
-      await promptWithModelSuggestionRetry(
-        client,
-        {
-          path: { id: continuationID },
-          body: {
-            ...(resumeAgent !== undefined ? { agent: resumeAgent } : {}),
-            ...(resumeModel !== undefined ? { model: resumeModel } : {}),
-            ...(resumeVariant !== undefined ? { variant: resumeVariant } : {}),
-            system: systemContent,
-            tools,
-            parts: [{ type: "text", text: effectivePrompt }],
-          },
+      const promptInput = {
+        path: { id: continuationID },
+        body: {
+          ...(resumeAgent !== undefined ? { agent: resumeAgent } : {}),
+          ...(resumeModel !== undefined ? { model: resumeModel } : {}),
+          ...(resumeVariant !== undefined ? { variant: resumeVariant } : {}),
+          system: systemContent,
+          ...(!retainedTask ? { tools } : {}),
+          parts: [{ type: "text" as const, text: effectivePrompt }],
         },
-        {
+      }
+      if (retainedTask) {
+        const dispatch = await dispatchInternalPrompt({
+          mode: "async",
+          client,
+          sessionID: continuationID,
+          input: promptInput,
+          source: "retained-session-continuation",
           queueBehavior: "defer",
-          checkToolState: false,
-        },
-      )
+          settleMs: 0,
+          checkToolState: true,
+        })
+        if (dispatch.status === "failed") throw dispatch.error
+        if (dispatch.status !== "dispatched")
+          throw new Error(`Retained-session prompt skipped by gate: ${dispatch.status}`)
+      } else {
+        await promptWithModelSuggestionRetry(client, promptInput, { queueBehavior: "defer", checkToolState: false })
+      }
     } catch (promptError) {
       if (toastManager) {
         toastManager.removeTask(taskId)
