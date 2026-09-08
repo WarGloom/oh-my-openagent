@@ -16,11 +16,13 @@ import { buildTaskMetadataBlock } from "../../features/tool-metadata-store/task-
 import { getTaskID } from "./task-id"
 import { resolveMetadataModel } from "./resolve-metadata-model"
 import { log } from "../../shared/logger"
+import { extractErrorStatusCode } from "../../features/background-agent/error-classifier"
 import { cancelSyncSessionDeletion, scheduleSyncSessionDeletion } from "./sync-session-cleanup"
 
 type ResumeModel = { providerID: string; modelID: string }
 
 type ResumeContext = {
+  missingSession?: true
   resumeAgent?: string
   resumeModel?: ResumeModel
   resumeVariant?: string
@@ -60,6 +62,7 @@ async function resolveResumeContext(
 ): Promise<ResumeContext> {
   try {
     const messagesResp = await client.session.messages({ path: { id: continuationID } })
+    if (extractErrorStatusCode(messagesResp) === 404) return { missingSession: true }
     const messages = normalizeSDKResponse(messagesResp, [] as SessionMessage[])
 
     for (let index = messages.length - 1; index >= 0; index--) {
@@ -79,6 +82,7 @@ async function resolveResumeContext(
 
     return { anchorMessageCount: messages.length, anchorMessageID: messages.at(-1)?.info?.id }
   } catch (error) {
+    if (extractErrorStatusCode(error) === 404) return { missingSession: true }
     if (!(error instanceof Error)) throw error
     const resumeMessageDir = getMessageDir(continuationID)
     const { prevMessage } = await resolveMessageContext(continuationID, client, resumeMessageDir)
@@ -140,6 +144,10 @@ export async function executeSyncContinuation(
   try {
     try {
       const resumeContext = await resolveResumeContext(client, continuationID)
+      if (resumeContext.missingSession) {
+        toastManager?.removeTask(taskId)
+        return `Session ${continuationID} no longer exists; cannot resume this session. Start a new task using saved task context.`
+      }
       resumeAgent = resumeContext.resumeAgent
       resumeModel = resumeContext.resumeModel
       resumeVariant = resumeContext.resumeVariant

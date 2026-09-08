@@ -54,6 +54,8 @@ describe("executeSyncContinuation - toast cleanup error paths", () => {
   })
 
   afterEach(() => {
+    const { releaseAllPromptAsyncReservationsForTesting } = require("../../hooks/shared/prompt-async-gate")
+    releaseAllPromptAsyncReservationsForTesting()
     //#given - reset timing after each test
     const { __resetTimingConfig } = require("./timing")
     __resetTimingConfig()
@@ -62,6 +64,41 @@ describe("executeSyncContinuation - toast cleanup error paths", () => {
 
 		resetToastManager?.()
 		resetToastManager = null
+  })
+
+  test("fails permanently before dispatch or polling when the SDK resolves a session 404", async () => {
+    // given
+    const { executeSyncContinuation } = require("./sync-continuation")
+    const promptAsync = mock(async () => ({}))
+    const prompt = mock(async () => ({}))
+    const pollSyncSession = mock(async () => null)
+    const releaseClaim = mock(() => {})
+    const metadata = mock(() => {})
+    const client = {
+      session: {
+        messages: async () => ({ error: { name: "NotFoundError" }, response: { status: 404 } }),
+        promptAsync,
+        prompt,
+      },
+    }
+
+    // when
+    const result = await executeSyncContinuation(
+      { task_id: "ses_deleted", prompt: "continue", description: "resume", load_skills: [], run_in_background: false },
+      { sessionID: "parent-session", callID: "call-404", metadata },
+      { client, manager: { claimSyncContinuation: () => releaseClaim } },
+      { sessionID: "parent-session", messageID: "parent-message" },
+      { pollSyncSession, fetchSyncResult: mock(async () => ({ ok: true, textContent: "" })) },
+    )
+
+    // then
+    expect(result).toContain("Session ses_deleted no longer exists; cannot resume")
+    expect(prompt).not.toHaveBeenCalled()
+    expect(promptAsync).not.toHaveBeenCalled()
+    expect(pollSyncSession).not.toHaveBeenCalled()
+    expect(metadata).not.toHaveBeenCalled()
+    expect(releaseClaim).toHaveBeenCalledTimes(1)
+    expect(removeTaskCalls).toEqual(["resume_sync_ses_dele"])
   })
 
   test("removes toast when fetchSyncResult throws", async () => {
@@ -486,6 +523,7 @@ describe("executeSyncContinuation - toast cleanup error paths", () => {
     const activeChildCalls: string[] = []
     const parentWakeCalls: string[] = []
     const manager = {
+      claimSyncContinuation: () => undefined,
       resumedSessionID,
       hasActiveChildTasks(sessionID: string) {
         activeChildCalls.push(sessionID)
@@ -577,8 +615,10 @@ describe("executeSyncContinuation - toast cleanup error paths", () => {
     const { handedBackSyncSessions } = require("../../features/claude-code-session-state")
     handedBackSyncSessions.clear()
     const abortCalls: Array<{ path: { id: string } }> = []
+    const deleteSession = mock(async () => ({}))
     const mockClient = {
       session: {
+        delete: deleteSession,
         messages: async () => ({
           data: [
             { info: { id: "msg_001", role: "user", time: { created: 1000 } } },
@@ -638,7 +678,14 @@ describe("executeSyncContinuation - toast cleanup error paths", () => {
     expect(handedBackSyncSessions.has("ses_test_12345678")).toBe(true)
     expect(abortCalls).toEqual([{ path: { id: "ses_test_12345678" } }])
 
-    handedBackSyncSessions.clear()
+    // when - completion cleanup expires, only the handback marker is removed
+    const { scheduleSyncSessionDeletion } = require("./sync-session-cleanup")
+    scheduleSyncSessionDeletion(mockClient, "ses_test_12345678", 0)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    // then
+    expect(handedBackSyncSessions.has("ses_test_12345678")).toBe(false)
+    expect(deleteSession).not.toHaveBeenCalled()
   })
 
   test("does not mark or abort resumed sync session when handback fails", async () => {

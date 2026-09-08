@@ -2793,12 +2793,7 @@ The task is retrying on a fallback model after a retryable failure.
         subagentSessions.delete(task.sessionId)
         clearDelegatedChildSessionBootstrap(task.sessionId)
         SessionCategoryRegistry.remove(task.sessionId)
-        const deleteSession = this.client.session.delete?.bind(this.client.session)
-        if (typeof deleteSession === "function") {
-          await deleteSession({ path: { id: task.sessionId } }).catch((error: unknown) => {
-            log("[background-agent] Failed to delete completed subagent session:", { sessionID: task.sessionId, error: String(error) })
-          })
-        }
+        // Keep the SDK session available for later task_id resumption.
       }
       log("[background-agent] Removed completed task from memory:", taskId)
     }, this.config?.taskCleanupDelayMs ?? TASK_CLEANUP_DELAY_MS)
