@@ -6,8 +6,14 @@ function normalizeDarwinRealpath(filePath: string): string {
   return filePath.startsWith("/private/var/") ? filePath.slice("/private".length) : filePath
 }
 
-export function isMarkdownFile(entry: { name: string; isFile: () => boolean }): boolean {
-	return !entry.name.startsWith(".") && entry.name.endsWith(".md") && entry.isFile()
+export function isMarkdownFile(entry: {
+	name: string
+	isFile: () => boolean
+	isSymbolicLink?: () => boolean
+}): boolean {
+	return !entry.name.startsWith(".")
+		&& entry.name.endsWith(".md")
+		&& (entry.isFile() || entry.isSymbolicLink?.() === true)
 }
 
 export async function fileExists(filePath: string): Promise<boolean> {

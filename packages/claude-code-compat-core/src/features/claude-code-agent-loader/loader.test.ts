@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -223,6 +223,23 @@ describe("claude-code-agent-loader", () => {
       process.env.OPENCODE_CONFIG_DIR = root
       const result = loadOpencodeGlobalAgents()
       expect(result).toEqual({})
+    })
+
+    test("loads a symlinked markdown agent", () => {
+      const root = trackDir(mkdtempSync(join(tmpdir(), "agent-loader-symlink-")))
+      const agentsDir = join(root, "opencode", "agents")
+      const definitionsDir = join(root, "definitions")
+      mkdirSync(agentsDir, { recursive: true })
+      mkdirSync(definitionsDir, { recursive: true })
+      const definitionPath = join(definitionsDir, "pinion-rust-dev.md")
+      writeFileSync(definitionPath, MINIMAL_AGENT, "utf-8")
+      symlinkSync(definitionPath, join(agentsDir, "pinion-rust-dev.md"))
+      process.env.XDG_CONFIG_HOME = root
+      delete process.env.OPENCODE_CONFIG_DIR
+
+      const result = loadOpencodeGlobalAgents()
+
+      expect(Object.keys(result)).toEqual(["pinion-rust-dev"])
     })
 
     test("loads agents from both the custom and default opencode config directories", () => {
