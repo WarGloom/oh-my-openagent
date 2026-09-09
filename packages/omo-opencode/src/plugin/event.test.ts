@@ -2,7 +2,7 @@
 import { describe, it, expect, afterEach, mock, spyOn } from "bun:test"
 import type { PluginInput } from "@opencode-ai/plugin"
 import { randomUUID } from "node:crypto"
-import { mkdtemp, mkdir, rm } from "node:fs/promises"
+import { mkdtemp, mkdir, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
@@ -16,8 +16,12 @@ import * as sharedTmuxOriginal from "../shared/tmux"
 import { TeamModeConfigSchema } from "../config/schema/team-mode"
 import type { TeamModeConfig } from "../config/schema/team-mode"
 import { sendMessage } from "../features/team-mode/team-mailbox/send"
+import { listUnreadMessages } from "../features/team-mode/team-mailbox/inbox"
 import { clearTeamSessionRegistry } from "../features/team-mode/team-session-registry"
-import { loadRuntimeState, saveRuntimeState } from "../features/team-mode/team-state-store/store"
+import { loadRuntimeState, saveRuntimeState, transitionRuntimeState } from "../features/team-mode/team-state-store/store"
+import { settleTerminalErrorClaims } from "../hooks/team-session-events/pending-claim-settlement"
+import * as teamStateLocks from "@oh-my-opencode/team-core/team-state-store/locks"
+import * as teamStateStore from "@oh-my-opencode/team-core/team-state-store/store"
 import type { RuntimeState } from "../features/team-mode/types"
 import { releaseAllPromptAsyncReservationsForTesting } from "../hooks/shared/prompt-async-gate"
 
@@ -167,6 +171,7 @@ async function createTemporaryTeamBaseDir(): Promise<string> {
 function createTeamRuntimeState(
 	teamRunId: string,
 	memberStatus: RuntimeState["members"][number]["status"] = "idle",
+	memberName: "worker" | "lead" = "worker",
 ): RuntimeState {
 	return {
 		version: 1,
@@ -178,9 +183,9 @@ function createTeamRuntimeState(
 		leadSessionId: "lead-session",
 		members: [
 			{
-				name: "worker",
-				sessionId: "member-session",
-				agentType: "general-purpose",
+				name: memberName,
+				sessionId: memberName === "lead" ? "lead-session" : "member-session",
+				agentType: memberName === "lead" ? "leader" : "general-purpose",
 				status: memberStatus,
 				pendingInjectedMessageIds: [],
 			},
@@ -216,6 +221,7 @@ async function loadTeamMemberStatus(
 function createTeamStatusEventHandler(
 	teamConfig: TeamModeConfig,
 	hooks: EventHandlerArgs["hooks"] = createEventHandlerHooks({}),
+	sessionOverrides: Record<string, unknown> = {},
 ): ReturnType<typeof createEventHandler> {
 	return createEventHandler({
 		ctx: asEventHandlerContext({
@@ -225,6 +231,7 @@ function createTeamStatusEventHandler(
 					abort: async () => ({}),
 					prompt: async () => ({}),
 					promptAsync: async () => ({}),
+					...sessionOverrides,
 				},
 				tui: { showToast: async () => ({}) },
 			},
@@ -259,6 +266,222 @@ describe("event error extraction", () => {
 		const result = extractErrorMessage(error)
 		expect(result).toBe("Forbidden: Selected provider is forbidden")
 	})
+})
+
+describe("createEventHandler - team error recovery", () => {
+	for (const terminalStatus of ["completed", "shutdown_approved"] as const) {
+		for (const terminalAtCommit of [false, true]) {
+			it(`terminal error chain preserves ${terminalStatus} when terminal ${terminalAtCommit ? "at commit" : "before error"}`, async () => {
+				// given
+				const baseDir = await createTemporaryTeamBaseDir()
+				const teamConfig = TeamModeConfigSchema.parse({ base_dir: baseDir, enabled: true })
+				const teamRunId = randomUUID()
+				const messageId = randomUUID()
+				const runtimeState = createTeamRuntimeState(teamRunId, terminalAtCommit ? "running" : terminalStatus, "lead")
+				runtimeState.members = runtimeState.members.map((member) => ({ ...member, pendingInjectedMessageIds: terminalAtCommit ? [messageId] : [] }))
+				await mkdir(path.join(baseDir, "runtime", teamRunId), { recursive: true })
+				await saveRuntimeState(runtimeState, teamConfig)
+				await sendMessage({
+					version: 1, messageId, from: "worker", to: "lead", kind: "message",
+					body: "work finished", timestamp: 100,
+				}, teamRunId, teamConfig, {
+					isLead: false, activeMembers: ["lead"], reservedRecipients: new Set(terminalAtCommit ? ["lead"] : []),
+				})
+				const originalTransition = teamStateStore.transitionRuntimeState
+				let finishBeforeCommit = terminalAtCommit
+				const transitionSpy = spyOn(teamStateStore, "transitionRuntimeState").mockImplementation(async (...args) => {
+					if (finishBeforeCommit) {
+						finishBeforeCommit = false
+						await originalTransition(teamRunId, (current) => ({
+							...current,
+							members: current.members.map((member) => ({ ...member, status: terminalStatus })),
+						}), teamConfig)
+					}
+					return originalTransition(...args)
+				})
+				const promptAsync = mock(async () => ({}))
+				const handler = createTeamStatusEventHandler(teamConfig, createEventHandlerHooks(), { promptAsync })
+
+				// when
+				try {
+					await handler(asEventHandlerInput({ event: { type: "session.error", properties: { sessionID: "lead-session", error: new Error("late error") } } }))
+					const settledMember = (await loadRuntimeState(teamRunId, teamConfig)).members[0]
+					const unreadAfterError = await listUnreadMessages(teamRunId, "lead", teamConfig)
+					await handler(asEventHandlerInput({ event: { type: "session.idle", properties: { sessionID: "lead-session" } } }))
+					await handler(asEventHandlerInput({ event: { type: "session.status", properties: { sessionID: "lead-session", status: { type: "busy" } } } }))
+
+					// then
+					expect(await loadTeamMemberStatus(teamRunId, teamConfig)).toBe(terminalStatus)
+					expect(promptAsync).toHaveBeenCalledTimes(0)
+					expect(settledMember?.status).toBe(terminalStatus)
+					expect(settledMember?.pendingInjectedMessageIds).toEqual([])
+					expect(unreadAfterError.map((message) => message.messageId)).toEqual([messageId])
+				} finally {
+					transitionSpy.mockRestore()
+				}
+			})
+		}
+	}
+
+	for (const initialStatus of ["errored", "completed", "shutdown_approved"] as const) {
+		it(`handles unread lead mail on idle from ${initialStatus} without resurrecting terminal members`, async () => {
+			// given
+			const baseDir = await createTemporaryTeamBaseDir()
+			const teamConfig = TeamModeConfigSchema.parse({ base_dir: baseDir, enabled: true })
+			const teamRunId = randomUUID()
+			await mkdir(path.join(baseDir, "runtime", teamRunId), { recursive: true })
+			await saveRuntimeState(createTeamRuntimeState(teamRunId, initialStatus, "lead"), teamConfig)
+			const messageId = randomUUID()
+			await sendMessage({
+				version: 1, messageId, from: "worker", to: "lead", kind: "message",
+				body: "work finished", timestamp: 100,
+			}, teamRunId, teamConfig, { isLead: false, activeMembers: ["lead"] })
+			const promptAsync = mock(async (_input: { path: { id: string }; body: { parts: Array<{ text: string }> } }) => ({}))
+			const handler = createTeamStatusEventHandler(teamConfig, createEventHandlerHooks(), { promptAsync })
+
+			// when
+			await handler(asEventHandlerInput({ event: { type: "session.idle", properties: { sessionID: "lead-session" } } }))
+
+			// then
+			expect(await loadTeamMemberStatus(teamRunId, teamConfig)).toBe(initialStatus === "errored" ? "idle" : initialStatus)
+			expect(promptAsync).toHaveBeenCalledTimes(initialStatus === "errored" ? 1 : 0)
+			if (initialStatus === "errored") {
+				expect(promptAsync.mock.calls[0]?.[0].path.id).toBe("lead-session")
+				expect(promptAsync.mock.calls[0]?.[0].body.parts.some((part) => part.text.includes(messageId))).toBe(true)
+				expect((await loadRuntimeState(teamRunId, teamConfig)).members[0]?.pendingInjectedMessageIds).toEqual([messageId])
+			} else {
+				await handler(asEventHandlerInput({ event: { type: "session.status", properties: { sessionID: "lead-session", status: { type: "busy" } } } }))
+				expect(await loadTeamMemberStatus(teamRunId, teamConfig)).toBe(initialStatus)
+				expect(promptAsync).toHaveBeenCalledTimes(0)
+			}
+		})
+	}
+
+	it("preserves an in-flight terminal settlement and delivers mail on a later idle", async () => {
+		// given
+		const baseDir = await createTemporaryTeamBaseDir()
+		const teamConfig = TeamModeConfigSchema.parse({ base_dir: baseDir, enabled: true })
+		const teamRunId = randomUUID()
+		await mkdir(path.join(baseDir, "runtime", teamRunId), { recursive: true })
+		await saveRuntimeState(createTeamRuntimeState(teamRunId, "running", "lead"), teamConfig)
+		const messageId = randomUUID()
+		await sendMessage({
+			version: 1, messageId, from: "worker", to: "lead", kind: "message",
+			body: "work finished", timestamp: 100,
+		}, teamRunId, teamConfig, { isLead: false, activeMembers: ["lead"] })
+		const committed = Promise.withResolvers<void>()
+		const releaseSettlement = Promise.withResolvers<void>()
+		const settlement = settleTerminalErrorClaims({ teamRunId, memberName: "lead", sessionID: "lead-session", config: teamConfig }, {
+			transitionRuntimeState: async (...args) => {
+				const result = await transitionRuntimeState(...args)
+				committed.resolve()
+				await releaseSettlement.promise
+				return result
+			},
+		})
+		const promptAsync = mock(async () => ({}))
+		const handler = createTeamStatusEventHandler(teamConfig, createEventHandlerHooks(), { promptAsync })
+		const idle = asEventHandlerInput({ event: { type: "session.idle", properties: { sessionID: "lead-session" } } })
+
+		// when / then: the errored write has committed, but settlement still owns its lease.
+		try {
+			await committed.promise
+			await handler(idle)
+			expect(await loadTeamMemberStatus(teamRunId, teamConfig)).toBe("errored")
+			expect(promptAsync).toHaveBeenCalledTimes(0)
+		} finally {
+			releaseSettlement.resolve()
+			await settlement
+		}
+
+		// when / then: a distinct event after settlement is fresh recovery evidence.
+		await handler(idle)
+		expect(await loadTeamMemberStatus(teamRunId, teamConfig)).toBe("idle")
+		expect(promptAsync).toHaveBeenCalledTimes(1)
+	})
+
+	it("preserves a newer terminal error that starts inside the recovery write window", async () => {
+		// given
+		const baseDir = await createTemporaryTeamBaseDir()
+		const teamConfig = TeamModeConfigSchema.parse({ base_dir: baseDir, enabled: true })
+		const teamRunId = randomUUID()
+		await mkdir(path.join(baseDir, "runtime", teamRunId), { recursive: true })
+		await saveRuntimeState(createTeamRuntimeState(teamRunId, "errored", "lead"), teamConfig)
+		const handler = createTeamStatusEventHandler(teamConfig)
+		const writeStarted = Promise.withResolvers<void>()
+		const releaseWrite = Promise.withResolvers<void>()
+		const originalAtomicWrite = teamStateLocks.atomicWrite
+		let pauseNextWrite = true
+		const writeSpy = spyOn(teamStateLocks, "atomicWrite").mockImplementation(async (...args) => {
+			if (pauseNextWrite) {
+				pauseNextWrite = false
+				writeStarted.resolve()
+				await releaseWrite.promise
+			}
+			await originalAtomicWrite(...args)
+		})
+
+		// when: the transition callback has passed its guard, but the old errored state is still on disk.
+		const recovery = handler(asEventHandlerInput({ event: { type: "session.idle", properties: { sessionID: "lead-session" } } }))
+		try {
+			await writeStarted.promise
+			const recoveryOwnsLease = await stat(path.join(baseDir, "runtime", teamRunId, "inboxes", "lead", ".consumer.lock"))
+				.then(() => true, (error: unknown) => {
+					if (error instanceof Error && "code" in error && error.code === "ENOENT") return false
+					throw error
+				})
+			const settlement = settleTerminalErrorClaims({ teamRunId, memberName: "lead", sessionID: "lead-session", config: teamConfig })
+			// A lease-owning writer must finish before settlement can read; without it, force the stale read first.
+			if (recoveryOwnsLease) releaseWrite.resolve()
+			const outcome = await settlement.finally(() => releaseWrite.resolve())
+			await recovery
+
+			// then
+			expect(outcome.kind).toBe("settled")
+			expect(await loadTeamMemberStatus(teamRunId, teamConfig)).toBe("errored")
+		} finally {
+			releaseWrite.resolve()
+			await recovery
+			writeSpy.mockRestore()
+		}
+	})
+
+	for (const statusType of ["busy", "idle"] as const) {
+		it(`does not recover from a stale ${statusType} event when settlement finishes during hook dispatch`, async () => {
+			// given
+			const baseDir = await createTemporaryTeamBaseDir()
+			const teamConfig = TeamModeConfigSchema.parse({ base_dir: baseDir, enabled: true })
+			const teamRunId = randomUUID()
+			await saveTeamRuntimeStatus(teamRunId, teamConfig, "running")
+			const enteredHook = Promise.withResolvers<void>()
+			const releaseHook = Promise.withResolvers<void>()
+			const handler = createTeamStatusEventHandler(teamConfig, createEventHandlerHooks({
+				autoUpdateChecker: { event: async (input: EventInput) => {
+					if (input.event.type !== "session.status") return
+					enteredHook.resolve()
+					await releaseHook.promise
+				} },
+			}))
+			const statusEvent = asEventHandlerInput({ event: { type: "session.status", properties: { sessionID: "member-session", status: { type: statusType } } } })
+
+			// when
+			const delayedEvent = handler(statusEvent)
+			try {
+				await enteredHook.promise
+				await handler(asEventHandlerInput({ event: { type: "session.error", properties: { sessionID: "member-session", error: new Error("terminal failure") } } }))
+			} finally {
+				releaseHook.resolve()
+				await delayedEvent
+			}
+
+			// then
+			expect(await loadTeamMemberStatus(teamRunId, teamConfig)).toBe("errored")
+
+			// when / then: a later active event can recover, unlike the pre-settlement event.
+			await handler(asEventHandlerInput({ event: { type: "session.status", properties: { sessionID: "member-session", status: { type: "busy" } } } }))
+			expect(await loadTeamMemberStatus(teamRunId, teamConfig)).toBe("running")
+		})
+	}
 })
 
 describe("createEventHandler - idle deduplication", () => {

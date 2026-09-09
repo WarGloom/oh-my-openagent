@@ -56,6 +56,20 @@ type SettlementDeps = {
   readonly transitionRuntimeState?: typeof transitionRuntimeState
 }
 
+const terminalSettlements = new Map<string, { generation: number; inFlight: number }>()
+
+export function captureTerminalSettlementRecoveryCheck(sessionID: string): () => boolean {
+  const settlement = terminalSettlements.get(sessionID)
+  const generation = settlement?.generation ?? 0
+  const startedOutsideSettlement = (settlement?.inFlight ?? 0) === 0
+  return () => {
+    const current = terminalSettlements.get(sessionID)
+    return startedOutsideSettlement
+      && (current?.inFlight ?? 0) === 0
+      && (current?.generation ?? 0) === generation
+  }
+}
+
 type MemberSettlementCommit = {
   readonly input: ClaimIdentity
   readonly expectedSessionID: string | undefined
@@ -96,7 +110,9 @@ async function persistMemberSettlement(commit: MemberSettlementCommit) {
           const pendingInjectedMessageIds = member.pendingInjectedMessageIds.filter(
             (id) => !commit.resolvedMessageIds.has(id),
           )
-          if (!commit.markErrored) return { ...member, pendingInjectedMessageIds }
+          if (!commit.markErrored || member.status === "completed" || member.status === "shutdown_approved") {
+            return { ...member, pendingInjectedMessageIds }
+          }
           const { lastInjectedTurnMarker: _turnMarker, ...memberWithoutTurnMarker } = member
           return {
             ...memberWithoutTurnMarker,
@@ -163,7 +179,11 @@ export async function settleTerminalErrorClaims(
   input: TerminalSettlementInput,
   deps: SettlementDeps = {},
 ): Promise<TerminalClaimSettlement> {
-  return withInboxConsumerLease(
+  const settlement = terminalSettlements.get(input.sessionID) ?? { generation: 0, inFlight: 0 }
+  settlement.generation += 1
+  settlement.inFlight += 1
+  terminalSettlements.set(input.sessionID, settlement)
+  return withInboxConsumerLease<TerminalClaimSettlement>(
     input.teamRunId,
     input.memberName,
     input.config,
@@ -214,5 +234,7 @@ export async function settleTerminalErrorClaims(
       }
     },
     { staleAfterMs: 0 },
-  )
+  ).finally(() => {
+    settlement.inFlight -= 1
+  })
 }
