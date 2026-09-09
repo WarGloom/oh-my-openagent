@@ -7,7 +7,7 @@ import { _resetForTesting as resetClaudeSessionState } from "./packages/omo-open
 import { _resetTaskToastManagerForTesting as resetTaskToastManager } from "./packages/omo-opencode/src/features/task-toast-manager/manager"
 import { _resetForTesting as resetModelFallbackState } from "./packages/omo-opencode/src/hooks/model-fallback/hook"
 import { RULES_INJECTOR_STORAGE } from "./packages/omo-opencode/src/hooks/rules-injector/constants"
-import { clearPluginComponentsCache } from "./packages/omo-opencode/src/features/claude-code-plugin-loader/loader"
+import { clearPluginComponentsCache } from "./packages/claude-code-compat-core/src/features/claude-code-plugin-loader/loader"
 import { _resetMemCacheForTesting as resetConnectedProvidersCache } from "./packages/omo-opencode/src/shared/connected-providers-cache"
 import { getOmoOpenCodeCacheDir } from "./packages/omo-opencode/src/shared/data-path"
 import { _resetForTesting as resetLoggerForTesting } from "./packages/omo-opencode/src/shared/logger"
