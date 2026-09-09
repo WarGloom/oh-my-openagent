@@ -13,6 +13,7 @@ Team mode gives Claude Code Agent Teams parity. It is off by default. Enable it 
 - Split a large job across several agents.
 - Keep a lead agent focused while member agents work in parallel.
 - Use worktree mode for isolated code changes, or tmux visualization when you want live session layout.
+- Do NOT use Team Mode for independent or solitary work — use \`task\`/delegate-task instead. Team Mode is for members whose work genuinely depends on each other and who must coordinate.
 
 ## Declare a team
 
@@ -91,12 +92,12 @@ Do not use \`oracle\`, \`prometheus\`, or other non-eligible agents here. For th
 
 ## Lifecycle
 
-Teams are **ephemeral**. There is no in-place reshape — restructuring is delete-then-create. Lingering teams burn sessions, mailbox quota, and member-turn budget every idle minute.
+Teams are **ephemeral**. Add members to an active run with \`team_add_member\`; removing or replacing members requires delete-then-create. Lingering teams burn sessions, mailbox quota, and member-turn budget every idle minute.
 
 One cycle:
 
 1. Lead spawns the team: \`team_create({ teamName })\` for a declared team, or \`team_create({ inline_spec })\` for a one-off. Never call \`team_create\` with empty arguments.
-2. Lead assigns work with \`team_send_message\` or \`team_task_create\`.
+2. Lead assigns work with \`team_send_message\` or \`team_task_create\`. Mid-run, the lead can extend an active team with \`team_add_member({ teamRunId, member })\`; the new member counts against the roster cap while existing members, tasks, and mailboxes stay intact.
 3. Members report progress with \`team_send_message\` plus \`team_task_update\`.
 4. Lead and members track progress with \`team_task_list\`, \`team_task_get\`, and \`team_status\`.
 5. When the **Closure Contract** below holds, the lead runs the **Closure Sequence** in the same turn. Loop to step 1 for the next phase.
@@ -105,9 +106,9 @@ One cycle:
 
 A team is **closable** when ALL of the following hold, as observed by \`team_task_list({ teamRunId })\` and \`team_status({ teamRunId })\`:
 
-- Every task is in a terminal state: \`completed\` or \`failed\`. (No \`pending\`, no \`claimed\`, no \`in_progress\`.)
+- Every task is in a terminal state (\`completed\` or \`failed\`), AND every member's results have been received and accepted by the lead. All tasks being terminal is NOT sufficient on its own — a task can be marked terminal before its result actually reaches and is accepted by the lead.
 - No outstanding \`team_shutdown_request\` is still awaiting approval.
-- The user has not asked you to keep the team open for follow-up.
+- The user has not asked you to keep the team open for follow-up. When follow-up work IS expected, extend the active run with \`team_add_member\` instead of closing; the run stays open while the user asked to keep it.
 
 Closure is **the lead's responsibility**, not the user's. Do not wait to be told. The check runs after every \`team_task_update\` that completes or fails a task — if the contract holds, close in the same turn. Closure now is cheaper than closure after the next user message, because by then the model has paged out the context.
 
@@ -162,6 +163,7 @@ Members should:
 ## Lead-only tools
 
 - \`team_create\` - create a team from a declaration.
+- \`team_add_member\` - add one member to an active run (lead-only); returns once the member's durable row, inbox, and registry entry are ready.
 - \`team_delete\` - remove a team.
 - \`team_shutdown_request\` - start the shutdown flow.
 
@@ -185,7 +187,7 @@ Members should:
 
 ## Bounds
 
-- Max 8 members.
+- Max 8 members per run (the \`max_members\` roster cap; \`team_add_member\` counts against it, and finished members still hold their slot for the life of the run).
 - Max 4 parallel workers.
 - Max 32KB per message.
 - Max 256KB unread inbox.

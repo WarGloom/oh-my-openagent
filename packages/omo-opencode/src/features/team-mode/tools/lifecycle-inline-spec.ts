@@ -6,7 +6,7 @@ import { normalizeTeamSpecInput } from "@oh-my-opencode/team-core/team-registry/
 import { validateSpec } from "@oh-my-opencode/team-core/team-registry/validator"
 import { TeamSpecSchema, type TeamSpec } from "@oh-my-opencode/team-core/types"
 
-export const TEAM_CREATE_USAGE = "team_create requires exactly one of teamName or inline_spec. Omit unused optional args and member keys instead of passing empty strings. Use team_create({ teamName: \"existing-team\" }) or team_create({ inline_spec: { name: \"project-analysis-team\", members: [{ name: \"structure-analyst\", category: \"quick\", prompt: \"Analyze project structure.\" }] } }). For independent read-only searches, use flat members with category prompts."
+export const TEAM_CREATE_USAGE = "team_create requires exactly one of teamName or inline_spec. Omit unused optional args and member keys instead of passing empty strings. Use team_create({ teamName: \"existing-team\" }) or team_create({ inline_spec: { name: \"project-analysis-team\", members: [{ name: \"structure-analyst\", category: \"quick\", prompt: \"Analyze project structure.\" }] } }). Use Team Mode only for genuinely collaborative parallel work whose members depend on each other; for independent or solitary work (including independent read-only searches) use task/delegate-task instead."
 
 function emptyStringToUndefined(value: unknown): unknown {
   return typeof value === "string" && value.trim().length === 0 ? undefined : value
