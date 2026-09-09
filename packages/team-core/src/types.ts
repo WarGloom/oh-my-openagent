@@ -169,6 +169,7 @@ const RuntimeStateMemberSchema = z
     worktreePath: z.string().optional(),
     lastInjectedTurnMarker: z.string().optional(),
     pendingInjectedMessageIds: z.array(z.string()).default([]),
+    provisioningClaimId: z.string().optional(),
   })
   .strict()
 
