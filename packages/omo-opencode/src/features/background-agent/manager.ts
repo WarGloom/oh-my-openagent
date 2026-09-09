@@ -415,6 +415,7 @@ export interface BackgroundManagerConfig {
   tmuxConfig?: TmuxConfig
   onSubagentSessionCreated?: OnSubagentSessionCreated
   onSubagentSessionDeleted?: OnSubagentSessionDeleted
+  onTaskTerminal?: (task: Readonly<Pick<BackgroundTask, "id" | "sessionId" | "teamRunId" | "status" | "currentAttemptID">>) => Promise<void>
   onShutdown?: () => void | Promise<void>
   enableParentSessionNotifications?: boolean
   modelFallbackControllerAccessor?: ModelFallbackControllerAccessor
@@ -439,6 +440,8 @@ export class BackgroundManager {
   private tmuxEnabled: boolean
   private onSubagentSessionCreated?: OnSubagentSessionCreated
   private onSubagentSessionDeleted?: OnSubagentSessionDeleted
+  private onTaskTerminal?: BackgroundManagerConfig["onTaskTerminal"]
+  private terminalOutcomeUpdates = new Map<string, Promise<void>>()
   private onShutdown?: () => void | Promise<void>
 
   private queuesByKey: Map<string, QueueItem[]> = new Map()
@@ -480,6 +483,7 @@ export class BackgroundManager {
     this.tmuxEnabled = options?.tmuxConfig?.enabled ?? false
     this.onSubagentSessionCreated = options?.onSubagentSessionCreated
     this.onSubagentSessionDeleted = options?.onSubagentSessionDeleted
+    this.onTaskTerminal = options?.onTaskTerminal
     this.onShutdown = options?.onShutdown
     this.rootDescendantCounts = new Map()
     this.preStartDescendantReservations = new Set()
@@ -2613,9 +2617,21 @@ The task is retrying on a fallback model after a retryable failure.
   }
 
   markForNotification(task: BackgroundTask): void {
+    this.recordTerminalOutcome(task)
     const queue = this.notifications.get(task.parentSessionId) ?? []
     queue.push(task)
     this.notifications.set(task.parentSessionId, queue)
+  }
+
+  private recordTerminalOutcome(task: BackgroundTask): void {
+    if (!this.onTaskTerminal || !task.teamRunId || task.status === "pending" || task.status === "running") return
+    const { id, sessionId, teamRunId, status, currentAttemptID } = task
+    const update = this.onTaskTerminal({ id, sessionId, teamRunId, status, currentAttemptID })
+      .catch((error) => log("[background-agent] team terminal outcome update failed", { taskId: id, error: String(error) }))
+    this.terminalOutcomeUpdates.set(id, update)
+    void update.finally(() => {
+      if (this.terminalOutcomeUpdates.get(id) === update) this.terminalOutcomeUpdates.delete(id)
+    })
   }
 
   getPendingNotifications(sessionID: string): BackgroundTask[] {
@@ -2880,6 +2896,7 @@ The task is retrying on a fallback model after a retryable failure.
     }
 
     if (options?.skipNotification) {
+      this.recordTerminalOutcome(task)
       this.cleanupPendingByParent(task)
       this.scheduleTaskRemoval(task.id)
       log(`[background-agent] Task cancelled via ${source} (notification skipped):`, task.id)
@@ -3052,6 +3069,7 @@ The task is retrying on a fallback model after a retryable failure.
   }
 
   private async notifyParentSession(task: BackgroundTask): Promise<void> {
+    await this.terminalOutcomeUpdates.get(task.id)
     const duration = formatDuration(task.startedAt ?? new Date(), task.completedAt)
 
     log("[background-agent] notifyParentSession called for task:", task.id)

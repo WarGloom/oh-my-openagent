@@ -8,6 +8,7 @@ import type { MonitorManager } from "./features/monitor"
 import { createMonitorManager } from "./features/monitor"
 import { SkillMcpManager } from "./features/skill-mcp-manager"
 import { cleanupSessionTeamRuns } from "./features/team-mode/team-runtime/session-cleanup"
+import { reconcileTeamBackgroundOutcome } from "./features/team-mode/team-runtime/background-member-outcome"
 import { lookupTeamSession } from "./features/team-mode/team-session-registry"
 import { TuiStateMirror } from "./features/tui-sidebar/mirror-manager"
 import { createModelFallbackControllerAccessor } from "./hooks/model-fallback"
@@ -131,6 +132,14 @@ export function createManagers(args: {
   })
 
   backgroundManager = new deps.BackgroundManagerClass({
+    onTaskTerminal: async (outcome) => {
+      if (!pluginConfig.team_mode?.enabled) return
+      await reconcileTeamBackgroundOutcome(outcome, pluginConfig.team_mode, () => {
+        const current = backgroundManager?.getTask(outcome.id)
+        return current?.sessionId === outcome.sessionId && current?.status === outcome.status
+          && current?.currentAttemptID === outcome.currentAttemptID
+      })
+    },
     pluginContext: ctx,
     config: pluginConfig.background_task,
     tmuxConfig,
