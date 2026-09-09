@@ -8,6 +8,7 @@ import { stripInvisibleAgentCharacters } from "./agent-display-names"
 
 const TEAM_TOOL_DENYLIST: Record<string, boolean> = {
   team_create: false,
+  team_add_member: false,
   team_delete: false,
   team_shutdown_request: false,
   team_approve_shutdown: false,

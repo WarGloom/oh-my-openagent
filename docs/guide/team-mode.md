@@ -127,16 +127,19 @@ The curated agents are read-only and in-process, so they can't write mailbox sta
 ## Lifecycle
 
 1. `team_create` — spawns team and member sessions.
-2. Lead delegates work via `team_send_message`, `team_task_create`.
+2. Lead delegates work via `team_send_message`, `team_task_create`. Mid-run, the lead can add one member to the active run with `team_add_member({ teamRunId, member })`; it counts against `max_members` and leaves existing members, tasks, and mailboxes intact.
 3. Members claim tasks (`team_task_update` with `status: "claimed"`), report back via `team_send_message`.
 4. `team_shutdown_request` → member or lead acks via `team_approve_shutdown` / `team_reject_shutdown`.
 5. `team_delete` — removes runtime state, worktrees, optional tmux layout.
 
-## 12 tools
+Closure is the lead's responsibility, not the user's. Do NOT close a team just because every task row is terminal: close only once every member's results have been received AND accepted and no follow-up work remains. A task can be marked terminal before its result actually reaches and is accepted by the lead. When follow-up work is expected, extend the active run with `team_add_member` instead of closing.
+
+## 13 tools
 
 | Tool | Purpose |
 |------|---------|
 | `team_create` | Spawn a team. |
+| `team_add_member` | Add one member to an active run (lead only). Returns `{ teamRunId, memberName, sessionId, status }` once the member's durable row, inbox, and registry entry are ready. |
 | `team_delete` | Tear down (lead only; rejects active members unless `force: true`). |
 | `team_shutdown_request` | Lead asks a member to wrap up. |
 | `team_approve_shutdown` / `team_reject_shutdown` | Member or lead responds. |
@@ -148,6 +151,7 @@ The curated agents are read-only and in-process, so they can't write mailbox sta
 ## Bounds (defaults)
 
 - 8 members max, 4 in flight.
+- `max_members` (default 8) is the roster cap; it counts every row including the lead and finished members. `team_add_member` is rejected at capacity, and finished members never free their slot for the life of the run. Raising `max_members` applies to new runs only. `max_parallel_members` (default 4) stays a spawn fan-out limit, not a live-concurrency or roster cap.
 - 32 KB per message body, 256 KB per recipient unread.
 - 10 000 messages per run, 120 minutes wall clock, 500 turns per member.
 
