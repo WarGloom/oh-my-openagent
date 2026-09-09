@@ -128,6 +128,8 @@ describe("createTeamRun", () => {
     expect(runtimeState.status).toBe("active")
     expect(runtimeState.members.map((member) => member.sessionId)).toEqual(["session-1", "session-2", "session-3"])
     expect((launchMock.mock.calls as Array<[LaunchInput]>).every(([input]) => input.suppressTmuxSpawn === true)).toBe(true)
+    const launchedPrompts = (launchMock.mock.calls as Array<[LaunchInput]>).map(([input]) => input.prompt)
+    expect(launchedPrompts.some((prompt) => prompt.includes("# Team Roster") && prompt.includes("member-2") && prompt.includes("member-3"))).toBe(true)
   })
 
   test("#given a new team runtime #when createTeamRun succeeds #then it registers the run for session cleanup", async () => {
@@ -367,7 +369,7 @@ describe("createTeamRun", () => {
     const launchInputs = launchMock.mock.calls.map((call) => call[0] as LaunchInput)
     for (const member of spec.members) {
       const expectedWorktree = path.resolve(baseDir, member.worktreePath!)
-      const launchInput = launchInputs.find((input) => input.description.endsWith(`/${member.name}`))
+      const launchInput = launchInputs.find((input) => input.description === `${member.name}: ${member.prompt}`)
       expect(launchInput?.cwd).toBe(expectedWorktree)
       expect(launchInput?.prompt).toContain(`Worktree: ${expectedWorktree}`)
     }
@@ -592,5 +594,20 @@ describe("createTeamRun", () => {
       { name: "captain", sessionId: "lead-session" },
       { name: "member-1", sessionId: "member-1-agent-session-1" },
     ])
+  })
+
+  test("#given max_members lower than the roster #when createTeamRun runs #then it rejects at admission without provisioning", async () => {
+    // given
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-runtime-cap-"))
+    temporaryDirectories.push(baseDir)
+    const { manager, launchMock } = createManager(baseDir, async () => ({ id: "task-1", sessionId: "session-1", status: "running" } as BackgroundTask))
+    const cappedConfig = TeamModeConfigSchema.parse({ base_dir: baseDir, max_members: 2, max_wall_clock_minutes: 1 })
+
+    // when / then
+    await expect(
+      createTeamRun(createSpec(3), "lead-session", createContext(baseDir, manager), cappedConfig, manager),
+    ).rejects.toThrow(/max_members cap is 2/)
+    expect(launchMock).toHaveBeenCalledTimes(0)
+    expect(await readdir(path.join(baseDir, "runtime")).catch(() => [])).toEqual([])
   })
 })

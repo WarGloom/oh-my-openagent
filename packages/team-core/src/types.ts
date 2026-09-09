@@ -146,6 +146,7 @@ const RuntimeStateMemberSchema = z.object({
   worktreePath: z.string().optional(),
   lastInjectedTurnMarker: z.string().optional(),
   pendingInjectedMessageIds: z.array(z.string()).default([]),
+  provisioningClaimId: z.string().optional()
 }).strict()
 
 const RuntimeBoundsSchema = z.object({

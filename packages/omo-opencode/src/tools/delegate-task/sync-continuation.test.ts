@@ -2,6 +2,7 @@ const { describe, test, expect, beforeEach, afterEach, mock, spyOn } = require("
 
 const TEAM_TOOL_DENIALS = {
   team_create: false,
+  team_add_member: false,
   team_delete: false,
   team_shutdown_request: false,
   team_approve_shutdown: false,

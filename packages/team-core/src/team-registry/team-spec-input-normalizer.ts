@@ -135,7 +135,7 @@ function deleteEmptyStringFields(member: JsonRecord, fields: string[]): void {
   }
 }
 
-function normalizeInlineMember(member: JsonRecord, options?: NormalizeTeamSpecInputOptions): JsonRecord {
+export function normalizeInlineMember(member: JsonRecord, options?: NormalizeTeamSpecInputOptions): JsonRecord {
   const strippedMember = omitEmptyStringFields(member)
   const {
     capabilities: _capabilities,
