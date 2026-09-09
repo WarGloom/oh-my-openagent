@@ -7,7 +7,7 @@ import * as agents from "../agents"
 import * as commandLoader from "../features/claude-code-command-loader"
 import * as agentLoader from "../features/claude-code-agent-loader"
 import * as mcpLoader from "../features/claude-code-mcp-loader"
-import * as pluginLoader from "../features/claude-code-plugin-loader"
+import * as pluginLoader from "@oh-my-opencode/claude-code-compat-core/claude-code-plugin-loader"
 import {
   hasProjectAgentProvenance,
   replaceProjectAgentProvenance,
@@ -140,6 +140,23 @@ test("preserves an unrelated spy established outside the per-test setup", () => 
 })
 
 describe("project agent provenance snapshots", () => {
+  test("captures an OpenCode global agent that survives into the final registry", async () => {
+    // given
+    const directory = "/tmp/provenance-global-agent"
+    unsafeTestValue(agentLoader.loadOpencodeGlobalAgents).mockReturnValue({
+      "pinion-rust-qa": { mode: "subagent" },
+    })
+
+    // when
+    await createHandler(directory)({
+      model: "openai/gpt-5.4-mini",
+      agent: {},
+    })
+
+    // then
+    expect(hasProjectAgentProvenance(directory, "pinion-rust-qa")).toBe(true)
+  })
+
   test("captures the exact directory project source without leaking to another directory", async () => {
     // given
     const directory = "/tmp/provenance-project-a"

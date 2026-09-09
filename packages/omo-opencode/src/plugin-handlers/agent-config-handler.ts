@@ -39,9 +39,12 @@ function collectProjectAgentNames(
     }
   }
   const protectedBuiltinAgentNames = createProtectedAgentNameSet(protectedAgentNames);
-  const survivingProjectAgents = filterProtectedAgentOverrides(
+  const survivingOpenCodeAgents = filterProtectedAgentOverrides(
     Object.fromEntries(
-      Object.entries(sources.opencodeProjectAgents).filter(
+      Object.entries({
+        ...sources.opencodeGlobalAgents,
+        ...sources.opencodeProjectAgents,
+      }).filter(
         ([name]) => !disabledAgentNames.has(name.toLowerCase()),
       ),
     ),
@@ -49,7 +52,7 @@ function collectProjectAgentNames(
   );
 
   return [...new Set(
-    Object.entries(survivingProjectAgents)
+    Object.entries(survivingOpenCodeAgents)
       .filter(([, config]) => config !== undefined)
       .map(([name]) => runtimeName(name))
       .filter(
