@@ -28,6 +28,7 @@ import {
 
 const {
   createTeamApproveShutdownTool,
+  createTeamAddMemberTool,
   createTeamCreateTool,
   createTeamDeleteTool,
   createTeamRejectShutdownTool,
@@ -47,6 +48,18 @@ const lifecycleDeps = {
 
 function createTeamCreateToolForTest() {
   return createTeamCreateTool(config, mockClient, backgroundManager, undefined, undefined, lifecycleDeps)
+}
+
+const addTeamMemberMock = mock(async () => ({ teamRunId: "team-run-1", memberName: "reviewer", sessionId: "reviewer-session", status: "running" as const }))
+
+const addMemberDeps = {
+  addTeamMember: addTeamMemberMock,
+  listActiveTeams: listActiveTeamsMock,
+  loadRuntimeState: loadRuntimeStateMock,
+}
+
+function createAddMemberToolForTest() {
+  return createTeamAddMemberTool(config, mockClient, backgroundManager, undefined, addMemberDeps)
 }
 
 function parseToolResult<TValue>(value: ToolResult): TValue {
@@ -442,5 +455,40 @@ describe("team lifecycle tools", () => {
     // then
     expect(result.rejectedBy).toBe("lead")
     expect(rejectShutdownMock).toHaveBeenCalledWith(created.teamRunId, "member-a", "lead", "still working", config)
+  })
+
+  test("team_add_member refuses a caller who is not the lead of the target run", async () => {
+    // given
+    const createTool = createTeamCreateToolForTest()
+    const addTool = createAddMemberToolForTest()
+    const created = parseToolResult<{ teamRunId: string }>(await createTool.execute({ inline_spec: createSpec() }, createToolContext("lead-session")))
+
+    // when
+    const result = addTool.execute(
+      { teamRunId: created.teamRunId, member: { name: "reviewer", category: "quick", prompt: "review the work" } },
+      createToolContext("outside-session"),
+    )
+
+    // then
+    await expect(result).rejects.toThrow("team_add_member is lead-only")
+    expect(addTeamMemberMock).not.toHaveBeenCalled()
+  })
+
+  test("team_add_member refuses when the target run is not active", async () => {
+    // given
+    const createTool = createTeamCreateToolForTest()
+    const addTool = createAddMemberToolForTest()
+    const created = parseToolResult<{ teamRunId: string }>(await createTool.execute({ inline_spec: createSpec() }, createToolContext("lead-session")))
+    requireRuntime(created.teamRunId).status = "deleting"
+
+    // when
+    const result = addTool.execute(
+      { teamRunId: created.teamRunId, member: { name: "reviewer", category: "quick", prompt: "review the work" } },
+      createToolContext("lead-session"),
+    )
+
+    // then
+    await expect(result).rejects.toThrow("not 'active'")
+    expect(addTeamMemberMock).not.toHaveBeenCalled()
   })
 })

@@ -286,4 +286,30 @@ describe("createTeamToolGating", () => {
     // then
     await expect(result).rejects.toThrow("denied: not a participant of team 11111111-1111-4111-8111-111111111111")
   })
+
+  test("allows team_add_member for the lead of the target team", async () => {
+    // given
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-tool-gating-"))
+    temporaryDirectories.push(baseDir)
+    await seedTeams(baseDir, createRuntimeState())
+
+    // when
+    const result = runHook("team_add_member", "lead-session", { teamRunId: "11111111-1111-4111-8111-111111111111" }, undefined, baseDir)
+
+    // then
+    await expect(result).resolves.toBeUndefined()
+  })
+
+  test("rejects team_add_member from a non-lead member", async () => {
+    // given
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-tool-gating-"))
+    temporaryDirectories.push(baseDir)
+    await seedTeams(baseDir, createRuntimeState())
+
+    // when
+    const result = runHook("team_add_member", "member-session-1", { teamRunId: "11111111-1111-4111-8111-111111111111" }, undefined, baseDir)
+
+    // then
+    await expect(result).rejects.toThrow("team_add_member is lead-only")
+  })
 })

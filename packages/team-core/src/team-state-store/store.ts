@@ -8,6 +8,7 @@ import { log } from "../logger"
 import { type ActiveTeamSummary, type RuntimeState, RuntimeStateSchema, type TeamSpec } from "../types"
 import { getRuntimeStateDir, resolveBaseDir } from "../team-registry/paths"
 import { atomicWrite, withLock } from "./locks"
+import { assertRosterWithinCapacity } from "./member-admission"
 
 const STATE_FILE_NAME = "state.json"
 export const STALE_DELETING_TTL_MS = 60_000
@@ -124,6 +125,7 @@ export async function createRuntimeState(
   specSource: "project" | "user",
   config: TeamModeConfig,
 ): Promise<RuntimeState> {
+  assertRosterWithinCapacity(spec.members.length, config.max_members, spec.name)
   const baseDir = resolveBaseDir(config)
   const teamRunId = randomUUID()
   const runtimeDirectoryPath = getRuntimeStateDir(baseDir, teamRunId)

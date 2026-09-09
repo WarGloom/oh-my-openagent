@@ -29,6 +29,16 @@ export function createTeamModeToolsRecord(args: {
         agentOverrides: pluginConfig.agents,
       },
     ),
+    team_add_member: factories.createTeamAddMemberTool(
+      pluginConfig.team_mode,
+      ctx.client,
+      managers.backgroundManager,
+      {
+        userCategories: pluginConfig.categories,
+        sisyphusJuniorModel: getSisyphusJuniorModelOverride(pluginConfig.agents?.["sisyphus-junior"]),
+        agentOverrides: pluginConfig.agents,
+      },
+    ),
     team_delete: factories.createTeamDeleteTool(
       pluginConfig.team_mode,
       ctx.client,

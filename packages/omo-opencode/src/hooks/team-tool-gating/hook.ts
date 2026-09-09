@@ -110,7 +110,7 @@ export function createTeamToolGating(_ctx: PluginInput, config: TeamModeConfig |
       const teamRunId = getStringArg(output.args, "teamRunId")
       const memberName = getStringArg(output.args, "memberName")
 
-      if (toolName === "team_delete" || toolName === "team_shutdown_request") {
+      if (toolName === "team_delete" || toolName === "team_shutdown_request" || toolName === "team_add_member") {
         if (!isLeadOfTargetTeam(participant, teamRunId)) {
           throw new Error(`${toolName} is lead-only`)
         }

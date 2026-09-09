@@ -10,6 +10,7 @@ import { tool } from "@opencode-ai/plugin"
 import { OhMyOpenCodeConfigSchema } from "../config"
 import type { OpencodeClient } from "../tools/delegate-task/types"
 import { createToolRegistry } from "./tool-registry"
+import { createTeamModeToolsRecord } from "./tool-registry-team-tools"
 
 const fakeTool = tool({
   description: "test tool",
@@ -105,6 +106,7 @@ describe("team-mode tool registry wiring", () => {
         createTaskUpdateTool: mock(() => fakeTool),
         createHashlineEditTool: mock(() => fakeTool),
         createTeamCreateTool: mock(() => fakeTool),
+        createTeamAddMemberTool: mock(() => fakeTool),
         createTeamDeleteTool: mock(() => fakeTool),
         createTeamShutdownRequestTool: mock(() => fakeTool),
         createTeamApproveShutdownTool: mock(() => fakeTool),
@@ -122,16 +124,18 @@ describe("team-mode tool registry wiring", () => {
     // then
     expect(pluginConfig.team_mode?.enabled).toBe(true)
     expect(result.filteredTools).toHaveProperty("team_create")
+    expect(result.filteredTools).toHaveProperty("team_add_member")
     expect(result.filteredTools).toHaveProperty("team_send_message")
     expect(result.filteredTools).toHaveProperty("team_task_create")
     expect(result.filteredTools).toHaveProperty("team_status")
-    expect(Object.keys(result.filteredTools).filter((toolName) => toolName.startsWith("team_"))).toHaveLength(12)
+    expect(Object.keys(result.filteredTools).filter((toolName) => toolName.startsWith("team_"))).toHaveLength(13)
   })
 
   test("passes ctx.client into every team tool factory", () => {
     // given
     const client = {} as OpencodeClient
     const createTeamCreateTool = mock(() => fakeTool)
+    const createTeamAddMemberTool = mock(() => fakeTool)
     const createTeamDeleteTool = mock(() => fakeTool)
     const createTeamShutdownRequestTool = mock(() => fakeTool)
     const createTeamApproveShutdownTool = mock(() => fakeTool)
@@ -178,6 +182,7 @@ describe("team-mode tool registry wiring", () => {
         createTaskUpdateTool: mock(() => fakeTool),
         createHashlineEditTool: mock(() => fakeTool),
         createTeamCreateTool,
+        createTeamAddMemberTool,
         createTeamDeleteTool,
         createTeamShutdownRequestTool,
         createTeamApproveShutdownTool,
@@ -194,6 +199,7 @@ describe("team-mode tool registry wiring", () => {
 
     // then
     expect(createTeamCreateTool).toHaveBeenCalledWith(expect.anything(), client, expect.anything(), expect.anything(), expect.anything())
+    expect(createTeamAddMemberTool).toHaveBeenCalledWith(expect.anything(), client, expect.anything(), expect.anything())
     expect(createTeamDeleteTool).toHaveBeenCalledWith(expect.anything(), client, expect.anything(), expect.anything())
     expect(createTeamShutdownRequestTool).toHaveBeenCalledWith(expect.anything(), client)
     expect(createTeamApproveShutdownTool).toHaveBeenCalledWith(expect.anything(), client)
@@ -205,5 +211,25 @@ describe("team-mode tool registry wiring", () => {
     expect(createTeamTaskGetTool).toHaveBeenCalledWith(expect.anything(), client)
     expect(createTeamStatusTool).toHaveBeenCalledWith(expect.anything(), client, expect.anything())
     expect(createTeamListTool).toHaveBeenCalledWith(expect.anything(), client)
+  })
+
+  test("team mode tools record stays empty (no team_add_member) when team mode is disabled", () => {
+    // given
+    const pluginConfig = OhMyOpenCodeConfigSchema.parse({
+      git_master: { commit_footer: false, include_co_authored_by: false, git_env_prefix: "" },
+      team_mode: { enabled: false },
+    })
+
+    // when
+    const record = createTeamModeToolsRecord({
+      pluginConfig,
+      ctx: {} as Parameters<typeof createTeamModeToolsRecord>[0]["ctx"],
+      managers: {} as Parameters<typeof createTeamModeToolsRecord>[0]["managers"],
+      factories: {} as Parameters<typeof createTeamModeToolsRecord>[0]["factories"],
+    })
+
+    // then
+    expect(record).not.toHaveProperty("team_add_member")
+    expect(Object.keys(record)).toHaveLength(0)
   })
 })
