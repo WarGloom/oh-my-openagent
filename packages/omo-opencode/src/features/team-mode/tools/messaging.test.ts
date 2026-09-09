@@ -259,6 +259,34 @@ async function createTeamFixture() {
 }
 
 describe("createTeamSendMessageTool", () => {
+  test("corrective: post-reservation EIO releases the fallback batch without dispatch or acknowledgement", async () => {
+    // given
+    const fixture = await createTeamFixture()
+    const { sendMessage } = await import("../team-mailbox/send")
+    const { enqueueFallbackMailboxWake } = await import("./messaging-fallback-wake")
+    const store = await import("@oh-my-opencode/team-core/team-state-store/store")
+    const originalLoad = store.loadRuntimeState
+    const recipient = (await originalLoad(fixture.teamRunId, fixture.config)).members.find((m) => m.name === "m2")
+    if (!recipient) throw new Error("missing fixture recipient")
+    const messageId = randomUUID()
+    await sendMessage({ version: 1, messageId, from: "m1", to: "m2", kind: "message", body: "recover this payload", timestamp: Date.now() }, fixture.teamRunId, fixture.config, { isLead: false, activeMembers: ["m2"] })
+    let reads = 0
+    const loadSpy = spyOn(store, "loadRuntimeState").mockImplementation(async (...args) => {
+      if (++reads === 2) throw Object.assign(new Error("injected state read failure"), { code: "EIO" })
+      return originalLoad(...args)
+    })
+    const { client, calls } = createRecordingClient()
+    try {
+      // when
+      await enqueueFallbackMailboxWake({ client, recipientMember: recipient, recipientSessionId: fixture.memberTwoSessionId, directory: resolveBaseDir(fixture.config), teamRunId: fixture.teamRunId, recipientName: "m2", messageId, config: fixture.config, dispatchTiming: { fallbackWakeSettleMs: 0, postDispatchHoldMs: 0, queueRetryMs: 60_000 } })
+      // then
+      expect(calls).toHaveLength(0)
+      expect((await listUnreadMessages(fixture.teamRunId, "m2", fixture.config)).map((m) => m.messageId)).toEqual([messageId])
+      expect((await originalLoad(fixture.teamRunId, fixture.config)).members.find((m) => m.name === "m2")?.pendingInjectedMessageIds).toEqual([])
+    } finally {
+      loadSpy.mockRestore()
+    }
+  })
   test("resolveTeamRuntimeDetails preserves Error fallback for missing runtime state", async () => {
     // given
     const config = createConfig(await createFixtureBaseDir())
@@ -578,9 +606,11 @@ describe("createTeamSendMessageTool", () => {
     const fixture = await createTeamFixture()
     const fallbackWakeDispatched = createDeferred<void>()
     let promptCalls = 0
+    const promptTexts: string[] = []
     const client = {
       session: {
-        promptAsync: async () => {
+        promptAsync: async (input: Parameters<LiveDeliveryClient["session"]["promptAsync"]>[0]) => {
+          promptTexts.push(input.body.parts.map((part) => part.text ?? "").join("\n"))
           promptCalls += 1
           if (promptCalls === 2) fallbackWakeDispatched.resolve(undefined)
         },
@@ -612,18 +642,12 @@ describe("createTeamSendMessageTool", () => {
     // when
     expect(releasePromptAsyncReservation(fixture.memberTwoSessionId, "test-blocker")).toBe(true)
     await waitForEvent(fallbackWakeDispatched.promise, "queued fallback mailbox wake")
-    const injection = await pollAndBuildInjection(
-      fixture.memberTwoSessionId,
-      "m2",
-      fixture.teamRunId,
-      fixture.config,
-      "turn-after-fallback-wake",
-    )
 
     // then
     expect(promptCalls).toBe(2)
-    expect(injection.injected).toBe(true)
-    expect(injection.content).toContain("fallback ping")
+    expect(promptTexts[1]).toContain("fallback ping")
+    expect(promptTexts[1]).toContain(unread[0]!.messageId)
+    expect(await listUnreadMessages(fixture.teamRunId, "m2", fixture.config)).toHaveLength(0)
   })
 
   test("#given a message waits behind pending live delivery #when that prompt clears #then a queued wake exposes the waiting message", async () => {

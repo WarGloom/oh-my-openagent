@@ -49,6 +49,7 @@ type InternalPromptDispatchCommonArgs<TInput> = {
   readonly checkToolState?: boolean
   readonly durableRetry?: boolean
   readonly shouldDispatch?: () => boolean | Promise<boolean>
+  readonly onDispatchResult?: (result: InternalPromptDispatchResult) => Promise<void>
   readonly retryDispatchFailure?: (error: unknown) => boolean
 }
 
@@ -114,6 +115,7 @@ export type QueuedInternalPrompt = {
   readonly checkToolState: boolean
   readonly durableRetry: boolean
   readonly shouldDispatch?: () => boolean | Promise<boolean>
+  readonly onDispatchResult?: (result: InternalPromptDispatchResult) => Promise<void>
   readonly retryDispatchFailure?: (error: unknown) => boolean
   readonly dispatch: (input: unknown) => Promise<unknown>
 }
