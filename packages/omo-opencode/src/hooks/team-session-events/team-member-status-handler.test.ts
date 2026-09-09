@@ -13,11 +13,12 @@ import { clearTeamSessionRegistry, registerTeamSession } from "../../features/te
 import type { RuntimeState, RuntimeStateMember } from "../../features/team-mode/types"
 import { loadRuntimeState, saveRuntimeState } from "../../features/team-mode/team-state-store/store"
 import { createTeamMemberStatusHandler } from "./team-member-status-handler"
+import { reconcileTeamBackgroundOutcome } from "../../features/team-mode/team-runtime/background-member-outcome"
 
 const temporaryDirectories: string[] = []
 const activeSessionStatusTypes = ["busy", "retry", "running"] as const
-const activatableMemberStatuses = ["pending", "idle"] as const
-const protectedMemberStatuses = ["running", "errored", "completed", "shutdown_approved"] as const
+const activatableMemberStatuses = ["pending", "idle", "errored"] as const
+const protectedMemberStatuses = ["running", "completed", "shutdown_approved"] as const
 
 async function createTemporaryBaseDir(): Promise<string> {
   const baseDir = await mkdtemp(path.join(tmpdir(), "team-member-status-handler-"))
@@ -95,6 +96,50 @@ afterEach(async () => {
 })
 
 describe("createTeamMemberStatusHandler", () => {
+  test("corrective: stale idle error cannot poison a resumed attempt on the same session", async () => {
+    // given
+    const config = createConfig(await createTemporaryBaseDir())
+    const teamRunId = randomUUID()
+    await seedRuntimeState(createRuntimeState(teamRunId), config)
+    const task = {
+      id: "task",
+      sessionId: "member-session",
+      teamRunId,
+      status: "error" as "error" | "running",
+      currentAttemptID: "old",
+    }
+    let reads = 0
+    const handler = createTeamMemberStatusHandler(config, {
+      backgroundManager: {
+        findBySession: () => {
+          if (++reads > 1) {
+            task.currentAttemptID = "resumed"
+            task.status = "running"
+          }
+          return task
+        },
+      },
+    })
+    // when
+    await handler({ event: { type: "session.idle", properties: { sessionID: "member-session" } } })
+    // then
+    expect((await loadRuntimeState(teamRunId, config)).members[0]?.status).toBe("running")
+  })
+  test("retains a known background failure without session.error despite later idle", async () => {
+    const config = createConfig(await createTemporaryBaseDir())
+    const teamRunId = randomUUID()
+    await seedRuntimeState(createRuntimeState(teamRunId), config)
+    const outcome = { id: "task", sessionId: "member-session", teamRunId, status: "error" as const }
+    await reconcileTeamBackgroundOutcome(outcome, config, () => false)
+    expect((await loadRuntimeState(teamRunId, config)).members[0]?.status).toBe("running")
+    await reconcileTeamBackgroundOutcome({ ...outcome, status: "cancelled" }, config, () => true)
+    expect((await loadRuntimeState(teamRunId, config)).members[0]?.status).toBe("running")
+    await reconcileTeamBackgroundOutcome(outcome, config, () => true)
+    await createTeamMemberStatusHandler(config, {
+      backgroundManager: { findBySession: () => outcome },
+    })({ event: { type: "session.idle", properties: { sessionID: outcome.sessionId } } })
+    expect((await loadRuntimeState(teamRunId, config)).members[0]?.status).toBe("errored")
+  })
   test("leaves a pending member unchanged for an unknown session.status value", async () => {
     // given
     const initialMemberStatus = "pending"
@@ -260,7 +305,7 @@ describe("createTeamMemberStatusHandler", () => {
     expect(runtimeState.members[0]?.status).toBe("idle")
   })
 
-  test("never overrides a terminal errored status on session.idle", async () => {
+  test("transitions an errored member to idle on a later session.idle", async () => {
     // given
     const baseDir = await createTemporaryBaseDir()
     const config = createConfig(baseDir)
@@ -273,7 +318,7 @@ describe("createTeamMemberStatusHandler", () => {
 
     // then
     const runtimeState = await loadRuntimeState(teamRunId, config)
-    expect(runtimeState.members[0]?.status).toBe("errored")
+    expect(runtimeState.members[0]?.status).toBe("idle")
   })
 
   test("marks a running member completed when its session is deleted", async () => {
