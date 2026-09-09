@@ -136,9 +136,13 @@ function extractModelName(model: string): string {
 
 const GPT_NATIVE_SISYPHUS_RE = /gpt-5[.-](?:(?:3[.-])?codex|[4-9]|\d{2,})/i;
 
+export function isGpt6AstraModel(model: string): boolean {
+  return /^gpt-6-astra(?:-|$)/i.test(extractModelName(model));
+}
+
 export function isGptNativeSisyphusModel(model: string): boolean {
   const modelName = extractModelName(model).toLowerCase();
-  return GPT_NATIVE_SISYPHUS_RE.test(modelName);
+  return GPT_NATIVE_SISYPHUS_RE.test(modelName) || isGpt6AstraModel(modelName);
 }
 
 export function isGpt5_5Model(model: string): boolean {

@@ -38,6 +38,18 @@ describe("isGptNativeSisyphusModel", () => {
     expect(isGptNativeSisyphusModel("github-copilot/gpt-4o")).toBe(false);
   });
 
+  test("#given Astra model ids and aliases #then allows native Sisyphus support", () => {
+    for (const model of ["gpt-6-astra", "openai/gpt-6-astra", "openai/gpt-6-astra-600k", "github-copilot/GPT-6-ASTRA"]) {
+      expect(isGptNativeSisyphusModel(model)).toBe(true);
+    }
+  });
+
+  test("#given other GPT-6 names #then does not assume native Sisyphus support", () => {
+    for (const model of ["openai/gpt-6", "openai/gpt-6-other", "openai/gpt-6-astral", "openai/custom-gpt-6-astra"]) {
+      expect(isGptNativeSisyphusModel(model)).toBe(false);
+    }
+  });
+
   test("rejects non-GPT models", () => {
     expect(isGptNativeSisyphusModel("anthropic/claude-opus-4-7")).toBe(false);
     expect(isGptNativeSisyphusModel("google/gemini-3.1-pro")).toBe(false);

@@ -45,6 +45,8 @@ describe("createSisyphusAgent", () => {
         ["kimi-for-coding/kimi-for-coding", "kimi-k2-7"],
         ["kimi-for-coding/kimi-for-coding-highspeed", "kimi-k2-7"],
         ["openai/gpt-5.6-sol", "gpt-5-5"],
+        ["openai/gpt-6-astra", "gpt-5-5"],
+        ["openai/gpt-6-astra-600k", "gpt-5-5"],
         ["openai/gpt-5.5", "gpt-5-5"],
         ["openai/gpt-5.4", "gpt-5-4"],
         ["anthropic/claude-opus-4-7", "claude-opus-4-7"],

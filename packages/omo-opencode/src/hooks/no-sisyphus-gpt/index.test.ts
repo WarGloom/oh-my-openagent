@@ -2,7 +2,7 @@
 
 import { describe, expect, spyOn, test } from "bun:test"
 import type { PluginInput } from "@opencode-ai/plugin"
-import { _resetForTesting, updateSessionAgent } from "../../features/claude-code-session-state"
+import { _resetForTesting, getSessionAgent, updateSessionAgent } from "../../features/claude-code-session-state"
 import { getAgentDisplayName } from "../../shared/agent-display-names"
 import { createNoSisyphusGptHook } from "./index"
 import { unsafeTestValue } from "../../../../../test-support/unsafe-test-value"
@@ -29,6 +29,28 @@ function createHookContext(showToast: (input: unknown) => Promise<unknown>): Plu
 }
 
 describe("no-sisyphus-gpt hook", () => {
+  test.each(["gpt-6-astra", "gpt-6-astra-600k"])("preserves Sisyphus and selected reasoning for %s", async (modelID) => {
+    // given Sisyphus is selected with Astra and an explicit reasoning variant
+    const showToast = spyOn({ fn: async () => ({}) }, "fn")
+    const hook = createNoSisyphusGptHook(createHookContext(showToast))
+    const input = {
+      sessionID: `ses_${modelID}`,
+      agent: SISYPHUS_DISPLAY,
+      model: { providerID: "openai", modelID },
+    }
+    const output: HookOutput = { message: { agent: SISYPHUS_DISPLAY, variant: "high" }, parts: [] }
+    updateSessionAgent(input.sessionID, "sisyphus")
+
+    // when the model compatibility guard processes the message
+    await hook["chat.message"](input, output)
+
+    // then neither the message nor the stored session switches agent or reasoning
+    expect(showToast).toHaveBeenCalledTimes(0)
+    expect(input.agent).toBe(SISYPHUS_DISPLAY)
+    expect(output.message).toEqual({ agent: SISYPHUS_DISPLAY, variant: "high" })
+    expect(getSessionAgent(input.sessionID)).toBe("sisyphus")
+  })
+
   test("shows toast on every chat.message when sisyphus uses unsupported gpt model", async () => {
     // given - sisyphus (display name) with a GPT model that lacks native support
     const showToast = spyOn({ fn: async () => ({}) }, "fn")
