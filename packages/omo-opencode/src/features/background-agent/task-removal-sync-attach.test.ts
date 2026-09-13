@@ -41,6 +41,7 @@ function createManager(): { manager: BackgroundManager; deleteCalls: string[] } 
     project: {} as PluginInput["project"],
     directory: tmpdir(),
     worktree: tmpdir(),
+    experimental_workspace: { register: () => {} },
     serverUrl: new URL("http://localhost"),
     $: {} as PluginInput["$"],
   }
@@ -158,7 +159,7 @@ describe("BackgroundManager.scheduleTaskRemoval with an attached sync continuati
       expect(deleteCalls).toEqual([])
     })
 
-    test("#when the sync continuation detaches #then a fresh cleanup timer is armed and firing it removes the task and deletes the session once", async () => {
+    test("#when the sync continuation detaches #then a fresh cleanup timer removes the task and retains the SDK session", async () => {
       // given
       const { manager, deleteCalls } = createManager()
       managerUnderTest = manager
@@ -169,6 +170,8 @@ describe("BackgroundManager.scheduleTaskRemoval with an attached sync continuati
       const detach = manager.attachSyncContinuation("ses_child")
       await fakeTimers.run(getRequiredTimer(manager, task.id))
       expect(getCompletionTimers(manager).has(task.id)).toBe(false)
+      expect(getTasks(manager).has(task.id)).toBe(true)
+      expect(deleteCalls).toEqual([])
 
       // when
       detach()
@@ -183,7 +186,7 @@ describe("BackgroundManager.scheduleTaskRemoval with an attached sync continuati
       // then
       expect(getTasks(manager).has(task.id)).toBe(false)
       expect(manager.findBySession("ses_child")).toBeUndefined()
-      expect(deleteCalls).toEqual(["ses_child"])
+      expect(deleteCalls).toEqual([])
     })
 
     test("#when the sync continuation detaches before the timer fires #then the pending timer is left alone", async () => {
@@ -208,7 +211,8 @@ describe("BackgroundManager.scheduleTaskRemoval with an attached sync continuati
 
       // then
       expect(getTasks(manager).has(task.id)).toBe(false)
-      expect(deleteCalls).toEqual(["ses_child"])
+      expect(manager.findBySession("ses_child")).toBeUndefined()
+      expect(deleteCalls).toEqual([])
     })
   })
 
