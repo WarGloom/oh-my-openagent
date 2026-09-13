@@ -83,7 +83,7 @@ export function deriveLoop(snap: TuiRuntimeSnapshot | null): LoopState {
 }
 
 export function deriveTeams(snap: TuiRuntimeSnapshot | null): TeamsState {
-  if (!snap || snap.teams.length === 0) {
+  if (!snap) {
     return { kind: "none" }
   }
 

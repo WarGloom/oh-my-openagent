@@ -3,6 +3,10 @@
 import { describe, expect, it } from "bun:test"
 
 import { TeamSessionCache } from "./team-session-cache"
+import { computeView, viewKey } from "./compute-view"
+import { deriveTeams } from "./derivers"
+import { MIRROR_SCHEMA_VERSION } from "./constants"
+import type { TuiRuntimeSnapshot } from "./snapshot-schema"
 import type { TeamRow, TeamsState } from "./state-types"
 
 const alphaTeam: TeamRow = {
@@ -63,16 +67,53 @@ describe("Team session cache", () => {
     ])
   })
 
-  it("#given a cached Team #when a later mirror has no Teams #then the current session retains its cached Team", () => {
+  it("#given a cached Team #when a later mirror is unavailable #then the current session retains its cached Team", () => {
     // given
     const cache = new TeamSessionCache()
     cache.update(list([alphaTeam]))
 
     // when
-    cache.update({ kind: "none" })
+    cache.update(deriveTeams(null))
 
     // then
     expect(cache.forSession("ses-alpha-lead")).toEqual(list([alphaTeam]))
+  })
+
+  it("#given the last Team is cached #when a fresh snapshot has no teams #then lead and member session views drop it", () => {
+    // given
+    const cache = new TeamSessionCache()
+    const snapshot: TuiRuntimeSnapshot = {
+      version: MIRROR_SCHEMA_VERSION,
+      projectDir: "/tmp/project",
+      updatedAt: Date.now(),
+      activeAgents: [],
+      loop: null,
+      teams: [alphaTeam],
+    }
+    const sessionView = (sessionId: string) => computeView({
+      config: { kind: "valid" },
+      roster: { kind: "empty" },
+      agents: { kind: "none" },
+      jobs: { kind: "none" },
+      loop: { kind: "none" },
+      teams: cache.forSession(sessionId),
+    })
+    cache.update(deriveTeams(snapshot))
+    const before = sessionView("ses-alpha-lead")
+    expect(before.kind).toBe("active")
+    expect(sessionView("ses-unrelated").kind).toBe("idle")
+
+    // when
+    cache.update(deriveTeams({ ...snapshot, teams: [] }))
+
+    // then
+    for (const sessionId of ["ses-alpha-lead", "ses-alpha-member"]) {
+      expect(cache.forSession(sessionId)).toEqual({ kind: "none" })
+      expect(sessionView(sessionId)).toEqual({ kind: "idle", roster: { kind: "empty" } })
+    }
+    expect(viewKey(sessionView("ses-alpha-lead"))).not.toBe(viewKey(before))
+    cache.update(deriveTeams(null))
+    expect(cache.forSession("ses-alpha-lead")).toEqual({ kind: "none" })
   })
 
   it("#given a cached Team #when a replacement Team uses the same lead route session #then the route renders only the replacement", () => {
