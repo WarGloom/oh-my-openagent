@@ -18,7 +18,7 @@ Full schema: [`src/config/schema/team-mode.ts`](../../config/schema/team-mode.ts
     "enabled": false,                       // gate
     "tmux_visualization": false,            // optional tmux pane layout
     "max_parallel_members": 4,              // 1..8
-    "max_members": 8,                       // 1..8 hard cap
+    "max_members": 8,                       // 1..16 roster cap, including lead
     "max_messages_per_run": 10000,          // 1..∞
     "max_wall_clock_minutes": 120,          // 1..∞
     "max_member_turns": 500,                // 1..∞

@@ -1,8 +1,8 @@
 import { AGENT_ELIGIBILITY_REGISTRY } from "../types"
+import { MAX_TEAM_MEMBERS } from "../config"
 
 import type { Member, TeamSpec } from "../types"
 
-const MAX_TEAM_MEMBERS = 8
 const HYPERPLAN_REQUIRED_CATEGORIES = ["unspecified-low", "unspecified-high", "ultrabrain", "artistry"] as const
 const UNKNOWN_SUBAGENT_MESSAGE =
   "Unknown subagent_type '<name>'. Available ELIGIBLE agents: sisyphus, atlas, sisyphus-junior, hephaestus (if D-36 applied). Use delegate-task for read-only agents like oracle, librarian, explore, metis, momus, multimodal-looker."
@@ -26,7 +26,7 @@ export class TeamSpecValidationError extends Error {
 export function validateSpec(spec: TeamSpec, options: ValidateSpecOptions = {}): void {
   if (spec.members.length > MAX_TEAM_MEMBERS) {
     throw new TeamSpecValidationError(
-      `Team '${spec.name}' exceeds max 8 members.`,
+      `Team '${spec.name}' exceeds max ${MAX_TEAM_MEMBERS} members.`,
       "TEAM_MEMBER_LIMIT_EXCEEDED",
       "members",
     )
