@@ -2,10 +2,13 @@ import path from "node:path"
 
 import { z } from "zod"
 
-import { getAgentToolRestrictions, normalizeSDKResponse } from "../../shared"
+import { getAgentToolRestrictions } from "../../shared"
 import type { DelegatedModelConfig } from "../../shared/model-resolution-types"
 
-const EMPTY_AGENT_REGISTRY: readonly unknown[] = []
+const FinalAgentRegistryResponseSchema = z.union([
+  z.array(z.unknown()),
+  z.object({ data: z.array(z.unknown()), error: z.undefined().optional() }).transform((response) => response.data),
+])
 const REQUIRED_TEAM_TOOLS = [
   "team_send_message",
   "team_task_list",
@@ -81,10 +84,7 @@ export async function loadFinalOpenCodeAgentRegistry(
   directory: string,
 ): Promise<readonly unknown[]> {
   const response = await client.app.agents({ query: { directory } })
-  const normalized = normalizeSDKResponse<unknown>(response, EMPTY_AGENT_REGISTRY, {
-    preferResponseOnMissingData: true,
-  })
-  return Array.isArray(normalized) ? normalized : EMPTY_AGENT_REGISTRY
+  return FinalAgentRegistryResponseSchema.parse(response)
 }
 
 function wildcardMatches(value: string, pattern: string): boolean {
@@ -135,11 +135,11 @@ function findExactAgent(registry: readonly unknown[], name: string): FinalOpenCo
   return undefined
 }
 
-export async function resolveFinalProjectAgent(
+async function resolveTrustedFinalAgent(
   client: FinalOpenCodeAgentRegistryClient,
   directory: string,
   name: string,
-): Promise<ResolvedFinalProjectAgent> {
+): Promise<FinalOpenCodeAgent> {
 
   if (!hasProjectAgentProvenance(directory, name)) {
     throw new ProjectAgentResolutionError(
@@ -161,6 +161,34 @@ export async function resolveFinalProjectAgent(
   if (agent.hidden === true) {
     throw new ProjectAgentResolutionError(`Project agent '${agent.name}' must not be hidden.`)
   }
+  return agent
+}
+
+export async function resolveFinalProjectLead(
+  client: FinalOpenCodeAgentRegistryClient,
+  directory: string,
+  name: string,
+): Promise<string> {
+  const agent = await resolveTrustedFinalAgent(client, directory, name)
+  if (agent.mode !== "primary") {
+    throw new ProjectAgentResolutionError(`Project lead '${name}' mode must be 'primary'.`)
+  }
+  const coordinationTools = [...REQUIRED_TEAM_TOOLS, "team_create", "team_add_member", "team_task_create", "team_delete", "team_shutdown_request", "team_approve_shutdown", "team_reject_shutdown"]
+  for (const tool of coordinationTools) {
+    const explicitlyOptedIn = agent.permission.some((rule) => rule.permission !== "*" && wildcardMatches(tool, rule.permission) && rule.pattern === "*" && rule.action === "allow")
+    if (!explicitlyOptedIn || !hasUnconditionalFinalAction(agent, tool, "allow")) {
+      throw new ProjectAgentResolutionError(`Project lead '${name}' must explicitly and unconditionally allow ${tool}.`)
+    }
+  }
+  return agent.name
+}
+
+export async function resolveFinalProjectAgent(
+  client: FinalOpenCodeAgentRegistryClient,
+  directory: string,
+  name: string,
+): Promise<ResolvedFinalProjectAgent> {
+  const agent = await resolveTrustedFinalAgent(client, directory, name)
   if (agent.mode !== "subagent" && agent.mode !== "all") {
     throw new ProjectAgentResolutionError(
       `Project agent '${agent.name}' mode must be 'subagent' or 'all'.`,

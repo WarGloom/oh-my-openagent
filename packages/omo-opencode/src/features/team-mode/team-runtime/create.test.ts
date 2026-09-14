@@ -111,6 +111,19 @@ describe("createTeamRun", () => {
     await Promise.all(temporaryDirectories.splice(0).map(async (directoryPath) => rm(directoryPath, { recursive: true, force: true })))
   })
 
+  test("reuses a validated custom primary identity without provisioning it as a member", async () => {
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-current-primary-"))
+    temporaryDirectories.push(baseDir)
+    const { manager, launchMock } = createManager(baseDir, async () => ({ id: "worker-task", sessionId: "worker-session", status: "running" } as BackgroundTask))
+    const spec = createSpec(2)
+    spec.members[0] = { name: "member-1", kind: "subagent_type", subagent_type: "orchestrator", backendType: "in-process", isActive: true }
+    const state = await createTeamRun(spec, "current-primary-session", createContext(baseDir, manager), createConfig(baseDir), manager, undefined, { callerAgentTypeId: "orchestrator" })
+    expect(state.status).toBe("active")
+    expect(state.members[0]).toMatchObject({ sessionId: "current-primary-session", subagent_type: "orchestrator", agentType: "leader" })
+    expect(launchMock).toHaveBeenCalledTimes(1)
+    expect(resolveMemberMock.mock.calls.map(([member]) => member.name)).toEqual(["member-2"])
+  })
+
   test("spawns 3 members through BackgroundManager.launch without direct session creation", async () => {
     // given
     const baseDir = await mkdtemp(path.join(tmpdir(), "team-runtime-create-"))
