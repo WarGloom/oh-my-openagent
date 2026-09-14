@@ -9676,7 +9676,7 @@
           "default": 8,
           "type": "integer",
           "minimum": 1,
-          "maximum": 8
+          "maximum": 16
         },
         "max_messages_per_run": {
           "default": 10000,

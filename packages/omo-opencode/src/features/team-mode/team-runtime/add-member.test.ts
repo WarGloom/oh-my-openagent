@@ -246,6 +246,33 @@ describe("addTeamMember", () => {
     expect(lookupTeamSession(result.sessionId)).toMatchObject({ teamRunId: runtime.teamRunId, memberName: "worker-b", role: "member" })
   })
 
+  test.each([8, 16])("#given roster cap %i #when creating and extending a run #then the lead counts and overflow never provisions", async (cap) => {
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-roster-boundary-"))
+    temporaryDirectories.push(baseDir)
+    const { manager, launchMock } = createManager(baseDir, runningLaunch())
+    const config = createConfig(baseDir, { max_members: cap })
+    const ctx = createContext(baseDir, manager)
+    const names = ["lead", ...Array.from({ length: cap - 1 }, (_, index) => `worker-${index}`)]
+
+    const full = await createTeamRun(createSpec(names), "full-lead-session", ctx, config, manager)
+    expect(full.members).toHaveLength(cap)
+    expect(full.members.filter((member) => member.agentType === "leader")).toHaveLength(1)
+    expect(full.bounds).toMatchObject({ maxMembers: cap, maxParallelMembers: 4 })
+    const launchesAtCapacity = launchMock.mock.calls.length
+    await expect(createTeamRun(createSpec([...names, "overflow"]), "overflow-session", ctx, config, manager)).rejects.toThrow(`max_members cap is ${cap}`)
+    expect(launchMock.mock.calls.length).toBe(launchesAtCapacity)
+
+    const runtime = await createTeamRun(createSpec(names.slice(0, -1)), "growing-lead-session", ctx, config, manager)
+    const input = { teamRunId: runtime.teamRunId, leadSessionId: "growing-lead-session", ctx, config, bgMgr: manager }
+    await addTeamMember({ ...input, member: inlineMember("last-worker") })
+    const filled = await loadRuntimeState(runtime.teamRunId, config)
+    expect(filled.members).toHaveLength(cap)
+    const launchesAfterAdd = launchMock.mock.calls.length
+    await expect(addTeamMember({ ...input, config: createConfig(baseDir, { max_members: 16 }), member: inlineMember("overflow") })).rejects.toThrow(`at capacity (${cap}/${cap}`)
+    expect(launchMock.mock.calls.length).toBe(launchesAfterAdd)
+    expect((await loadRuntimeState(runtime.teamRunId, config)).members).toEqual(filled.members)
+  })
+
   test("#given a run at capacity #when a member is added #then it is rejected with an informative error and no reserved row remains", async () => {
     // given
     const baseDir = await mkdtemp(path.join(tmpdir(), "team-add-capacity-"))
