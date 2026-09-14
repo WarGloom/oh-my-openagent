@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 import { randomUUID } from "node:crypto"
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -8,13 +8,16 @@ import type { OhMyOpenCodeConfig } from "../config"
 import { readBoulderState } from "../features/boulder-state"
 import { _resetForTesting, getSessionAgent, registerAgentName, setMainSession, subagentSessions, updateSessionAgent } from "../features/claude-code-session-state"
 import { createAutoSlashCommandHook } from "../hooks/auto-slash-command"
+import { createGoalHook } from "../hooks/goal"
 import { validateObjective } from "../hooks/goal/validation"
 import { createUlwExecuteHook } from "../hooks/ulw-execute"
+import * as shared from "../shared"
 import { getAgentListDisplayName } from "../shared/agent-display-names"
 import { getOmoOpenCodeCacheDir, getOpenCodeCacheDir } from "../shared/data-path"
 import { OMO_INTERNAL_INITIATOR_MARKER } from "../shared/internal-initiator-marker"
 import { clearSessionModel, getSessionModel, getStoredSessionModel, setSessionModel } from "../shared/session-model-state"
 import { createChatMessageHandler } from "./chat-message"
+import * as ultraworkModelOverride from "./ultrawork-model-override"
 import type { PluginContext } from "./types"
 
 type ChatMessagePart = { type: string; text?: string; [key: string]: unknown }
@@ -678,6 +681,73 @@ describe("createChatMessageHandler - /goal raw slash fallback", () => {
     expect(goalMock.setGoalCalls).toEqual([{ sessionID: "test-session", objective: "original task" }])
     expect(output.parts[1].text).toBe("injected instructions".repeat(200))
   })
+  test("logs an oversized objective and continues chat processing", async () => {
+    // given
+    const text = "x".repeat(2_001)
+    const args = createMockHandlerArgs({ pluginConfig: { goal: { enabled: true } } })
+    const setGoal = mock((_: string, objective: string) => {
+      validateObjective(objective)
+      return { objective, status: "active" }
+    })
+    args.hooks.goal = { ...createGoalHookMock().hook, setGoal }
+    const output: ChatMessageHandlerOutput = { message: {}, parts: [{ type: "text", text: `/goal ${text}` }] }
+    const log = spyOn(shared, "log").mockImplementation(() => {})
+    const downstream = spyOn(ultraworkModelOverride, "applyUltraworkModelOverrideOnMessage")
+      .mockResolvedValue(undefined)
+    try {
+      // when
+      const run = createChatMessageHandler(args)(createMockInput("sisyphus"), output)
+
+      // then
+      await expect(run).resolves.toBeUndefined()
+      expect(setGoal).toHaveBeenCalledWith("test-session", text)
+      expect(downstream).toHaveBeenCalledTimes(1)
+      expect(output.parts).toEqual([{ type: "text", text: `/goal ${text}` }])
+      expect(log).toHaveBeenCalledWith("[chat-message] Goal handling failed; continuing message", {
+        sessionID: "test-session",
+        error: expect.stringContaining("InvalidObjectiveError"),
+      })
+    } finally {
+      downstream.mockRestore()
+      log.mockRestore()
+    }
+  })
+
+  test("does not re-ingest a dispatched goal continuation as a user objective", async () => {
+    // given
+    const directory = join(tmpdir(), `goal-chat-${randomUUID()}`)
+    const sessionID = `goal-chat-${randomUUID()}`
+    const dispatched: ChatMessagePart[][] = []
+    const ctx = unsafeTestValue<Parameters<typeof createGoalHook>[0]>({
+      directory,
+      client: {
+        session: {
+          promptAsync: async (input: { body: { parts: ChatMessagePart[] } }) => {
+            dispatched.push(input.body.parts)
+            return {}
+          },
+        },
+      },
+    })
+    const goal = createGoalHook(ctx, { projectDir: directory })
+    goal.setGoal(sessionID, "Ship it")
+    const setGoal = mock(goal.setGoal)
+    const args = createMockHandlerArgs({ pluginConfig: { goal: { enabled: true } } })
+    args.hooks.goal = { ...goal, setGoal }
+    try {
+      // when
+      await goal.event({ event: { type: "session.idle", properties: { sessionID } } })
+      expect(dispatched).toHaveLength(1)
+      await createChatMessageHandler(args)({ sessionID }, { message: {}, parts: dispatched[0] })
+
+      // then
+      expect(setGoal).not.toHaveBeenCalled()
+      expect(goal.getGoal(sessionID)?.objective).toBe("Ship it")
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   test("does not route an auto-slash-expanded skill payload into goal handling", async () => {
     // given
     const setGoal = mock((_: string, objective: string) => {
