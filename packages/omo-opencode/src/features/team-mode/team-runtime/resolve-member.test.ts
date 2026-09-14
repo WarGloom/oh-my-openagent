@@ -251,7 +251,6 @@ describe("resolveMember", () => {
     expect(fixture.appAgents).toHaveBeenCalledWith({
       query: { directory: fixture.context.directory },
     })
-    })
     expect(resolveSubagentExecutionMock).not.toHaveBeenCalled()
     expect(buildSystemContentMock).not.toHaveBeenCalled()
   })
@@ -346,5 +345,41 @@ describe("resolveMember", () => {
 
     // then
     await expect(result).rejects.toThrow("must already agree with the launch permission")
+  })
+
+  test("forwards a proven project agent's configured fallback_models as a proactive fallbackChain", async () => {
+    // given: a proven custom project agent with agents.<key>.fallback_models declared in the plugin config
+    const fixture = createProvenRegistryContext({ data: [createFinalAgent()] })
+    const context: ExecutorContext = {
+      ...fixture.context,
+      agentOverrides: {
+        "project-worker": { fallback_models: ["openai/gpt-5.6-luna-fast", "gpt-5.4-nano"] },
+      },
+    }
+
+    // when
+    const result = await resolveMember(createProjectMember(), context, "deep, quick", "lead")
+
+    // then: the chain matches the configured models; the provider-less entry inherits the agent model's provider
+    expect(result.fallbackChain).toEqual([
+      { providers: ["openai"], model: "gpt-5.6-luna-fast", variant: undefined },
+      { providers: ["openai"], model: "gpt-5.4-nano", variant: undefined },
+    ])
+    expect(result.model).toEqual({ providerID: "openai", modelID: "gpt-5.4-mini", variant: "high" })
+  })
+
+  test("leaves a proven project agent's fallbackChain undefined when its config declares no fallback_models", async () => {
+    // given: a proven custom project agent whose override entry declares no fallback_models
+    const fixture = createProvenRegistryContext({ data: [createFinalAgent()] })
+    const context: ExecutorContext = {
+      ...fixture.context,
+      agentOverrides: { "project-worker": { category: "deep" } },
+    }
+
+    // when
+    const result = await resolveMember(createProjectMember(), context, "deep, quick", "lead")
+
+    // then: absent fallback_models must stay undefined, not synthesize a chain from other agents
+    expect(result.fallbackChain).toBeUndefined()
   })
 })

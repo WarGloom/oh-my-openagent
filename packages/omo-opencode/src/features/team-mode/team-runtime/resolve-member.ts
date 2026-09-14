@@ -4,6 +4,7 @@ import type { ExecutorContext } from "../../../tools/delegate-task/executor-type
 import type { DelegateTaskArgs } from "../../../tools/delegate-task/types"
 import { AGENT_ELIGIBILITY_REGISTRY, type Member } from "../types"
 import { resolveFinalProjectAgent } from "../final-open-code-agent-registry"
+import { resolveAgentFallbackChain } from "../../../tools/delegate-task/subagent-model-resolution"
 import {
   buildSystemContent,
   resolveCategoryExecution,
@@ -106,11 +107,12 @@ export async function resolveMember(
         ctx.directory,
         member.subagent_type,
       )
+      const fallbackChain = resolveAgentFallbackChain(projectAgent.name, projectAgent.model, ctx)
       return {
         memberName: member.name,
         agentToUse: projectAgent.name,
         model: projectAgent.model,
-        fallbackChain: undefined,
+        fallbackChain,
         systemContent: undefined,
       }
     }

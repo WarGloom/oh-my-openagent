@@ -1,10 +1,11 @@
 import type { AgentOverrides } from "../../config/schema"
+import type { DelegatedModelConfig } from "./types"
 import { getAgentConfigKey } from "../../shared/agent-display-names"
 import { fuzzyMatchModel } from "../../shared/model-availability"
 import { buildFallbackChainFromModels } from "../../shared/fallback-chain-from-models"
 import { normalizeModelFormat } from "../../shared/model-format-normalizer"
 import { flattenToFallbackModelStrings, normalizeFallbackModels } from "../../shared/model-resolver"
-import { AGENT_MODEL_REQUIREMENTS } from "../../shared/model-requirements"
+import { AGENT_MODEL_REQUIREMENTS, type FallbackEntry } from "../../shared/model-requirements"
 import { log } from "../../shared/logger"
 import { getAvailableModelsForDelegateTask } from "./available-models"
 import { applyCategoryParams } from "./delegated-model-config"
@@ -119,4 +120,24 @@ export async function resolveSubagentModel(
   }
 
   return { categoryModel, fallbackChain }
+}
+
+// Proactive, config-driven fallback chain for an already-resolved agent, using the same
+// `agents.<key>.fallback_models` (or its category's `fallback_models`) source and the same
+// `buildFallbackChainFromModels` builder as `resolveSubagentModel`. Used by the team-mode
+// custom project-agent branch, which resolves its own model separately and only needs the chain.
+export function resolveAgentFallbackChain(
+  agentToUse: string,
+  agentModel: DelegatedModelConfig | undefined,
+  executorCtx: ExecutorContext,
+): FallbackEntry[] | undefined {
+  const agentConfigKey = getAgentConfigKey(agentToUse)
+  const agentOverride = findAgentOverride(executorCtx.agentOverrides, agentConfigKey)
+  const agentCategoryConfig = agentOverride?.category
+    ? executorCtx.userCategories?.[agentOverride.category]
+    : undefined
+  return buildFallbackChainFromModels(
+    agentOverride?.fallback_models ?? agentCategoryConfig?.fallback_models,
+    agentModel?.providerID,
+  )
 }
