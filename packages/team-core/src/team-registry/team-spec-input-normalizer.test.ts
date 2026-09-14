@@ -3,6 +3,7 @@
 import { describe, expect, test } from "bun:test"
 
 import { resolveCallerTeamLead } from "../resolve-caller-team-lead"
+import { TeamSpecSchema } from "../types"
 import { normalizeTeamSpecInput } from "./team-spec-input-normalizer"
 
 describe("normalizeTeamSpecInput", () => {
@@ -190,6 +191,40 @@ describe("normalizeTeamSpecInput", () => {
         { name: "quick-8", kind: "category" },
       ],
     })
+  })
+
+  test.each([9, 16])("rejects %i members without an explicit lead instead of promoting the first worker", (count) => {
+    const rawSpec = {
+      name: "large-team",
+      members: Array.from({ length: count }, (_, index) => ({
+        name: `worker-${index}`, category: "quick", prompt: `Complete task ${index}`,
+      })),
+    }
+    expect(() => normalizeTeamSpecInput(rawSpec, {
+      callerTeamLead: resolveCallerTeamLead("sisyphus"),
+    })).toThrow("Teams with more than 8 members require an explicit lead")
+    expect(rawSpec.members[0]?.name).toBe("worker-0")
+  })
+
+  test("preserves all explicit-lead forms at total16 and rejects lead plus16 workers", () => {
+    const lead = { name: "lead", subagent_type: "sisyphus" }
+    const workers = Array.from({ length: 15 }, (_, index) => ({
+      name: `worker-${index}`, category: "quick", prompt: `Complete task ${index}`,
+    }))
+    const options = { callerTeamLead: resolveCallerTeamLead("sisyphus") }
+    const explicitForms = [
+      { name: "large-team", lead, members: workers },
+      { name: "large-team", leadAgentId: "lead", members: [lead, ...workers] },
+      { name: "large-team", members: [{ ...lead, isLead: true }, ...workers] },
+    ]
+    for (const rawSpec of explicitForms) {
+      const spec = TeamSpecSchema.parse(normalizeTeamSpecInput(rawSpec, options))
+      expect(spec.leadAgentId).toBe("lead")
+      expect(spec.members.map((member) => member.name)).toEqual(["lead", ...workers.map((worker) => worker.name)])
+    }
+    expect(TeamSpecSchema.safeParse(normalizeTeamSpecInput({
+      name: "large-team", lead, members: [...workers, { ...workers[0], name: "overflow" }],
+    }, options)).success).toBe(false)
   })
 
   test("strips empty-string optional fields injected by the tool host", () => {

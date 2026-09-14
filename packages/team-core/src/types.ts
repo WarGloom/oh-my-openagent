@@ -1,4 +1,5 @@
 import * as z from "zod"
+import { MAX_TEAM_MEMBERS } from "./config"
 import { createParseMember } from "./member-parser"
 
 export const MESSAGE_KINDS = [
@@ -63,7 +64,7 @@ export const TeamSpecSchema = z.object({
   leadAgentId: z.string().optional(),
   teamAllowedPaths: z.array(z.string()).optional(),
   sessionPermission: z.string().optional(),
-  members: z.array(MemberSchema).min(1).max(8),
+  members: z.array(MemberSchema).min(1).max(MAX_TEAM_MEMBERS),
 }).superRefine((teamSpec, ctx) => {
   if (teamSpec.leadAgentId === undefined && teamSpec.members.length > 1) {
     ctx.addIssue({
