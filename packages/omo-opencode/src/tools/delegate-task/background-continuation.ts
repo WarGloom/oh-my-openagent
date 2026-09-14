@@ -6,6 +6,9 @@ import { getSessionTools } from "../../shared/session-tools-store"
 import { buildTaskMetadataBlock } from "../../features/tool-metadata-store/task-metadata-contract"
 import { resolveMetadataModel } from "./resolve-metadata-model"
 import { getTaskID } from "./task-id"
+import { z } from "zod"
+import { claimRetainedSessionRecovery } from "../../features/background-agent/task-registry"
+import { executeSyncContinuation } from "./sync-continuation"
 
 export async function executeBackgroundContinuation(
   args: DelegateTaskArgs,
@@ -31,7 +34,28 @@ export async function executeBackgroundContinuation(
       parentModel: parentContext.model,
       parentAgent: parentContext.agent,
       parentTools: getSessionTools(parentContext.sessionID),
+    }).catch(async (error: unknown) => {
+      if (!(error instanceof Error) || error.message !== `Task not found for session: ${taskID}`) throw error
+      return undefined
     })
+    if (!task) {
+      const claim = claimRetainedSessionRecovery(taskID, parentContext.sessionID)
+      try {
+        const sessionSchema = z.object({ id: z.literal(taskID), parentID: z.literal(parentContext.sessionID), error: z.undefined().optional() })
+        z.union([sessionSchema, z.object({ data: sessionSchema, error: z.undefined().optional() })]).parse(
+          await executorCtx.client.session.get({ path: { id: taskID } }),
+        )
+        const statuses = z.record(z.string(), z.object({ type: z.enum(["idle", "busy", "retry"]) }))
+        const statusResponse = z.union([z.object({ data: statuses, error: z.undefined().optional() }).transform((value) => value.data), statuses]).parse(
+          await executorCtx.client.session.status(),
+        )
+        if (statusResponse[taskID] && statusResponse[taskID].type !== "idle") throw new Error("Retained-session recovery denied: SDK session is busy.")
+        const result = await executeSyncContinuation({ ...args, run_in_background: false }, ctx, executorCtx, parentContext, undefined, systemContent, claim.task)
+        return `Synchronous recovery of retained session ${taskID}; no replacement agent or background task was created.\n\n${result}`
+      } finally {
+        claim.release()
+      }
+    }
     const sessionId = task.sessionId
     const backgroundTaskId = task.id
     const resolvedModel = resolveMetadataModel(task.model, parentContext.model)

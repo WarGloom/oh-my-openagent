@@ -6,6 +6,7 @@ const REGISTRY_KEY = "__omoBackgroundTaskRegistry"
 type BackgroundTaskRegistry = {
   activeTasks: Map<string, () => BackgroundTask>
   completedTasks: Map<string, BackgroundTask>
+  recoveryClaims?: Set<string>
 }
 
 type GlobalWithBackgroundTaskRegistry = typeof globalThis & {
@@ -130,8 +131,23 @@ export function forgetBackgroundTask(taskID: string): void {
   registry.completedTasks.delete(taskID)
 }
 
+export function claimRetainedSessionRecovery(sessionID: string, parentSessionID: string): { task: BackgroundTask; release: () => void } {
+  const registry = getRegistry()
+  const claims = registry.recoveryClaims ??= new Set<string>()
+  if (sessionID === parentSessionID || claims.has(sessionID) || [...registry.activeTasks.values()].some((getTask) => getTask().sessionId === sessionID)) {
+    throw new Error("Retained-session recovery denied: session is active, claimed, or the caller itself.")
+  }
+  const task = [...registry.completedTasks.values()].find((candidate) => candidate.sessionId === sessionID)
+  if (!task || task.status !== "completed" || task.parentSessionId !== parentSessionID || !task.agent || !task.model) {
+    throw new Error("Retained-session recovery denied: no owned completed task with trusted agent/model metadata. The archive may have expired or the process restarted; do not substitute another agent.")
+  }
+  claims.add(sessionID)
+  return { task: cloneRegisteredTask(task), release: () => { claims.delete(sessionID) } }
+}
+
 export function clearBackgroundTaskRegistryForTesting(): void {
   const registry = getRegistry()
   registry.activeTasks.clear()
   registry.completedTasks.clear()
+  registry.recoveryClaims?.clear()
 }

@@ -1,6 +1,76 @@
+/// <reference types="bun-types" />
 const { describe, test, expect, mock } = require("bun:test")
 
 describe("executeBackgroundContinuation - subagent metadata", () => {
+  test("recovers an archived completed session synchronously without creating or deleting a session", async () => {
+    const { archiveBackgroundTask, clearBackgroundTaskRegistryForTesting, claimRetainedSessionRecovery } = require("../../features/background-agent/task-registry")
+    clearBackgroundTaskRegistryForTesting()
+    const id = "ses_retained_recovery"
+    archiveBackgroundTask({ id: "bg_retained", sessionId: id, parentSessionId: "parent-session", parentMessageId: "old", description: "retained", prompt: "old", agent: "sisyphus", status: "completed", model: { providerID: "test", modelID: "original", variant: "high", reasoningEffort: "high" } })
+    let prompted = false
+    const create = mock(() => { throw new Error("must not create") })
+    const remove = mock(() => { throw new Error("must not delete") })
+    const promptAsync = mock(async () => { prompted = true; return {} })
+    const client = { session: {
+      get: async () => ({ data: { id, parentID: "parent-session" } }),
+      status: async () => ({ data: {} }),
+      messages: async () => ({ data: prompted ? [{ info: { id: "msg-1", role: "user" }, parts: [] }, { info: { id: "msg-2", role: "assistant", finish: "stop", time: { completed: Date.now() } }, parts: [{ type: "text", text: "recovered-result" }] }] : [] }),
+      promptAsync, create, delete: remove, abort: async () => ({}),
+    } }
+    const metadata = mock(async () => {})
+    const { executeBackgroundContinuation } = require("./background-continuation")
+    const result = await executeBackgroundContinuation({ task_id: id, prompt: "continue", description: "recover", run_in_background: true, load_skills: [] }, { sessionID: "parent-session", callID: "recovery-call", metadata, abort: new AbortController().signal }, { client, manager: { resume: async () => { throw new Error(`Task not found for session: ${id}`) } }, syncPollTimeoutMs: 4000 }, { sessionID: "parent-session", messageID: "current" }, "authorized skills")
+    expect(result).toContain("Synchronous recovery")
+    expect(result).toContain("recovered-result")
+    expect(promptAsync).toHaveBeenCalledTimes(1)
+    expect(promptAsync.mock.calls[0][0]).toMatchObject({ path: { id }, body: { agent: "sisyphus", model: { providerID: "test", modelID: "original" }, variant: "high", system: "authorized skills" } })
+    expect(promptAsync.mock.calls[0][0].body.tools).toBeUndefined()
+    expect(create).not.toHaveBeenCalled()
+    expect(remove).not.toHaveBeenCalled()
+    expect(metadata.mock.calls.at(-1)[0].metadata).toMatchObject({ sync: true, run_in_background: false, sessionId: id })
+    expect(metadata.mock.calls.at(-1)[0].metadata.backgroundTaskId).toBeUndefined()
+    const claim = claimRetainedSessionRecovery(id, "parent-session")
+    expect(() => claimRetainedSessionRecovery(id, "parent-session")).toThrow("claimed")
+    claim.release()
+    clearBackgroundTaskRegistryForTesting()
+  })
+
+  test("refuses unsafe archived-session recovery before prompting", async () => {
+    const { archiveBackgroundTask, clearBackgroundTaskRegistryForTesting } = require("../../features/background-agent/task-registry")
+    const { executeBackgroundContinuation } = require("./background-continuation")
+    const id = "ses_unsafe_recovery"
+    const promptAsync = mock(async () => ({}))
+    for (const [kind, expected] of [["missing", "no owned completed task"], ["foreign", "no owned completed task"], ["cancelled", "no owned completed task"], ["busy", "SDK session is busy"], ["api-error", "Invalid"], ["wrong-sdk-parent", "Invalid"], ["status-api-error", "Invalid"]]) {
+      clearBackgroundTaskRegistryForTesting()
+      if (kind !== "missing") archiveBackgroundTask({ id: "bg_unsafe", sessionId: id, parentSessionId: kind === "foreign" ? "foreign" : "parent", parentMessageId: "old", description: "old", agent: "sisyphus", status: kind === "cancelled" ? "cancelled" : "completed", model: { providerID: "test", modelID: "original" } })
+      const client = { session: { get: async () => kind === "api-error" ? { error: "unavailable" } : { data: { id, parentID: kind === "wrong-sdk-parent" ? "foreign" : "parent" } }, status: async () => kind === "status-api-error" ? { error: "unavailable" } : { data: { [id]: { type: kind === "busy" ? "busy" : "idle" } } }, messages: async () => ({ data: [] }), promptAsync } }
+      const result = await executeBackgroundContinuation({ task_id: id, prompt: "continue", description: "recover", run_in_background: true, load_skills: [] }, { sessionID: "parent", metadata: async () => {} }, { client, manager: { resume: async () => { throw new Error(`Task not found for session: ${id}`) } } }, { sessionID: "parent", messageID: "now" })
+      expect(result).not.toContain("Synchronous recovery")
+      expect(result).toContain(expected)
+    }
+    expect(promptAsync).not.toHaveBeenCalled()
+    clearBackgroundTaskRegistryForTesting()
+  })
+
+  test("retained recovery refuses a suggested replacement model and releases its claim", async () => {
+    const { archiveBackgroundTask, clearBackgroundTaskRegistryForTesting, claimRetainedSessionRecovery } = require("../../features/background-agent/task-registry")
+    clearBackgroundTaskRegistryForTesting()
+    const id = "ses_model_recovery"
+    archiveBackgroundTask({ id: "bg_model", sessionId: id, parentSessionId: "parent", parentMessageId: "old", description: "old", agent: "sisyphus", status: "completed", model: { providerID: "test", modelID: "original" } })
+    const missingModel = Object.assign(new Error("original model unavailable"), { name: "ProviderModelNotFoundError", data: { providerID: "test", modelID: "original", suggestions: ["replacement"] } })
+    const promptAsync = mock(async () => { throw missingModel })
+    const client = { session: { get: async () => ({ data: { id, parentID: "parent" } }), status: async () => ({ data: {} }), messages: async () => ({ data: [] }), promptAsync } }
+    const { executeBackgroundContinuation } = require("./background-continuation")
+    const result = await executeBackgroundContinuation({ task_id: id, prompt: "continue", description: "recover", run_in_background: true, load_skills: [] }, { sessionID: "parent", metadata: async () => {} }, { client, manager: { resume: async () => { throw new Error(`Task not found for session: ${id}`) } } }, { sessionID: "parent", messageID: "now" })
+    expect(result).toContain("Failed to send continuation prompt")
+    expect(result).toContain("original model unavailable")
+    expect(promptAsync).toHaveBeenCalledTimes(1)
+    expect(promptAsync.mock.calls[0][0].body.model).toEqual({ providerID: "test", modelID: "original" })
+    const claim = claimRetainedSessionRecovery(id, "parent")
+    claim.release()
+    clearBackgroundTaskRegistryForTesting()
+  })
+
   test("reports an error instead of false success when the task is already running", async () => {
     //#given - manager rejects a continuation that cannot be delivered
     const mockManager = {
