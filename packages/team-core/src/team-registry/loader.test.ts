@@ -266,13 +266,13 @@ describe("team-registry loader", () => {
     ]))
   })
 
-  test("rejects specs with more than 8 members", async () => {
+  test("rejects specs with more than 16 members", async () => {
     // given
     const rootDirectory = await createTemporaryRoot()
     temporaryDirectories.push(rootDirectory)
     const fixturePaths = getFixturePaths(rootDirectory, "too-many")
     const teamSpec = createBaseSpec("too-many")
-    teamSpec.members = Array.from({ length: 9 }, (_, index) => ({
+    teamSpec.members = Array.from({ length: 17 }, (_, index) => ({
       kind: "category",
       name: `member-${index}`,
       category: "deep",
@@ -292,9 +292,32 @@ describe("team-registry loader", () => {
     // then
     expect(thrownError).toMatchObject({
       name: TeamSpecValidationError.name,
-      message: "Team 'too-many' exceeds max 8 members.",
+      message: "Team 'too-many' exceeds max 16 members.",
       code: "TEAM_MEMBER_LIMIT_EXCEEDED",
       field: "members",
     })
+  })
+
+  test("accepts specs with up to 16 members including the lead", async () => {
+    // given
+    const rootDirectory = await createTemporaryRoot()
+    temporaryDirectories.push(rootDirectory)
+    const fixturePaths = getFixturePaths(rootDirectory, "within-limit")
+    const teamSpec = createBaseSpec("within-limit")
+    teamSpec.members = Array.from({ length: 16 }, (_, index) => ({
+      kind: "category",
+      name: `member-${index}`,
+      category: "deep",
+      prompt: `implement task number ${index}`,
+    }))
+    teamSpec.leadAgentId = "member-0"
+    await writeJsonFile(fixturePaths.userConfigPath, teamSpec)
+
+    // when
+    const loadedSpec = await loadTeamSpec("within-limit", createConfig(fixturePaths.userBaseDir), fixturePaths.projectRoot)
+
+    // then
+    expect(loadedSpec.members).toHaveLength(16)
+    expect(loadedSpec.leadAgentId).toBe("member-0")
   })
 })

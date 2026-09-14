@@ -187,8 +187,8 @@ Members should:
 
 ## Bounds
 
-- Max 8 members per run (the \`max_members\` roster cap; \`team_add_member\` counts against it, and finished members still hold their slot for the life of the run).
-- Max 4 parallel workers.
+- The \`max_members\` roster cap defaults to 8 and is configurable up to 16, including the lead. \`team_add_member\` counts against it; finished members hold their slot for the life of the run. Raising the cap applies only to new runs.
+- Spawn fan-out defaults to 4 (\`max_parallel_members\`, maximum 8); provider and background-task concurrency limits are unchanged.
 - Max 32KB per message.
 - Max 256KB unread inbox.
 

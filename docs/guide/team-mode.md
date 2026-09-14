@@ -42,7 +42,7 @@ All fields live under `team_mode`:
 - `enabled` (boolean, default `false`)
 - `tmux_visualization` (boolean, default `false`)
 - `max_parallel_members` (int, `1..8`, default `4`)
-- `max_members` (int, `1..8`, default `8`)
+- `max_members` (int, `1..16`, default `8`)
 - `max_messages_per_run` (int, `>=1`, default `10000`)
 - `max_wall_clock_minutes` (int, `>=1`, default `120`)
 - `max_member_turns` (int, `>=1`, default `500`)
@@ -85,7 +85,7 @@ Declared team config files can use the full canonical discriminated member schem
 
 When both scopes define the same team name, project scope wins.
 
-`version` and `createdAt` are optional in config files; the loader fills them automatically. The lead is always the current session, so there is no lead member to declare. `team_create` also accepts the same shape inline: `{ name, members: [{ name, category|subagent_type, prompt? }] }`.
+`version` and `createdAt` are optional in config files; the loader fills them automatically. An eligible caller's session is reused for the lead; for an unregistered custom caller, an explicitly declared eligible lead is spawned separately. `team_create` also accepts the same shape inline: `{ name, members: [{ name, category|subagent_type, prompt? }] }`. Arrays with more than eight members require an explicit lead: set `leadAgentId` to an existing member name, supply `lead: {...}`, or mark a member with `isLead: true`. A separate lead plus 15 workers fills the maximum roster of 16. For existing smaller arrays, implicit lead behavior is unchanged: an eligible caller is prepended below eight members; at exactly eight, the first member represents the caller lead rather than a separately spawned worker.
 
 ## Member kinds
 
@@ -150,8 +150,8 @@ Closure is the lead's responsibility, not the user's. Do NOT close a team just b
 
 ## Bounds (defaults)
 
-- 8 members max, 4 in flight.
-- `max_members` (default 8) is the roster cap; it counts every row including the lead and finished members. `team_add_member` is rejected at capacity, and finished members never free their slot for the life of the run. Raising `max_members` applies to new runs only. `max_parallel_members` (default 4) stays a spawn fan-out limit, not a live-concurrency or roster cap.
+- 8 members by default, configurable up to 16 including the lead; spawn fan-out defaults to 4.
+- `max_members` (default 8) is the roster cap; it counts every row including the lead and finished members. `team_add_member` is rejected at capacity, and finished members never free their slot for the life of the run. Set `team_mode.max_members` to `16` to opt in for new runs only; existing runs keep their original bounds. `max_parallel_members` (default 4, maximum 8) stays a spawn fan-out limit, not a live-concurrency or roster cap. Provider and background-task concurrency limits are unchanged.
 - 32 KB per message body, 256 KB per recipient unread.
 - 10 000 messages per run, 120 minutes wall clock, 500 turns per member.
 

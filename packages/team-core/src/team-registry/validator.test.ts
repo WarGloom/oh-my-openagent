@@ -142,11 +142,11 @@ describe("team-registry validator", () => {
     expect(act).toThrow("Member name 'lead' is duplicated within team 'validator-team'. Member names must be unique.")
   })
 
-  test("rejects teams that exceed the 8-member cap", () => {
+  test("rejects teams that exceed the 16-member cap", () => {
     // given
     const teamSpec = {
       ...createBaseTeamSpec(),
-      members: Array.from({ length: 9 }, (_, index) => createCategoryMember(`member-${index}`)),
+      members: Array.from({ length: 17 }, (_, index) => createCategoryMember(`member-${index}`)),
       leadAgentId: "member-0",
     }
 
@@ -154,14 +154,14 @@ describe("team-registry validator", () => {
     const act = () => validateSpec(teamSpec)
 
     // then
-    expect(act).toThrow("Team 'validator-team' exceeds max 8 members.")
+    expect(act).toThrow("Team 'validator-team' exceeds max 16 members.")
   })
 
-  test("accepts teams with exactly 8 members", () => {
+  test("accepts teams with exactly 16 members including the lead", () => {
     // given
     const teamSpec = {
       ...createBaseTeamSpec(),
-      members: Array.from({ length: 8 }, (_, index) => createCategoryMember(`member-${index}`)),
+      members: Array.from({ length: 16 }, (_, index) => createCategoryMember(`member-${index}`)),
       leadAgentId: "member-0",
     }
 
