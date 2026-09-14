@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises"
 
 import { ZodError } from "zod"
 
-import type { TeamModeConfig } from "../config"
+import { MAX_TEAM_MEMBERS, type TeamModeConfig } from "../config"
 import { log } from "../logger"
 import type { NormalizeTeamSpecInputOptions } from "./team-spec-input-normalizer"
 import { TeamSpecSchema } from "../types"
@@ -34,10 +34,10 @@ function createSpecialCaseValidationError(rawSpec: unknown): TeamSpecValidationE
     return undefined
   }
 
-  if (rawMembers.length > 8) {
+  if (rawMembers.length > MAX_TEAM_MEMBERS) {
     const teamName = typeof rawSpec.name === "string" ? rawSpec.name : "<unknown>"
     return new TeamSpecValidationError(
-      `Team '${teamName}' exceeds max 8 members.`,
+      `Team '${teamName}' exceeds max ${MAX_TEAM_MEMBERS} members.`,
       "TEAM_MEMBER_LIMIT_EXCEEDED",
       "members",
     )

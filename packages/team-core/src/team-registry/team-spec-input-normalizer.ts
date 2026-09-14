@@ -224,6 +224,11 @@ export function normalizeTeamSpecInput(raw: unknown, options?: NormalizeTeamSpec
     leadAgentId !== undefined || rawLead !== undefined || (Array.isArray(rawMembers) && hasMemberLeadFlag(rawMembers))
 
   if (Array.isArray(rawMembers)) {
+    if (rawMembers.length > 8 && !hasExplicitLead) {
+      throw new Error(
+        "Teams with more than 8 members require an explicit lead: set leadAgentId, provide lead: {...}, or mark one member isLead: true. The total roster including the lead must fit max_members (maximum 16).",
+      )
+    }
     let normalizedMembers = rawMembers.map((member) =>
       isJsonRecord(member) ? normalizeInlineMember(member, options) : member,
     )
