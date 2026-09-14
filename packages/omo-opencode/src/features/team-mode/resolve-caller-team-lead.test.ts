@@ -2,7 +2,8 @@
 
 import { describe, expect, test } from "bun:test"
 
-import { resolveCallerTeamLead, shouldReuseCallerLeadSession } from "./resolve-caller-team-lead"
+import { resolveCallerTeamLead, resolveCurrentCallerTeamLead, shouldReuseCallerLeadSession } from "./resolve-caller-team-lead"
+import { replaceProjectAgentProvenance } from "./final-open-code-agent-registry"
 import type { TeamSpec } from "./types"
 
 function makeSpec(overrides: Partial<TeamSpec> = {}): TeamSpec {
@@ -20,6 +21,17 @@ function makeSpec(overrides: Partial<TeamSpec> = {}): TeamSpec {
 }
 
 describe("resolveCallerTeamLead", () => {
+  test("propagates failed registry lookup while preserving established nonqualification", async () => {
+    const directory = "/tmp/team-lead-registry-failure"
+    replaceProjectAgentProvenance(directory, ["orchestrator"])
+    const failure = new Error("registry unavailable")
+    await expect(resolveCurrentCallerTeamLead("orchestrator", { app: { agents: async () => { throw failure } } }, directory)).rejects.toBe(failure)
+    for (const response of [{ error: { message: "unavailable" } }, { data: [], error: { message: "unavailable" } }, { data: "malformed" }, null]) {
+      await expect(resolveCurrentCallerTeamLead("orchestrator", { app: { agents: async () => response } }, directory)).rejects.toThrow()
+    }
+    expect(await resolveCurrentCallerTeamLead("orchestrator", { app: { agents: async () => ({ data: [] }) } }, directory)).toEqual({ displayName: "orchestrator", isEligibleForTeamLead: false })
+  })
+
   test("returns an eligible sisyphus lead for the plain display name", () => {
     // given
     const rawAgentName = "Sisyphus"

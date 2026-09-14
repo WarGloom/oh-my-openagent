@@ -278,7 +278,6 @@ describe("resolveMember", () => {
 
   test.each([
     ["a fuzzy registry name", { data: [createFinalAgent({ name: "Project Worker" })] }, "no exact final OpenCode registry entry"],
-    ["a malformed registry", { data: { name: "project-worker" } }, "no exact final OpenCode registry entry"],
     ["a native agent", { data: [createFinalAgent({ native: true })] }, "native === false"],
     ["a hidden agent", { data: [createFinalAgent({ hidden: true })] }, "must not be hidden"],
     ["a primary-only agent", { data: [createFinalAgent({ mode: "primary" })] }, "mode must be 'subagent' or 'all'"],
@@ -294,6 +293,20 @@ describe("resolveMember", () => {
 
     // then
     await expect(result).rejects.toThrow(expectedMessage)
+    expect(fixture.configGet).not.toHaveBeenCalled()
+    expect(fixture.sessionGet).not.toHaveBeenCalled()
+  })
+
+  test("surfaces malformed registry responses as validation failures", async () => {
+    // given
+    const fixture = createProvenRegistryContext({ data: { name: "project-worker" } })
+
+    // when
+    const result = resolveMember(createProjectMember(), fixture.context, "deep, quick", "lead")
+
+    // then
+    await expect(result).rejects.toBeInstanceOf(TeamMemberResolutionError)
+    await expect(result).rejects.toThrow("Invalid input")
     expect(fixture.configGet).not.toHaveBeenCalled()
     expect(fixture.sessionGet).not.toHaveBeenCalled()
   })

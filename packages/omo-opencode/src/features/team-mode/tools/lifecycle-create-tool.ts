@@ -6,7 +6,7 @@ import { getAgentConfigKey, stripAgentListSortPrefix } from "../../../shared/age
 import type { OpencodeClient } from "../../../tools/delegate-task/types"
 import type { BackgroundManager } from "../../background-agent/manager"
 import type { TmuxSessionManager } from "../../tmux-subagent/manager"
-import { resolveCallerTeamLead } from "../resolve-caller-team-lead"
+import { resolveCurrentCallerTeamLead } from "../resolve-caller-team-lead"
 import { loadTeamSpec } from "@oh-my-opencode/team-core/team-registry/loader"
 import { createTeamRun } from "../team-runtime/create"
 import { listActiveTeams, loadRuntimeState } from "@oh-my-opencode/team-core/team-state-store/store"
@@ -37,7 +37,7 @@ const TeamCreateInlineSpecToolSchema = tool.schema.union([
     description: tool.schema.string().optional().describe("Optional team description."),
     leadAgentId: tool.schema.string().optional().describe("Optional member name to use as team lead."),
     lead: TeamCreateInlineMemberToolSchema.optional().describe("Optional explicit lead member."),
-    members: tool.schema.array(TeamCreateInlineMemberToolSchema).describe("Team members; members must be a flat array, not an object or nested groups. Provide 1-8 members."),
+    members: tool.schema.array(TeamCreateInlineMemberToolSchema).describe("Team members; use a flat array, not nested groups. The normalized roster, including the lead, must fit max_members (default 8, configurable up to 16)."),
     teamAllowedPaths: tool.schema.array(tool.schema.string()).optional().describe("Optional paths the team may access."),
     sessionPermission: tool.schema.string().optional().describe("Optional session permission policy."),
   }),
@@ -90,15 +90,10 @@ export function createTeamCreateTool(
           `team_create denied: caller '${rawCallerAgentKey}' is not a registered team lead agent.`,
         )
       }
-      const callerTeamLead = resolveCallerTeamLead(runtimeContext.agent)
+      const callerTeamLead = await resolveCurrentCallerTeamLead(runtimeContext.agent, client, projectRoot)
       if (callerTeamLead.displayName !== undefined) {
         const callerAgentKey = getAgentConfigKey(callerTeamLead.displayName)
         const hasCallerRegistryEntry = Object.hasOwn(AGENT_ELIGIBILITY_REGISTRY, callerAgentKey)
-        if (callerTeamLead.isEligibleForTeamLead && !hasCallerRegistryEntry) {
-          throw new Error(
-            `team_create denied: caller '${callerAgentKey}' is not a registered team lead agent.`,
-          )
-        }
         const callerRegistryEntry = hasCallerRegistryEntry
           ? AGENT_ELIGIBILITY_REGISTRY[callerAgentKey]
           : undefined
@@ -117,6 +112,7 @@ export function createTeamCreateTool(
       if (
         leadMember?.kind === "subagent_type"
         && !Object.hasOwn(AGENT_ELIGIBILITY_REGISTRY, leadMember.subagent_type)
+        && leadMember.subagent_type !== callerTeamLead.agentTypeId
       ) {
         throw new Error(
           `Project-defined agent '${leadMember.subagent_type}' cannot be a team lead.`,

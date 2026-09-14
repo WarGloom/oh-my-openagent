@@ -8,6 +8,7 @@ import {
   hasProjectAgentProvenance,
   replaceProjectAgentProvenance,
   resolveFinalProjectAgent,
+  resolveFinalProjectLead,
 } from "./final-open-code-agent-registry"
 
 const TEAM_TOOLS = ["team_send_message", "team_task_list", "team_task_get", "team_task_update", "team_status", "call_omo_agent"] as const
@@ -72,6 +73,20 @@ describe("project agent provenance", () => {
 })
 
 describe("FinalOpenCodeAgentSchema", () => {
+  test("admits an opted-in primary as lead but never as a spawned member", async () => {
+    const directory = "/tmp/test-primary-team-lead"
+    replaceProjectAgentProvenance(directory, ["orchestrator"])
+    const entry = { name: "orchestrator", mode: "primary", native: false, hidden: false,
+      permission: [{ permission: "team_*", pattern: "*", action: "allow" }, { permission: "bash", pattern: "*", action: "deny" }] }
+    const client = { app: { agents: async () => [entry] } }
+    expect(await resolveFinalProjectLead(client, directory, "orchestrator")).toBe("orchestrator")
+    await expect(resolveFinalProjectAgent(client, directory, "orchestrator")).rejects.toThrow("mode must be 'subagent' or 'all'")
+    for (const override of [{ hidden: true }, { mode: "subagent" }, { native: true }, { permission: [] }]) {
+      await expect(resolveFinalProjectLead({ app: { agents: async () => [{ ...entry, ...override }] } }, directory, "orchestrator")).rejects.toThrow()
+    }
+    await expect(resolveFinalProjectLead(client, directory, "untrusted")).rejects.toThrow("provenance")
+  })
+
   test("tolerates null hidden, variant, and model from OpenCode output", async () => {
     // given: a registry entry shaped like OpenCode app.agents with null optional fields
     const directory = "/tmp/test-registry-null-fields"
