@@ -142,15 +142,22 @@ export function createChatMessageHandler(args: {
     })
     await runUlwExecuteHookIfApplicable(hooks, input, output)
     notifyWhenModelCacheIsMissing(pluginContext.client.tui)
-    handleGoalMessage({
-      hooks,
-      input,
-      output,
-      isFirstMessage,
-      pluginConfig,
-      nativeGoalCommand,
-      originalPromptText,
-    })
+    try {
+      handleGoalMessage({
+        hooks,
+        input,
+        output,
+        isFirstMessage,
+        pluginConfig,
+        nativeGoalCommand,
+        originalPromptText,
+      })
+    } catch (error) {
+      log("[chat-message] Goal handling failed; continuing message", {
+        sessionID: input.sessionID,
+        error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+      })
+    }
     await applyUltraworkModelOverrideOnMessage(
       pluginConfig,
       input.agent,
