@@ -33,7 +33,8 @@ export function handleGoalMessage(args: {
       isFirstMessage &&
       pluginConfig.default_mode?.goal &&
       objective.length > 0 &&
-      objective.length <= MAX_OBJECTIVE_LENGTH
+      objective.length <= MAX_OBJECTIVE_LENGTH &&
+      !objective.startsWith("/")
     ) {
       hooks.goal.setGoal(input.sessionID, objective)
       log("[chat-message] Default goal auto-started", { sessionID: input.sessionID, objective })
