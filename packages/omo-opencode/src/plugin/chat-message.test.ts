@@ -681,16 +681,77 @@ describe("createChatMessageHandler - /goal raw slash fallback", () => {
     expect(goalMock.setGoalCalls).toEqual([{ sessionID: "test-session", objective: "original task" }])
     expect(output.parts[1].text).toBe("injected instructions".repeat(200))
   })
+  test.each([
+    ["ordinary text", "ordinary chat"],
+    ["oversized text", "x".repeat(2_001)],
+    ["bare pause", "pause"],
+    ["bare resume", "resume"],
+    ["bare clear", "clear"],
+    ["different command", "/goalkeeper other command"],
+  ])(
+    "does not mutate goals or validate ordinary chat: %s",
+    async (_label, text) => {
+      // given
+      const goalMock = createGoalHookMock()
+      const setGoal = mock((_: string, objective: string) => {
+        validateObjective(objective)
+        return { objective, status: "active" }
+      })
+      const args = createMockHandlerArgs({ shouldOverride: true })
+      args.hooks.goal = { ...goalMock.hook, setGoal }
+      const output: ChatMessageHandlerOutput = { message: {}, parts: [{ type: "text", text }] }
+
+      // when
+      await createChatMessageHandler(args)(createMockInput("sisyphus"), output)
+
+      // then
+      expect(setGoal).not.toHaveBeenCalled()
+      expect(goalMock.pauseGoalCalls).toEqual([])
+      expect(goalMock.resumeGoalCalls).toEqual([])
+      expect(goalMock.clearGoalCalls).toEqual([])
+      expect(output.parts).toEqual([{ type: "text", text }])
+    },
+  )
+
+  test("does not auto-create or replace a goal on later messages with auto-goal enabled", async () => {
+    // given
+    const goalMock = createGoalHookMock()
+    const args = createMockHandlerArgs({ pluginConfig: { default_mode: { goal: true } } })
+    args.hooks.goal = goalMock.hook
+
+    // when
+    await createChatMessageHandler(args)(createMockInput("sisyphus"), {
+      message: {}, parts: [{ type: "text", text: "another request" }],
+    })
+
+    // then
+    expect(goalMock.setGoalCalls).toEqual([])
+  })
+
+  test.each(["/goal", "/help"])("does not auto-create a goal for %s on the first message", async (text) => {
+    // given
+    const goalMock = createGoalHookMock()
+    const args = createMockHandlerArgs({ shouldOverride: true, pluginConfig: { default_mode: { goal: true } } })
+    args.hooks.goal = goalMock.hook
+
+    // when
+    await createChatMessageHandler(args)(createMockInput("sisyphus"), { message: {}, parts: [{ type: "text", text }] })
+
+    // then
+    expect(goalMock.setGoalCalls).toEqual([])
+  })
+
   test("logs an oversized objective and continues chat processing", async () => {
     // given
-    const text = "x".repeat(2_001)
+    const objective = "x".repeat(2_001)
+    const text = `/goal ${objective}`
     const args = createMockHandlerArgs({ pluginConfig: { goal: { enabled: true } } })
     const setGoal = mock((_: string, objective: string) => {
       validateObjective(objective)
       return { objective, status: "active" }
     })
     args.hooks.goal = { ...createGoalHookMock().hook, setGoal }
-    const output: ChatMessageHandlerOutput = { message: {}, parts: [{ type: "text", text: `/goal ${text}` }] }
+    const output: ChatMessageHandlerOutput = { message: {}, parts: [{ type: "text", text }] }
     const log = spyOn(shared, "log").mockImplementation(() => {})
     const downstream = spyOn(ultraworkModelOverride, "applyUltraworkModelOverrideOnMessage")
       .mockResolvedValue(undefined)
@@ -700,9 +761,9 @@ describe("createChatMessageHandler - /goal raw slash fallback", () => {
 
       // then
       await expect(run).resolves.toBeUndefined()
-      expect(setGoal).toHaveBeenCalledWith("test-session", text)
+      expect(setGoal).toHaveBeenCalledWith("test-session", objective)
       expect(downstream).toHaveBeenCalledTimes(1)
-      expect(output.parts).toEqual([{ type: "text", text: `/goal ${text}` }])
+      expect(output.parts).toEqual([{ type: "text", text }])
       expect(log).toHaveBeenCalledWith("[chat-message] Goal handling failed; continuing message", {
         sessionID: "test-session",
         error: expect.stringContaining("InvalidObjectiveError"),
@@ -782,7 +843,7 @@ describe("createChatMessageHandler - /goal raw slash fallback", () => {
     expect(output.parts[0].text).toContain("<auto-slash-command>")
   })
 
-  test("sets goal when /goal <objective> arrives through chat.message without native command expansion", async () => {
+  test.each(["Ship the dashboard", "Ship the dashboard\nwith accessible controls"])("sets the complete raw /goal objective: %s", async (objective) => {
     // given
     const goalMock = createGoalHookMock()
     const args = createMockHandlerArgs()
@@ -791,7 +852,7 @@ describe("createChatMessageHandler - /goal raw slash fallback", () => {
     const input = createMockInput("sisyphus")
     const output: ChatMessageHandlerOutput = {
       message: {},
-      parts: [{ type: "text", text: "/goal Ship the dashboard" }],
+      parts: [{ type: "text", text: `/goal ${objective}` }],
     }
 
     // when
@@ -799,7 +860,7 @@ describe("createChatMessageHandler - /goal raw slash fallback", () => {
 
     // then
     expect(goalMock.setGoalCalls).toEqual([
-      { sessionID: "test-session", objective: "Ship the dashboard" },
+      { sessionID: "test-session", objective },
     ])
   })
 
