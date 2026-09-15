@@ -6,13 +6,12 @@ import type { PluginInput } from "@opencode-ai/plugin"
 import { OhMyOpenCodeConfigSchema } from "./config/schema/oh-my-opencode-config"
 import { createManagers } from "./create-managers"
 import * as openclawRuntimeDispatch from "./openclaw/runtime-dispatch"
+import * as sessionCleanup from "./features/team-mode/team-runtime/session-cleanup"
 import { createModelCacheState } from "./plugin-state"
 
 type CleanupRegistration = {
   shutdown: () => void | Promise<void>
 }
-
-type CleanupSessionTeamRunsFn = typeof import("./features/team-mode/team-runtime/session-cleanup").cleanupSessionTeamRuns
 
 const markServerRunningInProcess = mock(() => {})
 let backgroundManagerOptions: {
@@ -21,15 +20,6 @@ let backgroundManagerOptions: {
 } | null = null
 const trackedPaneBySession = new Map<string, string>()
 const registeredCleanupManagers: CleanupRegistration[] = []
-const cleanupSessionTeamRunsCalls: Array<Parameters<CleanupSessionTeamRunsFn>[0]> = []
-const cleanupSessionTeamRunsMock = mock(async (input: Parameters<CleanupSessionTeamRunsFn>[0]) => {
-  cleanupSessionTeamRunsCalls.push(input)
-  return {
-    cleanedTeamRunIds: [],
-    removedLayoutTeamRunIds: [],
-    errors: [],
-  }
-})
 const tuiMirrorConstructedInputs: unknown[] = []
 let tuiMirrorStartCount = 0
 let tuiMirrorStopCount = 0
@@ -102,7 +92,6 @@ function createDeps(): NonNullable<Parameters<typeof createManagers>[0]["deps"]>
     TuiStateMirrorClass: MockTuiStateMirror as typeof import("./features/tui-sidebar/mirror-manager").TuiStateMirror,
     initTaskToastManagerFn: initTaskToastManager,
     registerManagerForCleanupFn: registerManagerForCleanup,
-    cleanupSessionTeamRunsFn: cleanupSessionTeamRunsMock as CleanupSessionTeamRunsFn,
     createConfigHandlerFn: createConfigHandler,
     markServerRunningInProcessFn: markServerRunningInProcess,
   }
@@ -159,16 +148,17 @@ function createContext(directory: string): PluginInput {
 
 describe("createManagers", () => {
   let dispatchOpenClawEvent: ReturnType<typeof spyOn>
+  let cleanupSessionTeamRunsSpy: ReturnType<typeof spyOn>
 
   beforeEach(() => {
     dispatchOpenClawEvent = spyOn(openclawRuntimeDispatch, "dispatchOpenClawEvent")
+    cleanupSessionTeamRunsSpy = spyOn(sessionCleanup, "cleanupSessionTeamRuns")
     markServerRunningInProcess.mockClear()
     dispatchOpenClawEvent.mockReset()
+    cleanupSessionTeamRunsSpy.mockReset()
     backgroundManagerOptions = null
     trackedPaneBySession.clear()
     registeredCleanupManagers.length = 0
-    cleanupSessionTeamRunsCalls.length = 0
-    cleanupSessionTeamRunsMock.mockClear()
     tuiMirrorConstructedInputs.length = 0
     tuiMirrorStartCount = 0
     tuiMirrorStopCount = 0
@@ -176,6 +166,7 @@ describe("createManagers", () => {
 
   afterEach(() => {
     dispatchOpenClawEvent.mockRestore()
+    cleanupSessionTeamRunsSpy.mockRestore()
   })
 
   it("#given tmux integration is disabled #when managers are created #then it does not mark the tmux server as running", () => {
@@ -266,7 +257,7 @@ describe("createManagers", () => {
     })
   })
 
-  it("#given team mode is enabled #when process cleanup runs #then session team runs are cleaned with tmux visualization dependencies", async () => {
+  it("#given team mode is enabled #when process cleanup runs #then durable session team runs are preserved", async () => {
     const args = {
       ctx: createContext("/tmp/project"),
       pluginConfig: OhMyOpenCodeConfigSchema.parse({
@@ -285,16 +276,29 @@ describe("createManagers", () => {
 
     await registeredCleanupManagers[0]?.shutdown()
 
-    expect(cleanupSessionTeamRunsMock).toHaveBeenCalledTimes(1)
-    const cleanupArgs = cleanupSessionTeamRunsCalls[0]
-    if (cleanupArgs === undefined) {
-      throw new Error("cleanupSessionTeamRuns was not called")
+    expect(cleanupSessionTeamRunsSpy).not.toHaveBeenCalled()
+  })
+
+  it("#given team mode is enabled #when background manager shutdown runs #then durable session team runs are preserved", async () => {
+    const args = {
+      ctx: createContext("/tmp/project"),
+      pluginConfig: OhMyOpenCodeConfigSchema.parse({
+        team_mode: {
+          enabled: true,
+          tmux_visualization: true,
+        },
+      }),
+      tmuxConfig: createTmuxConfig(true),
+      modelCacheState: createModelCacheState(),
+      backgroundNotificationHookEnabled: false,
+      deps: createDeps(),
     }
-    expect(cleanupArgs).toMatchObject({
-      config: args.pluginConfig.team_mode,
-    })
-    expect(cleanupArgs?.tmuxMgr).toBeInstanceOf(MockTmuxSessionManager)
-    expect(cleanupArgs?.bgMgr).toBeInstanceOf(MockBackgroundManager)
+
+    const managers = createManagers(args)
+
+    await managers.backgroundManager.shutdown()
+
+    expect(cleanupSessionTeamRunsSpy).not.toHaveBeenCalled()
   })
 
   it("#given TuiStateMirror is enabled #when managers are created and cleanup runs #then it starts and stops the mirror", async () => {

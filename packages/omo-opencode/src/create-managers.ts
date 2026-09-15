@@ -7,7 +7,6 @@ import { BackgroundManager } from "./features/background-agent"
 import type { MonitorManager } from "./features/monitor"
 import { createMonitorManager } from "./features/monitor"
 import { SkillMcpManager } from "./features/skill-mcp-manager"
-import { cleanupSessionTeamRuns } from "./features/team-mode/team-runtime/session-cleanup"
 import { reconcileTeamBackgroundOutcome } from "./features/team-mode/team-runtime/background-member-outcome"
 import { lookupTeamSession } from "./features/team-mode/team-session-registry"
 import { TuiStateMirror } from "./features/tui-sidebar/mirror-manager"
@@ -32,7 +31,6 @@ type CreateManagersDeps = {
   createMonitorManagerFn: typeof createMonitorManager
   initTaskToastManagerFn: typeof initTaskToastManager
   registerManagerForCleanupFn: typeof registerManagerForCleanup
-  cleanupSessionTeamRunsFn: typeof cleanupSessionTeamRuns
   createConfigHandlerFn: typeof createConfigHandler
   markServerRunningInProcessFn: typeof markServerRunningInProcess
 }
@@ -45,7 +43,6 @@ const defaultCreateManagersDeps: CreateManagersDeps = {
   createMonitorManagerFn: createMonitorManager,
   initTaskToastManagerFn: initTaskToastManager,
   registerManagerForCleanupFn: registerManagerForCleanup,
-  cleanupSessionTeamRunsFn: cleanupSessionTeamRuns,
   createConfigHandlerFn: createConfigHandler,
   markServerRunningInProcessFn: markServerRunningInProcess,
 }
@@ -104,24 +101,9 @@ export function createManagers(args: {
     })
     : undefined
 
-  const cleanupTeamModeRuns = async (): Promise<void> => {
-    if (!pluginConfig.team_mode?.enabled) return
-    const report = await deps.cleanupSessionTeamRunsFn({
-      config: pluginConfig.team_mode,
-      tmuxMgr: tmuxSessionManager,
-      bgMgr: backgroundManager,
-    })
-    if (report.cleanedTeamRunIds.length > 0 || report.errors.length > 0) {
-      log("[create-managers] team-mode session cleanup complete", report)
-    }
-  }
-
   deps.registerManagerForCleanupFn({
     shutdown: async () => {
       tuiStateMirror?.stop()
-      await cleanupTeamModeRuns().catch((error) => {
-        log("[create-managers] team-mode cleanup error during process shutdown:", error)
-      })
       await tmuxSessionManager.cleanup().catch((error) => {
         log("[create-managers] tmux cleanup error during process shutdown:", error)
       })
@@ -191,9 +173,6 @@ export function createManagers(args: {
     },
     onShutdown: async () => {
       tuiStateMirror?.stop()
-      await cleanupTeamModeRuns().catch((error) => {
-        log("[create-managers] team-mode cleanup error during shutdown:", error)
-      })
       await tmuxSessionManager.cleanup().catch((error) => {
         log("[create-managers] tmux cleanup error during shutdown:", error)
       })
