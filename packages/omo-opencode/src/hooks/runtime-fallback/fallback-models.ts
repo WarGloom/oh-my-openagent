@@ -57,6 +57,10 @@ function getRawFallbackModelsForSession(
       return normalizeFallbackModels(agentConfig.fallback_models)
     }
 
+    if (agentConfig?.models) {
+      return normalizeFallbackModels(agentConfig.models)
+    }
+
     const agentCategory = agentConfig?.category
     if (agentCategory && pluginConfig.categories?.[agentCategory]) {
       const categoryConfig = pluginConfig.categories[agentCategory]
