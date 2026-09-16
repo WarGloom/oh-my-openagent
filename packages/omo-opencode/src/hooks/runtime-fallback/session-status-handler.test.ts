@@ -95,6 +95,35 @@ function createHelpers(abortCalls: string[], retryCalls: Array<{ sessionID: stri
 }
 
 describe("createSessionStatusHandler", () => {
+  it("defers exhausted account pools for initial grace then dispatches fallback", async () => {
+    // given
+    const sessionID = "session-status-exhausted-account-pool"
+    SessionCategoryRegistry.register(sessionID, "test")
+    const deps = createDeps()
+    const abortCalls: string[] = []
+    const retryCalls: Array<{ sessionID: string; model: string; source: string }> = []
+    const handler = createSessionStatusHandler(deps, createHelpers(abortCalls, retryCalls), deps.sessionStatusRetryKeys)
+    const message = "All 3 account(s) failed (server errors or auth issues). Check account health with `codex-health`."
+
+    try {
+      // when
+      await handler({ sessionID, model: "openai/gpt-5.4", status: { type: "retry", attempt: 1, message } })
+
+      // then
+      expect(abortCalls).toEqual([])
+      expect(retryCalls).toEqual([])
+
+      // when
+      await handler({ sessionID, model: "openai/gpt-5.4", status: { type: "retry", attempt: 2, message } })
+
+      // then
+      expect(abortCalls).toEqual([sessionID])
+      expect(retryCalls).toEqual([{ sessionID, model: "google/gemini-2.5-pro", source: "session.status" }])
+    } finally {
+      SessionCategoryRegistry.clear()
+    }
+  })
+
   it("#given model-core retryable patterns #when the adapter status fallback patterns are loaded #then they share the canonical pattern set", () => {
     // given
     const canonicalPatterns = RUNTIME_FALLBACK_RETRYABLE_ERROR_PATTERNS
@@ -586,6 +615,9 @@ describe("createSessionStatusHandler", () => {
     const deps = createDeps()
     deps.config.timeout_seconds = 0
     const abortCalls: string[] = []
+    deps.config.first_progress_timeout_seconds = 0
+    deps.config.stall_timeout_seconds = 0
+    deps.config.hard_timeout_seconds = 0
     const retryCalls: Array<{ sessionID: string; model: string; source: string }> = []
     const helpers = createHelpers(abortCalls, retryCalls)
     const retryStarted = Promise.withResolvers<void>()
@@ -661,6 +693,9 @@ describe("createSessionStatusHandler", () => {
     const deps = createDeps()
     deps.config.timeout_seconds = 0
     deps.sessionStates.set(sessionID, createFallbackState("anthropic/claude-opus-4-7"))
+    deps.config.first_progress_timeout_seconds = 0
+    deps.config.stall_timeout_seconds = 0
+    deps.config.hard_timeout_seconds = 0
     deps.sessionRetryInFlight.add(sessionID)
     const abortCalls: string[] = []
     const retryCalls: Array<{ sessionID: string; model: string; source: string }> = []
