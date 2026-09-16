@@ -12,6 +12,8 @@ export const RUNTIME_FALLBACK_RETRYABLE_ERROR_PATTERNS = [
   /all\s+credentials\s+for\s+model/i,
   /^Claude Code returned an error result: You've hit your (?:session )?limit\s+·\s+resets\s+\d{1,2}(?::\d{2})?(?:am|pm)\b/im,
   /^All [1-9]\d* account\(s\) failed \(server errors or auth issues\)\. Check account health with `codex-health`\.$/i,
+  /Meridian['’]s session bookkeeping is saturated/i,
+  /shared session mapping changed before publication/i,
   /cool(?:ing)?\s+down/i,
   /model.{0,20}?not.{0,10}?supported/i,
   /model_not_supported/i,
