@@ -41,6 +41,26 @@ describe("runtime fallback error classifier", () => {
       .toEqual([true, true, false, false])
   })
 
+  test("retries exhausted account pools without retrying individual auth failures", () => {
+    //#given
+    const message = "All 3 account(s) failed (server errors or auth issues). Check account health with `codex-health`."
+    const unrelatedMessages = [
+      "Account authentication failed: invalid credentials",
+      "Server errors or auth issues prevented authentication",
+      `Documentation example: ${message}`,
+      `"${message}"`,
+    ]
+
+    //#when
+    const retryable = isRuntimeFallbackRetryableError({ message, status: message }, DEFAULT_RETRY_CODES)
+
+    //#then
+    expect(retryable).toBe(true)
+    for (const unrelatedMessage of unrelatedMessages) {
+      expect(isRuntimeFallbackRetryableError({ message: unrelatedMessage }, DEFAULT_RETRY_CODES)).toBe(false)
+    }
+  })
+
   test("classifies representative Anthropic provider payloads without adapter state", () => {
     //#given
     const cases = [
