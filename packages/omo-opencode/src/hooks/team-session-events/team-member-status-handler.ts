@@ -2,13 +2,18 @@ import type { TeamModeConfig } from "../../config/schema/team-mode"
 import { isActiveSessionStatus } from "../../features/background-agent/session-status-classifier"
 import type { BackgroundTask } from "../../features/background-agent/types"
 import { findResolvedMemberSession } from "../../features/team-mode/member-session-resolution"
+import { withInboxConsumerLease } from "../../features/team-mode/team-mailbox"
 import { lookupTeamSession } from "../../features/team-mode/team-session-registry"
 import { loadRuntimeState, transitionRuntimeState } from "../../features/team-mode/team-state-store/store"
 import type { RuntimeStateMember } from "../../features/team-mode/types"
 import { resolveSessionEventID } from "../../shared/event-session-id"
 import { log } from "../../shared/logger"
+import { captureTerminalSettlementRecoveryCheck } from "./pending-claim-settlement"
 
-type HookInput = { event: { type: string; properties?: unknown } }
+type HookInput = {
+  event: { type: string; properties?: unknown }
+  canRecoverFromError?: () => boolean
+}
 export type HookImpl = (input: HookInput) => Promise<void>
 
 type MemberStatus = RuntimeStateMember["status"]
@@ -22,9 +27,9 @@ type TeamMemberStatusHandlerDeps = {
   }
 }
 
-const IDLE_TRANSITION_SOURCE_STATUSES: ReadonlySet<MemberStatus> = new Set(["running"])
+const IDLE_TRANSITION_SOURCE_STATUSES: ReadonlySet<MemberStatus> = new Set(["running", "errored"])
 const COMPLETED_TRANSITION_SOURCE_STATUSES: ReadonlySet<MemberStatus> = new Set(["running", "idle", "pending"])
-const ACTIVE_TRANSITION_SOURCE_STATUSES: ReadonlySet<MemberStatus> = new Set(["pending", "idle"])
+const ACTIVE_TRANSITION_SOURCE_STATUSES: ReadonlySet<MemberStatus> = new Set(["pending", "idle", "errored"])
 
 function getSessionStatusType(properties: unknown): string | undefined {
   if (typeof properties !== "object" || properties === null || !("status" in properties)) return undefined
@@ -56,7 +61,7 @@ async function transitionMemberStatus(
   if (!allowedSources.has(currentEntry.status)) return
 
   let transitioned = false
-  await transitionRuntimeState(runtimeState.teamRunId, (currentRuntimeState) => {
+  const commitTransition = () => transitionRuntimeState(runtimeState.teamRunId, (currentRuntimeState) => {
     if (!isCurrent() || (currentRuntimeState.status !== "active" && currentRuntimeState.status !== "creating")) return currentRuntimeState
     const registered = lookupTeamSession(sessionID)
     const isSpawnRace = registered?.teamRunId === runtimeMember.teamRunId && registered.memberName === runtimeMember.memberName
@@ -70,6 +75,12 @@ async function transitionMemberStatus(
       }),
     }
   }, config)
+  if (currentEntry.status === "errored") {
+    if (!isCurrent()) return
+    await withInboxConsumerLease(runtimeState.teamRunId, runtimeMember.memberName, config, commitTransition, { staleAfterMs: 0 })
+  } else {
+    await commitTransition()
+  }
 
   if (!transitioned) return
   log(`team member ${eventLabel}`, {
@@ -120,7 +131,10 @@ export function createTeamMemberStatusHandler(
   config: TeamModeConfig,
   deps: TeamMemberStatusHandlerDeps = {},
 ): HookImpl {
-  return async ({ event }: HookInput): Promise<void> => {
+  return async ({ event, canRecoverFromError }: HookInput): Promise<void> => {
+    const recoverySessionID = resolveSessionEventID(event.properties)
+    if (!recoverySessionID) return
+    const recoveryIsCurrent = canRecoverFromError ?? captureTerminalSettlementRecoveryCheck(recoverySessionID)
     if (event.type === "session.status") {
       const sessionID = resolveSessionEventID(event.properties)
       const statusType = getSessionStatusType(event.properties)
@@ -128,7 +142,7 @@ export function createTeamMemberStatusHandler(
       try {
         const runtimeMember = await findResolvedMemberSession(sessionID, config, "team member status handler")
         if (runtimeMember === null) return
-        await transitionMemberStatus(runtimeMember, ACTIVE_TRANSITION_SOURCE_STATUSES, "running", config, sessionID, "running")
+        await transitionMemberStatus(runtimeMember, ACTIVE_TRANSITION_SOURCE_STATUSES, "running", config, sessionID, "running", recoveryIsCurrent)
       } catch (error) {
         log("team member status handler failed on session.status", {
           event: "team-mode-member-status-handler-error",
@@ -165,7 +179,7 @@ export function createTeamMemberStatusHandler(
           })
           return
         }
-        await transitionMemberStatus(runtimeMember, IDLE_TRANSITION_SOURCE_STATUSES, "idle", config, sessionID, "idled")
+        await transitionMemberStatus(runtimeMember, IDLE_TRANSITION_SOURCE_STATUSES, "idle", config, sessionID, "idled", recoveryIsCurrent)
       } catch (error) {
         log("team member status handler failed on session.idle", {
           event: "team-mode-member-status-handler-error",

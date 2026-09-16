@@ -20,8 +20,8 @@ import { reconcileTeamBackgroundOutcome } from "../../features/team-mode/team-ru
 
 const temporaryDirectories: string[] = []
 const activeSessionStatusTypes = ["busy", "retry", "running"] as const
-const activatableMemberStatuses = ["pending", "idle"] as const
-const protectedMemberStatuses = ["running", "errored", "completed", "shutdown_approved"] as const
+const activatableMemberStatuses = ["pending", "idle", "errored"] as const
+const protectedMemberStatuses = ["running", "completed", "shutdown_approved"] as const
 
 async function createTemporaryBaseDir(): Promise<string> {
   const baseDir = await mkdtemp(path.join(tmpdir(), "team-member-status-handler-"))
@@ -123,7 +123,9 @@ describe("createTeamMemberStatusHandler", () => {
     await reconcileTeamBackgroundOutcome({ ...outcome, status: "cancelled" }, config, () => true)
     expect((await loadRuntimeState(teamRunId, config)).members[0]?.status).toBe("running")
     await reconcileTeamBackgroundOutcome(outcome, config, () => true)
-    await createTeamMemberStatusHandler(config)({ event: { type: "session.idle", properties: { sessionID: outcome.sessionId } } })
+    await createTeamMemberStatusHandler(config, {
+      backgroundManager: { findBySession: () => outcome },
+    })({ event: { type: "session.idle", properties: { sessionID: outcome.sessionId } } })
     expect((await loadRuntimeState(teamRunId, config)).members[0]?.status).toBe("errored")
   })
   test("leaves a pending member unchanged for an unknown session.status value", async () => {
@@ -291,7 +293,7 @@ describe("createTeamMemberStatusHandler", () => {
     expect(runtimeState.members[0]?.status).toBe("idle")
   })
 
-  test("never overrides a terminal errored status on session.idle", async () => {
+  test("transitions an errored member to idle on a later session.idle", async () => {
     // given
     const baseDir = await createTemporaryBaseDir()
     const config = createConfig(baseDir)
@@ -304,7 +306,7 @@ describe("createTeamMemberStatusHandler", () => {
 
     // then
     const runtimeState = await loadRuntimeState(teamRunId, config)
-    expect(runtimeState.members[0]?.status).toBe("errored")
+    expect(runtimeState.members[0]?.status).toBe("idle")
   })
 
   test("marks a running member completed when its session is deleted", async () => {

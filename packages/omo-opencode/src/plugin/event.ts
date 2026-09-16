@@ -6,6 +6,7 @@ import type { PluginContext } from "./types";
 
 import { isActiveSessionStatus } from "../features/background-agent/session-status-classifier";
 import { getMainSessionID, subagentSessions, syncSubagentSessions } from "../features/claude-code-session-state";
+import { captureTerminalSettlementRecoveryCheck } from "../hooks/team-session-events/pending-claim-settlement";
 import { invalidateContextWindowUsageCache } from "../shared/dynamic-truncator";
 import { resolveSessionEventID } from "../shared/event-session-id";
 import { log } from "../shared/logger";
@@ -76,13 +77,14 @@ export function createEventHandler(args: {
     return true;
   };
 
-  const dispatchIdleOnlyHooks = async (input: EventInput): Promise<void> => {
+  const dispatchIdleOnlyHooks = async (input: EventInput, canRecoverFromError: () => boolean): Promise<void> => {
     managers.tmuxSessionManager?.onEvent?.(input.event);
+    const statusInput = { ...input, canRecoverFromError };
+    await runEventHookSafely("teamMemberStatusHandler", teamHandlers.teamMemberStatusHandler, statusInput);
     await runEventHookSafely("teamIdleWakeHint", teamHandlers.teamIdleWakeHint, input);
-    await runEventHookSafely("teamMemberStatusHandler", teamHandlers.teamMemberStatusHandler, input);
   };
 
-  const dispatchSyntheticIdle = async (syntheticIdle: EventInput): Promise<void> => {
+  const dispatchSyntheticIdle = async (syntheticIdle: EventInput, canRecoverFromError: () => boolean): Promise<void> => {
     const sessionID = (syntheticIdle.event.properties as Record<string, unknown>)?.sessionID as string;
     const now = Date.now();
     const emittedAt = recentRealIdles.get(sessionID);
@@ -101,10 +103,14 @@ export function createEventHandler(args: {
       rawEvent: "session.idle",
       sessionID,
     });
-    await dispatchIdleOnlyHooks(syntheticIdle);
+    await dispatchIdleOnlyHooks(syntheticIdle, canRecoverFromError);
   };
 
   return async (input): Promise<void> => {
+    const recoverySessionID = resolveSessionEventID(input.event.properties);
+    const canRecoverFromError = recoverySessionID
+      ? captureTerminalSettlementRecoveryCheck(recoverySessionID)
+      : () => false;
     pruneRecentSyntheticIdles({
       recentSyntheticIdles,
       recentRealIdles,
@@ -123,7 +129,7 @@ export function createEventHandler(args: {
         const emittedAt = recentSyntheticIdles.get(sessionID);
         if (emittedAt !== undefined && now - emittedAt < dedupWindowMs) recentSyntheticIdles.delete(sessionID);
       }
-      await dispatchIdleOnlyHooks(input);
+      await dispatchIdleOnlyHooks(input, canRecoverFromError);
       idleOnlyHooksDispatched = true;
       if (sessionID) {
         const now = Date.now();
@@ -133,7 +139,7 @@ export function createEventHandler(args: {
     }
 
     await dispatchToHooks(input);
-    if (syntheticIdle) await dispatchSyntheticIdle(syntheticIdle);
+    if (syntheticIdle) await dispatchSyntheticIdle(syntheticIdle, canRecoverFromError);
 
     const { event } = input;
     managers.tuiStateMirror?.onEvent(event);
@@ -176,7 +182,7 @@ export function createEventHandler(args: {
       if (sessionID) {
         await dispatchOpenClawSessionEvent({ pluginConfig, pluginContext, managers, rawEvent: event.type, sessionID });
       }
-      if (!idleOnlyHooksDispatched) await dispatchIdleOnlyHooks(input);
+      if (!idleOnlyHooksDispatched) await dispatchIdleOnlyHooks(input, canRecoverFromError);
       await Promise.resolve().then(() => managers.monitorManager?.handleEvent({
         type: "session.idle",
         sessionId: resolveSessionEventID(props) ?? "",
@@ -216,7 +222,8 @@ export function createEventHandler(args: {
         && status?.type
         && isActiveSessionStatus(status.type)
       ) {
-        await runEventHookSafely("teamMemberStatusHandler", teamHandlers.teamMemberStatusHandler, input);
+        const statusInput = { ...input, canRecoverFromError };
+        await runEventHookSafely("teamMemberStatusHandler", teamHandlers.teamMemberStatusHandler, statusInput);
       }
       if (sessionID) {
         try {
