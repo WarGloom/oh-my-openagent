@@ -26,6 +26,8 @@ function formatMonitor(record: MonitorRecord) {
     mode: record.mode,
     startedAt: formatStartedAt(record.startedAt),
     status: record.status,
+    ...(record.exitCode !== undefined && { exitCode: record.exitCode }),
+    ...(record.signal !== undefined && { signal: record.signal }),
     counters: {
       matched: record.counters.matchedLines,
       unmatched: record.counters.unmatchedLines,
@@ -44,7 +46,7 @@ export function createMonitorList(
   return tool({
     description: `List monitors owned by the current session.
 
-Returns id, label, mode, startedAt, status, and counters. Raw commands are never included.`,
+Returns id, label, mode, startedAt, status, exitCode and signal when available, and counters. Raw commands are never included.`,
     args: {
       include_exited: tool.schema
         .boolean()

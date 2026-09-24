@@ -1,3 +1,5 @@
+import { getSessionAgent } from "../features/claude-code-session-state/state"
+
 export type SessionModel = { readonly providerID: string; readonly modelID: string }
 export type SessionModelWithVariant = SessionModel & { readonly variant?: string }
 export type StoredSessionModel = SessionModelWithVariant & { readonly agent?: string }
@@ -34,6 +36,22 @@ export function getStoredSessionModel(sessionID: string): StoredSessionModel | u
     modelID: storedModel.modelID,
     ...(storedModel.variant ? { variant: storedModel.variant } : {}),
     ...(storedModel.agent ? { agent: storedModel.agent } : {}),
+  }
+}
+
+export function getLiveParentPromptSelection(sessionID: string): {
+  readonly model: SessionModel
+  readonly variant?: string
+  readonly agent?: string
+} | undefined {
+  const stored = getStoredSessionModel(sessionID)
+  if (!stored) return undefined
+
+  const agent = stored.agent ?? getSessionAgent(sessionID)
+  return {
+    model: { providerID: stored.providerID, modelID: stored.modelID },
+    ...(stored.variant ? { variant: stored.variant } : {}),
+    ...(agent ? { agent } : {}),
   }
 }
 

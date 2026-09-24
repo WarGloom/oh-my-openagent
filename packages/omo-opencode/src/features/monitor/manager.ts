@@ -137,6 +137,35 @@ export class MonitorManager implements MonitorManagerContract {
       .map((record) => ({ ...record }))
   }
 
+  getActiveMonitorCounts(): ReadonlyMap<string, number> {
+    const counts = new Map<string, number>()
+    for (const state of this.monitors.values()) {
+      if (state.record.status !== "starting" && state.record.status !== "running") continue
+      const sessionId = state.record.parentSessionId
+      counts.set(sessionId, (counts.get(sessionId) ?? 0) + 1)
+    }
+    return counts
+  }
+
+  getActiveMonitorLabels(): ReadonlyMap<string, readonly string[]> {
+    const labels = new Map<string, string[]>()
+    for (const state of this.monitors.values()) {
+      if (state.record.status !== "starting" && state.record.status !== "running") continue
+      const sessionId = state.record.parentSessionId
+      labels.set(sessionId, [...(labels.get(sessionId) ?? []), state.record.label])
+    }
+    return labels
+  }
+
+  hasMonitorWork(sessionId: string): boolean {
+    for (const id of this.monitorsByParentSession.get(sessionId) ?? []) {
+      const state = this.monitors.get(id)
+      if (state?.record.status === "starting" || state?.record.status === "running"
+        || state?.injector.hasPendingTerminalOutput?.(id)) return true
+    }
+    return false
+  }
+
   get(id: MonitorId): MonitorRecord | undefined {
     const record = this.monitors.get(id)?.record
     return record ? { ...record } : undefined
@@ -222,9 +251,7 @@ export class MonitorManager implements MonitorManagerContract {
   }
 
   private assertSessionCapacity(sessionId: string): void {
-    const activeCount = [...this.monitorsByParentSession.get(sessionId) ?? []]
-      .map((id) => this.monitors.get(id)?.record.status)
-      .filter((status) => status === "starting" || status === "running").length
+    const activeCount = this.getActiveMonitorCounts().get(sessionId) ?? 0
 
     if (activeCount >= this.config.max_monitors_per_session) {
       throw new Error(`max_monitors_per_session reached for session ${sessionId}`)
