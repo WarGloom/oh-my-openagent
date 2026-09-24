@@ -1,5 +1,5 @@
 import { MAX_AGENTS, MAX_JOBS } from "./constants"
-import { readSessionJobsMirror } from "./session-jobs-mirror"
+import { readSessionJobsMirrorSnapshot } from "./session-jobs-mirror"
 import type { TuiRuntimeSnapshot } from "./snapshot-schema"
 import type {
   AgentsState,
@@ -60,11 +60,20 @@ export function deriveCurrentSessionJobs(
   sessionId: string | null,
   now: number = Date.now(),
 ): JobBoardState {
+  return deriveCurrentSessionActivity(projectDir, sessionId, now).jobs
+}
+
+export function deriveCurrentSessionActivity(
+  projectDir: string,
+  sessionId: string | null,
+  now: number = Date.now(),
+): { readonly jobs: JobBoardState; readonly monitors: number } {
   if (sessionId === null) {
-    return { kind: "none" }
+    return { jobs: { kind: "none" }, monitors: 0 }
   }
 
-  return deriveJobs(readSessionJobsMirror(projectDir, sessionId, now))
+  const mirror = readSessionJobsMirrorSnapshot(projectDir, sessionId, now)
+  return { jobs: deriveJobs(mirror?.jobs ?? null), monitors: mirror?.activeMonitorCount ?? 0 }
 }
 
 function deriveJobs(jobs: readonly JobRow[] | null): JobBoardState {

@@ -7,7 +7,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { computeView, viewKey } from "./compute-view"
-import { deriveAgents, deriveConfig, deriveCurrentSessionJobs, deriveLoop, deriveRoster, deriveTeams } from "./derivers"
+import { deriveAgents, deriveConfig, deriveCurrentSessionActivity, deriveCurrentSessionJobs, deriveLoop, deriveRoster, deriveTeams } from "./derivers"
 import { MAX_AGENTS, MAX_JOBS, MIRROR_SCHEMA_VERSION, STALE_MS } from "./constants"
 import { canonicalProjectDir, mirrorStorageDir } from "./mirror-path"
 import { writeSessionJobsMirror } from "./session-jobs-mirror"
@@ -241,11 +241,27 @@ describe("exact current-session Jobs derivation", () => {
     expect(states).toEqual([{ kind: "list", jobs: sessionAJobs }, { kind: "list", jobs: sessionBJobs }, { kind: "none" }, { kind: "list", jobs: sessionAJobs }])
   })
 
+  it("#given session-specific monitor counts #when selecting current sessions #then counts cannot cross routes", () => {
+    // given
+    writeSessionJobsMirror(projectDir, SESSION_A, [], NOW, 1)
+    writeSessionJobsMirror(projectDir, SESSION_B, sessionBJobs, NOW, 2)
+
+    // when
+    const activities = [SESSION_A, SESSION_B, null].map((sessionId) => deriveCurrentSessionActivity(projectDir, sessionId, NOW))
+
+    // then
+    expect(activities).toEqual([
+      { jobs: { kind: "none" }, monitors: 1 },
+      { jobs: { kind: "list", jobs: sessionBJobs }, monitors: 2 },
+      { jobs: { kind: "none" }, monitors: 0 },
+    ])
+  })
+
   const invalidSessionCases: readonly (readonly [string, () => void])[] = [
     ["missing", () => undefined],
     ["malformed", () => overwriteSessionFile(SESSION_A, "{")],
     ["stale", () => writeSessionJobsMirror(projectDir, SESSION_A, sessionAJobs, NOW - STALE_MS - 1)],
-    ["foreign", () => overwriteSessionFile(SESSION_A, { version: 1, projectDir: canonicalProjectDir(projectDir), parentSessionId: "foreign", updatedAt: NOW, jobs: sessionAJobs })],
+    ["foreign", () => overwriteSessionFile(SESSION_A, { version: 2, projectDir: canonicalProjectDir(projectDir), parentSessionId: "foreign", updatedAt: NOW, jobs: sessionAJobs, activeMonitorCount: 0 })],
   ]
   for (const [condition, prepareA] of invalidSessionCases) {
     it(`#given a ${condition} session A mirror and fresh session B #when deriving both #then A is none and B stays isolated`, () => {

@@ -17,10 +17,15 @@ type TuiBackgroundSnapshotProvider = {
   readonly getTasksSnapshot: () => readonly BackgroundTaskSnapshot[]
 }
 
+type TuiMonitorCountsProvider = {
+  readonly getActiveMonitorCounts: () => ReadonlyMap<string, number>
+}
+
 export type TuiStateMirrorInput = {
   readonly client: TuiMirrorClient
   readonly projectDir: string
   readonly backgroundManager: TuiBackgroundSnapshotProvider
+  readonly monitorManager?: TuiMonitorCountsProvider
   readonly getStatuses?: () => Promise<SessionStatusMap>
   readonly sessionAgentResolver?: SessionAgentResolver
   readonly teamModeConfig?: TeamModeConfig
@@ -36,6 +41,7 @@ export class TuiStateMirror {
   private resolvePendingFlush: (() => void) | null = null
   private inFlightFlush: Promise<void> | null = null
   private stopped = false
+  private previousSessionIds = new Set<string>()
 
   constructor(input: TuiStateMirrorInput) {
     this.snapshotInput = input
@@ -145,9 +151,18 @@ export class TuiStateMirror {
           jobsByParentSession.set(parentSessionId, [job])
         }
       }
-      for (const [parentSessionId, jobs] of jobsByParentSession) {
-        writeSessionJobsMirror(this.snapshotInput.projectDir, parentSessionId, jobs, snapshot.updatedAt)
+      const monitorCounts = this.snapshotInput.monitorManager?.getActiveMonitorCounts() ?? new Map<string, number>()
+      const sessionIds = new Set([...jobsByParentSession.keys(), ...monitorCounts.keys(), ...this.previousSessionIds])
+      for (const parentSessionId of sessionIds) {
+        writeSessionJobsMirror(
+          this.snapshotInput.projectDir,
+          parentSessionId,
+          jobsByParentSession.get(parentSessionId) ?? [],
+          snapshot.updatedAt,
+          monitorCounts.get(parentSessionId) ?? 0,
+        )
       }
+      this.previousSessionIds = new Set([...jobsByParentSession.keys(), ...monitorCounts.keys()])
     } catch (error) {
       if (error instanceof Error) {
         this.reportFlushError(error)

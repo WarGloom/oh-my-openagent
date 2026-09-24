@@ -16,6 +16,7 @@ export type MonitorPromptClient = PromptDispatchClient & InternalPromptDispatchA
 export interface MonitorInjector {
   queueBatch(record: MonitorRecord, batch: OutputBatch): void
   flushMonitor(monitorId: string): Promise<void>
+  hasPendingTerminalOutput?(monitorId: string): boolean
 }
 
 export interface InternalMonitorState {

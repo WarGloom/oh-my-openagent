@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test"
 import { MonitorOutputInjector } from "./output-injector"
 import type { MonitorCounters, MonitorRecord, OutputBatch } from "./types"
 import type { InternalPromptDispatchResult, PromptAsyncInput, PromptDispatchClient } from "@oh-my-opencode/utils/prompt-async-gate/types"
+import { clearSessionModel, setSessionModel } from "../../shared/session-model-state"
 
 type DispatchCall = {
   source: string
@@ -59,6 +60,7 @@ function createHarness(opts: {
   active?: boolean
   messages?: FakeMessage[]
   dispatchResults?: InternalPromptDispatchResult[]
+  dispatchResult?: () => Promise<InternalPromptDispatchResult>
   now?: number
 } = {}): {
   injector: MonitorOutputInjector
@@ -104,7 +106,7 @@ function createHarness(opts: {
         checkStatus: args.checkStatus,
         checkToolState: args.checkToolState,
       })
-      return dispatchResults.shift() ?? { status: "dispatched", response: { ok: true } }
+      return opts.dispatchResult ? opts.dispatchResult() : dispatchResults.shift() ?? { status: "dispatched", response: { ok: true } }
     },
     scheduleFlush: () => {},
   })
@@ -131,6 +133,64 @@ function latestUserMessage(createdAt: number, text = "real user prompt"): FakeMe
 }
 
 describe("MonitorOutputInjector", () => {
+  test("uses the latest accepted parent model at dispatch rather than at batch queueing", async () => {
+    // given
+    const record = createRecord()
+    const harness = createHarness()
+    setSessionModel(record.parentSessionId, { providerID: "provider-a", modelID: "model-a", variant: "variant-a" }, "agent-a")
+    harness.injector.queueBatch(record, createBatch(49))
+    setSessionModel(record.parentSessionId, { providerID: "provider-b", modelID: "model-b", variant: "variant-b" }, "agent-b")
+
+    // when
+    await harness.injector.flushMonitor(record.id)
+
+    // then
+    expect(harness.calls).toHaveLength(1)
+    expect(harness.calls[0]?.input.body).toMatchObject({ model: { providerID: "provider-b", modelID: "model-b" }, variant: "variant-b", agent: "agent-b" })
+    clearSessionModel(record.parentSessionId)
+  })
+
+  test("leaves the existing monitor prompt body alone without a stored selection", async () => {
+    // given
+    const harness = createHarness()
+    const record = createRecord()
+    harness.injector.queueBatch(record, createBatch(50))
+
+    // when
+    await harness.injector.flushMonitor(record.id)
+
+    // then
+    expect(harness.calls).toHaveLength(1)
+    expect(harness.calls[0]?.input.body).not.toHaveProperty("model")
+  })
+
+  test("reports terminal delivery while queued and while dispatch is in flight, then releases it", async () => {
+    // given
+    const terminal = { ...createBatch(9), stillRunning: false }
+    const record = createRecord({ status: "exited" })
+    const dispatch = Promise.withResolvers<InternalPromptDispatchResult>()
+    const dispatchStarted = Promise.withResolvers<void>()
+    const { injector } = createHarness({ dispatchResult: () => {
+      dispatchStarted.resolve()
+      return dispatch.promise
+    } })
+    injector.queueBatch(record, terminal)
+    expect(injector.hasPendingTerminalOutput(record.id)).toBe(true)
+
+    // when
+    const flush = injector.flushMonitor(record.id)
+    await dispatchStarted.promise
+    const duringDispatch = injector.hasPendingTerminalOutput(record.id)
+    expect(injector.getPendingBatches(record.id)).toEqual([])
+    dispatch.resolve({ status: "dispatched", response: { ok: true } })
+    await flush
+
+    // then
+    expect(injector.getPendingBatches(record.id)).toEqual([])
+    expect(duringDispatch).toBe(true)
+    expect(injector.hasPendingTerminalOutput(record.id)).toBe(false)
+  })
+
   describe("#given an idle-mode batch while the parent session is active", () => {
     test("#when flushing #then it does not dispatch and keeps the same batch pending", async () => {
       // given

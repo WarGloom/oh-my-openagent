@@ -30,6 +30,7 @@ export function buildViewNodes(view: SidebarView, theme: ThemeLike, teamInteract
           ...configBannerNodes(view.configBanner, theme),
           ...loopNodes(view.loop, theme),
           ...jobNodes(view.jobs, theme),
+          ...monitorNodes(view.monitors, theme),
           ...teamNodes(view.teams, theme, teamInteraction),
         ]),
       ]
@@ -53,6 +54,7 @@ function linesForView(view: SidebarView): string[] {
         ...configBannerLines(view.configBanner),
         ...loopLines(view.loop),
         ...jobLines(view.jobs),
+        ...monitorLines(view.monitors),
         ...teamLines(view.teams),
       ]
     case "broken":
@@ -154,6 +156,14 @@ function jobLines(jobs: JobBoardState): string[] {
     default:
       return assertNever(jobs)
   }
+}
+
+function monitorNodes(count: number, theme: ThemeLike): ViewNode[] {
+  return count > 0 ? [section("Monitors", theme, [text({ fg: theme.text }, `active ${count}`)])] : []
+}
+
+function monitorLines(count: number): string[] {
+  return count > 0 ? [`monitors ${count}`] : []
 }
 
 function brokenNodes(messages: readonly string[], theme: ThemeLike): ViewNode[] {

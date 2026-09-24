@@ -6,6 +6,7 @@ import {
 } from "../../shared"
 import { isSessionActive as isOpenCodeSessionActive, settleAfterSessionIdle } from "../../shared/session-idle-settle"
 import { dispatchInternalPrompt, isInternalPromptDispatchAccepted } from "../../shared/prompt-async-gate"
+import { getLiveParentPromptSelection } from "../../shared/session-model-state"
 import type { InternalPromptDispatchArgs, InternalPromptDispatchResult, PromptAsyncInput } from "@oh-my-opencode/utils/prompt-async-gate/types"
 import { formatMonitorBatch } from "./envelope"
 import {
@@ -23,6 +24,7 @@ export class MonitorOutputInjector {
   private readonly dispatchedOutputs: Map<string, DispatchedMonitorOutput> = new Map()
   private readonly deliveredSources: Set<string> = new Set()
   private readonly queuedAtBySource: Map<string, number> = new Map()
+  private readonly dispatchingTerminalBatches = new Map<string, number>()
 
   constructor(private readonly deps: MonitorOutputInjectorDeps) {
     if (deps.postDispatchHoldMs <= 0) {
@@ -53,6 +55,11 @@ export class MonitorOutputInjector {
 
   getPendingBatches(monitorId: string): OutputBatch[] {
     return [...this.pendingOutputs.get(monitorId)?.batches ?? []]
+  }
+
+  hasPendingTerminalOutput(monitorId: string): boolean {
+    return (this.dispatchingTerminalBatches.get(monitorId) ?? 0) > 0
+      || (this.pendingOutputs.get(monitorId)?.batches.some((batch) => !batch.stillRunning) ?? false)
   }
 
   async flushMonitor(monitorId: string): Promise<void> {
@@ -124,7 +131,19 @@ export class MonitorOutputInjector {
         this.pendingOutputs.delete(monitorId)
       }
 
-      const delivered = await this.dispatchBatch(pending.record, batch, source, forceActiveDispatch)
+      if (this.isTerminalBatch(batch)) {
+        this.dispatchingTerminalBatches.set(monitorId, (this.dispatchingTerminalBatches.get(monitorId) ?? 0) + 1)
+      }
+      let delivered: boolean
+      try {
+        delivered = await this.dispatchBatch(pending.record, batch, source, forceActiveDispatch)
+      } finally {
+        if (this.isTerminalBatch(batch)) {
+          const remaining = (this.dispatchingTerminalBatches.get(monitorId) ?? 1) - 1
+          if (remaining === 0) this.dispatchingTerminalBatches.delete(monitorId)
+          else this.dispatchingTerminalBatches.set(monitorId, remaining)
+        }
+      }
       if (!delivered) {
         this.requeueBatch(pending.record, batch)
         return
@@ -162,6 +181,7 @@ export class MonitorOutputInjector {
           path: { id: sessionID },
           body: {
             noReply: !shouldReply,
+            ...getLiveParentPromptSelection(sessionID),
             parts: [
               shouldReply
                 ? createInternalAgentTextPart(content)

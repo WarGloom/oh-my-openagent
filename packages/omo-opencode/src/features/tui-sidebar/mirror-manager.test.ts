@@ -9,7 +9,7 @@ import { HEARTBEAT_MS, STALE_MS, WRITE_DEBOUNCE_MS } from "./constants"
 import { readMirror } from "./mirror-io"
 import { mirrorStorageDir } from "./mirror-path"
 import { TuiStateMirror } from "./mirror-manager"
-import { readSessionJobsMirror, writeSessionJobsMirror } from "./session-jobs-mirror"
+import { readSessionJobsMirror, readSessionJobsMirrorSnapshot, writeSessionJobsMirror } from "./session-jobs-mirror"
 import type { SessionAgentResolver } from "./snapshot-builder"
 import type { BackgroundTaskSnapshot } from "../background-agent/types"
 
@@ -52,6 +52,7 @@ function createMirror(input?: {
   readonly client?: FakeClient
   readonly projectDir?: string
   readonly backgroundManager?: FakeBackgroundManager
+  readonly monitorManager?: { readonly getActiveMonitorCounts: () => ReadonlyMap<string, number> }
   readonly sessionAgentResolver?: SessionAgentResolver
   readonly reportFlushError?: (error: Error) => void
 }): TuiStateMirror {
@@ -60,6 +61,7 @@ function createMirror(input?: {
     client: input?.client ?? createClient({}),
     projectDir,
     backgroundManager: input?.backgroundManager ?? createBackgroundManager([]),
+    monitorManager: input?.monitorManager,
     sessionAgentResolver: input?.sessionAgentResolver ?? resolveTestSessionAgent,
     reportFlushError: input?.reportFlushError,
   })
@@ -122,6 +124,28 @@ describe("TuiStateMirror", () => {
     expect(readSessionJobsMirror(projectDir, "parent-session-b")).toEqual([
       { title: "Review results", status: "completed", toolCalls: 3, lastTool: "read" },
     ])
+  })
+
+  it("#given only monitors in two sessions #when counts change 0 to 1 to 2 to 0 #then each mirror is promptly updated without leaking other activity", async () => {
+    // given
+    const projectDir = makeTempDir("monitor-transitions")
+    let counts: ReadonlyMap<string, number> = new Map()
+    const mirror = createMirror({ projectDir, monitorManager: { getActiveMonitorCounts: () => counts } })
+
+    // when / then
+    await mirror.flush()
+    expect(readSessionJobsMirrorSnapshot(projectDir, "parent-session-a")).toBeNull()
+    counts = new Map([["parent-session-a", 1], ["parent-session-b", 3]])
+    await mirror.flush()
+    expect(readSessionJobsMirrorSnapshot(projectDir, "parent-session-a")).toEqual({ jobs: [], activeMonitorCount: 1 })
+    expect(readSessionJobsMirrorSnapshot(projectDir, "parent-session-b")).toEqual({ jobs: [], activeMonitorCount: 3 })
+    counts = new Map([["parent-session-a", 2], ["parent-session-b", 3]])
+    await mirror.flush()
+    expect(readSessionJobsMirrorSnapshot(projectDir, "parent-session-a")?.activeMonitorCount).toBe(2)
+    counts = new Map([["parent-session-b", 3]])
+    await mirror.flush()
+    expect(readSessionJobsMirrorSnapshot(projectDir, "parent-session-a")).toEqual({ jobs: [], activeMonitorCount: 0 })
+    expect(readSessionJobsMirrorSnapshot(projectDir, "parent-session-b")?.activeMonitorCount).toBe(3)
   })
 
   it("#given a quiet running task #when heartbeats continue beyond staleness #then its session Jobs mirror stays fresh", async () => {

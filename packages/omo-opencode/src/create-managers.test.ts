@@ -326,6 +326,26 @@ describe("createManagers", () => {
     expect(tuiMirrorStopCount).toBe(1)
   })
 
+  it("#given monitor and sidebar enabled #when managers are created #then the sidebar receives the same session-scoped monitor manager", () => {
+    // given
+    const args = {
+      ctx: createContext("/tmp/project"),
+      pluginConfig: OhMyOpenCodeConfigSchema.parse({ monitor: { enabled: true } }),
+      tmuxConfig: createTmuxConfig(false),
+      modelCacheState: createModelCacheState(),
+      backgroundNotificationHookEnabled: false,
+      deps: createDeps(),
+    }
+
+    // when
+    const managers = createManagers(args)
+
+    // then
+    expect(managers.monitorManager).toBeDefined()
+    expect(tuiMirrorConstructedInputs[0]).toMatchObject({ monitorManager: managers.monitorManager })
+    managers.tuiStateMirror?.stop()
+  })
+
   it("#given TuiStateMirror is enabled #when normal shutdown runs #then it stops the mirror", async () => {
     const args = {
       ctx: createContext("/tmp/project"),

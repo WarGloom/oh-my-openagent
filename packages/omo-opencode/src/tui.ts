@@ -4,7 +4,7 @@ import { registerBtwSideTui } from "./features/btw-side"
 import { registerNativeEditionNudgeTui } from "./features/native-edition-nudge"
 import { computeView, viewKey } from "./features/tui-sidebar/compute-view"
 import { POLL_INTERVAL_MS } from "./features/tui-sidebar/constants"
-import { deriveAgents, deriveConfig, deriveCurrentSessionJobs, deriveLoop, deriveRoster, deriveTeams } from "./features/tui-sidebar/derivers"
+import { deriveAgents, deriveConfig, deriveCurrentSessionActivity, deriveLoop, deriveRoster, deriveTeams } from "./features/tui-sidebar/derivers"
 import type { ViewNode } from "./features/tui-sidebar/element-helpers"
 import { readMirror } from "./features/tui-sidebar/mirror-io"
 import { buildViewNodes } from "./features/tui-sidebar/render-view"
@@ -105,12 +105,14 @@ export async function readView(directory: string, sessionId: string | null, team
   const mirror = readMirror(directory)
   const roster = await loadRosterRows(directory)
   const freshTeams = deriveTeams(mirror)
+  const activity = deriveCurrentSessionActivity(directory, sessionId)
   teamCache.update(freshTeams)
   return computeView({
     config: deriveConfig(validation),
     roster: deriveRoster(roster),
     agents: deriveAgents(mirror),
-    jobs: deriveCurrentSessionJobs(directory, sessionId),
+    jobs: activity.jobs,
+    monitors: activity.monitors,
     loop: deriveLoop(mirror),
     teams: teamCache.forSession(sessionId),
   })

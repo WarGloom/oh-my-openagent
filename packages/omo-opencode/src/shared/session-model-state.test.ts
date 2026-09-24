@@ -1,7 +1,23 @@
 import { describe, expect, test } from "bun:test"
-import { clearSessionModel, getSessionModel, getStoredSessionModel, setSessionModel } from "./session-model-state"
+import { clearSessionModel, getLiveParentPromptSelection, getSessionModel, getStoredSessionModel, setSessionModel } from "./session-model-state"
+import { clearSessionAgent, setSessionAgent } from "../features/claude-code-session-state/state"
 
 describe("session-model-state", () => {
+  test("live parent selection falls back to the session agent when stored model has no agent", () => {
+    // given
+    const sessionID = "ses_agent_fallback"
+    setSessionAgent(sessionID, "agent-b")
+    setSessionModel(sessionID, { providerID: "provider-b", modelID: "model-b", variant: "variant-b" })
+
+    // when
+    const selection = getLiveParentPromptSelection(sessionID)
+
+    // then
+    expect(selection).toEqual({ model: { providerID: "provider-b", modelID: "model-b" }, variant: "variant-b", agent: "agent-b" })
+    clearSessionAgent(sessionID)
+    clearSessionModel(sessionID)
+  })
+
   test("stores and retrieves a session model", () => {
     //#given
     const sessionID = "ses_test"

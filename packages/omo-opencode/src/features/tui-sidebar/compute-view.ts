@@ -15,6 +15,7 @@ export type ComputeViewSections = {
   readonly roster: RosterState
   readonly agents: AgentsState
   readonly jobs: JobBoardState
+  readonly monitors?: number
   readonly loop: LoopState
   readonly teams: TeamsState
 }
@@ -26,6 +27,7 @@ export function computeView(sections: ComputeViewSections): SidebarView {
       loop: sections.loop,
       agents: sections.agents,
       jobs: sections.jobs,
+      monitors: sections.monitors ?? 0,
       teams: sections.teams,
       configBanner: sections.config.kind === "invalid" ? { kind: "invalid" } : { kind: "none" },
     }
@@ -46,6 +48,7 @@ export function viewKey(view: SidebarView): string {
         loopKeyParts(view.loop),
         agentsKeyParts(view.agents),
         jobsKeyParts(view.jobs),
+        view.monitors,
         teamsKeyParts(view.teams),
         ["configBanner", view.configBanner.kind],
       ])
@@ -61,6 +64,7 @@ export function viewKey(view: SidebarView): string {
 function isActive(sections: ComputeViewSections): boolean {
   return sections.agents.kind === "list"
     || sections.jobs.kind === "list"
+    || (sections.monitors ?? 0) > 0
     || sections.loop.kind === "live"
     || sections.teams.kind === "list"
 }

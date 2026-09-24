@@ -7,10 +7,9 @@ import { join } from "node:path"
 
 import type { TuiSlotPlugin } from "@opencode-ai/plugin/tui"
 
-import type { TuiSlotPlugin } from "@opencode-ai/plugin/tui"
-
 import { MIRROR_SCHEMA_VERSION } from "./features/tui-sidebar/constants"
 import { writeMirror } from "./features/tui-sidebar/mirror-io"
+import { writeSessionJobsMirror } from "./features/tui-sidebar/session-jobs-mirror"
 import { describeView } from "./features/tui-sidebar/render-view"
 import { TeamSessionCache } from "./features/tui-sidebar/team-session-cache"
 import type { TuiRuntimeSnapshot } from "./features/tui-sidebar/snapshot-schema"
@@ -50,6 +49,7 @@ type SidebarApiForTest = {
       readonly name: string
       readonly params?: Record<string, unknown>
     }
+    readonly navigate: () => void
   }
   readonly slots: {
     readonly register: (registration: TuiSlotPlugin) => string
@@ -67,12 +67,6 @@ type SidebarApiForTest = {
   }
   readonly mode: {
     readonly current: () => string
-  }
-  readonly route: {
-    readonly current: {
-      readonly name: "home"
-    }
-    readonly navigate: () => void
   }
   readonly event: {
     readonly on: () => () => void
@@ -163,7 +157,6 @@ describe("TUI sidebar polling", () => {
         },
       },
       theme: { current: {} },
-      route: { current: { name: "home" } },
       slots: {
         register: (nextRegistration: TuiSlotPlugin): string => {
           calls.push("register")
@@ -185,10 +178,7 @@ describe("TUI sidebar polling", () => {
       mode: {
         current: () => "base",
       },
-      route: {
-        current: { name: "home" as const },
-        navigate: () => undefined,
-      },
+      route: { current: { name: "home" as const }, navigate: () => undefined },
       event: {
         on: (): (() => void) => () => undefined,
       },
@@ -229,13 +219,13 @@ describe("TUI sidebar polling", () => {
   it("#given sidebar state changes after the slot mounts #when the host renders again #then the sidebar output is current", () => {
     // given
     let state = "initial"
-    let registration: TuiSlotPlugin | undefined
+    let registration: { readonly slots: { readonly sidebar_content: () => unknown } } | undefined
     let mountedOutput: unknown
     let renderedOutput: unknown
     let requestRender = (): void => undefined
     registerSidebarContentSlot({
       registerSlot: (nextRegistration) => {
-        registration = nextRegistration as TuiSlotPlugin
+        registration = nextRegistration
       },
       requestRender: () => {
         requestRender = () => {
@@ -327,6 +317,24 @@ describe("TUI sidebar polling", () => {
     expect(view.kind).toBe("active")
     expect(description).toContain("ULW")
     expect(description).toContain("Team (1)")
+  })
+
+  it("#given a monitor-only session mirror #when switching current routes #then only that session's sidebar shows monitors", async () => {
+    // given
+    writeMirror(tempDir, snapshotWithActivity(tempDir, false))
+    writeSessionJobsMirror(tempDir, "ses-monitor", [], Date.now(), 1)
+    const teamCache = new TeamSessionCache()
+
+    // when
+    const current = await readView(tempDir, "ses-monitor", teamCache)
+    const unrelated = await readView(tempDir, "ses-other", teamCache)
+    const home = await readView(tempDir, null, teamCache)
+
+    // then
+    expect(current.kind).toBe("active")
+    expect(describeView(current)).toBe("monitors 1")
+    expect(unrelated.kind).toBe("idle")
+    expect(home.kind).toBe("idle")
   })
 
 })

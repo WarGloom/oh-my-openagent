@@ -216,6 +216,42 @@ describe("MonitorManager", () => {
   })
 
   describe("#given monitors in two parent sessions", () => {
+    test("#when querying active counts #then monitor-only session IDs and counts stay scoped through stop", async () => {
+      // given
+      const { manager } = createManagerHarness()
+      const first = await startMonitor(manager, "s1-a", "s1")
+      await startMonitor(manager, "s1-b", "s1")
+      await startMonitor(manager, "s2-a", "s2")
+
+      // when
+      const before = manager.getActiveMonitorCounts()
+      await manager.stop(first.id)
+      const after = manager.getActiveMonitorCounts()
+
+      // then
+      expect([...before]).toEqual([["s1", 2], ["s2", 1]])
+      expect([...after]).toEqual([["s1", 1], ["s2", 1]])
+      expect(manager.hasMonitorWork("missing")).toBe(false)
+      expect(manager.hasMonitorWork("s2")).toBe(true)
+    })
+
+    test("#when a monitor is starting #then it still blocks goal work and appears in the count", async () => {
+      // given
+      const { manager } = createManagerHarness()
+      const monitor = await startMonitor(manager, "starting-cmd", "s1")
+      const internal = manager as unknown as { monitors: Map<string, { record: MonitorRecord }> }
+      const state = internal.monitors.get(monitor.id)
+      if (!state) throw new Error("monitor fixture missing")
+      state.record.status = "starting"
+
+      // when
+      const counts = manager.getActiveMonitorCounts()
+
+      // then
+      expect(counts.get("s1")).toBe(1)
+      expect(manager.hasMonitorWork("s1")).toBe(true)
+    })
+
     test("#when session.idle is handled #then it flushes only that session's injectors", async () => {
       // given
       const { manager, injectorsByMonitorId } = createManagerHarness()
@@ -362,6 +398,7 @@ describe("MonitorManager", () => {
         rejectExit = reject
       })
       const flushed: string[] = []
+      let terminalPending = false
       const scheduler = createFakeScheduler()
       const manager = new MonitorManager({
         pluginContext: unsafeTestValue({ client: {}, directory: "/repo" }),
@@ -387,10 +424,13 @@ describe("MonitorManager", () => {
           },
           createInjector() {
             return {
-              queueBatch() {},
+              queueBatch(_record, batch) {
+                if (!batch.stillRunning) terminalPending = true
+              },
               async flushMonitor(monitorId: string) {
                 flushed.push(monitorId)
               },
+              hasPendingTerminalOutput: () => terminalPending,
             }
           },
           scheduler: {
@@ -403,7 +443,7 @@ describe("MonitorManager", () => {
           log: () => {},
         },
       })
-      return { manager, resolveExit, rejectExit, flushed }
+      return { manager, resolveExit, rejectExit, flushed, markTerminalDelivered: () => { terminalPending = false } }
     }
 
     test("#when the process exits naturally #then the manager flushes the injector for final delivery", async () => {
@@ -417,6 +457,24 @@ describe("MonitorManager", () => {
 
       // then
       expect(flushed).toContain(record.id)
+    })
+
+    test("#when exit output awaits delivery #then the goal stays blocked until delivery completes", async () => {
+      // given
+      const { manager, resolveExit, markTerminalDelivered } = createExitHarness()
+      await startMonitor(manager, "exiting-cmd", "s1")
+      expect(manager.hasMonitorWork("s1")).toBe(true)
+
+      // when
+      resolveExit({ code: 0, signal: null })
+      await drainMicrotasks()
+      const awaiting = manager.hasMonitorWork("s1")
+      markTerminalDelivered()
+
+      // then
+      expect(manager.getActiveMonitorCounts().get("s1")).toBeUndefined()
+      expect(awaiting).toBe(true)
+      expect(manager.hasMonitorWork("s1")).toBe(false)
     })
 
     test("#when the process exit rejects #then the manager still flushes the injector for final delivery", async () => {

@@ -5,6 +5,7 @@ import {
   withInternalNoReplyMarker,
 } from "../../shared"
 import { dispatchInternalPrompt, isInternalPromptDispatchAccepted } from "../../hooks/shared/prompt-async-gate"
+import { getLiveParentPromptSelection } from "../../shared/session-model-state"
 import type { PromptDispatchClient } from "@oh-my-opencode/utils/prompt-async-gate/types"
 import { getErrorText } from "./error-classifier"
 import { createEmptyAssistantTurnRetryDedupeKey } from "./parent-wake-history-state"
@@ -34,6 +35,7 @@ export async function sendParentWakePrompt(input: ParentWakePromptDispatchInput)
   let dispatchStartedAt = Date.now()
   try {
     dispatchStartedAt = Date.now()
+    const liveSelection = getLiveParentPromptSelection(input.sessionID)
     const promptResult = await dispatchInternalPrompt({
       mode: "async",
       client: input.client,
@@ -51,6 +53,11 @@ export async function sendParentWakePrompt(input: ParentWakePromptDispatchInput)
         body: {
           noReply: input.forceNoReply === true || !input.latestWake.shouldReply,
           ...input.latestWake.promptContext,
+          ...(liveSelection ? {
+            model: liveSelection.model,
+            variant: liveSelection.variant,
+            agent: liveSelection.agent ?? input.latestWake.promptContext.agent,
+          } : {}),
           parts: [
             input.forceNoReply === true || !input.latestWake.shouldReply
               ? withInternalNoReplyMarker(createInternalAgentTextPart(notificationContent))

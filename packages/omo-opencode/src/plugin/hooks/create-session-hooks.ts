@@ -1,5 +1,6 @@
 import type { OhMyOpenCodeConfig, HookName } from "../../config"
 import type { BackgroundManager } from "../../features/background-agent"
+import type { MonitorManager } from "../../features/monitor"
 import type { ModelFallbackControllerAccessor } from "../../hooks/model-fallback"
 import type { ModelCacheState } from "../../plugin-state"
 import type { PluginContext } from "../types"
@@ -72,11 +73,12 @@ export function createSessionHooks(args: {
   pluginConfig: OhMyOpenCodeConfig
   modelCacheState: ModelCacheState
   backgroundManager: BackgroundManager
+  monitorManager?: MonitorManager
   modelFallbackControllerAccessor?: ModelFallbackControllerAccessor
   isHookEnabled: (hookName: HookName) => boolean
   safeHookEnabled: boolean
 }): SessionHooks {
-  const { ctx, pluginConfig, modelCacheState, backgroundManager, modelFallbackControllerAccessor, isHookEnabled, safeHookEnabled } = args
+  const { ctx, pluginConfig, modelCacheState, monitorManager, modelFallbackControllerAccessor, isHookEnabled, safeHookEnabled } = args
   const safeHook = <T>(hookName: HookName, factory: () => T): T | null =>
     safeCreateHook(hookName, factory, { enabled: safeHookEnabled })
 
@@ -168,6 +170,7 @@ export function createSessionHooks(args: {
           autoStart: pluginConfig.goal?.auto_start ?? false,
           ultrawork: pluginConfig.default_mode?.ultrawork ?? false,
           getSessionExists: async (sessionId) => await sessionExists(sessionId),
+          hasMonitorWork: monitorManager ? (sessionId) => monitorManager.hasMonitorWork(sessionId) : undefined,
         }))
     : null
 

@@ -78,6 +78,7 @@ export type SidebarView =
       readonly loop: LoopState
       readonly agents: AgentsState
       readonly jobs: JobBoardState
+      readonly monitors: number
       readonly teams: TeamsState
       readonly configBanner: ConfigBanner
     }

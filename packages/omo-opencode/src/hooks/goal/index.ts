@@ -1,5 +1,6 @@
 import type { PluginInput } from "@opencode-ai/plugin"
 import { OMO_INTERNAL_INITIATOR_MARKER } from "../../shared/internal-initiator-marker"
+import { getLiveParentPromptSelection } from "../../shared/session-model-state"
 import { dispatchInternalPrompt, isInternalPromptDispatchAccepted } from "../shared/prompt-async-gate"
 import { createGoalController, type GoalController } from "./controller"
 import { buildContinuationPrompt } from "./prompt"
@@ -10,6 +11,7 @@ export type GoalHookOptions = {
   readonly autoStart?: boolean
   readonly ultrawork?: boolean
   readonly getSessionExists?: (sessionID: string) => Promise<boolean>
+  readonly hasMonitorWork?: (sessionID: string) => boolean
 }
 
 export type GoalHook = {
@@ -43,12 +45,19 @@ export function createGoalHook(ctx: PluginInput, options: GoalHookOptions): Goal
     if (goal === null || goal.status !== "active") {
       return
     }
+    if (options.hasMonitorWork?.(sessionID)) {
+      return
+    }
     if (inFlightContinuations.has(sessionID)) {
       return
     }
     inFlightContinuations.add(sessionID)
     try {
       const promptText = buildContinuationPrompt(goal)
+      const promptInput = {
+        path: { id: sessionID },
+        body: { parts: [{ type: "text" as const, text: `${promptText}\n${OMO_INTERNAL_INITIATOR_MARKER}` }] },
+      }
       const promptResult = await dispatchInternalPrompt({
         mode: "async",
         client: ctx.client,
@@ -56,12 +65,12 @@ export function createGoalHook(ctx: PluginInput, options: GoalHookOptions): Goal
         source: `${HOOK_NAME}:idle-continuation`,
         settleMs: 150,
         queueBehavior: "defer",
-        input: {
-          path: { id: sessionID },
-          body: {
-            parts: [{ type: "text", text: `${promptText}\n${OMO_INTERNAL_INITIATOR_MARKER}` }],
-          },
+        shouldDispatch: () => {
+          if (options.hasMonitorWork?.(sessionID)) return false
+          Object.assign(promptInput.body, getLiveParentPromptSelection(sessionID))
+          return true
         },
+        input: promptInput,
       })
       if (promptResult.status === "failed" && !isInternalPromptDispatchAccepted(promptResult)) {
         // Log only; the dispatch may still have been accepted by another route.
