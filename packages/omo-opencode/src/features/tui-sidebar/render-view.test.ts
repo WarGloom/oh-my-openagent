@@ -114,4 +114,21 @@ describe("tui sidebar renderView", () => {
     expect(description).toBe("")
     expect(nodes).toEqual([])
   })
+
+  it("#given a monitor-only active view #when rendering in a narrow sidebar #then it shows the count and single-line labels using themed nodes", () => {
+    // given
+    const view = computeView({
+      config: { kind: "valid" }, roster: { kind: "empty" }, agents: { kind: "none" },
+      jobs: { kind: "none" }, loop: { kind: "none" }, teams: { kind: "none" }, monitors: ["build", "tests  logs\nwatch"],
+    })
+
+    // when
+    const description = describeView(view)
+    const nodes = buildViewNodes(view, theme)
+
+    // then
+    expect(description).toBe("monitors 2\nbuild\ntests logs watch")
+        expect(nodes[0]?.children?.[0]?.children?.[1]).toMatchObject({ kind: "text", text: "active 2", props: { fg: theme.text } })
+    expect(nodes[0]?.children?.[0]?.children?.[3]).toMatchObject({ kind: "text", text: "tests logs watch", props: { fg: theme.textMuted } })
+  })
 })

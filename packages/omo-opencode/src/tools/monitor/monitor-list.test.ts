@@ -182,6 +182,47 @@ describe("createMonitorList", () => {
     expect(JSON.parse(result).monitors[0]).not.toHaveProperty("command")
   })
 
+  it("includes stored exit metadata without exposing commands or other sessions", async () => {
+    //#given
+    const manager = new FakeMonitorManager(
+      new Map([
+        [
+          "session-a",
+          [
+            createRecord({ id: "zero-exit", status: "exited", exitCode: 0 }),
+            createRecord({ id: "nonzero-exit", status: "failed", exitCode: 17 }),
+            createRecord({ id: "signal-exit", status: "stopped", signal: "SIGTERM" }),
+            createRecord({ id: "no-exit-metadata", status: "exited" }),
+          ],
+        ],
+        ["session-b", [createRecord({ id: "other-session", status: "exited", exitCode: 9 })]],
+      ])
+    )
+    const tool = createMonitorList(manager, { sessionID: "session-a" })
+
+    //#when
+    const result = resultOutput(
+      await tool.execute({ include_exited: true }, createToolContext("ignored-session"))
+    )
+
+    //#then
+    const parsed = JSON.parse(result)
+    expect(parsed.monitors.map((monitor: { id: string }) => monitor.id)).toEqual([
+      "zero-exit",
+      "nonzero-exit",
+      "signal-exit",
+      "no-exit-metadata",
+    ])
+    expect(parsed.monitors[0]).toHaveProperty("exitCode", 0)
+    expect(parsed.monitors[1]).toHaveProperty("exitCode", 17)
+    expect(parsed.monitors[2]).toHaveProperty("signal", "SIGTERM")
+    expect(parsed.monitors[3]).not.toHaveProperty("exitCode")
+    expect(parsed.monitors[3]).not.toHaveProperty("signal")
+    expect(result).not.toContain("printf secret-token-123")
+    expect(result).not.toContain("other-session")
+    expect(manager.listedSessionIds).toEqual(["session-a"])
+  })
+
   it("hides exited monitors by default and includes them when requested", async () => {
     //#given
     const manager = new FakeMonitorManager(

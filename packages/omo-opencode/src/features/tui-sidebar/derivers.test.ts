@@ -7,7 +7,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { computeView, viewKey } from "./compute-view"
-import { deriveAgents, deriveConfig, deriveCurrentSessionJobs, deriveLoop, deriveRoster, deriveTeams } from "./derivers"
+import { deriveAgents, deriveConfig, deriveCurrentSessionActivity, deriveCurrentSessionJobs, deriveLoop, deriveRoster, deriveTeams } from "./derivers"
 import { MAX_AGENTS, MAX_JOBS, MIRROR_SCHEMA_VERSION, STALE_MS } from "./constants"
 import { canonicalProjectDir, mirrorStorageDir } from "./mirror-path"
 import { writeSessionJobsMirror } from "./session-jobs-mirror"
@@ -241,11 +241,27 @@ describe("exact current-session Jobs derivation", () => {
     expect(states).toEqual([{ kind: "list", jobs: sessionAJobs }, { kind: "list", jobs: sessionBJobs }, { kind: "none" }, { kind: "list", jobs: sessionAJobs }])
   })
 
+  it("#given session-specific monitor labels #when selecting current sessions #then labels cannot cross routes", () => {
+    // given
+    writeSessionJobsMirror(projectDir, SESSION_A, [], NOW, ["build"])
+    writeSessionJobsMirror(projectDir, SESSION_B, sessionBJobs, NOW, ["b1", "b2"])
+
+    // when
+    const activities = [SESSION_A, SESSION_B, null].map((sessionId) => deriveCurrentSessionActivity(projectDir, sessionId, NOW))
+
+    // then
+    expect(activities).toEqual([
+      { jobs: { kind: "none" }, monitors: ["build"] },
+      { jobs: { kind: "list", jobs: sessionBJobs }, monitors: ["b1", "b2"] },
+      { jobs: { kind: "none" }, monitors: [] },
+    ])
+  })
+
   const invalidSessionCases: readonly (readonly [string, () => void])[] = [
     ["missing", () => undefined],
     ["malformed", () => overwriteSessionFile(SESSION_A, "{")],
     ["stale", () => writeSessionJobsMirror(projectDir, SESSION_A, sessionAJobs, NOW - STALE_MS - 1)],
-    ["foreign", () => overwriteSessionFile(SESSION_A, { version: 1, projectDir: canonicalProjectDir(projectDir), parentSessionId: "foreign", updatedAt: NOW, jobs: sessionAJobs })],
+    ["foreign", () => overwriteSessionFile(SESSION_A, { version: 3, projectDir: canonicalProjectDir(projectDir), parentSessionId: "foreign", updatedAt: NOW, jobs: sessionAJobs, activeMonitorLabels: [] })],
   ]
   for (const [condition, prepareA] of invalidSessionCases) {
     it(`#given a ${condition} session A mirror and fresh session B #when deriving both #then A is none and B stays isolated`, () => {
