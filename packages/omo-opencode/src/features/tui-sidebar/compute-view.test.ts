@@ -101,6 +101,7 @@ describe("tui sidebar computeView", () => {
       loop: idleLoop,
       agents: activeAgents,
       jobs: idleJobs,
+      monitors: [],
       teams: idleTeams,
       configBanner: { kind: "none" },
     })
@@ -126,6 +127,7 @@ describe("tui sidebar computeView", () => {
       loop: idleLoop,
       agents: idleAgents,
       jobs: activeJobs,
+      monitors: [],
       teams: idleTeams,
       configBanner: { kind: "invalid" },
     })
@@ -151,6 +153,7 @@ describe("tui sidebar computeView", () => {
       loop: liveLoop,
       agents: idleAgents,
       jobs: idleJobs,
+      monitors: [],
       teams: idleTeams,
       configBanner: { kind: "none" },
     })
@@ -252,6 +255,7 @@ describe("tui sidebar computeView", () => {
       loop: liveLoop,
       agents: activeAgents,
       jobs: activeJobs,
+      monitors: [],
       teams: idleTeams,
       configBanner: { kind: "invalid" },
     }
@@ -262,6 +266,7 @@ describe("tui sidebar computeView", () => {
         kind: "list",
       },
       agents: { agents: [{ status: "busy", name: "sisyphus" }], kind: "list" },
+      monitors: [],
       teams: idleTeams,
       loop: {
         activeGoal: "Ship sidebar",
@@ -298,5 +303,28 @@ describe("tui sidebar computeView", () => {
 
     // then
     expect(changedKey).not.toBe(originalKey)
+  })
+
+  it("#given a monitor-only session #when counts rise and return to zero #then the active view and key track each transition", () => {
+    // given
+    const sections = {
+      config: validConfig,
+      roster,
+      agents: idleAgents,
+      jobs: idleJobs,
+      loop: idleLoop,
+      teams: idleTeams,
+    }
+
+    // when
+    const views = [[], ["build"], ["build", "tests"], []].map((monitors) => computeView({ ...sections, monitors }))
+
+    // then
+    expect(views.map((view) => view.kind)).toEqual(["idle", "active", "active", "idle"])
+    expect(views[1]).toMatchObject({ kind: "active", jobs: idleJobs, monitors: ["build"] })
+    expect(views[2]).toMatchObject({ kind: "active", jobs: idleJobs, monitors: ["build", "tests"] })
+    const keys = views.map(viewKey)
+    expect(keys[1]).not.toBe(keys[2])
+    expect(keys[0]).toBe(keys[3])
   })
 })

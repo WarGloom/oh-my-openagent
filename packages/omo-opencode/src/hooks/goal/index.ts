@@ -1,5 +1,6 @@
 import type { PluginInput } from "@opencode-ai/plugin"
 import { OMO_INTERNAL_INITIATOR_MARKER } from "../../shared/internal-initiator-marker"
+import { getLiveParentPromptSelection } from "../../shared/session-model-state"
 import { dispatchInternalPrompt, isInternalPromptDispatchAccepted } from "../shared/prompt-async-gate"
 import { createGoalController, type GoalController } from "./controller"
 import { buildContinuationPrompt } from "./prompt"
@@ -10,6 +11,8 @@ export type GoalHookOptions = {
   readonly autoStart?: boolean
   readonly ultrawork?: boolean
   readonly getSessionExists?: (sessionID: string) => Promise<boolean>
+  readonly hasMonitorWork?: (sessionID: string) => boolean
+  readonly hasBackgroundWork?: (sessionID: string) => boolean
 }
 
 export type GoalHook = {
@@ -38,9 +41,18 @@ export function createGoalHook(ctx: PluginInput, options: GoalHookOptions): Goal
   const controller: GoalController = createGoalController({ projectDir: options.projectDir })
   const inFlightContinuations = new Set<string>()
 
+  // A running monitor, background task, or team member will wake this session
+  // when it reports; an idle continuation meanwhile only produces "still waiting" turns.
+  function hasPendingWork(sessionID: string): boolean {
+    return options.hasMonitorWork?.(sessionID) === true || options.hasBackgroundWork?.(sessionID) === true
+  }
+
   async function handleSessionIdle(sessionID: string): Promise<void> {
     const goal = controller.getGoal(sessionID)
     if (goal === null || goal.status !== "active") {
+      return
+    }
+    if (hasPendingWork(sessionID)) {
       return
     }
     if (inFlightContinuations.has(sessionID)) {
@@ -49,6 +61,10 @@ export function createGoalHook(ctx: PluginInput, options: GoalHookOptions): Goal
     inFlightContinuations.add(sessionID)
     try {
       const promptText = buildContinuationPrompt(goal)
+      const promptInput = {
+        path: { id: sessionID },
+        body: { parts: [{ type: "text" as const, text: `${promptText}\n${OMO_INTERNAL_INITIATOR_MARKER}` }] },
+      }
       const promptResult = await dispatchInternalPrompt({
         mode: "async",
         client: ctx.client,
@@ -56,12 +72,12 @@ export function createGoalHook(ctx: PluginInput, options: GoalHookOptions): Goal
         source: `${HOOK_NAME}:idle-continuation`,
         settleMs: 150,
         queueBehavior: "defer",
-        input: {
-          path: { id: sessionID },
-          body: {
-            parts: [{ type: "text", text: `${promptText}\n${OMO_INTERNAL_INITIATOR_MARKER}` }],
-          },
+        shouldDispatch: () => {
+          if (hasPendingWork(sessionID)) return false
+          Object.assign(promptInput.body, getLiveParentPromptSelection(sessionID))
+          return true
         },
+        input: promptInput,
       })
       if (promptResult.status === "failed" && !isInternalPromptDispatchAccepted(promptResult)) {
         // Log only; the dispatch may still have been accepted by another route.

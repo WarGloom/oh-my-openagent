@@ -1,5 +1,6 @@
 import type { OhMyOpenCodeConfig, HookName } from "../../config"
 import type { BackgroundManager } from "../../features/background-agent"
+import type { MonitorManager } from "../../features/monitor"
 import type { ModelFallbackControllerAccessor } from "../../hooks/model-fallback"
 import type { ModelCacheState } from "../../plugin-state"
 import type { PluginContext } from "../types"
@@ -68,6 +69,7 @@ export function createSessionHooks(args: {
   pluginConfig: OhMyOpenCodeConfig
   modelCacheState: ModelCacheState
   backgroundManager: BackgroundManager
+  monitorManager?: MonitorManager
   modelFallbackControllerAccessor?: ModelFallbackControllerAccessor
   isHookEnabled: (hookName: HookName) => boolean
   safeHookEnabled: boolean
@@ -77,6 +79,7 @@ export function createSessionHooks(args: {
     pluginConfig,
     modelCacheState,
     backgroundManager,
+    monitorManager,
     modelFallbackControllerAccessor,
     isHookEnabled,
     safeHookEnabled,
@@ -170,6 +173,11 @@ export function createSessionHooks(args: {
             autoStart: pluginConfig.goal?.auto_start ?? false,
             ultrawork: pluginConfig.default_mode?.ultrawork ?? false,
             getSessionExists: async (sessionId) => await sessionExists(sessionId),
+            hasMonitorWork: monitorManager ? (sessionId) => monitorManager.hasMonitorWork(sessionId) : undefined,
+            hasBackgroundWork: (sessionId) =>
+              backgroundManager
+                .getTasksByParentSession(sessionId)
+                .some((task) => task.status === "running" || task.status === "pending"),
           }),
         )
       : null
