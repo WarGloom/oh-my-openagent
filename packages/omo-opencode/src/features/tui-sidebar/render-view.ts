@@ -158,12 +158,22 @@ function jobLines(jobs: JobBoardState): string[] {
   }
 }
 
-function monitorNodes(count: number, theme: ThemeLike): ViewNode[] {
-  return count > 0 ? [section("Monitors", theme, [text({ fg: theme.text }, `active ${count}`)])] : []
+function monitorNodes(labels: readonly string[], theme: ThemeLike): ViewNode[] {
+  if (labels.length === 0) return []
+  return [
+    section("Monitors", theme, [
+      text({ fg: theme.text }, `active ${labels.length}`),
+      ...labels.map((label) => text({ fg: theme.textMuted }, truncate(singleLine(label)))),
+    ]),
+  ]
 }
 
-function monitorLines(count: number): string[] {
-  return count > 0 ? [`monitors ${count}`] : []
+function monitorLines(labels: readonly string[]): string[] {
+  return labels.length > 0 ? [`monitors ${labels.length}`, ...labels.map(singleLine)] : []
+}
+
+function singleLine(value: string): string {
+  return value.replace(/\s+/g, " ").trim()
 }
 
 function brokenNodes(messages: readonly string[], theme: ThemeLike): ViewNode[] {

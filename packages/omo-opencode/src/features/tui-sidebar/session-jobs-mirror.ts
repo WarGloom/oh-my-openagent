@@ -9,7 +9,7 @@ import { STALE_MS } from "./constants"
 import { canonicalProjectDir, mirrorStorageDir } from "./mirror-path"
 import type { JobRow } from "./state-types"
 
-const SESSION_JOBS_MIRROR_VERSION = 2
+const SESSION_JOBS_MIRROR_VERSION = 3
 const HASH_LENGTH = 16
 
 const BACKGROUND_TASK_STATUS_VALUES = [
@@ -37,7 +37,7 @@ const SessionJobsMirrorSchema = z
     parentSessionId: z.string(),
     updatedAt: z.number(),
     jobs: z.array(JobRowSchema),
-    activeMonitorCount: z.number().int().nonnegative(),
+    activeMonitorLabels: z.array(z.string()),
   })
   .strict()
 
@@ -71,7 +71,7 @@ export function writeSessionJobsMirror(
   parentSessionId: string,
   jobs: readonly JobRow[],
   now: number = Date.now(),
-  activeMonitorCount = 0,
+  activeMonitorLabels: readonly string[] = [],
 ): void {
   const canonicalDir = canonicalProjectDir(projectDir)
   const filePath = sessionJobsMirrorFilePath(canonicalDir, parentSessionId)
@@ -83,7 +83,7 @@ export function writeSessionJobsMirror(
     parentSessionId,
     updatedAt: now,
     jobs,
-    activeMonitorCount,
+    activeMonitorLabels,
   })
 
   mkdirSync(jobsPath, { recursive: true })
@@ -107,7 +107,7 @@ export function readSessionJobsMirror(
 
 export type SessionJobsMirrorSnapshot = {
   readonly jobs: readonly JobRow[]
-  readonly activeMonitorCount: number
+  readonly activeMonitorLabels: readonly string[]
 }
 
 export function readSessionJobsMirrorSnapshot(
@@ -140,5 +140,5 @@ export function readSessionJobsMirrorSnapshot(
   if (now - parsed.data.updatedAt > STALE_MS) {
     return null
   }
-  return { jobs: parsed.data.jobs, activeMonitorCount: parsed.data.activeMonitorCount }
+  return { jobs: parsed.data.jobs, activeMonitorLabels: parsed.data.activeMonitorLabels }
 }

@@ -322,7 +322,7 @@ describe("TUI sidebar polling", () => {
   it("#given a monitor-only session mirror #when switching current routes #then only that session's sidebar shows monitors", async () => {
     // given
     writeMirror(tempDir, snapshotWithActivity(tempDir, false))
-    writeSessionJobsMirror(tempDir, "ses-monitor", [], Date.now(), 1)
+    writeSessionJobsMirror(tempDir, "ses-monitor", [], Date.now(), ["build-watch"])
     const teamCache = new TeamSessionCache()
 
     // when
@@ -332,7 +332,7 @@ describe("TUI sidebar polling", () => {
 
     // then
     expect(current.kind).toBe("active")
-    expect(describeView(current)).toBe("monitors 1")
+    expect(describeView(current)).toBe("monitors 1\nbuild-watch")
     expect(unrelated.kind).toBe("idle")
     expect(home.kind).toBe("idle")
   })

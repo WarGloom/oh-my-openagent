@@ -59,12 +59,12 @@ function validPayload(
   updatedAt: number = NOW,
 ): Record<string, unknown> {
   return {
-    version: 2,
+    version: 3,
     projectDir: canonicalProjectDir(projectDir),
     parentSessionId,
     updatedAt,
     jobs,
-    activeMonitorCount: 0,
+    activeMonitorLabels: [],
   }
 }
 
@@ -157,7 +157,7 @@ describe("session Jobs mirror IPC", () => {
 
     // then
     expect(JSON.parse(readFileSync(expectedFilePath(projectDir, parentSessionId), "utf-8"))).toEqual({
-      version: 2,
+      version: 3,
       projectDir: canonicalProjectDir(projectDir),
       parentSessionId,
       updatedAt: NOW,
@@ -169,7 +169,7 @@ describe("session Jobs mirror IPC", () => {
           lastTool: "grep",
         },
       ],
-      activeMonitorCount: 0,
+      activeMonitorLabels: [],
     })
   })
 
@@ -179,19 +179,19 @@ describe("session Jobs mirror IPC", () => {
     const sessionId = "session-monitor-only"
 
     // when
-    writeSessionJobsMirror(projectDir, sessionId, [], NOW, 2)
+    writeSessionJobsMirror(projectDir, sessionId, [], NOW, ["build", "tests"])
     const serialized = JSON.parse(readFileSync(expectedFilePath(projectDir, sessionId), "utf-8"))
 
     // then
     expect(serialized).toEqual({
-      version: 2,
+      version: 3,
       projectDir: canonicalProjectDir(projectDir),
       parentSessionId: sessionId,
       updatedAt: NOW,
       jobs: [],
-      activeMonitorCount: 2,
+      activeMonitorLabels: ["build", "tests"],
     })
-    expect(readSessionJobsMirrorSnapshot(projectDir, sessionId, NOW)).toEqual({ jobs: [], activeMonitorCount: 2 })
+    expect(readSessionJobsMirrorSnapshot(projectDir, sessionId, NOW)).toEqual({ jobs: [], activeMonitorLabels: ["build", "tests"] })
   })
 
   it("#given a legacy v1 or malformed count #when reading #then neither supplies current monitor activity", () => {
@@ -201,9 +201,9 @@ describe("session Jobs mirror IPC", () => {
     const valid = validPayload(projectDir, sessionId)
 
     // when / then
-    writeRaw(projectDir, sessionId, { ...valid, version: 1, activeMonitorCount: undefined })
+    writeRaw(projectDir, sessionId, { ...valid, version: 2, activeMonitorLabels: undefined, activeMonitorCount: 0 })
     expect(readSessionJobsMirrorSnapshot(projectDir, sessionId, NOW)).toBeNull()
-    writeRaw(projectDir, sessionId, { ...valid, activeMonitorCount: -1 })
+    writeRaw(projectDir, sessionId, { ...valid, activeMonitorLabels: [1] })
     expect(readSessionJobsMirrorSnapshot(projectDir, sessionId, NOW)).toBeNull()
   })
 

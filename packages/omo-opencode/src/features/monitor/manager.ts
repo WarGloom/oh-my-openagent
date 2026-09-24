@@ -147,6 +147,16 @@ export class MonitorManager implements MonitorManagerContract {
     return counts
   }
 
+  getActiveMonitorLabels(): ReadonlyMap<string, readonly string[]> {
+    const labels = new Map<string, string[]>()
+    for (const state of this.monitors.values()) {
+      if (state.record.status !== "starting" && state.record.status !== "running") continue
+      const sessionId = state.record.parentSessionId
+      labels.set(sessionId, [...(labels.get(sessionId) ?? []), state.record.label])
+    }
+    return labels
+  }
+
   hasMonitorWork(sessionId: string): boolean {
     for (const id of this.monitorsByParentSession.get(sessionId) ?? []) {
       const state = this.monitors.get(id)

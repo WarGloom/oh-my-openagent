@@ -67,13 +67,13 @@ export function deriveCurrentSessionActivity(
   projectDir: string,
   sessionId: string | null,
   now: number = Date.now(),
-): { readonly jobs: JobBoardState; readonly monitors: number } {
+): { readonly jobs: JobBoardState; readonly monitors: readonly string[] } {
   if (sessionId === null) {
-    return { jobs: { kind: "none" }, monitors: 0 }
+    return { jobs: { kind: "none" }, monitors: [] }
   }
 
   const mirror = readSessionJobsMirrorSnapshot(projectDir, sessionId, now)
-  return { jobs: deriveJobs(mirror?.jobs ?? null), monitors: mirror?.activeMonitorCount ?? 0 }
+  return { jobs: deriveJobs(mirror?.jobs ?? null), monitors: mirror?.activeMonitorLabels ?? [] }
 }
 
 function deriveJobs(jobs: readonly JobRow[] | null): JobBoardState {

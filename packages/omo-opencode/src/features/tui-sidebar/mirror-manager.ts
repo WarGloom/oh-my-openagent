@@ -17,15 +17,15 @@ type TuiBackgroundSnapshotProvider = {
   readonly getTasksSnapshot: () => readonly BackgroundTaskSnapshot[]
 }
 
-type TuiMonitorCountsProvider = {
-  readonly getActiveMonitorCounts: () => ReadonlyMap<string, number>
+type TuiMonitorLabelsProvider = {
+  readonly getActiveMonitorLabels: () => ReadonlyMap<string, readonly string[]>
 }
 
 export type TuiStateMirrorInput = {
   readonly client: TuiMirrorClient
   readonly projectDir: string
   readonly backgroundManager: TuiBackgroundSnapshotProvider
-  readonly monitorManager?: TuiMonitorCountsProvider
+  readonly monitorManager?: TuiMonitorLabelsProvider
   readonly getStatuses?: () => Promise<SessionStatusMap>
   readonly sessionAgentResolver?: SessionAgentResolver
   readonly teamModeConfig?: TeamModeConfig
@@ -151,18 +151,18 @@ export class TuiStateMirror {
           jobsByParentSession.set(parentSessionId, [job])
         }
       }
-      const monitorCounts = this.snapshotInput.monitorManager?.getActiveMonitorCounts() ?? new Map<string, number>()
-      const sessionIds = new Set([...jobsByParentSession.keys(), ...monitorCounts.keys(), ...this.previousSessionIds])
+      const monitorLabels = this.snapshotInput.monitorManager?.getActiveMonitorLabels() ?? new Map<string, readonly string[]>()
+      const sessionIds = new Set([...jobsByParentSession.keys(), ...monitorLabels.keys(), ...this.previousSessionIds])
       for (const parentSessionId of sessionIds) {
         writeSessionJobsMirror(
           this.snapshotInput.projectDir,
           parentSessionId,
           jobsByParentSession.get(parentSessionId) ?? [],
           snapshot.updatedAt,
-          monitorCounts.get(parentSessionId) ?? 0,
+          monitorLabels.get(parentSessionId) ?? [],
         )
       }
-      this.previousSessionIds = new Set([...jobsByParentSession.keys(), ...monitorCounts.keys()])
+      this.previousSessionIds = new Set([...jobsByParentSession.keys(), ...monitorLabels.keys()])
     } catch (error) {
       if (error instanceof Error) {
         this.reportFlushError(error)

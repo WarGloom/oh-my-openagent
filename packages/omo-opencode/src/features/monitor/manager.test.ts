@@ -231,6 +231,7 @@ describe("MonitorManager", () => {
       // then
       expect([...before]).toEqual([["s1", 2], ["s2", 1]])
       expect([...after]).toEqual([["s1", 1], ["s2", 1]])
+      expect([...manager.getActiveMonitorLabels()]).toEqual([["s1", ["s1-b"]], ["s2", ["s2-a"]]])
       expect(manager.hasMonitorWork("missing")).toBe(false)
       expect(manager.hasMonitorWork("s2")).toBe(true)
     })
