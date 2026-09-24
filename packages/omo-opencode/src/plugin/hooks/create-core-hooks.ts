@@ -35,6 +35,7 @@ export function createCoreHooks(args: {
     pluginConfig,
     modelCacheState,
     backgroundManager,
+    monitorManager,
     modelFallbackControllerAccessor,
     isHookEnabled,
     safeHookEnabled,

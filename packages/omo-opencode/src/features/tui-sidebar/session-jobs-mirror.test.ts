@@ -18,7 +18,7 @@ import { basename, dirname, join } from "node:path"
 
 import { STALE_MS } from "./constants"
 import { canonicalProjectDir, mirrorStorageDir } from "./mirror-path"
-import { readSessionJobsMirror, writeSessionJobsMirror } from "./session-jobs-mirror"
+import { readSessionJobsMirror, readSessionJobsMirrorSnapshot, writeSessionJobsMirror } from "./session-jobs-mirror"
 import type { JobRow } from "./state-types"
 
 const NOW = 10_000_000
@@ -55,11 +55,12 @@ function expectedFilePath(projectDir: string, parentSessionId: string): string {
 
 function validPayload(projectDir: string, parentSessionId: string, updatedAt: number = NOW): Record<string, unknown> {
   return {
-    version: 1,
+    version: 3,
     projectDir: canonicalProjectDir(projectDir),
     parentSessionId,
     updatedAt,
     jobs,
+    activeMonitorLabels: [],
   }
 }
 
@@ -148,7 +149,7 @@ describe("session Jobs mirror IPC", () => {
 
     // then
     expect(JSON.parse(readFileSync(expectedFilePath(projectDir, parentSessionId), "utf-8"))).toEqual({
-      version: 1,
+      version: 3,
       projectDir: canonicalProjectDir(projectDir),
       parentSessionId,
       updatedAt: NOW,
@@ -160,7 +161,45 @@ describe("session Jobs mirror IPC", () => {
           lastTool: "grep",
         },
       ],
+      activeMonitorLabels: [],
     })
+  })
+
+  it("#given monitor-only activity #when writing a session mirror #then only a versioned count and Jobs rows are serialized", () => {
+    // given
+    const projectDir = makeTempDir("monitor-only")
+    const sessionId = "session-monitor-only"
+
+    // when
+    writeSessionJobsMirror(projectDir, sessionId, [], NOW, ["build", "tests"])
+    const serialized = JSON.parse(readFileSync(expectedFilePath(projectDir, sessionId), "utf-8"))
+
+    // then
+    expect(serialized).toEqual({
+      version: 3,
+      projectDir: canonicalProjectDir(projectDir),
+      parentSessionId: sessionId,
+      updatedAt: NOW,
+      jobs: [],
+      activeMonitorLabels: ["build", "tests"],
+    })
+    expect(readSessionJobsMirrorSnapshot(projectDir, sessionId, NOW)).toEqual({
+      jobs: [],
+      activeMonitorLabels: ["build", "tests"],
+    })
+  })
+
+  it("#given a legacy v1 or malformed count #when reading #then neither supplies current monitor activity", () => {
+    // given
+    const projectDir = makeTempDir("legacy-monitor")
+    const sessionId = "session-legacy"
+    const valid = validPayload(projectDir, sessionId)
+
+    // when / then
+    writeRaw(projectDir, sessionId, { ...valid, version: 2, activeMonitorLabels: undefined, activeMonitorCount: 0 })
+    expect(readSessionJobsMirrorSnapshot(projectDir, sessionId, NOW)).toBeNull()
+    writeRaw(projectDir, sessionId, { ...valid, activeMonitorLabels: [1] })
+    expect(readSessionJobsMirrorSnapshot(projectDir, sessionId, NOW)).toBeNull()
   })
 
   it("#given a Jobs write #when inspecting permissions #then the mirror file is mode 0600", () => {

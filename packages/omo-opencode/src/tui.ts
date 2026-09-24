@@ -7,7 +7,7 @@ import { POLL_INTERVAL_MS } from "./features/tui-sidebar/constants"
 import {
   deriveAgents,
   deriveConfig,
-  deriveCurrentSessionJobs,
+  deriveCurrentSessionActivity,
   deriveLoop,
   deriveRoster,
   deriveTeams,
@@ -117,12 +117,14 @@ export async function readView(
   const mirror = readMirror(directory)
   const roster = await loadRosterRows(directory)
   const freshTeams = deriveTeams(mirror)
+  const activity = deriveCurrentSessionActivity(directory, sessionId)
   teamCache.update(freshTeams)
   return computeView({
     config: deriveConfig(validation),
     roster: deriveRoster(roster),
     agents: deriveAgents(mirror),
-    jobs: deriveCurrentSessionJobs(directory, sessionId),
+    jobs: activity.jobs,
+    monitors: activity.monitors,
     loop: deriveLoop(mirror),
     teams: teamCache.forSession(sessionId),
   })
