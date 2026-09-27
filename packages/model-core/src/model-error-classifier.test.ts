@@ -436,6 +436,31 @@ describe("model-error-classifier", () => {
     //#then
     expect(result).toBe(true)
   })
+
+  test("treats an exhausted codex account pool as retryable so a background task falls back", () => {
+    //#given
+    const error = {
+      name: "SessionRetry",
+      message: "All 2 account(s) failed (server errors or auth issues). Check account health with `codex-health`.",
+    }
+
+    //#when
+    const result = shouldRetryError(error)
+
+    //#then
+    expect(result).toBe(true)
+  })
+
+  test("treats a proxy upstream stall as retryable so a background task falls back", () => {
+    //#given
+    const error = { name: "SessionRetry", message: "Upstream stalled: no data for 90019ms" }
+
+    //#when
+    const result = shouldRetryError(error)
+
+    //#then
+    expect(result).toBe(true)
+  })
 })
 
 export {}

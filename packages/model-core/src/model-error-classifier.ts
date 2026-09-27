@@ -81,6 +81,10 @@ const RETRYABLE_MESSAGE_PATTERNS = [
   "server_error",
   "an error occurred while processing",
   "upstream request failed",
+  // Every account in a multi-auth pool failed (opencode codex multi-auth); another provider may still serve.
+  "account(s) failed (server errors or auth issues)",
+  // Proxy idle-stall guard (Meridian): the upstream stopped sending mid-turn.
+  "upstream stalled",
 ]
 
 const AUTO_RETRY_GATE_PATTERNS = [
