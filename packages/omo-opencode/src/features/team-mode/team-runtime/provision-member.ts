@@ -154,7 +154,7 @@ export async function provisionTeamMember(input: ProvisionTeamMemberInput): Prom
     model: resolvedMember.model,
     fallbackChain: resolvedMember.fallbackChain,
     skillContent: resolvedMember.systemContent,
-    category: input.member.kind === "category" ? input.member.category : undefined,
+    category: resolvedMember.category,
     sessionPermission: QUESTION_DENIED_SESSION_PERMISSION,
     ...(worktreePath ? { cwd: worktreePath } : {}),
     onSessionCreated: async (sessionId, sessionModel) => {
@@ -201,7 +201,7 @@ export async function provisionTeamMember(input: ProvisionTeamMemberInput): Prom
               worktreePath,
               subagent_type: resolvedMember.agentToUse,
               provisioningClaimId: undefined,
-              ...(input.member.kind === "category" ? { category: input.member.category } : {}),
+              ...(resolvedMember.category ? { category: resolvedMember.category } : {}),
               ...(member.sessionId === sessionId && member.model
                 ? { model: member.model }
                 : persistedModel ? { model: persistedModel } : {}),

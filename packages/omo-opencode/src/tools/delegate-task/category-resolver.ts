@@ -18,7 +18,7 @@ import { resolveModelForDelegateTask } from "./model-selection"
 import type { DelegatedModelConfig } from "./types"
 import { applyCategoryParams } from "./delegated-model-config"
 import { applyFallbackEntrySettings } from "./fallback-entry-settings"
-import { selectCategoryModelWithJev } from "./jev-routing"
+import { selectCategoryTierWithJev } from "./jev-routing"
 
 function getConfiguredModel(entry: string | { model: string } | undefined): string | undefined {
   return typeof entry === "string" ? entry : entry?.model
@@ -122,6 +122,19 @@ export async function resolveCategoryExecution(
   // A retired builtin name resolves to its replacement so third-party skills and AGENTS.md text
   // spawning the old category keep working; a user category of that name still wins over the alias.
   const enabledCategories = mergeCategories(userCategories)
+  if (args.category === "auto") {
+    const selected = await selectCategoryTierWithJev({
+      brief: args.prompt,
+      config: executorCtx.jevRouting,
+      categories: userCategories,
+      enabledCategories,
+      modelRouting: args.model_routing,
+      signal: executorCtx.abortSignal,
+    })
+    executorCtx.abortSignal?.throwIfAborted()
+    if (!selected) return categoryResolutionError("Invalid Jev routing default for category auto")
+    args.category = selected
+  }
   const requestedCategoryName = args.category!
   const categoryName = enabledCategories[requestedCategoryName] !== undefined
     ? requestedCategoryName
@@ -135,7 +148,7 @@ export async function resolveCategoryExecution(
 
   const availableModels = await getAvailableModelsForDelegateTask(client)
 
-  let resolved = resolveCategoryConfig(categoryName, {
+  const resolved = resolveCategoryConfig(categoryName, {
     userCategories,
     inheritedModel,
     systemDefaultModel,
@@ -176,26 +189,6 @@ Available categories: ${allCategoryNames}`)
     }
 
     return categoryResolutionError(`Unknown category: "${categoryName}". Available: ${allCategoryNames}`)
-  }
-
-  const routedEntry = args.model_routing === false ? undefined : await selectCategoryModelWithJev({
-    category: categoryName,
-    brief: args.prompt,
-    config: executorCtx.jevRouting,
-    canonicalModels: userCategories?.[categoryName]?.models,
-    usableModels: resolved.config.models,
-    availableModels,
-    signal: executorCtx.abortSignal,
-  })
-  executorCtx.abortSignal?.throwIfAborted()
-  if (routedEntry && resolved.config.models) {
-    resolved = {
-      ...resolved,
-      config: {
-        ...resolved.config,
-        models: [routedEntry, ...resolved.config.models.filter((entry) => entry !== routedEntry)],
-      },
-    }
   }
 
   const requirement = CATEGORY_MODEL_REQUIREMENTS[args.category!]

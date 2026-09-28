@@ -1,40 +1,32 @@
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { z } from "zod"
 import { OhMyOpenCodeConfigSchema } from "../../config/schema"
 import { JevRoutingConfigSchema } from "../../config/schema/jev-routing"
 import { loadOmoOpenCodeConfigChain } from "../../plugin-config/omo-config-chain"
 import * as providerCache from "../../shared/connected-providers-cache"
+import { resolveMember } from "../../features/team-mode/team-runtime/resolve-member"
 import { unsafeTestValue } from "../../../../../test-support/unsafe-test-value"
 import { resolveCategoryExecution } from "./category-resolver"
 import type { ExecutorContext } from "./executor-types"
-import { selectCategoryModelWithJev, type JevRoutingInput } from "./jev-routing"
-import { createDelegateTask } from "./tools"
+import { selectCategoryTierWithJev, type JevRoutingInput } from "./jev-routing"
 
-const models = [
-  { model: "example/low", reasoning: "low", variant: "small" },
-  { model: "example/high", reasoning: "high", variant: "large" },
-] as const
 const config = JevRoutingConfigSchema.parse({
-    mode: "active",
-    categories: {
-      custom: [
-        { model: "example/low", suitability: "simple work" },
-        { model: "example/high", suitability: "hard work" },
-      ],
-    },
+  mode: "active", ladder: ["cheap", "strong"], default: "strong",
 })
+const categories = {
+  auto: { description: "Route a delegation to a tier" },
+  cheap: { description: "Small bounded tasks", models: ["example/low", "other/backup"] },
+  strong: { description: "Complex decisions", models: ["example/high", "other/reserve"] },
+}
 
 function input(overrides: Partial<JevRoutingInput> = {}): JevRoutingInput {
   return {
-    category: "custom",
     brief: "Implement the bounded change",
     config,
-    canonicalModels: models,
-    usableModels: models,
-    availableModels: new Set(["example/low", "example/high"]),
+    categories,
+    enabledCategories: categories,
     ...overrides,
   }
 }
@@ -42,241 +34,172 @@ function input(overrides: Partial<JevRoutingInput> = {}): JevRoutingInput {
 function reply(scores: readonly number[], overrides: Record<string, unknown> = {}): Response {
   return Response.json({
     model: "jev-1.13.0",
-    answers: Object.fromEntries(scores.map((score, index) => [`candidate_${index}`, { type: "noul", noul: score }])),
+    answers: Object.fromEntries(scores.map((score, index) => [`tier_${index}`, { type: "noul", noul: score }])),
     ...overrides,
   })
 }
 
-describe("Jev category routing", () => {
+describe("Jev auto tier routing", () => {
   let fetchSpy: ReturnType<typeof spyOn>
-  let previousApiKey: string | undefined
 
   beforeEach(() => {
-    previousApiKey = process.env.OPENCODE_API_KEY
-    process.env.OPENCODE_API_KEY = "test-only-key"
-    fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(reply([0.2, 0.95]))
+    fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(reply([0.7, 0.9]))
   })
+  afterEach(() => fetchSpy.mockRestore())
 
-  afterEach(() => {
-    fetchSpy.mockRestore()
-    if (previousApiKey === undefined) delete process.env.OPENCODE_API_KEY
-    else process.env.OPENCODE_API_KEY = previousApiKey
-  })
-
-  test("selects the first suitable declared candidate and sends only the bounded Jev request", async () => {
-    // given: two canonical, available entries ordered by preference
-    // when: Jev rates only the second above threshold
-    const selected = await selectCategoryModelWithJev(input())
-    // then: the selected entry is the original configured object and wire contract is fixed
-    expect(selected).toBe(models[1])
+  test("chooses the cheapest qualifying tier without sending model IDs or credentials", async () => {
+    // given: two ordered tiers with descriptions and private model chains
+    // when: both qualify
+    expect(await selectCategoryTierWithJev(input())).toBe("cheap")
+    // then: the wire contract contains only tier names, descriptions and the brief
     const [url, init] = fetchSpy.mock.calls[0] ?? []
     expect(url).toBe("https://opencode.ai/zen/v1/systemone")
-    expect(init).toMatchObject({ method: "POST", redirect: "error" })
-    expect(init.headers).toEqual({ "content-type": "application/json" })
-    const body = z.object({
-      model: z.string(), state: z.string(),
-      questions: z.record(z.string(), z.object({
-        instructions: z.string(), criteria: z.object({ true: z.string() }),
-      })),
-    }).parse(JSON.parse(init?.body))
-    expect(body).toMatchObject({ model: "jev-1.13-free", state: "Implement the bounded change" })
-    expect(Object.keys(body.questions)).toEqual(["candidate_0", "candidate_1"])
-    expect(body.questions.candidate_0.instructions).toContain("candidate 0 (example/low)")
-    expect(body.questions.candidate_1.criteria.true).toBe("hard work")
+    expect(init).toMatchObject({ method: "POST", redirect: "error", headers: { "content-type": "application/json" } })
+    const body = JSON.parse(init.body)
+    expect(body.model).toBe("jev-1.13-free")
+    expect(body.state).toBe(input().brief)
+    expect(Object.keys(body.questions)).toEqual(["tier_0", "tier_1"])
+    expect(body.questions.tier_0.instructions).toContain("cheap")
+    expect(body.questions.tier_0.instructions).toContain("Small bounded tasks")
+    expect(body.questions.tier_1.instructions).toContain("Complex decisions")
+    expect(init.body).not.toContain("example/low")
+    expect(init.body).not.toContain("other/backup")
   })
 
-  test("routes anonymously when no API key is set", async () => {
-    // given: the free endpoint needs no credentials
-    delete process.env.OPENCODE_API_KEY
-    // when: the classifier selects a suitable candidate
-    const selected = await selectCategoryModelWithJev(input())
-    // then: routing works without an authorization header
-    expect(selected).toBe(models[1])
-    expect(fetchSpy.mock.calls[0]?.[1]?.headers).toEqual({ "content-type": "application/json" })
+  test("falls back when unsure, and observes without changing the tier", async () => {
+    // given: no suitable tier or an observe-only configuration
+    fetchSpy.mockResolvedValueOnce(reply([0.4, 0.5])).mockResolvedValueOnce(reply([0.9, 0.9]))
+    // when: both decisions complete
+    expect(await selectCategoryTierWithJev(input())).toBe("strong")
+    expect(await selectCategoryTierWithJev(input({ config: { ...config, mode: "observe" } }))).toBe("strong")
+    // then: observe sent exactly one additional request
+    expect(fetchSpy).toHaveBeenCalledTimes(2)
   })
 
-  test("keeps original selection in observe, off and oversized-brief modes", async () => {
-    // given: explicit opt-in and bypass conditions
-    const observed = { ...config, mode: "observe" as const }
-    // when: each boundary is evaluated
-    expect(await selectCategoryModelWithJev(input({ config: observed }))).toBeUndefined()
-    expect(fetchSpy).toHaveBeenCalledTimes(1)
-    expect(await selectCategoryModelWithJev(input({ config: { ...config, mode: "off" } }))).toBeUndefined()
-    expect(await selectCategoryModelWithJev(input({ brief: "x".repeat(8193) }))).toBeUndefined()
-    // then: only observe issued a request
-    expect(fetchSpy).toHaveBeenCalledTimes(1)
-  })
-
-  test.each([
-    ["missing answer", reply([0.95])],
-    ["out-of-range score", reply([0.5, 1.2])],
-    ["extra answer", reply([0.5, 0.9, 0.9])],
-    ["unknown answer type", reply([], { answers: { candidate_0: { type: "confidence", confidence: 1 }, candidate_1: { type: "noul", noul: 1 } } })],
-  ])("keeps original routing when response has %s", async (_name, response) => {
-    // given: an invalid response boundary
-    fetchSpy.mockResolvedValue(response)
-    // when: selection is requested
-    const selected = await selectCategoryModelWithJev(input())
-    // then: no candidate is selected
-    expect(selected).toBeUndefined()
-  })
-
-  test("keeps original routing on no suitable score, HTTP error or timeout", async () => {
-    // given: a service unavailable or ineligible response
-    fetchSpy.mockResolvedValueOnce(reply([0.2, 0.8])).mockResolvedValueOnce(new Response("private body", { status: 503 }))
-    // when: requests complete or time out
-    expect(await selectCategoryModelWithJev(input())).toBeUndefined()
-    expect(await selectCategoryModelWithJev(input())).toBeUndefined()
-    fetchSpy.mockImplementation((_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
-      init.signal?.addEventListener("abort", () => reject(new DOMException("timeout", "AbortError")), { once: true })
-    }))
-    expect(await selectCategoryModelWithJev(input({ config: { ...config, timeout_ms: 100 } }))).toBeUndefined()
-  })
-
-  test("does not call Jev for an outside-chain, unavailable or single-model candidate", async () => {
-    // given: categories that cannot safely reroute
-    const outside = { ...config, categories: { custom: [{ model: "example/alien", suitability: "x" }, config.categories.custom[1]] } }
-    // when: candidate membership or availability is insufficient
-    expect(await selectCategoryModelWithJev(input({ config: outside }))).toBeUndefined()
-    expect(await selectCategoryModelWithJev(input({ availableModels: new Set(["example/low"]) }))).toBeUndefined()
-    expect(await selectCategoryModelWithJev(input({ canonicalModels: models.slice(0, 1) }))).toBeUndefined()
-    // then: no classifier request was sent
+  test("off, opt-out and oversized briefs use default without requests", async () => {
+    // given: bypass conditions
+    expect(await selectCategoryTierWithJev(input({ config: { ...config, mode: "off" } }))).toBe("strong")
+    expect(await selectCategoryTierWithJev(input({ modelRouting: false }))).toBe("strong")
+    expect(await selectCategoryTierWithJev(input({ brief: "x".repeat(8193) }))).toBe("strong")
+    // then: no remote call occurs
     expect(fetchSpy).not.toHaveBeenCalled()
   })
 
-  test("propagates tool cancellation instead of failing open", async () => {
-    // given: a pending classifier call and tool cancellation
-    const controller = new AbortController()
+  test.each([
+    ["HTTP", new Response("private body", { status: 503 })],
+    ["missing answer", reply([0.95])],
+    ["out-of-range score", reply([0.5, 1.2])],
+    ["extra answer", reply([0.5, 0.9, 0.9])],
+    ["wrong answer type", reply([], { answers: { tier_0: { type: "confidence", confidence: 1 }, tier_1: { type: "noul", noul: 1 } } })],
+  ])("falls back on %s response", async (_reason, response) => {
+    // given: an invalid remote response
+    fetchSpy.mockResolvedValue(response)
+    // when: Jev responds
+    expect(await selectCategoryTierWithJev(input())).toBe("strong")
+  })
+
+  test("falls back on timeout but propagates tool cancellation", async () => {
+    // given: a pending request
     fetchSpy.mockImplementation((_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
-      init.signal?.addEventListener("abort", () => reject(new DOMException("cancelled", "AbortError")), { once: true })
+      init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true })
     }))
-    // when: the parent aborts while Jev is pending
-    const pending = selectCategoryModelWithJev(input({ signal: controller.signal }))
+    // when: the timeout fires
+    expect(await selectCategoryTierWithJev(input({ config: { ...config, timeout_ms: 100 } }))).toBe("strong")
+    const controller = new AbortController()
+    const pending = selectCategoryTierWithJev(input({ signal: controller.signal }))
     controller.abort()
-    // then: selection rejects; a worker must not spawn
-    const settled = await Promise.allSettled([pending])
-    expect(settled[0]).toMatchObject({ status: "rejected", reason: { name: "AbortError" } })
+    // then: cancellation cannot dispatch a worker
+    expect((await Promise.allSettled([pending]))[0]).toMatchObject({ status: "rejected", reason: { name: "AbortError" } })
+  })
+
+  test("invalid auto or ladder disables routing and uses a valid default", async () => {
+    // given: forbidden auto model settings, missing or disabled tier, duplicate tier
+    for (const override of [
+      { categories: { ...categories, auto: { description: "Route", models: ["example/low"] } } },
+      { enabledCategories: { ...categories, cheap: undefined } },
+      { config: { ...config, ladder: ["cheap", "cheap"] } },
+    ]) {
+      // when: the configuration is examined
+      expect(await selectCategoryTierWithJev(input(override as Partial<JevRoutingInput>))).toBe("strong")
+    }
+    // then: invalid default cannot dispatch
+    expect(await selectCategoryTierWithJev(input({ config: { ...config, default: "missing" } }))).toBeUndefined()
+    expect(fetchSpy).not.toHaveBeenCalled()
   })
 })
 
-test("Jev candidate schema accepts nested model IDs without accepting empty segments", () => {
-  // given: a nested model ID used in an existing provider chain
-  const candidates = [
-    { model: "openrouter/deepseek/deepseek-v4-flash-0731:free", suitability: "routine work" },
-    { model: "example/strong", suitability: "complex work" },
-  ]
-  // when: the candidate list crosses the config boundary
-  const parsed = JevRoutingConfigSchema.safeParse({ categories: { custom: candidates } })
-  // then: the exact nested ID survives and an empty model segment is refused
-  expect(parsed.success && parsed.data.categories.custom[0]?.model).toBe(candidates[0]?.model)
-  expect(JevRoutingConfigSchema.safeParse({ categories: { custom: [{ ...candidates[0], model: "openrouter//deepseek" }, candidates[1]] } }).success).toBe(false)
+test("Jev schema validates bounds and rejects the former per-model configuration", () => {
+  expect(JevRoutingConfigSchema.parse({ ladder: ["quick", "deep"], default: "quick" })).toMatchObject({
+    mode: "off", timeout_ms: 2000, min_suitability: 0.6,
+  })
+  for (const invalid of [
+    { ladder: ["quick"], default: "quick" },
+    { ladder: Array(9).fill("quick"), default: "quick" },
+    { ladder: ["quick", "deep"], default: "quick", timeout_ms: 99 },
+    { ladder: ["quick", "deep"], default: "quick", min_suitability: 1.1 },
+    { ladder: ["quick", "deep"], default: "quick", categories: {} },
+  ]) expect(JevRoutingConfigSchema.safeParse(invalid).success).toBe(false)
 })
 
-test("global [opencode] Jev config survives the unified loader", () => {
-  // given: a global-only config file with Jev routing
+test("global [opencode] tier settings survive the unified loader", () => {
   const home = mkdtempSync(join(tmpdir(), "omo-jev-config-"))
   try {
     mkdirSync(join(home, ".omo"))
-    writeFileSync(join(home, ".omo", "omo.jsonc"), JSON.stringify({ "[opencode]": { jev_routing: config } }))
-    // when: the normal OpenCode view is loaded
+    writeFileSync(join(home, ".omo", "omo.jsonc"), JSON.stringify({ "[opencode]": { jev_routing: config, categories } }))
     const chain = loadOmoOpenCodeConfigChain(home, { HOME: home })
     const parsed = OhMyOpenCodeConfigSchema.parse(Object.assign({}, ...chain.views.map((view) => view.config)))
-    // then: the routing mode and candidate order survive
-    expect(parsed.jev_routing?.mode).toBe("active")
-    expect(parsed.jev_routing?.categories.custom.map((candidate) => candidate.model)).toEqual(["example/low", "example/high"])
+    expect(parsed.jev_routing?.ladder).toEqual(["cheap", "strong"])
+    expect(parsed.categories?.auto).toEqual({ description: "Route a delegation to a tier" })
   } finally {
     rmSync(home, { recursive: true, force: true })
   }
 })
 
-test("category resolver reroutes the same role and preserves entry settings and fallback order", async () => {
-  // given: two available canonical models and a classifier decision for the second
-  const previousApiKey = process.env.OPENCODE_API_KEY
-  process.env.OPENCODE_API_KEY = "test-only-key"
-  const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(reply([0.3, 0.98]))
+test("auto resolves the selected tier's unchanged full cross-provider fallback chain", async () => {
+  const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(reply([0.8, 0.9]))
   const cacheSpy = spyOn(providerCache, "readProviderModelsCache").mockReturnValue({
-    connected: ["example"], models: { example: ["low", "high"] }, updatedAt: "2026-09-28",
+    connected: ["example", "other"], models: { example: ["low", "high"], other: ["backup", "reserve"] }, updatedAt: "2026-09-28",
   })
   try {
     const ctx: ExecutorContext = {
       client: { model: { list: async () => ({ data: [] }) } } as ExecutorContext["client"],
-      manager: {} as ExecutorContext["manager"], directory: "/tmp",
-      userCategories: { custom: { models: [...models] } }, jevRouting: config,
+      manager: {} as ExecutorContext["manager"], directory: "/tmp", userCategories: categories, jevRouting: config,
     }
-    const args = { category: "custom", prompt: "Implement feature", description: "Feature", run_in_background: false, load_skills: [] }
-    // when: active routing selects the second canonical entry
+    const args = { category: "auto", prompt: "Implement feature", description: "Feature", run_in_background: false, load_skills: [] }
     const result = await resolveCategoryExecution(args, ctx, undefined, undefined)
-    // then: the category agent, model-specific settings and remaining order persist
+    expect(args.category).toBe("cheap")
     expect(result.error).toBeUndefined()
-    expect(result.agentToUse).toBe("Sisyphus-Junior")
-    expect(result.actualModel).toBe("example/high")
-    expect(result.categoryModel).toMatchObject({ providerID: "example", modelID: "high", variant: "large", reasoning: "high" })
-    expect(result.fallbackChain?.map((entry) => entry.model)).toEqual(["low"])
-    expect(await resolveCategoryExecution({ ...args, model_routing: false }, ctx, undefined, undefined)).toMatchObject({ actualModel: "example/low" })
+    expect(result.actualModel).toBe("example/low")
+    expect(result.fallbackChain?.map((entry) => [entry.providers, entry.model])).toEqual([[ ["other"], "backup" ]])
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    const bypass = { ...args, category: "auto", model_routing: false as const }
+    expect((await resolveCategoryExecution(bypass, ctx, undefined, undefined)).actualModel).toBe("example/high")
+    expect(bypass.category).toBe("strong")
+    expect((await resolveCategoryExecution({ ...args, category: "strong" }, ctx, undefined, undefined)).actualModel).toBe("example/high")
     expect(fetchSpy).toHaveBeenCalledTimes(1)
   } finally {
     cacheSpy.mockRestore()
     fetchSpy.mockRestore()
-    if (previousApiKey === undefined) delete process.env.OPENCODE_API_KEY
-    else process.env.OPENCODE_API_KEY = previousApiKey
   }
 })
 
-test("task_id continuation bypasses classification even when its session is gone", async () => {
-  // given: enabled Jev routing and a prior session id
-  const previousApiKey = process.env.OPENCODE_API_KEY
-  process.env.OPENCODE_API_KEY = "test-only-key"
-  const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(reply([0.9, 0.9]))
-  const manager = { resume: async () => ({ id: "task-1", sessionId: "ses_earlier", status: "running" }) }
-  const client = {
-    app: { agents: async () => ({ data: [] }) },
-    config: { get: async () => ({ data: {} }) },
-    session: {
-      get: async () => ({ data: { directory: "/tmp" } }),
-      messages: async () => ({ status: 404 }),
-      status: async () => ({ data: { ses_earlier: { type: "idle" } } }),
-      prompt: async () => ({ data: {} }), promptAsync: async () => ({ data: {} }),
-    },
-  }
-  const delegate = createDelegateTask(unsafeTestValue({ manager, client, directory: "/tmp", jevRouting: config }))
+test("category team members use the shared auto resolver and retain the effective category", async () => {
+  const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(reply([0.8, 0.9]))
+  const cacheSpy = spyOn(providerCache, "readProviderModelsCache").mockReturnValue({
+    connected: ["example", "other"], models: { example: ["low", "high"], other: ["backup", "reserve"] }, updatedAt: "2026-09-28",
+  })
   try {
-    // when: continuing a prior task despite a category argument
-    const result = await delegate.execute({ task_id: "ses_earlier", category: "custom", prompt: "Continue", description: "Resume", load_skills: [] },
-      unsafeTestValue({ sessionID: "ses_parent", messageID: "msg_parent", agent: "sisyphus", abort: new AbortController().signal }))
-    // then: the classifier was never asked to select a new model
-    expect(result).toContain("no longer exists")
-    expect(fetchSpy).not.toHaveBeenCalled()
+    const ctx: ExecutorContext = {
+      client: { model: { list: async () => ({ data: [] }) } } as ExecutorContext["client"],
+      manager: {} as ExecutorContext["manager"], directory: "/tmp", userCategories: categories, jevRouting: config,
+    }
+    const member = await resolveMember(unsafeTestValue({ kind: "category", name: "worker", category: "auto", prompt: "Implement feature" }), ctx, "")
+    expect(member.category).toBe("cheap")
+    expect(member.model).toMatchObject({ providerID: "example", modelID: "low" })
+    expect(member.fallbackChain?.map((entry) => entry.model)).toEqual(["backup"])
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
   } finally {
+    cacheSpy.mockRestore()
     fetchSpy.mockRestore()
-    if (previousApiKey === undefined) delete process.env.OPENCODE_API_KEY
-    else process.env.OPENCODE_API_KEY = previousApiKey
-  }
-})
-
-test("named subagent dispatch bypasses the category classifier", async () => {
-  // given: enabled Jev routing and a named agent with a pinned model
-  const previousApiKey = process.env.OPENCODE_API_KEY
-  process.env.OPENCODE_API_KEY = "test-only-key"
-  const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(reply([0.9, 0.9]))
-  const launch = mock(async () => ({ id: "task-explore", sessionId: "ses_explore", status: "running" }))
-  const delegate = createDelegateTask(unsafeTestValue({
-    manager: { launch }, directory: "/tmp", jevRouting: config,
-    client: {
-      app: { agents: async () => ({ data: [{ name: "explore", mode: "subagent", model: { providerID: "example", modelID: "high" } }] }) },
-      config: { get: async () => ({ data: {} }) },
-      session: { messages: async () => ({ data: [] }) },
-    },
-  }))
-  try {
-    // when: a named agent is launched
-    await delegate.execute({ subagent_type: "explore", prompt: "Inspect", description: "Explore", run_in_background: true, load_skills: [] },
-      unsafeTestValue({ sessionID: "ses_parent", messageID: "msg_parent", agent: "sisyphus", abort: new AbortController().signal }))
-    // then: the named agent keeps its pinned model without Jev
-    expect(fetchSpy).not.toHaveBeenCalled()
-    expect(launch).toHaveBeenCalledWith(expect.objectContaining({ agent: "explore", model: expect.objectContaining({ modelID: "high" }) }))
-  } finally {
-    fetchSpy.mockRestore()
-    if (previousApiKey === undefined) delete process.env.OPENCODE_API_KEY
-    else process.env.OPENCODE_API_KEY = previousApiKey
   }
 })

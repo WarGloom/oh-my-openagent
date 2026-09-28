@@ -8807,48 +8807,31 @@
           "maximum": 5000
         },
         "min_suitability": {
-          "default": 0.9,
+          "default": 0.6,
           "type": "number",
           "minimum": 0,
           "maximum": 1
         },
-        "categories": {
-          "default": {},
-          "type": "object",
-          "propertyNames": {
-            "type": "string"
-          },
-          "additionalProperties": {
-            "minItems": 2,
-            "maxItems": 8,
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "model": {
-                  "type": "string",
-                  "pattern": "^[^\\s/]+\\/[^\\s/]+(?:\\/[^\\s/]+)*$"
-                },
-                "suitability": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 1000
-                }
-              },
-              "required": [
-                "model",
-                "suitability"
-              ],
-              "additionalProperties": false
-            }
+        "ladder": {
+          "minItems": 2,
+          "maxItems": 8,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
           }
+        },
+        "default": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [
         "mode",
         "timeout_ms",
         "min_suitability",
-        "categories"
+        "ladder",
+        "default"
       ],
       "additionalProperties": false
     },

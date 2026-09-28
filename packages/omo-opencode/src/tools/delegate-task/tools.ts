@@ -89,7 +89,7 @@ function buildDelegateTaskArgsSchema(availableSubagentNames?: readonly string[])
       .optional()
       .describe("true is the standard spawn: returns a background task ID `bg_...` at once; the completion notification delivers the result, which background_output reads. false blocks this response until the child finishes; use it only for a short child whose result gates your very next call. Omitted counts as false."),
     category: tool.schema.string().optional().describe("REQUIRED if subagent_type not provided. Do NOT provide both category and subagent_type."),
-    model_routing: tool.schema.boolean().optional().describe("Set false to bypass optional Jev routing for this category task; omitted uses the configured mode. Does not affect team members or named agents."),
+    model_routing: tool.schema.boolean().optional().describe("Set false to bypass optional Jev routing for category auto; omitted uses the configured mode. Does not affect team members or named agents."),
     subagent_type: buildSubagentTypeSchema(availableSubagentNames),
     task_id: tool.schema
       .string()
