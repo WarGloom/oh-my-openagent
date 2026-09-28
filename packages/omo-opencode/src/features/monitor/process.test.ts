@@ -148,6 +148,31 @@ describe("spawnMonitoredProcess", () => {
         { pid: -4321, signal: "SIGKILL" },
       ])
     })
+
+    test("#when manually stopped before the deadline and exit is delayed past it #then exit is not a timeout", async () => {
+      // given
+      let resolveExit!: (code: number) => void
+      const delayedExit = new Promise<number>((resolve) => { resolveExit = resolve })
+      const subprocess = createFakeSubprocess({ pid: 4322, exited: delayedExit, signalCode: "SIGTERM" })
+      const clock = createFakeClock()
+      process.kill = ((_pid: number, _signal?: string | number) => true) satisfies typeof process.kill
+      const monitored = spawnMonitoredProcess(
+        { command: "sleep 2", maxRuntimeMs: 25 },
+        { spawn: createFakeSpawn([subprocess], []), ...clock.deps },
+      )
+
+      // when
+      monitored.kill()
+      for (const timer of clock.calls.filter((entry) => !entry.cleared).sort((a, b) => a.ms - b.ms)) {
+        timer.fn()
+      }
+      resolveExit(0)
+      const result = await monitored.exited
+
+      // then
+      expect(result).toEqual({ code: 0, signal: "SIGTERM" })
+      expect(result).not.toHaveProperty("terminationReason")
+    })
   })
 
   describe("#given a subprocess exits immediately", () => {
@@ -193,7 +218,7 @@ describe("spawnMonitoredProcess", () => {
       const result = await monitored.exited
 
       // then
-      expect(result).toEqual({ code: null, signal: "SIGALRM" })
+      expect(result).toEqual({ code: null, signal: "SIGALRM", terminationReason: "timeout", maxRuntimeMs: 1234 })
       expect(killCalls).toEqual([{ pid: -2468, signal: "SIGTERM" }])
       clock.fireByMs(5_000)
       expect(killCalls).toEqual([
@@ -235,6 +260,20 @@ describe("spawnMonitoredProcess", () => {
 })
 
 describe("spawnMonitoredProcess real subprocess smoke", () => {
+  test.skipIf(process.platform === "win32")("#given a sleeping command #when the short runtime elapses #then exit identifies the timeout", async () => {
+    // given
+    const monitored = spawnMonitoredProcess(
+      { command: "sleep 2", maxRuntimeMs: 25 },
+      { setTimer: (fn, ms) => setTimeout(fn, ms), clearTimer: (handle) => clearTimeout(handle) },
+    )
+
+    // when
+    const exit = await monitored.exited
+
+    // then
+    expect(exit).toEqual({ code: null, signal: "SIGALRM", terminationReason: "timeout", maxRuntimeMs: 25 })
+  })
+
   test.skipIf(process.platform === "win32")("#given printf emits two lines #when monitored #then stdout lines arrive and no process group remains", async () => {
     // given
     let observedPid: number | undefined

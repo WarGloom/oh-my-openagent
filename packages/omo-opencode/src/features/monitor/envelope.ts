@@ -1,7 +1,11 @@
-import type { MonitorCounters, OutputBatch } from "./types"
+import type { MonitorCounters, MonitorRecord, OutputBatch } from "./types"
+
+export function formatTimeoutTermination(maxRuntimeMs: number): string {
+  return `Monitor exceeded max_runtime_ms=${maxRuntimeMs} and was stopped. Configure via monitor.max_runtime_ms.`
+}
 
 export function formatMonitorBatch(
-  record: { id: string; label: string; command: string; status: string; exitCode?: number; signal?: string },
+  record: Pick<MonitorRecord, "id" | "label" | "command" | "status" | "exitCode" | "signal" | "terminationReason" | "maxRuntimeMs">,
   batch: OutputBatch,
   counters: MonitorCounters,
 ): string {
@@ -36,11 +40,15 @@ function formatOutputLines(batch: OutputBatch): string[] {
 }
 
 function formatStatus(
-  record: { status: string; exitCode?: number; signal?: string },
+  record: Pick<MonitorRecord, "status" | "exitCode" | "signal" | "terminationReason" | "maxRuntimeMs">,
   batch: OutputBatch,
 ): string {
   if (batch.stillRunning) {
     return "Status: running"
+  }
+
+  if (record.terminationReason === "timeout" && record.maxRuntimeMs !== undefined) {
+    return `Status: exited (signal=${record.signal}, terminationReason=timeout)\n${formatTimeoutTermination(record.maxRuntimeMs)}`
   }
 
   if (record.signal !== undefined) {

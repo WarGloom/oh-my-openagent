@@ -11,12 +11,14 @@ export interface SpawnDeps {
 
 export interface MonitoredProcess {
   kill(signal?: NodeJS.Signals): void
-  exited: Promise<{ code: number | null; signal: string | null }>
+  exited: Promise<ExitResult>
   stdout: ReadableStream<Uint8Array>
   stderr: ReadableStream<Uint8Array>
 }
 
-type ExitResult = { code: number | null; signal: string | null }
+export type ExitResult =
+  | { code: number | null; signal: string | null; terminationReason?: never; maxRuntimeMs?: never }
+  | { code: null; signal: "SIGALRM"; terminationReason: "timeout"; maxRuntimeMs: number }
 interface SpawnedMonitorProcess {
   readonly exited: Promise<number>
   readonly stdout: ReadableStream<Uint8Array>
@@ -101,6 +103,7 @@ export function spawnMonitoredProcess(
 
   function kill(signal: NodeJS.Signals = "SIGTERM"): void {
     if (actualExited) return
+    clearWatchdog()
 
     if (subprocess.pid !== undefined) {
       killProcessGroup(subprocess.pid, signal)
@@ -119,7 +122,7 @@ export function spawnMonitoredProcess(
   watchdogTimer = deps.setTimer(() => {
     clearWatchdog()
     kill("SIGTERM")
-    settlePublicExit({ code: null, signal: "SIGALRM" })
+    settlePublicExit({ code: null, signal: "SIGALRM", terminationReason: "timeout", maxRuntimeMs: opts.maxRuntimeMs })
   }, opts.maxRuntimeMs)
 
   subprocess.exited.then((code) => {

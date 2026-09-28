@@ -92,6 +92,10 @@ export function observeProcessExit(
     if (result.signal !== null) {
       state.record.signal = result.signal
     }
+    if (result.terminationReason === "timeout") {
+      state.record.terminationReason = result.terminationReason
+      state.record.maxRuntimeMs = result.maxRuntimeMs
+    }
     state.record.counters = state.ring.getCounters()
     state.batcher.flushNow({ allowEmpty: true })
     state.batcher.destroy()
