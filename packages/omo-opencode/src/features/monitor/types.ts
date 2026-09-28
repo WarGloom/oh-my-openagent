@@ -38,6 +38,8 @@ export interface MonitorRecord {
   status: MonitorStatus
   exitCode?: number
   signal?: string
+  terminationReason?: "timeout"
+  maxRuntimeMs?: number
   counters: MonitorCounters
 }
 
