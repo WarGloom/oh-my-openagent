@@ -20,6 +20,7 @@ import { applyCategoryParams } from "./delegated-model-config"
 import { applyFallbackEntrySettings } from "./fallback-entry-settings"
 import { lowerReasoningForModel } from "../../shared/agent-variant"
 import { distributeTaskModels } from "./models-distribution"
+import { selectCategoryTierWithJev } from "./jev-routing"
 
 function getConfiguredModel(entry: string | { model: string } | undefined): string | undefined {
   return typeof entry === "string" ? entry : entry?.model
@@ -124,6 +125,19 @@ export async function resolveCategoryExecution(
   // A retired builtin name resolves to its replacement so third-party skills and AGENTS.md text
   // spawning the old category keep working; a user category of that name still wins over the alias.
   const enabledCategories = mergeCategories(userCategories)
+  if (args.category === "auto") {
+    const selected = await selectCategoryTierWithJev({
+      brief: args.prompt,
+      config: executorCtx.jevRouting,
+      categories: userCategories,
+      enabledCategories,
+      modelRouting: args.model_routing,
+      signal: executorCtx.abortSignal,
+    })
+    executorCtx.abortSignal?.throwIfAborted()
+    if (!selected) return categoryResolutionError("Invalid Jev routing default for category auto")
+    args.category = selected
+  }
   const requestedCategoryName = args.category!
   const categoryName = enabledCategories[requestedCategoryName] !== undefined
     ? requestedCategoryName
