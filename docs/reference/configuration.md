@@ -13,6 +13,7 @@ Complete reference for Oh My OpenCode plugin configuration. Every omo harness re
   - [Agents](#agents)
   - [Categories](#categories)
   - [Model Resolution](#model-resolution)
+  - [Optional Jev Category Routing](#optional-jev-category-routing)
   - [Model Profiles](#model-profiles)
 - [Task System](#task-system)
   - [Background Tasks](#background-tasks)
@@ -379,6 +380,42 @@ Domain-specific model delegation used by the `task()` tool. When the main agent 
 | `warn_unavailable`  | boolean       | -       | Present on the OpenCode schema. The dead-chain notice it suppresses is a Senpi/core `task` behavior. |
 
 Disable categories: `{ "categories": { "ultrabrain": { "disable": true } } }`
+
+### Optional Jev Category Routing
+
+OpenCode category delegations can optionally score a **declared** cheapest-first list of models before spawning `sisyphus-junior`. Put the following in the project's `.omo/omo.jsonc`, or use `~/.omo/omo.jsonc` for a global default (not `opencode.json`). The `jev-1.13-free` endpoint accepts anonymous requests; no API key is needed or sent:
+
+```jsonc
+{
+  "[opencode]": {
+    "categories": {
+      "deep-low": {
+        "models": [
+          { "model": "openai/gpt-5.6-sol-fast", "reasoning": "medium" },
+          { "model": "openai/gpt-5.6-sol", "reasoning": "high" }
+        ]
+      }
+    },
+    "jev_routing": {
+      "mode": "observe",
+      "timeout_ms": 2000,
+      "min_suitability": 0.9,
+      "categories": {
+        "deep-low": [
+          { "model": "openai/gpt-5.6-sol-fast", "suitability": "Routine implementation with settled decisions and narrow checks" },
+          { "model": "openai/gpt-5.6-sol", "suitability": "Complex implementation needing deeper reasoning within the same category" }
+        ]
+      }
+    }
+  }
+}
+```
+
+A complete project-local example with a dedicated trial category is in [`docs/examples/jev-project.jsonc`](../examples/jev-project.jsonc). Use model IDs your provider actually serves. `jev_routing.mode` defaults to `off` (no classifier request); `observe` sends the same request and logs the proposed decision but keeps the original worker model; `active` uses the first candidate scoring at least `min_suitability`. `timeout_ms` defaults to 2000 and is limited to 100–5000; `min_suitability` defaults to 0.9 and must be 0–1. The candidate list is a **declared cost preference**, not a measured price or a monetary guarantee. Every candidate must exactly match an entry in that category's configured `models` chain and be available; at least two distinct candidates and two canonical models are required. Existing single-model pins stay untouched. The chosen entry retains its own reasoning, variant and provider settings; the remaining configured fallback entries retain their order without duplicates.
+
+Jev receives only the current task/member brief (up to 8192 UTF-8 bytes) and the supplied suitability criteria, not session history or repository contents. Do not opt in for sensitive briefs. Calls go only to `https://opencode.ai/zen/v1/systemone` using `jev-1.13-free`; free availability and service limits may change. There is no paid classifier fallback, retry, or classifier session. Jev's score is a suitability judgment, **not a verification of model capability**. An oversized brief, unavailable candidate, unsuitable score, timeout or invalid response keeps the existing category routing; cancellation stops dispatch rather than falling through.
+
+This applies to ordinary `task(category=...)` and category team members at creation or `team_add_member`. For an individual ordinary task, pass `model_routing: false` to bypass; `task_id` continuations and named `subagent_type` agents never reclassify. Team member specs have no individual bypass: turn off the category or set `jev_routing.mode` to `off` in the project `[opencode]` config for that team. The existing full worker fallback policy remains unchanged, so a runtime error can still move to another model; cheapest runtime cost is not guaranteed.
 
 ### Model Resolution
 

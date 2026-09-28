@@ -1,0 +1,37 @@
+{
+  "$schema": "https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/dev/assets/omo.schema.json",
+
+  // Project-local Jev worker routing. Save as <project>/.omo/omo.jsonc.
+  // Only categories listed under jev_routing.categories are routed; all others keep normal routing.
+  // Candidates are ordered cheapest-first and must be members of that category's models chain.
+  // jev-1.13-free needs no API key; only the delegation brief and suitability text are sent.
+
+  "[opencode]": {
+    "categories": {
+      "jev-trial": {
+        "description": "Explicit Jev routing trial for bounded coding and analysis tasks.",
+        "models": [
+          { "model": "openai/gpt-6-sol", "reasoning": "high" },
+          { "model": "openai/gpt-6-luna", "reasoning": "low" }
+        ]
+      }
+    },
+    "jev_routing": {
+      "mode": "active",
+      "timeout_ms": 2000,
+      "min_suitability": 0.9,
+      "categories": {
+        "jev-trial": [
+          {
+            "model": "openai/gpt-6-luna",
+            "suitability": "A small, explicit task with supplied context, settled decisions and a straightforward check."
+          },
+          {
+            "model": "openai/gpt-6-sol",
+            "suitability": "A bounded implementation or analysis task requiring substantial reasoning about interactions or trade-offs."
+          }
+        ]
+      }
+    }
+  }
+}
