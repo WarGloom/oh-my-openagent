@@ -126,6 +126,17 @@ describe("Jev auto tier routing", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(3)
   })
 
+  test("finite oversized valid reply falls back instead of selecting cheap", async () => {
+    // given: a complete, closed JSON reply whose scores would select cheap
+    const response = reply([0.95, 0.1], { padding: "x".repeat(65536) })
+    expect(response.headers.get("content-length")).toBeNull()
+    fetchSpy.mockResolvedValue(response)
+    // when: Jev returns an oversized but otherwise valid reply
+    const selected = await selectCategoryTierWithJev(input())
+    // then: the response cap forces the default tier
+    expect(selected).toBe("strong")
+  })
+
   test("falls back on timeout but propagates tool cancellation", async () => {
     // given: a pending request
     fetchSpy.mockImplementation((_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
