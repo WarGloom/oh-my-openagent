@@ -1,6 +1,7 @@
 import { z } from "zod"
 import type { CategoriesConfig, JevRoutingConfig } from "../../config/schema"
 import { log } from "../../shared/logger"
+import { CATEGORY_DESCRIPTIONS } from "./constants"
 
 const JEV_URL = "https://opencode.ai/zen/v1/systemone"
 const JEV_MODEL = "jev-1.13-free"
@@ -54,17 +55,20 @@ export async function selectCategoryTierWithJev(input: JevRoutingInput): Promise
       status = "oversized_brief"
       return fallback
     }
-    const questions = Object.fromEntries(ladder.map((tier, index) => [
-      `tier_${index}`,
-      {
-        type: "noul",
-        instructions: `Score whether tier ${tier} is suitable for the current delegation brief. Category description: ${enabledCategories[tier]?.description ?? ""}. Score suitability only, not price or model capability claims.`,
-        criteria: {
-          true: `The delegation brief is suitable for tier ${tier}: ${enabledCategories[tier]?.description ?? ""}`,
-          false: `The delegation brief is not suitable for tier ${tier}.`,
+    const questions = Object.fromEntries(ladder.map((tier, index) => {
+      const description = categories?.[tier]?.description || CATEGORY_DESCRIPTIONS[tier] || ""
+      return [
+        `tier_${index}`,
+        {
+          type: "noul",
+          instructions: `Score whether tier ${tier} is suitable for the current delegation brief. Category description: ${description}. Score suitability only, not price or model capability claims.`,
+          criteria: {
+            true: `The delegation brief is suitable for tier ${tier}: ${description}`,
+            false: `The delegation brief is not suitable for tier ${tier}.`,
+          },
         },
-      },
-    ]))
+      ]
+    }))
     const body = JSON.stringify({ model: JEV_MODEL, state: brief, questions })
     if (new TextEncoder().encode(body).length > MAX_REQUEST_BYTES) {
       status = "oversized_request"

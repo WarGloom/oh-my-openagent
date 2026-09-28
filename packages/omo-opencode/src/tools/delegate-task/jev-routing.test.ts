@@ -9,6 +9,7 @@ import * as providerCache from "../../shared/connected-providers-cache"
 import { resolveMember } from "../../features/team-mode/team-runtime/resolve-member"
 import { unsafeTestValue } from "../../../../../test-support/unsafe-test-value"
 import { resolveCategoryExecution } from "./category-resolver"
+import { CATEGORY_DESCRIPTIONS } from "./constants"
 import type { ExecutorContext } from "./executor-types"
 import { selectCategoryTierWithJev, type JevRoutingInput } from "./jev-routing"
 import { createDelegateTask } from "./tools"
@@ -65,6 +66,32 @@ describe("Jev auto tier routing", () => {
     expect(body.questions.tier_1.instructions).toContain("Complex decisions")
     expect(init.body).not.toContain("example/low")
     expect(init.body).not.toContain("other/backup")
+  })
+
+  test("uses builtin tier descriptions unless a category config overrides them", async () => {
+    // given: a builtin tier without a configured description
+    const tierConfig = { ...config, ladder: ["quick", "strong"] }
+    const base = input({
+      config: tierConfig,
+      categories: { auto: categories.auto, quick: {}, strong: {} },
+      enabledCategories: { quick: {}, strong: {} },
+    })
+    // when: Jev scores the builtin and then an explicitly described tier
+    await selectCategoryTierWithJev(base)
+    await selectCategoryTierWithJev(input({
+      ...base,
+      categories: { ...base.categories, quick: { description: "Custom quick tier" } },
+      enabledCategories: { quick: { description: "Custom quick tier" }, strong: {} },
+    }))
+    // then: builtin prose is reused, while the user override wins
+    const builtinQuestion = JSON.parse(fetchSpy.mock.calls[0]?.[1]?.body).questions.tier_0
+    const overriddenQuestion = JSON.parse(fetchSpy.mock.calls[1]?.[1]?.body).questions.tier_0
+    expect(CATEGORY_DESCRIPTIONS.quick).toBeTruthy()
+    expect(builtinQuestion.instructions).toContain(CATEGORY_DESCRIPTIONS.quick)
+    expect(builtinQuestion.criteria.true).toContain(CATEGORY_DESCRIPTIONS.quick)
+    expect(overriddenQuestion.instructions).toContain("Custom quick tier")
+    expect(overriddenQuestion.criteria.true).toContain("Custom quick tier")
+    expect(overriddenQuestion.instructions).not.toContain(CATEGORY_DESCRIPTIONS.quick)
   })
 
   test("falls back when unsure, and observes without changing the tier", async () => {
