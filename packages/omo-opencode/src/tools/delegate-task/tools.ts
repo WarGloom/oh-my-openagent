@@ -104,6 +104,12 @@ function buildDelegateTaskArgsSchema(availableSubagentNames?: readonly string[])
       .string()
       .optional()
       .describe("REQUIRED if subagent_type not provided. Do NOT provide both category and subagent_type."),
+    model_routing: tool.schema
+      .boolean()
+      .optional()
+      .describe(
+        "Set false to bypass optional Jev routing for category auto; omitted uses the configured mode. Does not affect team members or named agents.",
+      ),
     subagent_type: buildSubagentTypeSchema(availableSubagentNames),
     task_id: tool.schema
       .string()
@@ -123,6 +129,7 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
     args: delegateTaskArgsSchema,
     async execute(args, toolContext) {
       const ctx = toolContext as ToolContextWithMetadata
+      ctx.abort?.throwIfAborted()
       const delegateTaskArgs = await prepareDelegateTaskArgs(args, ctx)
 
       if (!delegateTaskArgs.category && isPlanAgent(delegateTaskArgs.subagent_type)) {
@@ -162,6 +169,7 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
       const parentContext = await resolveParentContext(ctx, options.client)
 
       if (delegateTaskArgs.task_id) {
+        ctx.abort?.throwIfAborted()
         if (runInBackground) {
           return executeBackgroundContinuation(delegateTaskArgs, ctx, options, parentContext, continuationSystemContent)
         }
@@ -196,7 +204,13 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
       const modelOptions =
         currentModelConfig === undefined
           ? options
-          : { ...options, userCategories: currentModelConfig.categories, agentOverrides: currentModelConfig.agents }
+          : {
+              ...options,
+              userCategories: currentModelConfig.categories,
+              agentOverrides: currentModelConfig.agents,
+              jevRouting: currentModelConfig.jev_routing,
+            }
+      const routingOptions = { ...modelOptions, abortSignal: ctx.abort }
 
       let agentToUse: string
       let categoryModel: DelegatedModelConfig | undefined
@@ -210,7 +224,7 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
       if (delegateTaskArgs.category) {
         const resolution = await resolveCategoryExecution(
           delegateTaskArgs,
-          modelOptions,
+          routingOptions,
           inheritedModel,
           systemDefaultModel,
         )
@@ -239,6 +253,7 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
         })
 
         if (isUnstableAgent && isRunInBackgroundExplicitlyFalse) {
+          ctx.abort?.throwIfAborted()
           const systemContent = buildSystemContent({
             skillContent,
             skillContents,
@@ -288,6 +303,8 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
         availableSkills,
         nativeSkillInfos,
       })
+
+      ctx.abort?.throwIfAborted()
 
       if (runInBackground) {
         return executeBackgroundTask(

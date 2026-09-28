@@ -19,6 +19,7 @@ export class TeamMemberResolutionError extends Error {
 
 export interface ResolvedMember {
   memberName: string
+  category?: string
   agentToUse: string
   model: DelegatedModelConfig | undefined
   fallbackChain: FallbackEntry[] | undefined
@@ -72,16 +73,12 @@ export async function resolveMember(
 ): Promise<ResolvedMember> {
   try {
     if (member.kind === "category") {
-      const execution = await resolveCategoryExecution(
-        {
-          ...createBaseDelegateTaskArgs(member.prompt),
-          category: member.category,
-          subagent_type: "sisyphus-junior",
-        },
-        withoutSisyphusJuniorOverride(ctx),
-        undefined,
-        undefined,
-      )
+      const args: DelegateTaskArgs = {
+        ...createBaseDelegateTaskArgs(member.prompt),
+        category: member.category,
+        subagent_type: "sisyphus-junior",
+      }
+      const execution = await resolveCategoryExecution(args, withoutSisyphusJuniorOverride(ctx), undefined, undefined)
 
       if (execution.error) {
         throw new Error(execution.error)
@@ -89,6 +86,7 @@ export async function resolveMember(
 
       return {
         memberName: member.name,
+        category: args.category,
         agentToUse: execution.agentToUse,
         model: execution.categoryModel,
         fallbackChain: execution.fallbackChain,

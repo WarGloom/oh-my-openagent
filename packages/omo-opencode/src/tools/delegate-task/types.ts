@@ -6,6 +6,7 @@ import type {
   BrowserAutomationProvider,
   AgentOverrides,
   SisyphusAgentConfig,
+  JevRoutingConfig,
 } from "../../config/schema"
 import type { ModelFallbackControllerAccessor } from "../../hooks/model-fallback"
 import type { LoadedSkill } from "../../features/opencode-skill-loader/types"
@@ -63,6 +64,7 @@ export interface DelegateTaskArgs {
   descriptionSource?: "explicit" | "generated"
   prompt: string
   category?: string
+  model_routing?: false
   subagent_type?: string
   requested_subagent_type?: string
   run_in_background: boolean
@@ -108,6 +110,7 @@ export interface DelegateTaskToolOptions {
    */
   availableModelsOverride?: Set<string>
   userCategories?: CategoriesConfig
+  jevRouting?: JevRoutingConfig
   gitMasterConfig?: GitMasterConfig
   sisyphusJuniorModel?: string
   browserProvider?: BrowserAutomationProvider
@@ -117,7 +120,7 @@ export interface DelegateTaskToolOptions {
   availableSkills?: AvailableSkill[]
   agentOverrides?: AgentOverrides
   /** Reload model-bearing config at task invocation time so edits are honored without rebuilding tools. */
-  loadCurrentModelConfig?: () => Pick<OhMyOpenCodeConfig, "agents" | "categories">
+  loadCurrentModelConfig?: () => Pick<OhMyOpenCodeConfig, "agents" | "categories" | "jev_routing">
   sisyphusAgentConfig?: SisyphusAgentConfig
   /** Mirrors `claude_code.agents`; when false, `.claude/agents` definitions are not read during subagent matching. */
   claudeCodeAgentsEnabled?: boolean
