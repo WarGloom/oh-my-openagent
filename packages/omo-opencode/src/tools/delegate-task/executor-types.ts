@@ -5,6 +5,7 @@ import type {
   BrowserAutomationProvider,
   AgentOverrides,
   SisyphusAgentConfig,
+  JevRoutingConfig,
 } from "../../config/schema"
 import type { ModelFallbackControllerAccessor } from "../../hooks/model-fallback"
 import type { OpencodeClient } from "./types"
@@ -14,6 +15,8 @@ export interface ExecutorContext {
   client: OpencodeClient
   directory: string
   userCategories?: CategoriesConfig
+  jevRouting?: JevRoutingConfig
+  abortSignal?: AbortSignal
   gitMasterConfig?: GitMasterConfig
   sisyphusJuniorModel?: string
   browserProvider?: BrowserAutomationProvider

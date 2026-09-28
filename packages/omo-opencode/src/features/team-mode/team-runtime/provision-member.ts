@@ -160,6 +160,7 @@ export async function provisionTeamMember(input: ProvisionTeamMemberInput): Prom
   const resolvedMember = await resolveMember(input.member, input.ctx, input.categoryExamples, input.leadAgentName)
   const memberGoal = input.member.prompt?.replace(/\s+/g, " ").trim()
 
+  input.ctx.abortSignal?.throwIfAborted()
   const task = await input.bgMgr.launch({
     description: memberGoal ? `${input.member.name}: ${memberGoal}` : input.member.name,
     prompt: buildMemberPrompt({
@@ -178,7 +179,7 @@ export async function provisionTeamMember(input: ProvisionTeamMemberInput): Prom
     model: resolvedMember.model,
     fallbackChain: resolvedMember.fallbackChain,
     skillContent: resolvedMember.systemContent,
-    category: input.member.kind === "category" ? input.member.category : undefined,
+    category: resolvedMember.category,
     sessionPermission: QUESTION_DENIED_SESSION_PERMISSION,
     ...(worktreePath ? { cwd: worktreePath } : {}),
     onSessionCreated: async (sessionId, sessionModel) => {
@@ -247,7 +248,7 @@ export async function provisionTeamMember(input: ProvisionTeamMemberInput): Prom
                 worktreePath,
                 subagent_type: resolvedMember.agentToUse,
                 provisioningClaimId: undefined,
-                ...(input.member.kind === "category" ? { category: input.member.category } : {}),
+                ...(resolvedMember.category ? { category: resolvedMember.category } : {}),
                 ...(member.sessionId === sessionId && member.model
                   ? { model: member.model }
                   : persistedModel

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/dev/assets/omo.schema.json",
+
+  // Project-local Jev tier routing. Save as <project>/.omo/omo.jsonc.
+  // Only category: "auto" is classified; explicit categories keep their own model chains.
+  // The free endpoint needs no API key. Do not use auto for sensitive briefs.
+  "[opencode]": {
+    "categories": {
+      "auto": { "description": "Choose the cheapest suitable tier for a delegated task." }
+    },
+    "jev_routing": {
+      "mode": "active",
+      "timeout_ms": 2000,
+      "min_suitability": 0.6,
+      "ladder": ["quick", "unspecified-low", "deep-low", "unspecified-high", "deep-high"],
+      "default": "unspecified-low"
+    }
+  }
+}

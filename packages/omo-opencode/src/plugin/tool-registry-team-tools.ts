@@ -25,6 +25,7 @@ export function createTeamModeToolsRecord(args: {
       managers.tmuxSessionManager,
       {
         userCategories: pluginConfig.categories,
+        jevRouting: pluginConfig.jev_routing,
         sisyphusJuniorModel: getSisyphusJuniorModelOverride(pluginConfig.agents?.["sisyphus-junior"]),
         agentOverrides: pluginConfig.agents,
         claudeCodeAgentsEnabled: pluginConfig.claude_code?.agents ?? true,
@@ -32,6 +33,7 @@ export function createTeamModeToolsRecord(args: {
     ),
     team_add_member: factories.createTeamAddMemberTool(pluginConfig.team_mode, ctx.client, managers.backgroundManager, {
       userCategories: pluginConfig.categories,
+      jevRouting: pluginConfig.jev_routing,
       sisyphusJuniorModel: getSisyphusJuniorModelOverride(pluginConfig.agents?.["sisyphus-junior"]),
       agentOverrides: pluginConfig.agents,
     }),
