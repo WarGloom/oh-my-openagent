@@ -49,7 +49,7 @@ export function createTeamAddMemberTool(
       member: TeamAddMemberInlineMemberToolSchema.describe("One member to add, using the same inline member shape as team_create. Example: { name: \"reviewer\", category: \"deep\", prompt: \"Review the auth changes.\" }."),
     },
     async execute(rawArgs, toolContext) {
-      const runtimeContext = toolContext as TeamLifecycleToolContext
+      const runtimeContext = toolContext as TeamLifecycleToolContext & { abort?: AbortSignal }
       const leadSessionId = runtimeContext.sessionID
       if (!leadSessionId) throw new Error("team_add_member requires a tool context sessionID")
 
@@ -82,6 +82,8 @@ export function createTeamAddMemberTool(
         manager: bgMgr,
         directory: projectRoot,
         userCategories: executorConfig?.userCategories,
+        jevRouting: executorConfig?.jevRouting,
+        abortSignal: runtimeContext.abort,
         sisyphusJuniorModel: executorConfig?.sisyphusJuniorModel,
         agentOverrides: executorConfig?.agentOverrides,
       } as ExecutorContext

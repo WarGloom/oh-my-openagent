@@ -491,4 +491,28 @@ describe("team lifecycle tools", () => {
     await expect(result).rejects.toThrow("not 'active'")
     expect(addTeamMemberMock).not.toHaveBeenCalled()
   })
+
+  test("team_create and team_add_member forward the same Jev settings and tool signal", async () => {
+    // given: a lead with a category-routing configuration
+    const routing = { mode: "active" as const, timeout_ms: 2000, min_suitability: 0.9, categories: { quick: [
+      { model: "example/low", suitability: "simple" },
+      { model: "example/high", suitability: "complex" },
+    ] } }
+    const executorConfig = { jevRouting: routing }
+    const createTool = createTeamCreateTool(config, mockClient, backgroundManager, undefined, executorConfig, lifecycleDeps)
+    const addTool = createTeamAddMemberTool(config, mockClient, backgroundManager, executorConfig, addMemberDeps)
+    const abort = new AbortController()
+    const toolContext = { ...createToolContext("lead-session"), abort: abort.signal }
+    // when: a team is created and a category member is added
+    const created = parseToolResult<{ teamRunId: string }>(await createTool.execute({ inline_spec: createSpec() }, toolContext))
+    await addTool.execute({ teamRunId: created.teamRunId, member: { name: "reviewer", category: "quick", prompt: "review work" } }, toolContext)
+    // then: both executor contexts receive routing and cancellation
+    expect(createTeamRunMock).toHaveBeenCalledWith(
+      expect.anything(), "lead-session", expect.objectContaining({ jevRouting: routing, abortSignal: abort.signal }),
+      config, backgroundManager, undefined, expect.anything(),
+    )
+    expect(addTeamMemberMock).toHaveBeenCalledWith(expect.objectContaining({
+      ctx: expect.objectContaining({ jevRouting: routing, abortSignal: abort.signal }),
+    }))
+  })
 })

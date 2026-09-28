@@ -18,6 +18,7 @@ import { resolveModelForDelegateTask } from "./model-selection"
 import type { DelegatedModelConfig } from "./types"
 import { applyCategoryParams } from "./delegated-model-config"
 import { applyFallbackEntrySettings } from "./fallback-entry-settings"
+import { selectCategoryModelWithJev } from "./jev-routing"
 
 function getConfiguredModel(entry: string | { model: string } | undefined): string | undefined {
   return typeof entry === "string" ? entry : entry?.model
@@ -134,7 +135,7 @@ export async function resolveCategoryExecution(
 
   const availableModels = await getAvailableModelsForDelegateTask(client)
 
-  const resolved = resolveCategoryConfig(categoryName, {
+  let resolved = resolveCategoryConfig(categoryName, {
     userCategories,
     inheritedModel,
     systemDefaultModel,
@@ -175,6 +176,26 @@ Available categories: ${allCategoryNames}`)
     }
 
     return categoryResolutionError(`Unknown category: "${categoryName}". Available: ${allCategoryNames}`)
+  }
+
+  const routedEntry = args.model_routing === false ? undefined : await selectCategoryModelWithJev({
+    category: categoryName,
+    brief: args.prompt,
+    config: executorCtx.jevRouting,
+    canonicalModels: userCategories?.[categoryName]?.models,
+    usableModels: resolved.config.models,
+    availableModels,
+    signal: executorCtx.abortSignal,
+  })
+  executorCtx.abortSignal?.throwIfAborted()
+  if (routedEntry && resolved.config.models) {
+    resolved = {
+      ...resolved,
+      config: {
+        ...resolved.config,
+        models: [routedEntry, ...resolved.config.models.filter((entry) => entry !== routedEntry)],
+      },
+    }
   }
 
   const requirement = CATEGORY_MODEL_REQUIREMENTS[args.category!]

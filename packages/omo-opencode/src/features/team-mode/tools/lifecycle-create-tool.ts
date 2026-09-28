@@ -74,7 +74,7 @@ export function createTeamCreateTool(
     },
     async execute(rawArgs, toolContext) {
       const args = parseTeamCreateArgs(rawArgs)
-      const runtimeContext = toolContext as TeamLifecycleToolContext
+      const runtimeContext = toolContext as TeamLifecycleToolContext & { abort?: AbortSignal }
       const leadSessionId = runtimeContext.sessionID
       if (!leadSessionId) throw new Error("team_create requires a tool context sessionID")
       const projectRoot = typeof runtimeContext.directory === "string" ? runtimeContext.directory : process.cwd()
@@ -130,6 +130,8 @@ export function createTeamCreateTool(
           manager: bgMgr,
           directory: projectRoot,
           userCategories: executorConfig?.userCategories,
+          jevRouting: executorConfig?.jevRouting,
+          abortSignal: runtimeContext.abort,
           sisyphusJuniorModel: executorConfig?.sisyphusJuniorModel,
           agentOverrides: executorConfig?.agentOverrides,
         },

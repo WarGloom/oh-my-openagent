@@ -135,6 +135,7 @@ export async function provisionTeamMember(input: ProvisionTeamMemberInput): Prom
   const resolvedMember = await resolveMember(input.member, input.ctx, input.categoryExamples, input.leadAgentName)
   const memberGoal = input.member.prompt?.replace(/\s+/g, " ").trim()
 
+  input.ctx.abortSignal?.throwIfAborted()
   const task = await input.bgMgr.launch({
     description: memberGoal ? `${input.member.name}: ${memberGoal}` : input.member.name,
     prompt: buildMemberPrompt({

@@ -1,6 +1,6 @@
 import { z } from "zod"
 
-import type { AgentOverrides, CategoriesConfig } from "../../../config/schema"
+import type { AgentOverrides, CategoriesConfig, JevRoutingConfig } from "../../../config/schema"
 import { mergeCategories } from "../../../shared/merge-categories"
 import { normalizeTeamSpecInput } from "@oh-my-opencode/team-core/team-registry/loader"
 import { validateSpec } from "@oh-my-opencode/team-core/team-registry/validator"
@@ -36,6 +36,7 @@ export type TeamCreateArgs = z.infer<typeof TeamCreateArgsSchema>
 
 export type TeamCreateExecutorConfig = {
   userCategories?: CategoriesConfig
+  jevRouting?: JevRoutingConfig
   sisyphusJuniorModel?: string
   agentOverrides?: AgentOverrides
 }

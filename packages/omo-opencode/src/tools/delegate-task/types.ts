@@ -1,6 +1,6 @@
 import type { BackgroundManager } from "../../features/background-agent"
 import type { OhMyOpenCodeConfig } from "../../config"
-import type { CategoriesConfig, GitMasterConfig, BrowserAutomationProvider, AgentOverrides, SisyphusAgentConfig } from "../../config/schema"
+import type { CategoriesConfig, GitMasterConfig, BrowserAutomationProvider, AgentOverrides, SisyphusAgentConfig, JevRoutingConfig } from "../../config/schema"
 import type { ModelFallbackControllerAccessor } from "../../hooks/model-fallback"
 import type { LoadedSkill } from "../../features/opencode-skill-loader/types"
 import type { SessionPromptAsyncData, SessionPromptData, SessionStatusData } from "@opencode-ai/sdk"
@@ -58,6 +58,7 @@ export interface DelegateTaskArgs {
   descriptionSource?: "explicit" | "generated"
   prompt: string
   category?: string
+  model_routing?: false
   subagent_type?: string
   requested_subagent_type?: string
   run_in_background: boolean
@@ -103,6 +104,7 @@ export interface DelegateTaskToolOptions {
    */
   availableModelsOverride?: Set<string>
   userCategories?: CategoriesConfig
+  jevRouting?: JevRoutingConfig
   gitMasterConfig?: GitMasterConfig
   sisyphusJuniorModel?: string
   browserProvider?: BrowserAutomationProvider
@@ -112,7 +114,7 @@ export interface DelegateTaskToolOptions {
   availableSkills?: AvailableSkill[]
   agentOverrides?: AgentOverrides
   /** Reload model-bearing config at task invocation time so edits are honored without rebuilding tools. */
-  loadCurrentModelConfig?: () => Pick<OhMyOpenCodeConfig, "agents" | "categories">
+  loadCurrentModelConfig?: () => Pick<OhMyOpenCodeConfig, "agents" | "categories" | "jev_routing">
   sisyphusAgentConfig?: SisyphusAgentConfig
   modelFallbackControllerAccessor?: ModelFallbackControllerAccessor
   onSyncSessionCreated?: (event: SyncSessionCreatedEvent) => Promise<void>
