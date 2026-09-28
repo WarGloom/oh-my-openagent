@@ -399,7 +399,7 @@ OpenCode category delegations can optionally score a **declared** cheapest-first
     "jev_routing": {
       "mode": "observe",
       "timeout_ms": 2000,
-      "min_suitability": 0.9,
+      "min_suitability": 0.6,
       "categories": {
         "deep-low": [
           { "model": "openai/gpt-5.6-sol-fast", "suitability": "Routine implementation with settled decisions and narrow checks" },

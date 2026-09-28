@@ -19,7 +19,7 @@
     "jev_routing": {
       "mode": "active",
       "timeout_ms": 2000,
-      "min_suitability": 0.9,
+      "min_suitability": 0.6,
       "categories": {
         "jev-trial": [
           {
