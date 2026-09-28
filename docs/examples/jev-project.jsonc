@@ -8,7 +8,7 @@
 
   "[opencode]": {
     "categories": {
-      "jev-trial": {
+      "jev-router": {
         "description": "Explicit Jev routing trial for bounded coding and analysis tasks.",
         "models": [
           { "model": "openai/gpt-6-sol", "reasoning": "high" },
@@ -21,7 +21,7 @@
       "timeout_ms": 2000,
       "min_suitability": 0.6,
       "categories": {
-        "jev-trial": [
+        "jev-router": [
           {
             "model": "openai/gpt-6-luna",
             "suitability": "A small, explicit task with supplied context, settled decisions and a straightforward check."
