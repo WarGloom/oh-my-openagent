@@ -28,6 +28,14 @@ import type {
 
 export type { MonitorManagerDeps, MonitorManagerOptions }
 
+export class MonitorCapacityError extends Error {
+  readonly name = "MonitorCapacityError"
+
+  constructor(readonly activeCount: number, readonly limit: number) {
+    super(`max_monitors_per_session reached (${activeCount}/${limit} active monitors)`)
+  }
+}
+
 export class MonitorManager implements MonitorManagerContract {
   private readonly monitors = new Map<MonitorId, InternalMonitorState>()
   private readonly monitorsByParentSession = new Map<string, Set<MonitorId>>()
@@ -254,7 +262,7 @@ export class MonitorManager implements MonitorManagerContract {
     const activeCount = this.getActiveMonitorCounts().get(sessionId) ?? 0
 
     if (activeCount >= this.config.max_monitors_per_session) {
-      throw new Error(`max_monitors_per_session reached for session ${sessionId}`)
+      throw new MonitorCapacityError(activeCount, this.config.max_monitors_per_session)
     }
   }
 

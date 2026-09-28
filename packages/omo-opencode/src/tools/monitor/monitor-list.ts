@@ -1,5 +1,6 @@
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool"
 import type { MonitorManager, MonitorRecord, MonitorStatus } from "../../features/monitor"
+import { formatTimeoutTermination } from "../../features/monitor/envelope"
 
 interface MonitorListArgs {
   include_exited?: boolean
@@ -28,6 +29,11 @@ function formatMonitor(record: MonitorRecord) {
     status: record.status,
     ...(record.exitCode !== undefined && { exitCode: record.exitCode }),
     ...(record.signal !== undefined && { signal: record.signal }),
+    ...(record.terminationReason === "timeout" && record.maxRuntimeMs !== undefined && {
+      terminationReason: record.terminationReason,
+      maxRuntimeMs: record.maxRuntimeMs,
+      terminationMessage: formatTimeoutTermination(record.maxRuntimeMs),
+    }),
     counters: {
       matched: record.counters.matchedLines,
       unmatched: record.counters.unmatchedLines,
@@ -46,7 +52,7 @@ export function createMonitorList(
   return tool({
     description: `List monitors owned by the current session.
 
-Returns id, label, mode, startedAt, status, exitCode and signal when available, and counters. Raw commands are never included.`,
+Returns id, label, mode, startedAt, status, exitCode and signal when available, timeout reason and limit when applicable, and counters. Raw commands are never included.`,
     args: {
       include_exited: tool.schema
         .boolean()

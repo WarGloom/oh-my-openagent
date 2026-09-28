@@ -7,6 +7,7 @@ import type { OhMyOpenCodeConfig } from "../../config/schema/oh-my-opencode-conf
 import type { PluginContext } from "../../plugin/types"
 import { unsafeTestValue } from "../../../../../test-support/unsafe-test-value"
 import { createMonitorStart } from "./monitor-start"
+import { MonitorCapacityError } from "../../features/monitor"
 
 type PermissionAsk = (input: BashPermissionAskInput) => Promise<void>
 
@@ -76,6 +77,37 @@ function createHarness(startResult: MonitorRecord = createRecord()) {
 }
 
 describe("createMonitorStart", () => {
+  describe("#given the session is at its active monitor cap", () => {
+    test("#when monitor_start executes #then it reports count, limit, recovery and configuration", async () => {
+      // given
+      const { manager, pluginContext, start } = createHarness()
+      start.mockImplementation(async () => { throw new MonitorCapacityError(3, 3) })
+      const tool = createMonitorStart(manager, createPluginConfig(), pluginContext)
+
+      // when
+      const result = await tool.execute({ command: "bun test", label: "unit tests" }, createToolContext())
+
+      // then
+      expect(result).toContain("max_monitors_per_session reached: 3/3 active monitors")
+      expect(result).toContain("monitor_stop on a running monitor")
+      expect(result).toContain("exited monitors don't count")
+      expect(result).toContain("monitor.max_monitors_per_session")
+    })
+
+    test("#when a different start error occurs #then it retains the generic failure", async () => {
+      // given
+      const { manager, pluginContext, start } = createHarness()
+      start.mockImplementation(async () => { throw new Error("private spawn detail") })
+      const tool = createMonitorStart(manager, createPluginConfig(), pluginContext)
+
+      // when
+      const result = await tool.execute({ command: "bun test", label: "unit tests" }, createToolContext())
+
+      // then
+      expect(result).toBe("[ERROR] monitor_start failed for label: unit tests")
+    })
+  })
+
   describe("#given Bash-equivalent permission denies the command", () => {
     test("#when monitor_start executes #then it returns the denial reason without spawning", async () => {
       // given

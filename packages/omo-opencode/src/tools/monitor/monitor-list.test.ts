@@ -192,6 +192,7 @@ describe("createMonitorList", () => {
             createRecord({ id: "zero-exit", status: "exited", exitCode: 0 }),
             createRecord({ id: "nonzero-exit", status: "failed", exitCode: 17 }),
             createRecord({ id: "signal-exit", status: "stopped", signal: "SIGTERM" }),
+            createRecord({ id: "timed-out", status: "exited", signal: "SIGALRM", terminationReason: "timeout", maxRuntimeMs: 25 }),
             createRecord({ id: "no-exit-metadata", status: "exited" }),
           ],
         ],
@@ -211,13 +212,21 @@ describe("createMonitorList", () => {
       "zero-exit",
       "nonzero-exit",
       "signal-exit",
+      "timed-out",
       "no-exit-metadata",
     ])
     expect(parsed.monitors[0]).toHaveProperty("exitCode", 0)
     expect(parsed.monitors[1]).toHaveProperty("exitCode", 17)
     expect(parsed.monitors[2]).toHaveProperty("signal", "SIGTERM")
-    expect(parsed.monitors[3]).not.toHaveProperty("exitCode")
-    expect(parsed.monitors[3]).not.toHaveProperty("signal")
+    expect(parsed.monitors[3]).toMatchObject({
+      signal: "SIGALRM",
+      terminationReason: "timeout",
+      maxRuntimeMs: 25,
+      terminationMessage: "Monitor exceeded max_runtime_ms=25 and was stopped. Configure via monitor.max_runtime_ms.",
+    })
+    expect(parsed.monitors[4]).not.toHaveProperty("exitCode")
+    expect(parsed.monitors[4]).not.toHaveProperty("signal")
+    expect(parsed.monitors[0]).not.toHaveProperty("terminationReason")
     expect(result).not.toContain("printf secret-token-123")
     expect(result).not.toContain("other-session")
     expect(manager.listedSessionIds).toEqual(["session-a"])

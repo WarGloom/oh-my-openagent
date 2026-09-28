@@ -74,6 +74,19 @@ describe("#given monitor output envelope formatting", () => {
         // then
         expect(output).toContain("Status: exited (code=0)")
       })
+
+      it("reports the timeout limit and configuration in the terminal notification", () => {
+        // given
+        const record = { ...baseRecord, status: "exited", signal: "SIGALRM", terminationReason: "timeout", maxRuntimeMs: 25 } as const
+        const batch = createBatch({ stillRunning: false })
+
+        // when
+        const output = formatMonitorBatch(record, batch, baseCounters)
+
+        // then
+        expect(output).toContain("Status: exited (signal=SIGALRM, terminationReason=timeout)")
+        expect(output).toContain("Monitor exceeded max_runtime_ms=25 and was stopped. Configure via monitor.max_runtime_ms.")
+      })
     })
   })
 

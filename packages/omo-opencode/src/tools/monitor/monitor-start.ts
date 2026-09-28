@@ -3,6 +3,7 @@ import { tool, type ToolDefinition } from "@opencode-ai/plugin"
 import type { OhMyOpenCodeConfig } from "../../config/schema/oh-my-opencode-config"
 import { checkMonitorCommandPermission, type BashPermissionAskInput } from "../../features/monitor/permission"
 import { createMonitorFilter } from "../../features/monitor/filter"
+import { MonitorCapacityError } from "../../features/monitor"
 import type { MonitorManager, MonitorMode, MonitorStartArgs } from "../../features/monitor/types"
 import type { PluginContext } from "../../plugin/types"
 
@@ -135,7 +136,10 @@ export function createMonitorStart(
           maxRuntimeMs: monitorConfig.max_runtime_ms,
           note: effectiveMode.note,
         })
-      } catch {
+      } catch (error) {
+        if (error instanceof MonitorCapacityError) {
+          return `[ERROR] monitor_start max_monitors_per_session reached: ${error.activeCount}/${error.limit} active monitors (starting/running). Call monitor_stop on a running monitor to free a slot; exited monitors don't count. Configure via monitor.max_monitors_per_session.`
+        }
         return `[ERROR] monitor_start failed for label: ${args.label ?? "(manager-assigned label)"}`
       }
     },
