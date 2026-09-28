@@ -5,8 +5,8 @@ import { afterEach, describe, expect, mock, test } from "bun:test"
 import { unsafeTestValue } from "../../../../../test-support/unsafe-test-value"
 import { subagentSessions } from "../claude-code-session-state"
 import { _resetForTesting as resetProcessCleanupForTesting } from "../background-agent/process-cleanup"
-import { MonitorManager, createMonitorManager } from "./manager"
-import type { MonitoredProcess } from "./process"
+import { MonitorCapacityError, MonitorManager, createMonitorManager } from "./manager"
+import type { ExitResult, MonitoredProcess } from "./process"
 import type { MonitorCounters, MonitorRecord, OutputBatch } from "./types"
 
 type FakeTimerHandle = number
@@ -193,7 +193,11 @@ describe("MonitorManager", () => {
       const rejectedStart = manager.start({ command: "cmd-4", parentSessionId: "s1" })
 
       // then
-      await expectRejectsWithMessage(rejectedStart, "max_monitors_per_session")
+      await expect(rejectedStart).rejects.toMatchObject({
+        name: "MonitorCapacityError",
+        activeCount: 3,
+        limit: 3,
+      } satisfies Partial<MonitorCapacityError>)
       expect(spawnCalls).toEqual(["cmd-1", "cmd-2", "cmd-3"])
       expect(manager.list("s1")).toHaveLength(3)
     })
@@ -391,20 +395,21 @@ describe("MonitorManager", () => {
   })
 
   describe("#given a monitor whose process exits", () => {
-    function createExitHarness() {
-      let resolveExit!: (result: { code: number | null; signal: string | null }) => void
+    function createExitHarness(maxMonitorsPerSession = 3) {
+      let resolveExit!: (result: ExitResult) => void
       let rejectExit!: (error: unknown) => void
-      const exited = new Promise<{ code: number | null; signal: string | null }>((resolve, reject) => {
+      const exited = new Promise<ExitResult>((resolve, reject) => {
         resolveExit = resolve
         rejectExit = reject
       })
       const flushed: string[] = []
       let terminalPending = false
+      let spawnCount = 0
       const scheduler = createFakeScheduler()
       const manager = new MonitorManager({
         pluginContext: unsafeTestValue({ client: {}, directory: "/repo" }),
         config: {
-          max_monitors_per_session: 3,
+          max_monitors_per_session: maxMonitorsPerSession,
           max_runtime_ms: 60_000,
           batch_max_lines: 3,
           batch_max_bytes: 1024,
@@ -414,11 +419,15 @@ describe("MonitorManager", () => {
           pattern_max_length: 512,
         },
         deps: {
-          randomId: () => "mon_exit",
+          randomId: (() => {
+            let nextId = 1
+            return () => `mon_exit${nextId++}`
+          })(),
           spawnMonitoredProcess() {
+            spawnCount += 1
             return {
               kill() {},
-              exited,
+              exited: spawnCount === 1 ? exited : new Promise<ExitResult>(() => {}),
               stdout: createEmptyStream(),
               stderr: createEmptyStream(),
             }
@@ -458,6 +467,40 @@ describe("MonitorManager", () => {
 
       // then
       expect(flushed).toContain(record.id)
+    })
+
+    test("#when an exited monitor remains recorded #then it does not block a new start at capacity", async () => {
+      // given
+      const { manager, resolveExit } = createExitHarness(1)
+      const first = await startMonitor(manager, "first", "s1")
+
+      // when
+      resolveExit({ code: 0, signal: null })
+      await drainMicrotasks()
+      const second = await startMonitor(manager, "second", "s1")
+
+      // then
+      expect(manager.get(first.id)?.status).toBe("exited")
+      expect(second.status).toBe("running")
+      expect(manager.getActiveMonitorCounts().get("s1")).toBe(1)
+    })
+
+    test("#when the watchdog exit resolves #then the record carries a distinct timeout reason", async () => {
+      // given
+      const { manager, resolveExit } = createExitHarness()
+      const record = await startMonitor(manager, "watcher", "s1")
+
+      // when
+      resolveExit({ code: null, signal: "SIGALRM", terminationReason: "timeout", maxRuntimeMs: 25 })
+      await drainMicrotasks()
+
+      // then
+      expect(manager.get(record.id)).toMatchObject({
+        status: "exited",
+        signal: "SIGALRM",
+        terminationReason: "timeout",
+        maxRuntimeMs: 25,
+      })
     })
 
     test("#when exit output awaits delivery #then the goal stays blocked until delivery completes", async () => {
