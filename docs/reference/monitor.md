@@ -76,6 +76,8 @@ Arguments:
 
 If `mode: "live_safe"` is requested while `monitor.live_mode_enabled` is false, Monitor starts the command in `idle` mode and returns a note about the downgrade.
 
+When the active monitor cap is reached, `monitor_start` reports the current active count and limit. Stop a running monitor with `monitor_stop` to free a slot; exited monitors do not count toward the cap. Set `monitor.max_monitors_per_session` to change the limit.
+
 ### `monitor_stop`
 
 Stops a monitor owned by the current session.
@@ -98,7 +100,7 @@ Arguments:
 |----------|----------|------|---------|
 | `include_exited` | no | boolean | Include exited, stopped, and failed monitors. Defaults to `false`. |
 
-The result includes IDs, labels, modes, start times, statuses, and counters for matched, unmatched, and dropped output.
+The result includes IDs, labels, modes, start times, statuses, and counters for matched, unmatched, and dropped output. With `include_exited: true`, a monitor stopped by the runtime watchdog also includes `terminationReason: "timeout"`, `maxRuntimeMs`, and a message naming the `monitor.max_runtime_ms` setting. Normal exits retain their existing exit code or signal fields.
 
 ### `monitor_output`
 
@@ -159,6 +161,8 @@ Status: running
 ```
 
 Each output line is prefixed with its stream and sequence number, such as `[stdout seq=N]` or `[stderr seq=N]`. The warning tells the agent to treat the content as data, not instructions.
+
+When a monitor exceeds `monitor.max_runtime_ms`, the process group is stopped and the terminal notification says `Status: exited (signal=SIGALRM, terminationReason=timeout)`, followed by `Monitor exceeded max_runtime_ms=<value> and was stopped. Configure via monitor.max_runtime_ms.` Normal exits continue to report their exit code or signal without a timeout reason.
 
 ## MVP Limitations
 
