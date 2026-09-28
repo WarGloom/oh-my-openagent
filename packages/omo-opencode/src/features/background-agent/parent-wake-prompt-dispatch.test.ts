@@ -49,7 +49,7 @@ async function dispatchAt(nowMs: number, client: PromptDispatchClient, wake: Pen
     sessionID: SESSION_ID,
     latestWake: wake,
     emptyAssistantTurnRetry: false,
-    toolWaitDecision: { defer: false },
+    toolWaitDecision: { defer: false, skipPromptGateToolStateCheck: false },
     getDispatchedWake: () => undefined,
     hasRecordedPromptAfterDispatch: async () => false,
     trackDispatchedWake: () => {},
