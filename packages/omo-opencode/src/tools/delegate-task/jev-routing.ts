@@ -6,6 +6,7 @@ const JEV_URL = "https://opencode.ai/zen/v1/systemone"
 const JEV_MODEL = "jev-1.13-free"
 const MAX_BRIEF_BYTES = 8192
 const MAX_REQUEST_BYTES = 16384
+const MAX_RESPONSE_BYTES = 65536
 
 const JevResponseSchema = z.object({
   model: z.string(),
@@ -30,7 +31,8 @@ export async function selectCategoryTierWithJev(input: JevRoutingInput): Promise
   const started = performance.now()
   const ladder = config?.ladder ?? []
   const fallback = config?.default
-  const validTier = (name: string) => name !== "auto" && enabledCategories[name] !== undefined
+  const validTier = (name: string) => name !== "auto" && Object.hasOwn(enabledCategories, name)
+    && enabledCategories[name] !== undefined
   const validDefault = fallback !== undefined && validTier(fallback)
   const valid = Boolean(
     categories?.auto && !categories.auto.disable
@@ -80,7 +82,38 @@ export async function selectCategoryTierWithJev(input: JevRoutingInput): Promise
       status = "http_error"
       return fallback
     }
-    const raw: unknown = await response.json()
+    const contentLength = response.headers.get("content-length")
+    if (contentLength !== null && Number(contentLength) > MAX_RESPONSE_BYTES) {
+      status = "malformed"
+      void response.body?.cancel().catch(() => undefined)
+      return fallback
+    }
+    const reader = response.body?.getReader()
+    if (!reader) {
+      status = "malformed"
+      return fallback
+    }
+    const chunks: Uint8Array[] = []
+    let size = 0
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      size += value.byteLength
+      if (size > MAX_RESPONSE_BYTES) {
+        status = "malformed"
+        void reader.cancel().catch(() => undefined)
+        return fallback
+      }
+      chunks.push(value)
+    }
+    const bytes = new Uint8Array(size)
+    let offset = 0
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset)
+      offset += chunk.byteLength
+    }
+    status = "malformed"
+    const raw: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes))
     const parsed = JevResponseSchema.safeParse(raw)
     const expectedKeys = ladder.map((_, index) => `tier_${index}`)
     if (!parsed.success || Object.keys(parsed.data.answers).length !== expectedKeys.length

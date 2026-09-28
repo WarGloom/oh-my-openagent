@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -11,6 +11,7 @@ import { unsafeTestValue } from "../../../../../test-support/unsafe-test-value"
 import { resolveCategoryExecution } from "./category-resolver"
 import type { ExecutorContext } from "./executor-types"
 import { selectCategoryTierWithJev, type JevRoutingInput } from "./jev-routing"
+import { createDelegateTask } from "./tools"
 
 const config = JevRoutingConfigSchema.parse({
   mode: "active", ladder: ["cheap", "strong"], default: "strong",
@@ -98,6 +99,26 @@ describe("Jev auto tier routing", () => {
     expect(await selectCategoryTierWithJev(input())).toBe("strong")
   })
 
+  test("rejects oversized declared and streamed responses before JSON parsing", async () => {
+    // given: a declared excess and a body that exceeds the cap despite its small header
+    const oversized = "x".repeat(65537)
+    const declared = new Response(oversized)
+    const streamed = new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(oversized))
+        controller.close()
+      },
+    }), { headers: { "content-length": "2" } })
+    fetchSpy.mockResolvedValueOnce(declared).mockResolvedValueOnce(streamed)
+    // when: both replies are inspected
+    expect(await selectCategoryTierWithJev(input())).toBe("strong")
+    expect(await selectCategoryTierWithJev(input())).toBe("strong")
+    // then: neither over-cap payload is accepted
+    expect(declared.bodyUsed).toBe(true)
+    expect(streamed.bodyUsed).toBe(true)
+    expect(fetchSpy).toHaveBeenCalledTimes(2)
+  })
+
   test("falls back on timeout but propagates tool cancellation", async () => {
     // given: a pending request
     fetchSpy.mockImplementation((_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
@@ -118,12 +139,16 @@ describe("Jev auto tier routing", () => {
       { categories: { ...categories, auto: { description: "Route", models: ["example/low"] } } },
       { enabledCategories: { ...categories, cheap: undefined } },
       { config: { ...config, ladder: ["cheap", "cheap"] } },
+      { config: { ...config, ladder: ["__proto__", "strong"] } },
+      { config: { ...config, ladder: ["constructor", "strong"] } },
     ]) {
       // when: the configuration is examined
       expect(await selectCategoryTierWithJev(input(override as Partial<JevRoutingInput>))).toBe("strong")
     }
     // then: invalid default cannot dispatch
     expect(await selectCategoryTierWithJev(input({ config: { ...config, default: "missing" } }))).toBeUndefined()
+    expect(await selectCategoryTierWithJev(input({ config: { ...config, default: "__proto__" } }))).toBeUndefined()
+    expect(await selectCategoryTierWithJev(input({ config: { ...config, default: "constructor" } }))).toBeUndefined()
     expect(fetchSpy).not.toHaveBeenCalled()
   })
 })
@@ -200,6 +225,51 @@ test("category team members use the shared auto resolver and retain the effectiv
     expect(fetchSpy).toHaveBeenCalledTimes(1)
   } finally {
     cacheSpy.mockRestore()
+    fetchSpy.mockRestore()
+  }
+})
+
+test("task_id continuation with auto bypasses Jev", async () => {
+  const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(reply([0.9, 0.9]))
+  const manager = { resume: async () => ({ id: "task-1", sessionId: "ses_earlier", status: "running" }) }
+  const client = {
+    app: { agents: async () => ({ data: [] }) },
+    config: { get: async () => ({ data: {} }) },
+    session: {
+      get: async () => ({ data: { directory: "/tmp" } }),
+      messages: async () => ({ status: 404 }),
+      status: async () => ({ data: { ses_earlier: { type: "idle" } } }),
+      prompt: async () => ({ data: {} }), promptAsync: async () => ({ data: {} }),
+    },
+  }
+  const delegate = createDelegateTask(unsafeTestValue({ manager, client, directory: "/tmp", userCategories: categories, jevRouting: config }))
+  try {
+    const result = await delegate.execute({ task_id: "ses_earlier", category: "auto", prompt: "Continue", description: "Resume", load_skills: [] },
+      unsafeTestValue({ sessionID: "ses_parent", messageID: "msg_parent", agent: "sisyphus", abort: new AbortController().signal }))
+    expect(result).toContain("no longer exists")
+    expect(fetchSpy).not.toHaveBeenCalled()
+  } finally {
+    fetchSpy.mockRestore()
+  }
+})
+
+test("named subagent_type dispatch bypasses Jev", async () => {
+  const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(reply([0.9, 0.9]))
+  const launch = mock(async () => ({ id: "task-explore", sessionId: "ses_explore", status: "running" }))
+  const delegate = createDelegateTask(unsafeTestValue({
+    manager: { launch }, directory: "/tmp", userCategories: categories, jevRouting: config,
+    client: {
+      app: { agents: async () => ({ data: [{ name: "explore", mode: "subagent", model: { providerID: "example", modelID: "high" } }] }) },
+      config: { get: async () => ({ data: {} }) },
+      session: { messages: async () => ({ data: [] }) },
+    },
+  }))
+  try {
+    await delegate.execute({ subagent_type: "explore", prompt: "Inspect", description: "Explore", run_in_background: true, load_skills: [] },
+      unsafeTestValue({ sessionID: "ses_parent", messageID: "msg_parent", agent: "sisyphus", abort: new AbortController().signal }))
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(launch).toHaveBeenCalledWith(expect.objectContaining({ agent: "explore", model: expect.objectContaining({ modelID: "high" }) }))
+  } finally {
     fetchSpy.mockRestore()
   }
 })
