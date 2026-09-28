@@ -99,24 +99,31 @@ describe("Jev auto tier routing", () => {
     expect(await selectCategoryTierWithJev(input())).toBe("strong")
   })
 
-  test("rejects oversized declared and streamed responses before JSON parsing", async () => {
-    // given: a declared excess and a body that exceeds the cap despite its small header
-    const oversized = "x".repeat(65537)
-    const declared = new Response(oversized)
-    const streamed = new Response(new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode(oversized))
-        controller.close()
+  test("rejects oversized valid replies with absent, false-small or oversized content-length", async () => {
+    // given: a valid response that would select cheap if parsed
+    const payload = JSON.stringify({
+      model: "jev-1.13.0",
+      answers: {
+        tier_0: { type: "noul", noul: 0.95 },
+        tier_1: { type: "noul", noul: 0.1 },
       },
-    }), { headers: { "content-length": "2" } })
-    fetchSpy.mockResolvedValueOnce(declared).mockResolvedValueOnce(streamed)
-    // when: both replies are inspected
-    expect(await selectCategoryTierWithJev(input())).toBe("strong")
-    expect(await selectCategoryTierWithJev(input())).toBe("strong")
-    // then: neither over-cap payload is accepted
-    expect(declared.bodyUsed).toBe(true)
-    expect(streamed.bodyUsed).toBe(true)
-    expect(fetchSpy).toHaveBeenCalledTimes(2)
+      padding: "x".repeat(65536),
+    })
+    const bytes = new TextEncoder().encode(payload)
+    expect(bytes.byteLength).toBeGreaterThan(65536)
+    for (const contentLength of [undefined, "2", String(bytes.byteLength)]) {
+      const cancel = mock(() => undefined)
+      const response = new Response(new ReadableStream<Uint8Array>({
+        start(controller) { controller.enqueue(bytes) },
+        cancel,
+      }), contentLength === undefined ? undefined : { headers: { "content-length": contentLength } })
+      fetchSpy.mockResolvedValueOnce(response)
+      // when: each oversized reply is received
+      expect(await selectCategoryTierWithJev(input())).toBe("strong")
+      // then: streaming or header rejection cancels the unread remainder
+      expect(cancel).toHaveBeenCalledTimes(1)
+    }
+    expect(fetchSpy).toHaveBeenCalledTimes(3)
   })
 
   test("falls back on timeout but propagates tool cancellation", async () => {
@@ -231,22 +238,28 @@ test("category team members use the shared auto resolver and retain the effectiv
 
 test("task_id continuation with auto bypasses Jev", async () => {
   const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(reply([0.9, 0.9]))
-  const manager = { resume: async () => ({ id: "task-1", sessionId: "ses_earlier", status: "running" }) }
+  const promptAsync = mock(async () => ({ data: {} }))
+  const priorUser = { info: { id: "msg_1", role: "user" }, parts: [{ type: "text", text: "Earlier request" }] }
+  const prior = { info: { id: "msg_2", role: "assistant", agent: "Sisyphus-Junior", model: { providerID: "example", modelID: "low" }, finish: "stop" }, parts: [{ type: "text", text: "Earlier answer" }] }
+  const continuationUser = { info: { id: "msg_3", role: "user" }, parts: [{ type: "text", text: "Continue" }] }
+  const continued = { info: { id: "msg_4", role: "assistant", agent: "Sisyphus-Junior", model: { providerID: "example", modelID: "low" }, finish: "stop" }, parts: [{ type: "text", text: "Continued answer" }] }
   const client = {
     app: { agents: async () => ({ data: [] }) },
     config: { get: async () => ({ data: {} }) },
     session: {
-      get: async () => ({ data: { directory: "/tmp" } }),
-      messages: async () => ({ status: 404 }),
+      get: async () => ({ data: { id: "ses_earlier", parentID: "ses_parent", directory: "/tmp" } }),
+      messages: async () => ({ data: promptAsync.mock.calls.length ? [priorUser, prior, continuationUser, continued] : [priorUser, prior] }),
       status: async () => ({ data: { ses_earlier: { type: "idle" } } }),
-      prompt: async () => ({ data: {} }), promptAsync: async () => ({ data: {} }),
+      promptAsync,
+      abort: async () => ({ data: {} }),
     },
   }
-  const delegate = createDelegateTask(unsafeTestValue({ manager, client, directory: "/tmp", userCategories: categories, jevRouting: config }))
+  const delegate = createDelegateTask(unsafeTestValue({ manager: {}, client, directory: "/tmp", userCategories: categories, jevRouting: config }))
   try {
     const result = await delegate.execute({ task_id: "ses_earlier", category: "auto", prompt: "Continue", description: "Resume", load_skills: [] },
       unsafeTestValue({ sessionID: "ses_parent", messageID: "msg_parent", agent: "sisyphus", abort: new AbortController().signal }))
-    expect(result).toContain("no longer exists")
+    expect(result).toContain("Continued answer")
+    expect(promptAsync).toHaveBeenCalledWith(expect.objectContaining({ path: { id: "ses_earlier" } }))
     expect(fetchSpy).not.toHaveBeenCalled()
   } finally {
     fetchSpy.mockRestore()
