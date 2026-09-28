@@ -94,6 +94,7 @@ export async function prepareDelegateTaskArgs(
 
   return {
     category,
+    model_routing: args.model_routing === false ? false : undefined,
     subagent_type: subagentType,
     requested_subagent_type: originalSubagentType,
     description,

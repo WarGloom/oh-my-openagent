@@ -8900,6 +8900,53 @@
         "additionalProperties": false
       }
     },
+    "jev_routing": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "default": "off",
+          "type": "string",
+          "enum": [
+            "off",
+            "observe",
+            "active"
+          ]
+        },
+        "timeout_ms": {
+          "default": 2000,
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 5000
+        },
+        "min_suitability": {
+          "default": 0.6,
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "ladder": {
+          "minItems": 2,
+          "maxItems": 8,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "default": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "mode",
+        "timeout_ms",
+        "min_suitability",
+        "ladder",
+        "default"
+      ],
+      "additionalProperties": false
+    },
     "claude_code": {
       "type": "object",
       "properties": {
