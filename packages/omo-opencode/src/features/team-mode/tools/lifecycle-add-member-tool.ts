@@ -118,6 +118,7 @@ export function createTeamAddMemberTool(
         abortSignal: runtimeContext.abort,
         sisyphusJuniorModel: executorConfig?.sisyphusJuniorModel,
         agentOverrides: executorConfig?.agentOverrides,
+        disabledAgents: executorConfig?.disabledAgents,
       } as ExecutorContext
 
       const result = await deps.addTeamMember({

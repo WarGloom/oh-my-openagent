@@ -15,7 +15,14 @@ export interface DelegateTaskPresentation {
 
 type DelegateTaskPresentationOptions = Pick<
   DelegateTaskToolOptions,
-  "availableCategories" | "availableSkills" | "userCategories" | "jevRouting"
+  | "availableCategories"
+  | "availableSkills"
+  | "userCategories"
+  | "jevRouting"
+  | "availableSubagentNames"
+  | "descriptionAgentNames"
+  | "disabledAgents"
+  | "agentOverrides"
 >
 
 export function createDelegateTaskPresentation(options: DelegateTaskPresentationOptions): DelegateTaskPresentation {
@@ -26,6 +33,25 @@ export function createDelegateTaskPresentation(options: DelegateTaskPresentation
     routing &&
     routing.mode !== "off" &&
     getJevRoutingEligibility({ config: routing, categories: userCategories, enabledCategories: allCategories }).valid
+  const agentNames = new Set(options.descriptionAgentNames ?? options.availableSubagentNames ?? [])
+  const visibleAgent = (name: string) =>
+    agentNames.has(name) &&
+    !options.disabledAgents?.includes(name) &&
+    !(Object.hasOwn(options.agentOverrides ?? {}, name) && options.agentOverrides?.[name]?.disable)
+  const visibleAliases =
+    routing?.mode !== "off" && (options.descriptionAgentNames || options.availableSubagentNames)
+      ? Object.entries(routing?.agent_ladders ?? {}).filter(
+          ([alias, value]) =>
+            !["__proto__", "constructor", "prototype"].includes(alias) &&
+            !agentNames.has(alias) &&
+            !Object.hasOwn(allCategories, alias) &&
+            value.ladder.length >= 2 &&
+            value.ladder.length <= 8 &&
+            new Set(value.ladder).size === value.ladder.length &&
+            visibleAgent(value.default) &&
+            value.ladder.every(visibleAgent),
+        )
+      : []
   const categoryEntries = Object.entries(allCategories).map(([name, categoryConfig]) => ({
     name,
     categoryConfig,
@@ -59,7 +85,7 @@ export function createDelegateTaskPresentation(options: DelegateTaskPresentation
     .join("\n")
 
   const description = `Spawn agent task with category-based or direct agent selection.
-${showTierRouting ? `TIER ROUTING: if the right tier is unclear, use task(category="auto"); Jev picks the cheapest suitable tier (${routing.ladder.map((tier) => JSON.stringify(tier)).join(" → ")}) and falls back to ${JSON.stringify(routing.default)}.` : ""}
+${showTierRouting ? `TIER ROUTING: if the right tier is unclear, use task(category="auto"); Jev picks the cheapest suitable tier (${routing.ladder?.map((tier) => JSON.stringify(tier)).join(" → ")}) and falls back to ${JSON.stringify(routing.default)}.` : ""}
 
   ⚠️  CRITICAL: You MUST provide EITHER category OR subagent_type. Omitting BOTH will FAIL.
 
@@ -100,7 +126,8 @@ ${showTierRouting ? `TIER ROUTING: if the right tier is unclear, use task(catego
 
   Prompts MUST be in English.
 
-${formatAvailableAgentTypesSection()}`
+${formatAvailableAgentTypesSection()}
+${visibleAliases.map(([alias, value]) => `  - ${JSON.stringify(alias)}: Jev picks among ${value.ladder.map((name) => JSON.stringify(name)).join(" → ")} (default ${JSON.stringify(value.default)})`).join("\n")}`
 
   return {
     availableCategories,
