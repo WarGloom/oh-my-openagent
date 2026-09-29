@@ -3,6 +3,7 @@ import { mergeCategories } from "../../shared/merge-categories"
 import { CATEGORY_CALLER_GUIDANCE } from "./builtin-categories"
 import { formatAvailableAgentTypesSection } from "./builtin-subagent-types"
 import { CATEGORY_DESCRIPTIONS } from "./constants"
+import { getJevRoutingEligibility } from "./jev-routing"
 import type { DelegateTaskToolOptions } from "./types"
 
 export interface DelegateTaskPresentation {
@@ -21,7 +22,8 @@ export function createDelegateTaskPresentation(options: DelegateTaskPresentation
   const { userCategories } = options
   const allCategories = mergeCategories(userCategories)
   const routing = options.jevRouting
-  const showTierRouting = routing && routing.mode !== "off" && Object.hasOwn(allCategories, "auto")
+  const showTierRouting = routing && routing.mode !== "off"
+    && getJevRoutingEligibility({ config: routing, categories: userCategories, enabledCategories: allCategories }).valid
   const categoryEntries = Object.entries(allCategories).map(([name, categoryConfig]) => ({
     name,
     categoryConfig,
@@ -52,7 +54,7 @@ export function createDelegateTaskPresentation(options: DelegateTaskPresentation
   }).join("\n")
 
   const description = `Spawn agent task with category-based or direct agent selection.
-${showTierRouting ? `TIER ROUTING: if the right tier is unclear, use task(category="auto"); Jev picks the cheapest suitable tier (${routing.ladder.join(" → ")}) and falls back to "${routing.default}".` : ""}
+${showTierRouting ? `TIER ROUTING: if the right tier is unclear, use task(category="auto"); Jev picks the cheapest suitable tier (${routing.ladder.map((tier) => JSON.stringify(tier)).join(" → ")}) and falls back to ${JSON.stringify(routing.default)}.` : ""}
 
   ⚠️  CRITICAL: You MUST provide EITHER category OR subagent_type. Omitting BOTH will FAIL.
 

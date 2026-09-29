@@ -26,10 +26,7 @@ export type JevRoutingInput = {
   readonly signal?: AbortSignal
 }
 
-export async function selectCategoryTierWithJev(input: JevRoutingInput): Promise<string | undefined> {
-  const { brief, config, categories, enabledCategories, modelRouting, signal } = input
-  signal?.throwIfAborted()
-  const started = performance.now()
+export function getJevRoutingEligibility({ config, categories, enabledCategories }: Pick<JevRoutingInput, "config" | "categories" | "enabledCategories">) {
   const ladder = config?.ladder ?? []
   const fallback = config?.default
   const validTier = (name: string) => name !== "auto" && Object.hasOwn(enabledCategories, name)
@@ -42,6 +39,16 @@ export async function selectCategoryTierWithJev(input: JevRoutingInput): Promise
     && validDefault && ladder.length >= 2 && ladder.length <= 8
     && new Set(ladder).size === ladder.length && ladder.every(validTier),
   )
+  return { valid, validDefault }
+}
+
+export async function selectCategoryTierWithJev(input: JevRoutingInput): Promise<string | undefined> {
+  const { brief, config, categories, enabledCategories, modelRouting, signal } = input
+  signal?.throwIfAborted()
+  const started = performance.now()
+  const ladder = config?.ladder ?? []
+  const fallback = config?.default
+  const { valid, validDefault } = getJevRoutingEligibility({ config, categories, enabledCategories })
   let status = "disabled"
   let scores: Record<string, number> = {}
   let choice = fallback
