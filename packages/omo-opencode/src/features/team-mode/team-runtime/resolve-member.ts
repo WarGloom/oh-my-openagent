@@ -5,6 +5,7 @@ import type { DelegateTaskArgs } from "../../../tools/delegate-task/types"
 import { AGENT_ELIGIBILITY_REGISTRY, type Member } from "../types"
 import { resolveFinalProjectAgent } from "../final-open-code-agent-registry"
 import { resolveAgentFallbackChain } from "../../../tools/delegate-task/subagent-model-resolution"
+import { selectAgentWithJev } from "../../../tools/delegate-task/jev-routing"
 import {
   buildSystemContent,
   resolveCategoryExecution,
@@ -101,14 +102,27 @@ export async function resolveMember(
       }
     }
 
-    if (!Object.hasOwn(AGENT_ELIGIBILITY_REGISTRY, member.subagent_type)) {
+    const requestedAgent = ctx.jevRouting?.agent_ladders && Object.hasOwn(ctx.jevRouting.agent_ladders, member.subagent_type)
+      ? await selectAgentWithJev(member.subagent_type, member.prompt ?? "", {
+          config: ctx.jevRouting,
+          client: ctx.client,
+          directory: ctx.directory,
+          categories: ctx.userCategories,
+          agentOverrides: ctx.agentOverrides,
+          disabledAgents: ctx.disabledAgents,
+          signal: ctx.abortSignal,
+        })
+      : member.subagent_type
+    if (!requestedAgent) throw new Error(`Unknown agent: "${member.subagent_type}".`)
+
+    if (!Object.hasOwn(AGENT_ELIGIBILITY_REGISTRY, requestedAgent)) {
       if (member.name === parentAgent) {
         throw new Error("Project-defined agents cannot be team leads.")
       }
       const projectAgent = await resolveFinalProjectAgent(
         ctx.client,
         ctx.directory,
-        member.subagent_type,
+        requestedAgent,
       )
       const fallbackChain = resolveAgentFallbackChain(projectAgent.name, projectAgent.model, ctx)
       return {
@@ -123,7 +137,7 @@ export async function resolveMember(
     const execution = await resolveSubagentExecution(
       {
         ...createBaseDelegateTaskArgs(member.prompt ?? ""),
-        subagent_type: member.subagent_type,
+        subagent_type: requestedAgent,
       },
       ctx,
       parentAgent,

@@ -9,6 +9,7 @@ export type AgentMode = "subagent" | "primary" | "all" | undefined
 
 export type AgentInfo = {
   name: string
+  description?: string
   mode?: "subagent" | "primary" | "all"
   hidden?: boolean
   model?: string | { providerID: string; modelID: string }
@@ -42,12 +43,13 @@ export function mergeWithClaudeCodeAgents(
   const userAgentsRecord = loadUserAgents()
   const projectAgentsRecord = loadProjectAgents(directory)
 
-  const toAgentInfoList = (record: Record<string, { mode?: string; hidden?: boolean; model?: AgentInfo["model"] }>): AgentInfo[] =>
+  const toAgentInfoList = (record: Record<string, { mode?: string; hidden?: boolean; model?: AgentInfo["model"]; description?: string }>): AgentInfo[] =>
     Object.entries(record).map(([name, config]) => ({
       name,
       mode: config.mode as AgentInfo["mode"],
       hidden: config.hidden,
       model: config.model,
+      description: config.description,
     }))
 
   const mergedAgentMap = new Map<string, AgentInfo>()
