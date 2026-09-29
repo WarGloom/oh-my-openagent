@@ -21,6 +21,7 @@ export interface ExecutorContext {
   sisyphusJuniorModel?: string
   browserProvider?: BrowserAutomationProvider
   agentOverrides?: AgentOverrides
+  disabledAgents?: readonly string[]
   sisyphusAgentConfig?: SisyphusAgentConfig
   claudeCodeAgentsEnabled?: boolean
   modelFallbackControllerAccessor?: ModelFallbackControllerAccessor
