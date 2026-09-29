@@ -299,7 +299,7 @@ describe("model-error-classifier", () => {
     expect(results).toEqual([true, true, true, true])
   })
 
-  test("does not let provider retryable metadata override client or terminal failures", () => {
+  test("does not let provider retryable metadata override client failures while retrying nonterminal quota", () => {
     //#given
     const errors = [
       { name: "TimeoutError", isRetryable: true },
@@ -314,7 +314,7 @@ describe("model-error-classifier", () => {
     const results = errors.map((error) => isRetryableModelError(error))
 
     //#then
-    expect(results).toEqual([false, false, false, false, false, false])
+    expect(results).toEqual([false, false, false, true, false, false])
   })
 
   test("HTTP 400 with statusCode does NOT trigger fallback via statusCode alone (400 excluded)", () => {
