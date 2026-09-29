@@ -381,7 +381,7 @@ Domain-specific model delegation used by the `task()` tool. When the main agent 
 
 Disable categories: `{ "categories": { "ultrabrain": { "disable": true } } }`
 
-### Optional Jev Tier Routing
+### Optional Jev Tier and Agent Routing
 
 OpenCode delegations with `category: "auto"` can score a declared cheapest-first ladder of **categories** before spawning `sisyphus-junior`. Put this in the project's `.omo/omo.jsonc`, or use `~/.omo/omo.jsonc` for a global default (not `opencode.json`). The `jev-1.13-free` endpoint accepts anonymous requests; no API key is needed or sent:
 
@@ -404,9 +404,32 @@ OpenCode delegations with `category: "auto"` can score a declared cheapest-first
 
 A complete project-local example is in [`docs/examples/jev-project.jsonc`](../examples/jev-project.jsonc). Declare `categories.auto` with **only a description**; it is a routing entry, not a worker and must not configure models. Every name in `ladder` and `default` must be an existing, enabled category other than `auto`; the ladder has 2–8 distinct tiers ordered by your cost preference. An invalid routing configuration disables scoring and uses `default` if valid. `jev_routing.mode` defaults to `off` (no classifier request); `observe` sends one request and logs the would-be choice while using `default`; `active` selects the first tier scoring at least `min_suitability`, otherwise `default`. `timeout_ms` defaults to 2000 and is limited to 100–5000; `min_suitability` defaults to 0.6 and must be 0–1. Price order is user-declared, not a measured cost guarantee. Once selected, normal category resolution applies the tier's complete, unchanged model chain, reasoning, prompt append, requirements and provider fallbacks.
 
-Jev receives only the current task/member brief (up to 8192 UTF-8 bytes), tier names and configured category descriptions—not model IDs, session history or repository contents. Do not opt in for sensitive briefs. Calls go only to `https://opencode.ai/zen/v1/systemone` using `jev-1.13-free`; free availability and service limits may change. There is no paid classifier fallback, retry, or classifier session. Jev's score is a suitability judgment, **not a verification of model capability**. An oversized brief, unsuitable score, timeout, HTTP error or invalid response uses `default`; cancellation stops dispatch instead.
+For named-agent routing, add `agent_ladders` instead of (or alongside) the category `ladder` and `default`. Each key is an alias accepted as `subagent_type`; its ladder lists **real dispatchable agent names**, cheapest first. The optional `suitability` map replaces an agent's configured description only for scoring:
 
-This applies only to `task(category="auto")` and category team members with `category: "auto"` at creation or `team_add_member`. For an individual task, `model_routing: false` uses `default` without a request. Explicit categories, `task_id` continuations and named `subagent_type` agents never call Jev. Team member specs have no individual bypass: set `jev_routing.mode` to `off` in the project `[opencode]` config for that team. Runtime fallback stays within the selected tier's model chain, including other providers; cheapest runtime cost is not guaranteed.
+```jsonc
+{
+  "[opencode]": {
+    "jev_routing": {
+      "mode": "active",
+      "timeout_ms": 2000,
+      "min_suitability": 0.6,
+      "agent_ladders": {
+        "general-worker": {
+          "ladder": ["your-cheap-agent", "your-strong-agent"],
+          "default": "your-strong-agent",
+          "suitability": { "your-cheap-agent": "Short, bounded changes with a clear acceptance test" }
+        }
+      }
+    }
+  }
+}
+```
+
+Replace the placeholder names with configured agents (`mode: "subagent"` or `"all"`). Aliases cannot shadow a real agent or category; ladder entries and default must be real enabled, callable agents, with 2–8 distinct ladder entries. Invalid aliases use their valid default without a classifier request, or produce the normal unknown-agent error if the default is invalid. The selected agent retains its own prompt, permissions and model; this routing never substitutes a model. A project `[opencode].jev_routing` object **replaces** the user-level object as a whole: `mergeConfigs` spreads overrides but deep-merges only selected fields (`packages/omo-opencode/src/plugin-config/config-merger.ts:8-24`). To keep user-level agent ladders alongside a project override, repeat them in the project block.
+
+Jev receives only the current task/member brief (up to 8192 UTF-8 bytes), candidate names and category descriptions or agent suitability text—not model IDs, session history or repository contents. Do not opt in for sensitive briefs. Calls go only to `https://opencode.ai/zen/v1/systemone` using `jev-1.13-free`; free availability and service limits may change. There is no paid classifier fallback, retry, or classifier session. Jev's score is a suitability judgment, **not a verification of model capability**. An oversized brief, unsuitable score, timeout, HTTP error or invalid response uses `default`; cancellation stops dispatch instead.
+
+Category routing applies to `task(category="auto")` and category team members with `category: "auto"`; agent routing applies to `task(subagent_type="general-worker")` and named team members using that alias. For an individual task, `model_routing: false` uses the relevant default without a request. Explicit categories, `task_id` continuations and **real** named agents never call Jev. Team member specs have no individual bypass: set `jev_routing.mode` to `off` in the project `[opencode]` config for that team. Runtime fallback stays within the selected category tier's model chain, including other providers; cheapest runtime cost is not guaranteed.
 
 ### Model Resolution
 
