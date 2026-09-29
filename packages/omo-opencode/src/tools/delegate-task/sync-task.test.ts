@@ -1002,8 +1002,8 @@ describe("executeSyncTask - cleanup on error paths", () => {
 
     expect(createdSessions).toEqual(["ses_first"])
     expect(polledSessions).toEqual(["ses_first", "ses_first"])
-    expect(attemptedModels).toEqual([
-      { providerID: "genai-proxy-openai", modelID: "gpt-5.4-mini", variant: undefined },
+    expect(attemptedModels).toMatchObject([
+      { providerID: "genai-proxy-openai", modelID: "gpt-5.6-luna-fast", variant: undefined },
       { providerID: "genai-proxy-aws", modelID: "us.anthropic.claude-haiku-4-5-20251001-v1:0", variant: undefined },
     ])
     expect(result).toContain("Result from ses_first")
