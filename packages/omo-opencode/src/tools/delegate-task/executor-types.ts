@@ -14,6 +14,7 @@ export interface ExecutorContext {
   sisyphusJuniorModel?: string
   browserProvider?: BrowserAutomationProvider
   agentOverrides?: AgentOverrides
+  disabledAgents?: readonly string[]
   sisyphusAgentConfig?: SisyphusAgentConfig
   modelFallbackControllerAccessor?: ModelFallbackControllerAccessor
   onSyncSessionCreated?: (event: { sessionID: string; parentID: string; title: string }) => Promise<void>

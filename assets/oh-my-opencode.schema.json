@@ -8824,14 +8824,47 @@
         "default": {
           "type": "string",
           "minLength": 1
+        },
+        "agent_ladders": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "ladder": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "default": {
+                "type": "string",
+                "minLength": 1
+              },
+              "suitability": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "ladder",
+              "default"
+            ],
+            "additionalProperties": false
+          }
         }
       },
       "required": [
         "mode",
         "timeout_ms",
-        "min_suitability",
-        "ladder",
-        "default"
+        "min_suitability"
       ],
       "additionalProperties": false
     },

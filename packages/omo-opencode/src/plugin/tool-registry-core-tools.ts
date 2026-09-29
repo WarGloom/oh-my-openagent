@@ -16,6 +16,10 @@ import { getSisyphusJuniorModelOverride } from "./tool-registry-team-tools"
 import { createNativeSkills, getPluginInputNativeSkills } from "./native-skills"
 import { createSkillContext } from "./skill-context"
 import { createRuntimeSkillsResolver, readRuntimeHostSkills } from "./runtime-skill-resolver"
+import { loadProjectAgents, loadUserAgents } from "../features/claude-code-agent-loader"
+import { BUILTIN_SUBAGENT_TYPES } from "../tools/delegate-task/builtin-subagent-types"
+import { isDirectSubagentTypeDisabled } from "../tools/delegate-task/builtin-subagent-types"
+import { isPlanAgent } from "../tools/delegate-task/constants"
 
 export function createCoreTools(args: {
   readonly ctx: PluginContext
@@ -55,7 +59,14 @@ export function createCoreTools(args: {
     directory: ctx.directory,
     userCategories: pluginConfig.categories,
     jevRouting: pluginConfig.jev_routing,
+    descriptionAgentNames: [
+      ...BUILTIN_SUBAGENT_TYPES.map((agent) => agent.name).filter((name) => !isPlanAgent(name) && !isDirectSubagentTypeDisabled(name)),
+      ...Object.entries(pluginConfig.agents ?? {}).filter(([, config]) => config?.mode === "subagent" || config?.mode === "all").map(([name]) => name),
+      ...Object.entries(loadProjectAgents(ctx.directory)).filter(([, config]) => config.mode !== "primary").map(([name]) => name),
+      ...Object.entries(loadUserAgents()).filter(([, config]) => config.mode !== "primary").map(([name]) => name),
+    ],
     agentOverrides: pluginConfig.agents,
+    disabledAgents: pluginConfig.disabled_agents,
     loadCurrentModelConfig: () => {
       const current = loadPluginConfig(ctx.directory, process.env)
       return { agents: current.agents, categories: current.categories, jev_routing: current.jev_routing }

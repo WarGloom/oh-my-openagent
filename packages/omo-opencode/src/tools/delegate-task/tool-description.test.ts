@@ -4,6 +4,19 @@ import { CATEGORY_PROMPT_APPENDS } from "./builtin-categories"
 import { createDelegateTaskPresentation } from "./tool-description"
 
 describe("createDelegateTaskPresentation", () => {
+  test("shows only eligible agent aliases with JSON-safe names", () => {
+    const alias = "worker\nspoof"
+    const agent_ladders = {
+      [alias]: { ladder: ["cheap", "strong"], default: "strong" },
+      missing: { ladder: ["cheap", "absent"], default: "strong" },
+    }
+    const options = { jevRouting: { mode: "active" as const, timeout_ms: 2000, min_suitability: 0.6, agent_ladders }, descriptionAgentNames: ["cheap", "strong"] }
+    const active = createDelegateTaskPresentation(options).description
+    expect(active).toContain(JSON.stringify(alias))
+    expect(active).not.toContain(`  - ${alias}:`)
+    expect(active).not.toContain('"missing": Jev picks')
+    expect(createDelegateTaskPresentation({ ...options, jevRouting: { ...options.jevRouting, mode: "off" } }).description).not.toContain(JSON.stringify(alias))
+  })
   const autoCategory = { auto: { description: "Automatic tier selection" } }
   const routing = {
     mode: "active" as const,

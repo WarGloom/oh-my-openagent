@@ -39,6 +39,7 @@ export type TeamCreateExecutorConfig = {
   jevRouting?: JevRoutingConfig
   sisyphusJuniorModel?: string
   agentOverrides?: AgentOverrides
+  disabledAgents?: readonly string[]
 }
 
 export function resolveDefaultInlineCategory(userCategories?: CategoriesConfig): string | undefined {

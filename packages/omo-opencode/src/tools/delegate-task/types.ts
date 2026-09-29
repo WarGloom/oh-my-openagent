@@ -113,6 +113,7 @@ export interface DelegateTaskToolOptions {
   availableCategories?: AvailableCategory[]
   availableSkills?: AvailableSkill[]
   agentOverrides?: AgentOverrides
+  disabledAgents?: readonly string[]
   /** Reload model-bearing config at task invocation time so edits are honored without rebuilding tools. */
   loadCurrentModelConfig?: () => Pick<OhMyOpenCodeConfig, "agents" | "categories" | "jev_routing">
   sisyphusAgentConfig?: SisyphusAgentConfig
@@ -120,6 +121,7 @@ export interface DelegateTaskToolOptions {
   onSyncSessionCreated?: (event: SyncSessionCreatedEvent) => Promise<void>
   syncPollTimeoutMs?: number
   availableSubagentNames?: readonly string[]
+  descriptionAgentNames?: readonly string[]
   /** OpenCode native skill accessor for skills registered via config.skills.paths. Same shape as SkillLoadOptions.nativeSkills. */
   nativeSkills?: {
     all(): { name: string; description: string; location: string; content: string }[] | Promise<{ name: string; description: string; location: string; content: string }[]>

@@ -28,6 +28,7 @@ export function createTeamModeToolsRecord(args: {
         jevRouting: pluginConfig.jev_routing,
         sisyphusJuniorModel: getSisyphusJuniorModelOverride(pluginConfig.agents?.["sisyphus-junior"]),
         agentOverrides: pluginConfig.agents,
+        disabledAgents: pluginConfig.disabled_agents,
       },
     ),
     team_add_member: factories.createTeamAddMemberTool(
@@ -39,6 +40,7 @@ export function createTeamModeToolsRecord(args: {
         jevRouting: pluginConfig.jev_routing,
         sisyphusJuniorModel: getSisyphusJuniorModelOverride(pluginConfig.agents?.["sisyphus-junior"]),
         agentOverrides: pluginConfig.agents,
+        disabledAgents: pluginConfig.disabled_agents,
       },
     ),
     team_delete: factories.createTeamDeleteTool(

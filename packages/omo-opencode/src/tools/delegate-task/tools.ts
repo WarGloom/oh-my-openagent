@@ -17,6 +17,7 @@ import { prepareDelegateTaskArgs } from "./tool-argument-preparation"
 import { createDelegateTaskPresentation } from "./tool-description"
 import { BUILTIN_SUBAGENT_TYPES, isDirectSubagentTypeDisabled } from "./builtin-subagent-types"
 import { isPlanAgent } from "./constants"
+import { selectAgentWithJev } from "./jev-routing"
 import type { AvailableSkill } from "../../agents/dynamic-agent-prompt-builder"
 import { mergeNativeSkillInfos, type NativeSkillEntry } from "../skill/native-skills"
 import type { SkillInfo } from "../skill/types"
@@ -62,11 +63,11 @@ export { resolveCategoryConfig } from "./categories"
 export type { SyncSessionCreatedEvent, DelegateTaskToolOptions, BuildSystemContentInput } from "./types"
 export { buildSystemContent, buildTaskPrompt } from "./prompt-builder"
 
-function buildSubagentTypeSchema(availableSubagentNames?: readonly string[]) {
+function buildSubagentTypeSchema(availableSubagentNames?: readonly string[], aliases: readonly string[] = []) {
   const describe = "REQUIRED if category not provided. Do NOT provide both category and subagent_type."
   if (!availableSubagentNames?.length) return tool.schema.string().optional().describe(describe)
 
-  const subagentNames = availableSubagentNames.filter((name) => !isPlanAgent(name) && !isDirectSubagentTypeDisabled(name))
+  const subagentNames = [...new Set([...availableSubagentNames, ...aliases])].filter((name) => !isPlanAgent(name) && !isDirectSubagentTypeDisabled(name))
   const schemaSubagentNames = subagentNames.length > 0
     ? subagentNames
     : BUILTIN_SUBAGENT_TYPES.map((subagent) => subagent.name).filter((name) => !isPlanAgent(name) && !isDirectSubagentTypeDisabled(name))
@@ -76,7 +77,7 @@ function buildSubagentTypeSchema(availableSubagentNames?: readonly string[]) {
     .describe(describe)
 }
 
-function buildDelegateTaskArgsSchema(availableSubagentNames?: readonly string[]) {
+function buildDelegateTaskArgsSchema(availableSubagentNames?: readonly string[], aliases: readonly string[] = []) {
   return {
     load_skills: tool.schema
       .array(tool.schema.string())
@@ -89,8 +90,8 @@ function buildDelegateTaskArgsSchema(availableSubagentNames?: readonly string[])
       .optional()
       .describe("true is the standard spawn: returns a background task ID `bg_...` at once; the completion notification delivers the result, which background_output reads. false blocks this response until the child finishes; use it only for a short child whose result gates your very next call. Omitted counts as false."),
     category: tool.schema.string().optional().describe("REQUIRED if subagent_type not provided. Do NOT provide both category and subagent_type."),
-    model_routing: tool.schema.boolean().optional().describe("Set false to bypass optional Jev routing for category auto; omitted uses the configured mode. Does not affect team members or named agents."),
-    subagent_type: buildSubagentTypeSchema(availableSubagentNames),
+    model_routing: tool.schema.boolean().optional().describe("Set false to bypass optional Jev routing for category auto or an agent ladder; omitted uses the configured mode. Does not affect team members or real named agents."),
+    subagent_type: buildSubagentTypeSchema(availableSubagentNames, aliases),
     task_id: tool.schema
       .string()
       .optional()
@@ -101,7 +102,7 @@ function buildDelegateTaskArgsSchema(availableSubagentNames?: readonly string[])
 
 export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefinition {
   const { availableCategories, availableSkills, categoryExamples, description } = createDelegateTaskPresentation(options)
-  const delegateTaskArgsSchema = buildDelegateTaskArgsSchema(options.availableSubagentNames)
+  const delegateTaskArgsSchema = buildDelegateTaskArgsSchema(options.availableSubagentNames, Object.keys(options.jevRouting?.agent_ladders ?? {}))
 
   return tool({
     description,
@@ -110,6 +111,17 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
       const ctx = toolContext as ToolContextWithMetadata
       ctx.abort?.throwIfAborted()
       const delegateTaskArgs = await prepareDelegateTaskArgs(args, ctx)
+      if (!delegateTaskArgs.task_id && !delegateTaskArgs.category && delegateTaskArgs.subagent_type) {
+        const current = options.loadCurrentModelConfig?.()
+        const config = current?.jev_routing ?? options.jevRouting
+        const alias = delegateTaskArgs.subagent_type
+        if (config?.agent_ladders && Object.hasOwn(config.agent_ladders, alias)) {
+          const context = { config, client: options.client, directory: options.directory, categories: current?.categories ?? options.userCategories, agentOverrides: current?.agents ?? options.agentOverrides, disabledAgents: options.disabledAgents, signal: ctx.abort }
+          const chosen = await selectAgentWithJev(alias, delegateTaskArgs.prompt, { ...context, modelRouting: delegateTaskArgs.model_routing })
+          if (!chosen) return `Unknown agent: "${alias}".`
+          delegateTaskArgs.subagent_type = chosen
+        }
+      }
 
       if (!delegateTaskArgs.category && isPlanAgent(delegateTaskArgs.subagent_type)) {
         return RUNTIME_PLAN_AGENT_DISABLED_MESSAGE
