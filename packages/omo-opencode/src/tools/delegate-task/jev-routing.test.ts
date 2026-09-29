@@ -11,7 +11,7 @@ import { unsafeTestValue } from "../../../../../test-support/unsafe-test-value"
 import { resolveCategoryExecution } from "./category-resolver"
 import { CATEGORY_DESCRIPTIONS } from "./constants"
 import type { ExecutorContext } from "./executor-types"
-import { selectCategoryTierWithJev, type JevRoutingInput } from "./jev-routing"
+import { selectAgentWithJev, selectCategoryTierWithJev, type JevRoutingInput } from "./jev-routing"
 import { createDelegateTask } from "./tools"
 
 const config = JevRoutingConfigSchema.parse({
@@ -292,12 +292,16 @@ test("task_id continuation with auto bypasses Jev", async () => {
       abort: async () => ({ data: {} }),
     },
   }
-  const delegate = createDelegateTask(unsafeTestValue({ manager: {}, client, directory: "/tmp", userCategories: categories, jevRouting: config }))
+  const delegate = createDelegateTask(unsafeTestValue({ manager: {}, client, directory: "/tmp", userCategories: categories,
+    jevRouting: { ...config, agent_ladders: { "worker-choice": { ladder: ["cheap-agent", "strong-agent"], default: "strong-agent" } } } }))
   try {
     const result = await delegate.execute({ task_id: "ses_earlier", category: "auto", prompt: "Continue", description: "Resume", load_skills: [] },
       unsafeTestValue({ sessionID: "ses_parent", messageID: "msg_parent", agent: "sisyphus", abort: new AbortController().signal }))
     expect(result).toContain("Continued answer")
     expect(promptAsync).toHaveBeenCalledWith(expect.objectContaining({ path: { id: "ses_earlier" } }))
+    expect(fetchSpy).not.toHaveBeenCalled()
+    await delegate.execute({ task_id: "ses_earlier", subagent_type: "worker-choice", prompt: "Continue", description: "Resume", load_skills: [] },
+      unsafeTestValue({ sessionID: "ses_parent", messageID: "msg_parent", agent: "sisyphus", abort: new AbortController().signal }))
     expect(fetchSpy).not.toHaveBeenCalled()
   } finally {
     fetchSpy.mockRestore()
@@ -308,7 +312,8 @@ test("named subagent_type dispatch bypasses Jev", async () => {
   const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(reply([0.9, 0.9]))
   const launch = mock(async () => ({ id: "task-explore", sessionId: "ses_explore", status: "running" }))
   const delegate = createDelegateTask(unsafeTestValue({
-    manager: { launch }, directory: "/tmp", userCategories: categories, jevRouting: config,
+    manager: { launch }, directory: "/tmp", userCategories: categories,
+    jevRouting: { ...config, agent_ladders: { explore: { ladder: ["other", "another"], default: "other" } } },
     client: {
       app: { agents: async () => ({ data: [{ name: "explore", mode: "subagent", model: { providerID: "example", modelID: "high" } }] }) },
       config: { get: async () => ({ data: {} }) },
@@ -323,4 +328,88 @@ test("named subagent_type dispatch bypasses Jev", async () => {
   } finally {
     fetchSpy.mockRestore()
   }
+})
+
+describe("Jev named-agent ladders", () => {
+  const agentConfig = JevRoutingConfigSchema.parse({
+    mode: "active",
+    agent_ladders: { worker: { ladder: ["cheap-agent", "strong-agent"], default: "strong-agent", suitability: { "cheap-agent": "Bounded tasks" } } },
+  })
+  const agents = [
+    { name: "cheap-agent", mode: "subagent", description: "Cheap configured description", model: { providerID: "example", modelID: "low" } },
+    { name: "strong-agent", mode: "subagent", description: "Hard work", model: { providerID: "example", modelID: "high" } },
+  ]
+  const context = { config: agentConfig, client: unsafeTestValue({ app: { agents: async () => ({ data: agents }) } }), directory: "/tmp" }
+  let fetchSpy: ReturnType<typeof spyOn>
+  beforeEach(() => { fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(reply([0.8, 0.9])) })
+  afterEach(() => fetchSpy.mockRestore())
+
+  test("selects each agent based on scores and sends descriptions without models", async () => {
+    expect(await selectAgentWithJev("worker", "Simple", context)).toBe("cheap-agent")
+    fetchSpy.mockResolvedValue(reply([0.2, 0.8]))
+    expect(await selectAgentWithJev("worker", "HARD_TASK", context)).toBe("strong-agent")
+    const body = JSON.parse(fetchSpy.mock.calls[0]?.[1]?.body)
+    expect(body.questions.tier_0.instructions).toContain("Bounded tasks")
+    expect(body.questions.tier_1.instructions).toContain("Hard work")
+    expect(fetchSpy.mock.calls[0]?.[1]?.body).not.toContain("example/low")
+  })
+
+  test("bypasses or defaults on failures and nonqualifying scores", async () => {
+    expect(await selectAgentWithJev("worker", "Simple", { ...context, config: { ...agentConfig, mode: "off" } })).toBe("strong-agent")
+    expect(await selectAgentWithJev("worker", "Simple", { ...context, modelRouting: false })).toBe("strong-agent")
+    expect(fetchSpy).not.toHaveBeenCalled()
+    for (const response of [reply([0.1, 0.2]), reply([0.9]), new Response("failure", { status: 503 })]) {
+      fetchSpy.mockResolvedValue(response)
+      expect(await selectAgentWithJev("worker", "Simple", context)).toBe("strong-agent")
+    }
+    fetchSpy.mockResolvedValue(reply([0.9, 0.9]))
+    expect(await selectAgentWithJev("worker", "Simple", { ...context, config: { ...agentConfig, mode: "observe" } })).toBe("strong-agent")
+    fetchSpy.mockImplementation(() => new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 1)))
+    expect(await selectAgentWithJev("worker", "Simple", context)).toBe("strong-agent")
+  })
+
+  test("invalid aliases, entries and defaults never call Jev", async () => {
+    for (const [alias, ladder] of [
+      ["cheap-agent", ["cheap-agent", "strong-agent"]],
+      ["quick", ["cheap-agent", "strong-agent"]],
+      ["worker", ["__proto__", "strong-agent"]],
+      ["worker", ["missing", "strong-agent"]],
+      ["worker", ["cheap-agent", "strong-agent"]],
+    ] as const) {
+      const next = { ...context, config: { ...agentConfig, agent_ladders: { [alias]: { ladder: [...ladder], default: "strong-agent" } } },
+        categories: { quick: { description: "Category" } },
+        ...(ladder[0] === "cheap-agent" && alias === "worker" ? { disabledAgents: ["cheap-agent"] } : {}) }
+      expect(await selectAgentWithJev(alias, "Simple", next)).toBe(alias === "cheap-agent" ? "cheap-agent" : "strong-agent")
+    }
+    expect(await selectAgentWithJev("worker", "Simple", { ...context, config: { ...agentConfig, agent_ladders: { worker: { ladder: ["cheap-agent", "strong-agent"], default: "__proto__" } } } })).toBeUndefined()
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  test("task dispatch substitutes the real agent without changing its declared model", async () => {
+    const launch = mock(async () => ({ id: "task-worker", sessionId: "ses_worker", status: "running" }))
+    const delegate = createDelegateTask(unsafeTestValue({
+      manager: { launch }, directory: "/tmp", jevRouting: agentConfig,
+      availableSubagentNames: ["cheap-agent", "strong-agent"],
+      client: { app: context.client.app, config: { get: async () => ({ data: {} }) }, session: { messages: async () => ({ data: [] }) } },
+    }))
+    await delegate.execute({ subagent_type: "worker", prompt: "Simple", run_in_background: true, load_skills: [] },
+      unsafeTestValue({ sessionID: "ses_parent", messageID: "msg_parent", agent: "sisyphus", abort: new AbortController().signal }))
+    expect(launch).toHaveBeenCalledWith(expect.objectContaining({ agent: "cheap-agent", model: expect.objectContaining({ modelID: "low" }) }))
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+  })
+
+  test("team named member resolves the alias to the effective agent", async () => {
+    const member = unsafeTestValue({ kind: "subagent_type", name: "worker-one", subagent_type: "worker", prompt: "Simple" })
+    const ctx: ExecutorContext = {
+      ...context,
+      manager: {} as ExecutorContext["manager"],
+      client: unsafeTestValue({ app: { agents: async () => ({ data: [
+        { name: "atlas", mode: "subagent", model: { providerID: "example", modelID: "low" } },
+        { name: "sisyphus-junior", mode: "subagent", model: { providerID: "example", modelID: "high" } },
+      ] }) }, model: { list: async () => ({ data: [] }) } }),
+      jevRouting: { ...agentConfig, agent_ladders: { worker: { ladder: ["sisyphus-junior", "atlas"], default: "atlas" } } },
+    }
+    const resolved = await resolveMember(member, ctx, "")
+    expect(resolved.agentToUse).toBe("sisyphus-junior")
+  })
 })
