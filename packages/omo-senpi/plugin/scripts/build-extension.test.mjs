@@ -112,11 +112,7 @@ describe("checkExtensionCurrent", () => {
       expect(text.indexOf("\n// omo:")).toBeGreaterThan(0)
     }
     // and the freshness round-trip still recognizes the artifacts
-    const check = await checkExtensionCurrent({
-      outputPath: outputs.outputPath,
-      memberOutputPath: outputs.memberOutputPath,
-      supervisorOutputPath: outputs.supervisorOutputPath,
-    })
+    const check = await checkExtensionCurrent(outputs)
     // Compare the whole result so a failure names the stale artifact instead of printing "false".
     expect(check).toMatchObject({ ok: true })
   })
