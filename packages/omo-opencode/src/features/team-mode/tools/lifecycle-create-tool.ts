@@ -1,5 +1,4 @@
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool"
-import path from "node:path"
 
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
 import { getAgentConfigKey, stripAgentListSortPrefix } from "../../../shared/agent-display-names"
@@ -173,6 +172,7 @@ export function createTeamCreateTool(
           sisyphusJuniorModel: executorConfig?.sisyphusJuniorModel,
           agentOverrides: executorConfig?.agentOverrides,
           claudeCodeAgentsEnabled: executorConfig?.claudeCodeAgentsEnabled,
+          disabledAgents: executorConfig?.disabledAgents,
         },
         config,
         bgMgr,
