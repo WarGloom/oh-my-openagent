@@ -19,6 +19,12 @@ type DispatchCall = {
   checkToolState?: boolean
 }
 
+type ScheduledFlush = {
+  monitorId: string
+  delayMs: number
+  operation: () => Promise<void>
+}
+
 type FakeMessage = {
   info?: { role?: string; finish?: string; time?: { created?: unknown } }
   role?: string
@@ -66,12 +72,16 @@ function createHarness(
     messages?: FakeMessage[]
     dispatchResults?: InternalPromptDispatchResult[]
     dispatchResult?: () => Promise<InternalPromptDispatchResult>
+    dispatchFn?: (source: string) => Promise<InternalPromptDispatchResult>
+    settleAfterSessionIdle?: () => Promise<void>
+    scheduleFlush?: (monitorId: string, delayMs: number, operation: () => Promise<void>) => void
     now?: number
     beforeDispatchReturns?: (call: DispatchCall) => Promise<void>
   } = {},
 ): {
   injector: MonitorOutputInjector
   calls: DispatchCall[]
+  scheduledFlushes: ScheduledFlush[]
   setActive(active: boolean): void
   setMessages(messages: FakeMessage[]): void
   client: PromptDispatchClient
@@ -79,6 +89,7 @@ function createHarness(
   let active = opts.active ?? false
   let messages = opts.messages ?? []
   const calls: DispatchCall[] = []
+  const scheduledFlushes: ScheduledFlush[] = []
   const dispatchResults = [...(opts.dispatchResults ?? [])]
   const client = {
     session: {
@@ -102,7 +113,7 @@ function createHarness(
     userMessageInProgressWindowMs: 500,
     postDispatchHoldMs: 250,
     now: () => opts.now ?? 1_000,
-    settleAfterSessionIdle: async () => {},
+    settleAfterSessionIdle: opts.settleAfterSessionIdle ?? (async () => {}),
     dispatchInternalPrompt: async (args) => {
       calls.push({
         source: args.source,
@@ -114,16 +125,21 @@ function createHarness(
         checkToolState: args.checkToolState,
       })
       await opts.beforeDispatchReturns?.(calls[calls.length - 1] as DispatchCall)
+      if (opts.dispatchFn) return opts.dispatchFn(args.source)
       return opts.dispatchResult
         ? opts.dispatchResult()
         : (dispatchResults.shift() ?? { status: "dispatched", response: { ok: true } })
     },
-    scheduleFlush: () => {},
+    scheduleFlush: (monitorId, delayMs, operation) => {
+      scheduledFlushes.push({ monitorId, delayMs, operation })
+      opts.scheduleFlush?.(monitorId, delayMs, operation)
+    },
   })
 
   return {
     injector,
     calls,
+    scheduledFlushes,
     client,
     setActive(nextActive: boolean): void {
       active = nextActive
@@ -429,6 +445,121 @@ describe("MonitorOutputInjector", () => {
       // then
       expect(pendingAfterReserve).toBe(batch)
       expect(calls.map((call) => call.source)).toEqual(["monitor-output:mon_1:batch-8", "monitor-output:mon_1:batch-8"])
+    })
+  })
+
+  describe("#given a streaming batch and an empty terminal batch flushed by overlapping callers", () => {
+    test("#when the terminal batch is first reserved by the in-flight streaming dispatch #then it is still delivered once as a reply-producing prompt", async () => {
+      // given
+      const streamingSource = "monitor-output:mon_1:batch-1"
+      const terminalSource = "monitor-output:mon_1:batch-2"
+      let releaseStreamingDispatch: (() => void) | undefined
+      let terminalAttempts = 0
+      const { injector, calls } = createHarness({
+        dispatchFn: async (source) => {
+          if (source === streamingSource) {
+            await new Promise<void>((resolve) => {
+              releaseStreamingDispatch = resolve
+            })
+            return { status: "dispatched", response: { ok: true } }
+          }
+          terminalAttempts += 1
+          return terminalAttempts === 1
+            ? { status: "reserved", reservedBy: streamingSource }
+            : { status: "dispatched", response: { ok: true } }
+        },
+      })
+      const runningRecord = createRecord()
+      const exitedRecord = createRecord({ status: "exited", exitCode: 0 })
+      const terminalBatch: OutputBatch = { monitorId: "mon_1", batchSeq: 2, lines: [], stillRunning: false }
+
+      // when
+      injector.queueBatch(runningRecord, createBatch(1, "RERUN DONE"))
+      const timerFlush = injector.flushMonitor(runningRecord.id)
+      for (let attempt = 0; attempt < 20 && !releaseStreamingDispatch; attempt += 1) {
+        await Promise.resolve()
+      }
+      injector.queueBatch(exitedRecord, terminalBatch)
+      const exitFlush = injector.flushMonitor(exitedRecord.id)
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await Promise.resolve()
+      }
+      releaseStreamingDispatch?.()
+      await Promise.all([timerFlush, exitFlush])
+      await injector.flushMonitor(exitedRecord.id)
+
+      // then
+      const streamingCalls = calls.filter((call) => call.source === streamingSource)
+      const terminalCalls = calls.filter((call) => call.source === terminalSource)
+      expect(streamingCalls).toHaveLength(1)
+      expect(streamingCalls[0]?.input.body.noReply).toBe(true)
+      expect(terminalCalls).toHaveLength(2)
+      expect(terminalCalls.every((call) => call.input.body.noReply === false)).toBe(true)
+      expect(injector.getPendingBatches(runningRecord.id)).toEqual([])
+      expect(injector.hasPendingTerminalOutput(runningRecord.id)).toBe(false)
+    })
+  })
+
+  describe("#given a flush attempt throws while a second caller coalesces onto it", () => {
+    test("#when the in-flight flush rejects #then a retry is scheduled and the terminal batch is delivered once as a reply-producing prompt", async () => {
+      // given
+      let settleCalls = 0
+      let failFirstSettle: (() => void) | undefined
+      const { injector, calls, scheduledFlushes } = createHarness({
+        settleAfterSessionIdle: async () => {
+          settleCalls += 1
+          if (settleCalls === 1) {
+            await new Promise<void>((resolve) => {
+              failFirstSettle = resolve
+            })
+            throw new Error("settle failed")
+          }
+        },
+      })
+      const exitedRecord = createRecord({ status: "exited", exitCode: 0 })
+      injector.queueBatch(exitedRecord, { monitorId: "mon_1", batchSeq: 2, lines: [], stillRunning: false })
+      scheduledFlushes.length = 0
+
+      // when
+      const exitFlush = injector.flushMonitor(exitedRecord.id)
+      for (let attempt = 0; attempt < 20 && !failFirstSettle; attempt += 1) {
+        await Promise.resolve()
+      }
+      const timerFlush = injector.flushMonitor(exitedRecord.id)
+      failFirstSettle?.()
+      const outcomes = await Promise.allSettled([exitFlush, timerFlush])
+      const retry = scheduledFlushes.find((entry) => entry.monitorId === exitedRecord.id)
+      await retry?.operation()
+
+      // then
+      expect(outcomes.map((outcome) => outcome.status)).toEqual(["rejected", "rejected"])
+      expect(retry?.delayMs).toBe(25)
+      expect(calls).toHaveLength(1)
+      expect(calls[0]?.source).toBe("monitor-output:mon_1:batch-2")
+      expect(calls[0]?.input.body.noReply).toBe(false)
+      expect(injector.hasPendingTerminalOutput(exitedRecord.id)).toBe(false)
+    })
+  })
+
+  describe("#given a scheduler that invokes the flush operation synchronously", () => {
+    test("#when the parent stays active #then coalesced reruns are capped and the flush settles without dispatching", async () => {
+      // given
+      const { injector, calls, scheduledFlushes } = createHarness({
+        active: true,
+        scheduleFlush: (_monitorId, _delayMs, operation) => {
+          void operation().catch(() => {})
+        },
+      })
+      const record = createRecord()
+
+      // when
+      injector.queueBatch(record, createBatch(1))
+      await injector.flushMonitor(record.id)
+
+      // then
+      expect(calls).toHaveLength(0)
+      expect(scheduledFlushes.length).toBeLessThan(20)
+      expect(injector.getPendingBatches(record.id)).toHaveLength(1)
     })
   })
 })
