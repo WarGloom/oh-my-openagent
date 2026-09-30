@@ -22,6 +22,7 @@ import type { DispatchedMonitorOutput, MonitorOutputInjectorDeps, PendingMonitor
 import type { MonitorRecord, OutputBatch } from "./types"
 
 const SAME_SOURCE_RETRY_MS = 2_000
+const MAX_COALESCED_FLUSH_RERUNS = 3
 
 export class MonitorOutputInjector {
   private readonly pendingOutputs: Map<string, PendingMonitorOutput> = new Map()
@@ -29,6 +30,8 @@ export class MonitorOutputInjector {
   private readonly deliveredSources: Set<string> = new Set()
   private readonly queuedAtBySource: Map<string, number> = new Map()
   private readonly dispatchingTerminalBatches = new Map<string, number>()
+  private readonly inFlightFlushes = new Map<string, Promise<void>>()
+  private readonly flushRerunRequested = new Set<string>()
 
   constructor(private readonly deps: MonitorOutputInjectorDeps) {
     if (deps.postDispatchHoldMs <= 0) {
@@ -68,10 +71,52 @@ export class MonitorOutputInjector {
     )
   }
 
-  async flushMonitor(monitorId: string): Promise<void> {
+  // Single-flight per monitor: the queue timer and the process-exit path both call this,
+  // and interleaved flushes previously dropped a requeued terminal batch.
+  flushMonitor(monitorId: string): Promise<void> {
+    const inFlight = this.inFlightFlushes.get(monitorId)
+    if (inFlight) {
+      this.flushRerunRequested.add(monitorId)
+      return inFlight
+    }
+
+    const run = this.runSerializedFlush(monitorId)
+    this.inFlightFlushes.set(monitorId, run)
+    return run
+  }
+
+  // Scheduler contract: deps.scheduleFlush is expected to run its operation later (a timer).
+  // A synchronous callback lands here as a coalesced rerun request; reruns are capped and the
+  // overflow is handed back to scheduleFlush so a synchronous scheduler cannot spin forever.
+  private async runSerializedFlush(monitorId: string): Promise<void> {
+    try {
+      let reruns = 0
+      do {
+        this.flushRerunRequested.delete(monitorId)
+        await this.flushMonitorOnce(monitorId)
+        if (this.flushRerunRequested.has(monitorId) && reruns >= MAX_COALESCED_FLUSH_RERUNS) {
+          this.flushRerunRequested.delete(monitorId)
+          this.scheduleFlush(monitorId)
+          break
+        }
+        reruns += 1
+      } while (this.flushRerunRequested.has(monitorId))
+    } catch (error) {
+      // Callers still see the rejection; a coalesced rerun or leftover output must not be dropped.
+      if (this.flushRerunRequested.has(monitorId) || (this.pendingOutputs.get(monitorId)?.batches.length ?? 0) > 0) {
+        this.scheduleFlush(monitorId)
+      }
+      throw error
+    } finally {
+      this.flushRerunRequested.delete(monitorId)
+      this.inFlightFlushes.delete(monitorId)
+    }
+  }
+
+  private async flushMonitorOnce(monitorId: string): Promise<void> {
     const pending = this.pendingOutputs.get(monitorId)
     if (!pending || pending.batches.length === 0) {
-      this.pendingOutputs.delete(monitorId)
+      if (pending) this.deletePendingIfCurrent(monitorId, pending)
       return
     }
 
@@ -144,7 +189,9 @@ export class MonitorOutputInjector {
       }
 
       pending.batches.shift()
-      this.deleteIfDrained(monitorId, pending)
+      if (pending.batches.length === 0) {
+        this.deletePendingIfCurrent(monitorId, pending)
+      }
 
       if (this.isTerminalBatch(batch)) {
         this.dispatchingTerminalBatches.set(monitorId, (this.dispatchingTerminalBatches.get(monitorId) ?? 0) + 1)
@@ -165,12 +212,13 @@ export class MonitorOutputInjector {
       }
     }
 
-    this.deleteIfDrained(monitorId, pending)
+    if (pending.batches.length === 0) {
+      this.deletePendingIfCurrent(monitorId, pending)
+    }
   }
 
-  // A batch queued while a dispatch is awaited lands in a new pending entry, which this flush must not delete.
-  private deleteIfDrained(monitorId: string, pending: PendingMonitorOutput): void {
-    if (pending.batches.length === 0 && this.pendingOutputs.get(monitorId) === pending) {
+  private deletePendingIfCurrent(monitorId: string, pending: PendingMonitorOutput): void {
+    if (this.pendingOutputs.get(monitorId) === pending) {
       this.pendingOutputs.delete(monitorId)
     }
   }
