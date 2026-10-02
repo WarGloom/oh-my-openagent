@@ -8,6 +8,7 @@ import { unsafeTestValue } from "../../../test-support/unsafe-test-value"
 import { createPluginInterface } from "./plugin-interface"
 import { applySessionPromptParams } from "./shared/session-prompt-params-helpers"
 import { clearAllSessionPromptParams } from "./shared/session-prompt-params-state"
+import { createInternalAgentTextPart } from "./shared/internal-initiator-marker"
 import { createKeywordDetectorHook } from "./hooks/keyword-detector"
 import { getUltraworkMessage } from "./hooks/keyword-detector/ultrawork"
 import { createAutoSlashCommandHook } from "./hooks/auto-slash-command"
@@ -376,25 +377,43 @@ describe("createPluginInterface - chat.params variant injection", () => {
     { reasoning: "off", expectedVariant: undefined, expectedEffort: "none" },
     { reasoning: "auto", expectedVariant: undefined, expectedEffort: undefined },
     { reasoning: undefined, expectedVariant: "high", expectedEffort: undefined },
-  ])("preserves delegated reasoning $reasoning through the late agent hook", async ({ reasoning, expectedVariant, expectedEffort }) => {
+  ])("preserves delegated reasoning $reasoning until an ordinary prompt replaces it", async ({ reasoning, expectedVariant, expectedEffort }) => {
     // given: delegation resolved effort independently of the configured high default
     const sessionID = "ses-delegated-reasoning"
     const model = { providerID: "openai", modelID: "gpt-5.5" }
     const lowered = applySessionPromptParams(sessionID, { ...model, reasoning })
     const pluginInterface = createPluginInterface({
-      ctx: unsafeTestValue({ client: {} }),
-      pluginConfig: { agents: { "configured-worker": { reasoning: "high" } } },
+      ctx: unsafeTestValue({ directory: "/tmp", client: { tui: { showToast: async () => {} } } }),
+      pluginConfig: unsafeTestValue({ agents: { "configured-worker": { reasoning: "high" } } }),
       firstMessageVariantGate: { shouldOverride: () => false, markApplied: () => {}, markSessionCreated: () => {}, clear: () => {} },
       managers: unsafeTestValue({}), hooks: unsafeTestValue({}), tools: {},
     })
-    const input = { sessionID, agent: "configured-worker", model, provider: { id: "openai" },
-      message: { variant: lowered.variant } }
-    const output: { options: Record<string, unknown> } = { options: {} }
-    // when: real chat.params wiring runs the late default hook and stored option application
-    await pluginInterface["chat.params"]?.(unsafeTestValue(input), unsafeTestValue(output))
-    // then: off/auto stay without high; unspecified retains the original default behavior
-    expect(input.message.variant).toBe(expectedVariant)
-    expect(output.options.reasoningEffort).toBe(expectedEffort)
+    const messageInput = { sessionID, agent: "configured-worker", model }
+    // when: the delegated message and its marked continuation each make multiple model calls
+    for (const text of ["Delegated task", "Continue the delegated task"]) {
+      await pluginInterface["chat.message"]?.(unsafeTestValue(messageInput), unsafeTestValue({
+        message: {}, parts: [createInternalAgentTextPart(text)],
+      }))
+      for (let call = 0; call < 2; call++) {
+        const input = { ...messageInput, provider: { id: "openai" }, message: { variant: lowered.variant } }
+        const output: { options: Record<string, unknown> } = { options: {} }
+        await pluginInterface["chat.params"]?.(unsafeTestValue(input), unsafeTestValue(output))
+        // then: suppression survives all delegated calls, while unspecified keeps its default
+        expect(input.message.variant).toBe(expectedVariant)
+        expect(output.options.reasoningEffort).toBe(expectedEffort)
+      }
+    }
+    // when: a new ordinary user prompt arrives in the same session without explicit reasoning
+    await pluginInterface["chat.message"]?.(unsafeTestValue(messageInput), unsafeTestValue({
+      message: {}, parts: [{ type: "text", text: "A new ordinary request" }],
+    }))
+    const ordinaryMessage: { variant?: string } = {}
+    const ordinaryInput = { ...messageInput, provider: { id: "openai" }, message: ordinaryMessage }
+    const ordinaryOutput: { options: Record<string, unknown> } = { options: {} }
+    await pluginInterface["chat.params"]?.(unsafeTestValue(ordinaryInput), unsafeTestValue(ordinaryOutput))
+    // then: the configured default applies again and the prior turn's native effort is absent
+    expect(ordinaryInput.message.variant).toBe("high")
+    expect(ordinaryOutput.options.reasoningEffort).toBeUndefined()
   })
 
   test("injects variant from agent config into chat.params message", async () => {
