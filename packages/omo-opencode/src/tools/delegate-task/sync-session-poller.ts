@@ -409,12 +409,9 @@ export async function pollSyncSession(
 
     if (isActiveStatus) continue
 
-    const hasAssistantText = messages.some((m) => {
-      if (m.info?.role !== "assistant") return false
-      return (m.parts ?? []).some((p) => {
-        if (p.type !== "text" && p.type !== "reasoning") return false
-        return (p.text ?? "").trim().length > 0
-      })
+    const hasAssistantText = (lastAssistant?.parts ?? []).some((part) => {
+      if (part.type !== "text" && part.type !== "reasoning") return false
+      return (part.text ?? "").trim().length > 0
     })
     if (!lastAssistant?.info?.finish && hasAssistantText) {
       if (isAwaitingChildContinuation(lastAssistant?.info?.id)) continue

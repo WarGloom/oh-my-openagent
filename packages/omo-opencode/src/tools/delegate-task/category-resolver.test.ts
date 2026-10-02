@@ -7,6 +7,7 @@ import type { DelegatedModelConfig } from "./types"
 import type { CategoryConfig } from "../../config/schema"
 import type { ExecutorContext } from "./executor-types"
 import * as connectedProvidersCache from "../../shared/connected-providers-cache"
+import { CATEGORY_MODEL_REQUIREMENTS } from "../../shared/model-requirements"
 import { unsafeTestValue } from "../../../../../test-support/unsafe-test-value"
 import {
 	DEEP_LOW_CATEGORY_PROMPT_APPEND,
@@ -124,23 +125,7 @@ describe("resolveCategoryExecution", () => {
 		expect(result.fallbackChain).toEqual([
 			{ providers: ["quotio"], model: "kimi-k2.5", variant: undefined },
 			{ providers: ["openai"], model: "gpt-5.5", variant: "high" },
-			{
-				providers: ["openai", "github-copilot", "opencode", "vercel"],
-				model: "gpt-5.5",
-				variant: "medium",
-			},
-			{
-				providers: ["anthropic", "github-copilot", "opencode", "vercel"],
-				model: "claude-opus-4-7",
-				variant: "max",
-			},
-			{
-				providers: ["google", "github-copilot", "opencode", "vercel"],
-				model: "gemini-3.1-pro",
-				variant: "high",
-			},
-			{ providers: ["opencode-go", "vercel"], model: "kimi-k2.6" },
-			{ providers: ["opencode-go", "vercel"], model: "glm-5.1" },
+			...CATEGORY_MODEL_REQUIREMENTS["deep-low"].fallbackChain,
 		])
 	})
 
@@ -196,7 +181,7 @@ describe("resolveCategoryExecution", () => {
 		const cacheSpy = spyOn(connectedProvidersCache, "readProviderModelsCache").mockReturnValue({
 			models: {
 				"github-copilot": ["gemini-3.1-pro-preview"],
-				openai: ["gpt-5.5"],
+				openai: ["gpt-6.1-sol"],
 				anthropic: ["claude-opus-4-8"],
 				opencode: ["qwen3.6-plus", "nemotron-3-super-free"],
 			},
@@ -210,7 +195,7 @@ describe("resolveCategoryExecution", () => {
 			"opencode",
 		])
 		const args = {
-			category: "artistry",
+			category: "deep-low",
 			prompt: "test prompt",
 			description: "Test task",
 			run_in_background: true,
@@ -220,7 +205,7 @@ describe("resolveCategoryExecution", () => {
 		}
 		const executorCtx = createMockExecutorContext()
 		executorCtx.userCategories = {
-			artistry: {
+			"deep-low": {
 				model: "github-copilot/gemini-3.1-pro-preview",
 				variant: "high",
 				fallback_models: [
@@ -239,7 +224,7 @@ describe("resolveCategoryExecution", () => {
 		expect(result.error).toBeUndefined()
 		expect(result.actualModel).toBe("github-copilot/gemini-3.1-pro-preview")
 		const gptIndex = result.fallbackChain?.findIndex((entry) =>
-			entry.providers.includes("openai") && entry.model === "gpt-5.5"
+			entry.providers.includes("openai") && entry.model === "gpt-6.1-sol"
 		)
 		const freeIndex = result.fallbackChain?.findIndex((entry) =>
 			entry.providers.includes("opencode") && entry.model === "qwen3.6-plus-free"
@@ -680,7 +665,7 @@ describe("resolveCategoryExecution", () => {
 		expect(result.categoryModel).toEqual({
 			providerID: "anthropic",
 			modelID: "claude-sonnet-4-6",
-			variant: undefined,
+			variant: "low",
 		})
 		expect(result.fallbackChain?.[0]).toEqual({
 			providers: ["openai"],

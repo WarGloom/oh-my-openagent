@@ -663,25 +663,30 @@ describe("sisyphus-task", () => {
     test("category overrides stale plan subagent during tool execution", async () => {
       //#given
       const { createDelegateTask } = require("./tools")
+      let launchInput: CapturedLaunchInput | undefined
       const mockManager = {
-        launch: async (_input: unknown) => ({
-          id: "task-plan",
-          status: "pending",
-          description: "Plan handoff",
-          agent: "plan",
-          sessionID: "plan-session",
-        }),
+        launch: async (input: CapturedLaunchInput) => {
+          launchInput = input
+          return {
+            id: "task-plan",
+            status: "pending",
+            description: "Plan handoff",
+            agent: input.agent,
+            sessionID: "plan-session",
+          }
+        },
       }
       const mockClient = {
         app: { agents: async () => ({ data: [{ name: "plan", mode: "subagent" }] }) },
         config: { get: async () => ({}) },
         provider: { list: async () => ({ data: { connected: ["openai"] } }) },
-        model: { list: async () => ({ data: [{ provider: "openai", id: "gpt-5.3-codex" }] }) },
+        model: { list: async () => ({ data: [{ provider: "openai", id: "gpt-5.5" }] }) },
         session: { messages: async () => ({ data: [] }) },
       }
       const tool = createDelegateTask({
         manager: mockManager,
         client: mockClient,
+        userCategories: { project_manager: { model: "openai/gpt-5.5" } },
         connectedProvidersOverride: TEST_CONNECTED_PROVIDERS,
         availableModelsOverride: createTestAvailableModels(),
       })
@@ -706,6 +711,11 @@ describe("sisyphus-task", () => {
       //#then
       expect(args.subagent_type).toBe("Sisyphus-Junior")
       expect(args.category).toBe("project_manager")
+      expect(requireCapturedLaunchInput(launchInput).agent).toBe("Sisyphus-Junior")
+      expect(requireCapturedLaunchInput(launchInput).model).toEqual({
+        providerID: "openai",
+        modelID: "gpt-5.5",
+      })
     }, { timeout: 10000 })
 
     test("proceeds without error when systemDefaultModel is undefined", async () => {
@@ -4586,7 +4596,8 @@ describe("sisyphus-task", () => {
     test("plan subagent is rejected before task permission setup", async () => {
       //#given - sisyphus tries to delegate to plan agent
       const { createDelegateTask } = require("./tools")
-      let promptBody: CapturedPromptBody = {}
+      let promptBody: CapturedPromptBody | undefined
+      const createSession = mock(async () => ({ data: { id: "ses_plan_delegate" } }))
       
        const mockManager = { launch: async () => ({}) }
        
@@ -4600,7 +4611,7 @@ describe("sisyphus-task", () => {
          config: { get: async () => ({ data: { model: SYSTEM_DEFAULT_MODEL } }) },
          session: {
            get: async () => ({ data: { directory: "/project" } }),
-           create: async () => ({ data: { id: "ses_plan_delegate" } }),
+           create: createSession,
            prompt: promptMock,
            promptAsync: promptMock,
            messages: async () => ({
@@ -4637,6 +4648,7 @@ describe("sisyphus-task", () => {
       //#then - no plan session is created
       expect(result).toContain("OpenCode runtime plan agent is disabled")
       expect(promptBody).toBeUndefined()
+      expect(createSession).not.toHaveBeenCalled()
     }, { timeout: 20000 })
 
     test("prometheus primary agent should not be callable via task", async () => {

@@ -669,7 +669,7 @@ bunDescribe("sendSyncPrompt", () => {
     //#given
     const { sendSyncPrompt } = require("./sync-prompt-sender")
 
-    const promptSyncWithModelSuggestionRetry = bunMock(async () => {
+    const promptWithModelSuggestionRetry = bunMock(async () => {
       throw new Error("prompt timed out after 120000ms")
     })
     const removeTask = bunMock(() => {})
@@ -700,21 +700,21 @@ bunDescribe("sendSyncPrompt", () => {
       mockClient,
       input,
       {
-        promptSyncWithModelSuggestionRetry,
+        promptWithModelSuggestionRetry,
       },
     )
 
     //#then
     bunExpect(result).toBeNull()
     bunExpect(removeTask).not.toHaveBeenCalled()
-    bunExpect(promptSyncWithModelSuggestionRetry).toHaveBeenCalledTimes(1)
+    bunExpect(promptWithModelSuggestionRetry).toHaveBeenCalledTimes(1)
   })
 
   bunTest("#given sync prompt times out before child starts #when sending prompt #then timeout remains fatal", async () => {
     //#given
     const { sendSyncPrompt } = require("./sync-prompt-sender")
 
-    const promptSyncWithModelSuggestionRetry = bunMock(async () => {
+    const promptWithModelSuggestionRetry = bunMock(async () => {
       throw new Error("prompt timed out after 120000ms")
     })
     const removeTask = bunMock(() => {})
@@ -745,13 +745,13 @@ bunDescribe("sendSyncPrompt", () => {
       mockClient,
       input,
       {
-        promptSyncWithModelSuggestionRetry,
+        promptWithModelSuggestionRetry,
       },
     )
 
     //#then
     bunExpect(result).toContain("prompt timed out after 120000ms")
     bunExpect(removeTask).toHaveBeenCalledWith("sync_test")
-    bunExpect(promptSyncWithModelSuggestionRetry).toHaveBeenCalledTimes(1)
+    bunExpect(promptWithModelSuggestionRetry).toHaveBeenCalledTimes(1)
   })
 })

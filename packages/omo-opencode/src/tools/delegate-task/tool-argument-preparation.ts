@@ -18,6 +18,7 @@ export async function prepareDelegateTaskArgs(args: Record<string, unknown>, ctx
 
   if (category) {
     subagentType = SISYPHUS_JUNIOR_AGENT
+    args.subagent_type = subagentType
   }
 
   let description = typeof args.description === "string" ? args.description : undefined
@@ -27,6 +28,9 @@ export async function prepareDelegateTaskArgs(args: Record<string, unknown>, ctx
     description = words.slice(0, 4).join(" ") || "Delegated task"
     descriptionSource = "generated"
   }
+
+  args.prompt = prompt
+  args.description = description
 
   await ctx.metadata?.({
     title: description,
