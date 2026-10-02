@@ -75,4 +75,3 @@ export function getAgentToolRestrictions(agentName: string, options: AgentToolRe
     ...agentRestrictions,
   }
 }
-
