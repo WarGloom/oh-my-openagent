@@ -122,7 +122,7 @@ describe("resolveModelForDelegateTask", () => {
 					availableModels: new Set(),
 				})
 
-				expect(result).toEqual({ model: "openai/gpt-5.4", matchedFallback: true })
+				expect(result).toEqual({ model: "openai/gpt-5.4", userFallbackIndex: 1, matchedFallback: true })
 				readConnectedProvidersSpy.mockRestore()
 			})
 
@@ -181,7 +181,7 @@ describe("resolveModelForDelegateTask", () => {
 					availableModels: new Set(["openai/gpt-5.5"]),
 				})
 
-				expect(result).toEqual({ model: "openai/gpt-5.5", variant: "high", matchedFallback: true })
+				expect(result).toEqual({ model: "openai/gpt-5.5", variant: "high", userFallbackIndex: 0, matchedFallback: true })
 			})
 
 			test("#then resolves a space-separated variant against the base available model", () => {
@@ -190,7 +190,7 @@ describe("resolveModelForDelegateTask", () => {
 					availableModels: new Set(["openai/gpt-5.5"]),
 				})
 
-				expect(result).toEqual({ model: "openai/gpt-5.5", variant: "medium", matchedFallback: true })
+				expect(result).toEqual({ model: "openai/gpt-5.5", variant: "medium", userFallbackIndex: 0, matchedFallback: true })
 			})
 		})
 
@@ -213,6 +213,7 @@ describe("resolveModelForDelegateTask", () => {
 				expect(result).toEqual({
 					model: "amazon-bedrock/us.anthropic.claude-opus-4-7",
 					variant: "max",
+					userFallbackIndex: 0,
 					matchedFallback: true,
 				})
 			})

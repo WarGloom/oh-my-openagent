@@ -29,6 +29,7 @@ export async function resolveSubagentModel(
 ): Promise<ResolvedSubagentModel> {
   let categoryModel = undefined
   let fallbackChain = undefined
+  let selectedEntry: FallbackEntry | undefined
 
   const agentConfigKey = getAgentConfigKey(agentToUse)
   const agentOverride = findAgentOverride(executorCtx.agentOverrides, agentConfigKey)
@@ -39,13 +40,15 @@ export async function resolveSubagentModel(
   const chainConfig = agentOverride?.models?.length
     ? agentOverride
     : !agentOverride?.model ? agentCategoryConfig : undefined
-  const canonicalModels = chainConfig?.models_distribution === "round_robin" && chainConfig.models?.length
-    ? [...distributeTaskModels(
-        chainConfig === agentOverride ? `agent:${agentConfigKey}` : `category:${agentOverride?.category}`,
-        chainConfig.models,
-        "round_robin",
-      )]
-    : undefined
+  const canonicalModels = !chainConfig?.models?.length
+    ? undefined
+    : chainConfig.models_distribution === "round_robin"
+      ? [...distributeTaskModels(
+          chainConfig === agentOverride ? `agent:${agentConfigKey}` : `category:${agentOverride?.category}`,
+          chainConfig.models,
+          "round_robin",
+        )]
+      : [...chainConfig.models]
   const firstEntry = canonicalModels?.[0]
   const explicitModel = (typeof firstEntry === "string" ? firstEntry : firstEntry?.model)
     ?? agentOverride?.model ?? agentCategoryConfig?.model
@@ -112,11 +115,21 @@ export async function resolveSubagentModel(
     if (canonicalChain && canonicalEntry) {
       fallbackChain = canonicalChain.slice(canonicalChain.indexOf(canonicalEntry) + 1)
     }
-    const effectiveEntry = canonicalEntry ?? resolveEffectiveFallbackEntry({
+    // The resolver reports which configured rung it picked; keep that rung's settings even when a
+    // later rung's model id is a longer prefix of the resolved model.
+    const selectedIndex = resolution && !resolutionSkipped && resolution.matchedFallback
+      ? resolution.userFallbackIndex
+      : undefined
+    const selectedModelEntry = selectedIndex !== undefined ? normalizedAgentFallbackModels?.[selectedIndex] : undefined
+    const indexedEntry = selectedModelEntry !== undefined
+      ? buildFallbackChainFromModels([selectedModelEntry], defaultProviderID)?.[0]
+      : undefined
+    const effectiveEntry = indexedEntry ?? canonicalEntry ?? resolveEffectiveFallbackEntry({
       categoryModel,
       configuredFallbackChain,
       resolution,
     })
+    selectedEntry = effectiveEntry
 
     if (categoryModel && effectiveEntry) {
       categoryModel = applyFallbackEntrySettings({
@@ -137,6 +150,16 @@ export async function resolveSubagentModel(
         model: fullModel,
       })
     }
+  }
+
+  const reasoning = selectedEntry?.reasoning
+    ?? (agentOverride?.models !== undefined ? selectedEntry?.variant : undefined)
+    ?? agentOverride?.reasoning
+    ?? agentOverride?.variant
+    ?? agentOverride?.reasoningEffort
+    ?? matchedAgent.variant
+  if (categoryModel && reasoning !== undefined) {
+    categoryModel = { ...categoryModel, reasoning }
   }
 
   return { categoryModel, fallbackChain }

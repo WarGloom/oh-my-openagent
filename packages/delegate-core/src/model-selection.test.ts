@@ -48,6 +48,7 @@ describe("resolveModelForDelegateTask", () => {
     expect(result).toEqual({
       model: "openai/gpt-5.4-preview",
       variant: "high",
+      userFallbackIndex: 0,
       matchedFallback: true,
     })
   })

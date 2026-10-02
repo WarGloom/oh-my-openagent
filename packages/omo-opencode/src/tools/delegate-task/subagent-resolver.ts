@@ -1,6 +1,7 @@
 import type { DelegateTaskArgs } from "./types"
 import type { ExecutorContext } from "./executor-types"
 import { log } from "../../shared/logger"
+import { normalizeModelFormat } from "../../shared/model-format-normalizer"
 import { resolveSubagentAgentMatch } from "./subagent-agent-match"
 import { resolveSubagentModel } from "./subagent-model-resolution"
 import { validateSubagentRequest } from "./subagent-request-preflight"
@@ -30,7 +31,15 @@ export async function resolveSubagentExecution(
 
     agentToUse = agentMatch.agentToUse
     const { categoryModel, fallbackChain } = await resolveSubagentModel(agentToUse, agentMatch.matchedAgent, executorCtx)
-    return { agentToUse, categoryModel, fallbackChain }
+    const reasoningModel = categoryModel
+      ?? (args.reasoning !== undefined && options.defaultModel ? normalizeModelFormat(options.defaultModel) : undefined)
+    const delegatedModel = reasoningModel && args.reasoning !== undefined
+      ? { ...reasoningModel, reasoning: args.reasoning }
+      : categoryModel
+    if (args.reasoning !== undefined && !delegatedModel) {
+      log("[delegate-task] Dropping call reasoning: no model resolved for agent", { agent: agentToUse, reasoning: args.reasoning })
+    }
+    return { agentToUse, categoryModel: delegatedModel, fallbackChain }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
     log("[delegate-task] Failed to resolve subagent execution", {

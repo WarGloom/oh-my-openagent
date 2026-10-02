@@ -3,6 +3,7 @@ export type SessionPromptParams = {
   topP?: number
   maxOutputTokens?: number
   options?: Record<string, unknown>
+  reasoningResolved?: boolean
 }
 
 const sessionPromptParams = new Map<string, SessionPromptParams>()
@@ -13,6 +14,7 @@ export function setSessionPromptParams(sessionID: string, params: SessionPromptP
     ...(params.topP !== undefined ? { topP: params.topP } : {}),
     ...(params.maxOutputTokens !== undefined ? { maxOutputTokens: params.maxOutputTokens } : {}),
     ...(params.options !== undefined ? { options: { ...params.options } } : {}),
+    ...(params.reasoningResolved !== undefined ? { reasoningResolved: params.reasoningResolved } : {}),
   })
 }
 
@@ -25,6 +27,7 @@ export function getSessionPromptParams(sessionID: string): SessionPromptParams |
     ...(params.topP !== undefined ? { topP: params.topP } : {}),
     ...(params.maxOutputTokens !== undefined ? { maxOutputTokens: params.maxOutputTokens } : {}),
     ...(params.options !== undefined ? { options: { ...params.options } } : {}),
+    ...(params.reasoningResolved !== undefined ? { reasoningResolved: params.reasoningResolved } : {}),
   }
 }
 
