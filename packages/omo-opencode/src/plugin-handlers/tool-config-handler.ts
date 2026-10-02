@@ -2,8 +2,8 @@ import type { OhMyOpenCodeConfig } from "../config";
 import { getAgentConfigKey, getAgentDisplayName, getAgentListDisplayName } from "../shared/agent-display-names";
 import { getAgentToolRestrictions } from "../shared/agent-tool-restrictions";
 import { isRecord } from "../shared/record-type-guard";
-import { scopeRoutineVerificationRoutingPolicy } from "../shared/routine-verification-routing-policy";
-import { scopeSisyphusRuntimePromptContext } from "../agents/sisyphus-runtime-prompt-reconciler";
+import { annotateRoutineVerificationCapability } from "../shared/routine-verification-routing-policy";
+import { annotateSisyphusRuntimePromptContext } from "../agents/sisyphus-runtime-prompt-reconciler";
 import { isTaskSystemEnabled } from "../shared";
 
 type AgentWithPermission = { permission?: Record<string, unknown> };
@@ -165,10 +165,9 @@ export function applyToolConfig(params: {
     const tools = {
       ...getAgentToolRestrictions(getAgentConfigKey(name)),
       ...(isRecord(agent.permission) ? agent.permission : {}),
-      ...(taskDisabled ? { task: false } : {}),
     };
-    agent.prompt = scopeRoutineVerificationRoutingPolicy(agent.prompt, tools);
-    if (getAgentConfigKey(name) === "sisyphus") scopeSisyphusRuntimePromptContext(tools);
+    agent.prompt = annotateRoutineVerificationCapability(agent.prompt, tools, !taskDisabled);
+    if (getAgentConfigKey(name) === "sisyphus") annotateSisyphusRuntimePromptContext(tools, !taskDisabled);
   }
 
   params.config.permission = {

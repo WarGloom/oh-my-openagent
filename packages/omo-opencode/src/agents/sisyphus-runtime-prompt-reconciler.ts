@@ -11,8 +11,7 @@
  * - `rebuildPromptForModel` re-runs the same registration pipeline with a
  *   different model, so overrides / prompt_append / env context are preserved.
  */
-import { hasCategoryDispatchCapability } from "../shared/agent-tool-restrictions";
-import { scopeRoutineVerificationRoutingPolicy } from "../shared/routine-verification-routing-policy";
+import { annotateRoutineVerificationCapability } from "../shared/routine-verification-routing-policy";
 
 export type SisyphusRuntimePromptContext = {
   configuredModel: string;
@@ -30,13 +29,13 @@ export function clearSisyphusRuntimePromptContext(): void {
   context = undefined;
 }
 
-export function scopeSisyphusRuntimePromptContext(tools: Readonly<Record<string, unknown>>): void {
-  if (!context || hasCategoryDispatchCapability(tools)) return;
+export function annotateSisyphusRuntimePromptContext(tools: Readonly<Record<string, unknown>>, taskAvailable = true): void {
+  if (!context) return;
   const previous = context;
   context = {
     ...previous,
-    bakedPrompt: scopeRoutineVerificationRoutingPolicy(previous.bakedPrompt, tools),
-    rebuildPromptForModel: (model) => scopeRoutineVerificationRoutingPolicy(previous.rebuildPromptForModel(model), tools),
+    bakedPrompt: annotateRoutineVerificationCapability(previous.bakedPrompt, tools, taskAvailable),
+    rebuildPromptForModel: (model) => annotateRoutineVerificationCapability(previous.rebuildPromptForModel(model), tools, taskAvailable),
   };
 }
 

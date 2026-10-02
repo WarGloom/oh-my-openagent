@@ -64,6 +64,37 @@ describe("createSystemTransformHandler", () => {
     expect(output.system[0].includes("<Routine_Verification_Routing_Policy>")).toBe(capability === "allow")
   })
 
+  test.each([
+    { agentTask: "deny", sessionTask: true, modelSwitch: false },
+    { agentTask: "deny", sessionTask: true, modelSwitch: true },
+    { agentTask: "allow", sessionTask: false, modelSwitch: false },
+    { agentTask: "allow", sessionTask: false, modelSwitch: true },
+  ] as const)("respects session task overrides %j", async ({ agentTask, sessionTask, modelSwitch }) => {
+    // given
+    const categories = [{ name: "quick", description: "QA fixture" }, { name: "deep-low", description: "QA fixture" }]
+    const agent = createSisyphusAgent("anthropic/claude-sonnet-5", [], [], [], categories)
+    agent.permission = { ...agent.permission, task: agentTask }
+    const rebuiltPrompt = createSisyphusAgent("openai/gpt-6.1-sol", [], [], [], categories).prompt ?? ""
+    setSisyphusRuntimePromptContext({
+      configuredModel: "anthropic/claude-sonnet-5", bakedPrompt: agent.prompt ?? "",
+      rebuildPromptForModel: () => `<Runtime_Rebuild_Receipt>${rebuiltPrompt}`,
+    })
+    applyToolConfig({ config: {}, pluginConfig: {}, agentResult: { sisyphus: agent } })
+    setSessionTools("ses_policy_override", { task: sessionTask, call_omo_agent: true })
+    const output = { system: [agent.prompt ?? "", ROUTINE_VERIFICATION_ROUTING_POLICY] }
+
+    // when
+    await createHandler()({ sessionID: "ses_policy_override", model: modelSwitch
+      ? { id: "gpt-6.1-sol", providerID: "openai" }
+      : { id: "claude-sonnet-5", providerID: "anthropic" } }, output)
+
+    // then
+    expect(output.system[0].includes("<Runtime_Rebuild_Receipt>")).toBe(modelSwitch)
+    expect(output.system[0].includes("<Routine_Verification_Routing_Policy>")).toBe(sessionTask)
+    expect(output.system[1].includes("<Routine_Verification_Routing_Policy>")).toBe(sessionTask)
+    expect(output.system.join("\n")).not.toContain("<Routine_Verification_Capability")
+  })
+
   test("appends Serena navigation prompt when session has Serena tools", async () => {
     setSessionTools("ses_serena", {
       serena_find_file: true,

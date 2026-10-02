@@ -12,11 +12,39 @@ export const QUICK_VERIFICATION_BOUNDARY = `<Quick_Verification_No_Autonomous_Fi
 You may run and summarize verification, but must not make autonomous fixes. Report failures to the parent for routing to the appropriate implementation worker.
 </Quick_Verification_No_Autonomous_Fixes>`
 
+const CAPABILITY_ANNOTATION = /<Routine_Verification_Capability task="(true|false)" available="(true|false)" \/>/g
+
+export function annotateRoutineVerificationCapability(
+  prompt: string,
+  tools: Readonly<Record<string, unknown>>,
+  taskAvailable = true,
+): string {
+  const source = prompt.replace(CAPABILITY_ANNOTATION, "")
+  if (!source.includes("<Routine_Verification_Routing_Policy>")) return source
+  const task = hasCategoryDispatchCapability(tools)
+  return task && taskAvailable
+    ? source
+    : `${source}\n<Routine_Verification_Capability task="${task}" available="${taskAvailable}" />`
+}
+
+export function resolveRoutineVerificationTools(
+  system: readonly string[],
+  sessionTools: Readonly<Record<string, boolean>> = {},
+): Readonly<Record<string, boolean>> {
+  const annotation = Array.from(system.join("\n").matchAll(CAPABILITY_ANNOTATION))[0]
+  const task = sessionTools.task ?? sessionTools["*"] ?? (annotation?.[1] !== "false")
+  return {
+    ...sessionTools,
+    task: annotation?.[2] !== "false" && hasCategoryDispatchCapability({ task }),
+  }
+}
+
 export function scopeRoutineVerificationRoutingPolicy(
   prompt: string,
   tools: Readonly<Record<string, unknown>> = {},
 ): string {
+  const source = prompt.replace(CAPABILITY_ANNOTATION, "")
   return hasCategoryDispatchCapability(tools)
-    ? prompt
-    : prompt.replace(/<Routine_Verification_Routing_Policy>[\s\S]*?<\/Routine_Verification_Routing_Policy>/g, "")
+    ? source
+    : source.replace(/<Routine_Verification_Routing_Policy>[\s\S]*?<\/Routine_Verification_Routing_Policy>/g, "")
 }
