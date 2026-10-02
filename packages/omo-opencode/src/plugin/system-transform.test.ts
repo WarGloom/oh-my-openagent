@@ -5,6 +5,7 @@ import { clearSessionTools, setSessionTools } from "../shared/session-tools-stor
 import { ROUTINE_VERIFICATION_ROUTING_POLICY } from "../shared/routine-verification-routing-policy"
 import { createSisyphusAgent } from "../agents/sisyphus-agent-factory"
 import { applyToolConfig } from "../plugin-handlers/tool-config-handler"
+import { OhMyOpenCodeConfigSchema } from "../config/schema/oh-my-opencode-config"
 import { clearSisyphusRuntimePromptContext, setSisyphusRuntimePromptContext } from "../agents/sisyphus-runtime-prompt-reconciler"
 
 function createHandler(messagesImpl?: () => Promise<unknown>) {
@@ -73,13 +74,14 @@ describe("createSystemTransformHandler", () => {
     // given
     const categories = [{ name: "quick", description: "QA fixture" }, { name: "deep-low", description: "QA fixture" }]
     const agent = createSisyphusAgent("anthropic/claude-sonnet-5", [], [], [], categories)
-    agent.permission = { ...agent.permission, task: agentTask }
+    const permission: NonNullable<typeof agent.permission> & { task: "allow" | "deny" } = { ...agent.permission, task: agentTask }
+    agent.permission = permission
     const rebuiltPrompt = createSisyphusAgent("openai/gpt-6.1-sol", [], [], [], categories).prompt ?? ""
     setSisyphusRuntimePromptContext({
       configuredModel: "anthropic/claude-sonnet-5", bakedPrompt: agent.prompt ?? "",
       rebuildPromptForModel: () => `<Runtime_Rebuild_Receipt>${rebuiltPrompt}`,
     })
-    applyToolConfig({ config: {}, pluginConfig: {}, agentResult: { sisyphus: agent } })
+    applyToolConfig({ config: {}, pluginConfig: OhMyOpenCodeConfigSchema.parse({}), agentResult: { sisyphus: agent } })
     setSessionTools("ses_policy_override", { task: sessionTask, call_omo_agent: true })
     const output = { system: [agent.prompt ?? "", ROUTINE_VERIFICATION_ROUTING_POLICY] }
 
