@@ -2,7 +2,7 @@ import type { AgentOverrides } from "../../config/schema"
 import type { DelegatedModelConfig } from "./types"
 import { getAgentConfigKey } from "../../shared/agent-display-names"
 import { fuzzyMatchModel } from "../../shared/model-availability"
-import { buildFallbackChainFromModels } from "../../shared/fallback-chain-from-models"
+import { buildFallbackChainFromModels, findMostSpecificFallbackEntry } from "../../shared/fallback-chain-from-models"
 import { normalizeModelFormat } from "../../shared/model-format-normalizer"
 import { flattenToFallbackModelStrings, normalizeFallbackModels } from "../../shared/model-resolver"
 import { AGENT_MODEL_REQUIREMENTS, type FallbackEntry } from "../../shared/model-requirements"
@@ -28,6 +28,7 @@ export async function resolveSubagentModel(
 ): Promise<ResolvedSubagentModel> {
   let categoryModel = undefined
   let fallbackChain = undefined
+  let selectedEntry: FallbackEntry | undefined
 
   const agentConfigKey = getAgentConfigKey(agentToUse)
   const agentOverride = findAgentOverride(executorCtx.agentOverrides, agentConfigKey)
@@ -36,9 +37,13 @@ export async function resolveSubagentModel(
     ? executorCtx.userCategories?.[agentOverride.category]
     : undefined
   const agentCategoryModel = agentCategoryConfig?.model
-  const hasExplicitUserModel = Boolean(agentOverride?.model ?? agentCategoryModel)
+  const [primary, ...modelFallbacks] = agentOverride?.models ?? []
+  const agentModel = primary === undefined
+    ? agentOverride?.model
+    : typeof primary === "string" ? primary : primary.model
+  const hasExplicitUserModel = Boolean(agentModel ?? agentCategoryModel)
   const normalizedAgentFallbackModels = normalizeFallbackModels(
-    agentOverride?.fallback_models
+    (agentOverride?.models !== undefined ? modelFallbacks : agentOverride?.fallback_models)
     ?? agentCategoryConfig?.fallback_models
   )
 
@@ -50,9 +55,9 @@ export async function resolveSubagentModel(
     ? `${normalizedMatchedModel.providerID}/${normalizedMatchedModel.modelID}`
     : undefined
 
-  if (agentOverride?.model || agentCategoryModel || agentRequirement || matchedAgent.model) {
+  if (agentModel || agentCategoryModel || agentRequirement || matchedAgent.model) {
     const resolution = resolveModelForDelegateTask({
-      userModel: agentOverride?.model ?? agentCategoryModel,
+      userModel: agentModel ?? agentCategoryModel,
       userFallbackModels: flattenToFallbackModelStrings(normalizedAgentFallbackModels),
       categoryDefaultModel: matchedAgentModelStr,
       fallbackChain: agentRequirement?.fallbackChain,
@@ -69,8 +74,8 @@ export async function resolveSubagentModel(
         const resolvedModel = variantToUse ? { ...normalized, variant: variantToUse } : normalized
         categoryModel = applyCategoryParams(resolvedModel, agentCategoryConfig)
       }
-    } else if (resolutionSkipped && (agentOverride?.model ?? agentCategoryModel)) {
-      const explicitModel = agentOverride?.model ?? agentCategoryModel
+    } else if (resolutionSkipped && (agentModel ?? agentCategoryModel)) {
+      const explicitModel = agentModel ?? agentCategoryModel
       const normalized = explicitModel ? normalizeModelFormat(explicitModel) : undefined
       if (normalized) {
         const variantToUse = agentOverride?.variant ?? agentCategoryConfig?.variant
@@ -78,7 +83,7 @@ export async function resolveSubagentModel(
         categoryModel = applyCategoryParams(resolvedModel, agentCategoryConfig)
         log("[delegate-task] Cold cache: using explicit user override for subagent", {
           agent: agentToUse,
-          model: agentOverride?.model ?? agentCategoryModel,
+          model: agentModel ?? agentCategoryModel,
         })
       }
     }
@@ -97,6 +102,10 @@ export async function resolveSubagentModel(
       configuredFallbackChain,
       resolution,
     })
+    const modelChain = buildFallbackChainFromModels(agentOverride?.models, defaultProviderID)
+    selectedEntry = categoryModel && modelChain
+      ? findMostSpecificFallbackEntry(categoryModel.providerID, categoryModel.modelID, modelChain)
+      : effectiveEntry
 
     if (categoryModel && effectiveEntry) {
       categoryModel = applyFallbackEntrySettings({
@@ -117,6 +126,16 @@ export async function resolveSubagentModel(
         model: fullModel,
       })
     }
+  }
+
+  const reasoning = selectedEntry?.reasoning
+    ?? (agentOverride?.models !== undefined ? selectedEntry?.variant : undefined)
+    ?? agentOverride?.reasoning
+    ?? agentOverride?.variant
+    ?? agentOverride?.reasoningEffort
+    ?? matchedAgent.variant
+  if (categoryModel && reasoning !== undefined) {
+    categoryModel = { ...categoryModel, reasoning }
   }
 
   return { categoryModel, fallbackChain }

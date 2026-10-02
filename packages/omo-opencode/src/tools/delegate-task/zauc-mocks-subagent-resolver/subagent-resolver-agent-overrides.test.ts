@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 import type { ExecutorContext } from "../executor-types"
 import type { DelegateTaskArgs } from "../types"
+import { buildTaskPromptBody } from "../../../features/background-agent/spawner/task-prompt-body"
+import { applySessionPromptParams } from "../../../shared/session-prompt-params-helpers"
 
 type SubagentResolverModule = typeof import("../subagent-resolver")
 
@@ -72,6 +74,54 @@ describe("resolveSubagentExecution agent overrides", () => {
 
   afterEach(() => {
     mock.restore()
+  })
+
+  test.each([
+    { name: "chain-entry reasoning", override: { models: [{ model: "openai/gpt-6.1-sol", reasoning: "medium" }] }, reasoning: "medium", variant: "medium" },
+    { name: "selected fallback reasoning", override: { models: [{ model: "unavailable/missing", reasoning: "high" }, { model: "openai/gpt-6.1-sol", reasoning: "medium" }] }, reasoning: "medium", variant: "medium" },
+    { name: "agent-level reasoning over category", override: { model: "openai/gpt-6.1-sol", reasoning: "medium", category: "worker" }, reasoning: "medium", variant: "medium" },
+    { name: "agent variant over category", override: { model: "openai/gpt-6.1-sol", variant: "medium", category: "worker" }, reasoning: "medium", variant: "medium" },
+    { name: "markdown variant over category", override: { category: "worker" }, markdownVariant: "medium", reasoning: "medium", variant: "medium" },
+    { name: "explicit call reasoning over chain", override: { models: [{ model: "openai/gpt-6.1-sol", reasoning: "high" }] }, callReasoning: "medium", reasoning: "medium", variant: "medium" },
+    { name: "non-variant reasoning effort", override: { model: "openai/gpt-6.1-sol", reasoning: "off" }, reasoning: "off", variant: undefined, effort: "none" },
+    { name: "no reasoning unchanged", override: { model: "openai/gpt-6.1-sol" }, reasoning: undefined, variant: undefined },
+  ] satisfies Array<{
+    name: string
+    override: NonNullable<ExecutorContext["agentOverrides"]>[string]
+    markdownVariant?: string
+    callReasoning?: "medium"
+    reasoning: string | undefined
+    variant: string | undefined
+    effort?: "none"
+  }>)("propagates $name to the delegated prompt", async (scenario) => {
+    // given: differing agent and category settings, and only the selected model available
+    readProviderModelsCacheMock.mockReturnValue({
+      models: { openai: ["gpt-6.1-sol"] }, connected: ["openai"], updatedAt: "2026-10-02",
+    })
+    readConnectedProvidersCacheMock.mockReturnValue(["openai"])
+    const executorCtx = createExecutorContext(async () => ({ data: [{
+      name: "configured-worker", mode: "subagent", model: "openai/gpt-6.1-sol",
+      variant: "markdownVariant" in scenario ? scenario.markdownVariant : undefined,
+    }] }), {
+      agentOverrides: { "configured-worker": scenario.override },
+      userCategories: { worker: { reasoning: "high", variant: "high" } },
+    })
+    const args = createBaseArgs({ subagent_type: "configured-worker",
+      reasoning: "callReasoning" in scenario ? scenario.callReasoning : undefined })
+
+    // when: direct-agent resolution feeds the real background prompt lowering path
+    const result = await resolveSubagentExecution(args, executorCtx, "sisyphus", "deep")
+    const body = buildTaskPromptBody({ kind: "launch", agent: result.agentToUse,
+      model: result.categoryModel, system: undefined, prompt: args.prompt, includeTeamToolDenylist: false })
+
+    // then: the selected effort, not the category/primary effort, reaches the prompt
+    expect(result.error).toBeUndefined()
+    expect(result.categoryModel).toMatchObject({ providerID: "openai", modelID: "gpt-6.1-sol" })
+    expect(result.categoryModel?.reasoning).toBe(scenario.reasoning)
+    expect(body.variant).toBe(scenario.variant)
+    if ("effort" in scenario) {
+      expect(applySessionPromptParams("ses_reasoning_test", result.categoryModel)).toEqual({ reasoningEffort: scenario.effort })
+    }
   })
 
   test("does not inherit hardcoded fallback chain when agent override uses custom provider model", async () => {

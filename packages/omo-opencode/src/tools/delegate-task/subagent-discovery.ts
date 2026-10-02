@@ -13,6 +13,7 @@ export type AgentInfo = {
   mode?: "subagent" | "primary" | "all"
   hidden?: boolean
   model?: string | { providerID: string; modelID: string }
+  variant?: string
 }
 
 const BUILTIN_AGENT_ALIASES: Readonly<Record<string, readonly string[]>> = {
@@ -43,12 +44,13 @@ export function mergeWithClaudeCodeAgents(
   const userAgentsRecord = loadUserAgents()
   const projectAgentsRecord = loadProjectAgents(directory)
 
-  const toAgentInfoList = (record: Record<string, { mode?: string; hidden?: boolean; model?: AgentInfo["model"]; description?: string }>): AgentInfo[] =>
+  const toAgentInfoList = (record: Record<string, { mode?: string; hidden?: boolean; model?: AgentInfo["model"]; variant?: string; description?: string }>): AgentInfo[] =>
     Object.entries(record).map(([name, config]) => ({
       name,
       mode: config.mode as AgentInfo["mode"],
       hidden: config.hidden,
       model: config.model,
+      variant: config.variant,
       description: config.description,
     }))
 
