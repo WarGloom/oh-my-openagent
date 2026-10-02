@@ -2,6 +2,7 @@ import type { PluginContext, PluginInterface, ToolsRecord } from "./plugin/types
 import type { OhMyOpenCodeConfig } from "./config"
 
 import { applyAgentVariant } from "./shared/agent-variant"
+import { getSessionPromptParams } from "./shared/session-prompt-params-state"
 import { createChatParamsHandler } from "./plugin/chat-params"
 import { createChatHeadersHandler } from "./plugin/chat-headers"
 import { createChatMessageHandler } from "./plugin/chat-message"
@@ -38,6 +39,7 @@ export function createPluginInterface(args: {
 
     "chat.params": async (input: unknown, output: unknown) => {
       const chatParamsInput = input as {
+        sessionID?: string
         agent?: string | { name?: string }
         model?: { providerID?: unknown; modelID?: unknown; id?: unknown }
         message?: { variant?: string }
@@ -49,7 +51,10 @@ export function createPluginInterface(args: {
       const providerID = chatParamsInput.model?.providerID
       const rawModelID = chatParamsInput.model?.modelID ?? chatParamsInput.model?.id
       const modelID = typeof rawModelID === "string" ? rawModelID : undefined
-      if (chatParamsInput.message && typeof providerID === "string" && modelID !== undefined) {
+      const reasoningResolved = chatParamsInput.sessionID
+        ? getSessionPromptParams(chatParamsInput.sessionID)?.reasoningResolved === true
+        : false
+      if (!reasoningResolved && chatParamsInput.message && typeof providerID === "string" && modelID !== undefined) {
         applyAgentVariant(pluginConfig, agentName, chatParamsInput.message, { providerID, modelID })
       }
       const handler = createChatParamsHandler({

@@ -92,7 +92,7 @@ function buildDelegateTaskArgsSchema(availableSubagentNames?: readonly string[],
     category: tool.schema.string().optional().describe("REQUIRED if subagent_type not provided. Do NOT provide both category and subagent_type."),
     model_routing: tool.schema.boolean().optional().describe("Set false to bypass optional Jev routing for category auto or an agent ladder; omitted uses the configured mode. Does not affect team members or real named agents."),
     subagent_type: buildSubagentTypeSchema(availableSubagentNames, aliases),
-    reasoning: tool.schema.string().optional().describe("Optional reasoning override for a named agent (subagent_type), including a Jev agent alias. Overrides agent configuration; category delegation uses its category settings."),
+    reasoning: tool.schema.string().optional().describe("Optional reasoning override only with subagent_type (including a Jev alias). Canonical levels: off, auto, minimal, low, medium, high, xhigh, max. Unknown names pass through as provider variants, matching permissive agent config. Overrides agent configuration; category delegation ignores this argument."),
     task_id: tool.schema
       .string()
       .optional()

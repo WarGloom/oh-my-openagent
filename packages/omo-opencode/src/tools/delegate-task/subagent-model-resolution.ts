@@ -2,7 +2,7 @@ import type { AgentOverrides } from "../../config/schema"
 import type { DelegatedModelConfig } from "./types"
 import { getAgentConfigKey } from "../../shared/agent-display-names"
 import { fuzzyMatchModel } from "../../shared/model-availability"
-import { buildFallbackChainFromModels, findMostSpecificFallbackEntry } from "../../shared/fallback-chain-from-models"
+import { buildFallbackChainFromModels } from "../../shared/fallback-chain-from-models"
 import { normalizeModelFormat } from "../../shared/model-format-normalizer"
 import { flattenToFallbackModelStrings, normalizeFallbackModels } from "../../shared/model-resolver"
 import { AGENT_MODEL_REQUIREMENTS, type FallbackEntry } from "../../shared/model-requirements"
@@ -11,7 +11,6 @@ import { getAvailableModelsForDelegateTask } from "./available-models"
 import { applyCategoryParams } from "./delegated-model-config"
 import type { ExecutorContext } from "./executor-types"
 import { applyFallbackEntrySettings } from "./fallback-entry-settings"
-import { resolveEffectiveFallbackEntry } from "./fallback-entry-resolution"
 import { resolveModelForDelegateTask } from "./model-selection"
 import type { AgentInfo } from "./subagent-discovery"
 import type { ResolvedSubagentModel } from "./subagent-resolution-types"
@@ -97,15 +96,17 @@ export async function resolveSubagentModel(
     )
     fallbackChain = configuredFallbackChain
       ?? ((resolutionSkipped || hasExplicitUserModel) ? undefined : agentRequirement?.fallbackChain)
-    const effectiveEntry = resolveEffectiveFallbackEntry({
-      categoryModel,
-      configuredFallbackChain,
-      resolution,
-    })
-    const modelChain = buildFallbackChainFromModels(agentOverride?.models, defaultProviderID)
-    selectedEntry = categoryModel && modelChain
-      ? findMostSpecificFallbackEntry(categoryModel.providerID, categoryModel.modelID, modelChain)
-      : effectiveEntry
+    if (resolution && !resolutionSkipped) {
+      const selectedModelEntry = resolution.userFallbackIndex !== undefined
+        ? normalizedAgentFallbackModels?.[resolution.userFallbackIndex]
+        : !resolution.matchedFallback && agentModel ? primary : undefined
+      selectedEntry = selectedModelEntry !== undefined
+        ? buildFallbackChainFromModels([selectedModelEntry], defaultProviderID)?.[0]
+        : resolution.fallbackEntry
+    }
+    const effectiveEntry = resolution && !resolutionSkipped && resolution.matchedFallback
+      ? selectedEntry
+      : undefined
 
     if (categoryModel && effectiveEntry) {
       categoryModel = applyFallbackEntrySettings({

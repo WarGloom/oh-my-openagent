@@ -6,6 +6,8 @@ import { randomUUID } from "node:crypto"
 import type { PluginInput } from "@opencode-ai/plugin"
 import { unsafeTestValue } from "../../../test-support/unsafe-test-value"
 import { createPluginInterface } from "./plugin-interface"
+import { applySessionPromptParams } from "./shared/session-prompt-params-helpers"
+import { clearAllSessionPromptParams } from "./shared/session-prompt-params-state"
 import { createKeywordDetectorHook } from "./hooks/keyword-detector"
 import { getUltraworkMessage } from "./hooks/keyword-detector/ultrawork"
 import { createAutoSlashCommandHook } from "./hooks/auto-slash-command"
@@ -368,6 +370,33 @@ describe("createPluginInterface - backward compatibility", () => {
 })
 
 describe("createPluginInterface - chat.params variant injection", () => {
+  afterEach(() => clearAllSessionPromptParams())
+
+  test.each([
+    { reasoning: "off", expectedVariant: undefined, expectedEffort: "none" },
+    { reasoning: "auto", expectedVariant: undefined, expectedEffort: undefined },
+    { reasoning: undefined, expectedVariant: "high", expectedEffort: undefined },
+  ])("preserves delegated reasoning $reasoning through the late agent hook", async ({ reasoning, expectedVariant, expectedEffort }) => {
+    // given: delegation resolved effort independently of the configured high default
+    const sessionID = "ses-delegated-reasoning"
+    const model = { providerID: "openai", modelID: "gpt-5.5" }
+    const lowered = applySessionPromptParams(sessionID, { ...model, reasoning })
+    const pluginInterface = createPluginInterface({
+      ctx: unsafeTestValue({ client: {} }),
+      pluginConfig: { agents: { "configured-worker": { reasoning: "high" } } },
+      firstMessageVariantGate: { shouldOverride: () => false, markApplied: () => {}, markSessionCreated: () => {}, clear: () => {} },
+      managers: unsafeTestValue({}), hooks: unsafeTestValue({}), tools: {},
+    })
+    const input = { sessionID, agent: "configured-worker", model, provider: { id: "openai" },
+      message: { variant: lowered.variant } }
+    const output: { options: Record<string, unknown> } = { options: {} }
+    // when: real chat.params wiring runs the late default hook and stored option application
+    await pluginInterface["chat.params"]?.(unsafeTestValue(input), unsafeTestValue(output))
+    // then: off/auto stay without high; unspecified retains the original default behavior
+    expect(input.message.variant).toBe(expectedVariant)
+    expect(output.options.reasoningEffort).toBe(expectedEffort)
+  })
+
   test("injects variant from agent config into chat.params message", async () => {
     // given
     const pluginInterface = createPluginInterface({

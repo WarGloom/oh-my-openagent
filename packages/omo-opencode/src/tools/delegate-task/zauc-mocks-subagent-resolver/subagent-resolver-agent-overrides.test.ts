@@ -83,13 +83,14 @@ describe("resolveSubagentExecution agent overrides", () => {
     { name: "agent variant over category", override: { model: "openai/gpt-6.1-sol", variant: "medium", category: "worker" }, reasoning: "medium", variant: "medium" },
     { name: "markdown variant over category", override: { category: "worker" }, markdownVariant: "medium", reasoning: "medium", variant: "medium" },
     { name: "explicit call reasoning over chain", override: { models: [{ model: "openai/gpt-6.1-sol", reasoning: "high" }] }, callReasoning: "medium", reasoning: "medium", variant: "medium" },
+    { name: "unknown call reasoning as provider variant", override: { model: "openai/gpt-6.1-sol", reasoning: "high" }, callReasoning: "provider-custom", reasoning: "provider-custom", variant: "provider-custom" },
     { name: "non-variant reasoning effort", override: { model: "openai/gpt-6.1-sol", reasoning: "off" }, reasoning: "off", variant: undefined, effort: "none" },
     { name: "no reasoning unchanged", override: { model: "openai/gpt-6.1-sol" }, reasoning: undefined, variant: undefined },
   ] satisfies Array<{
     name: string
     override: NonNullable<ExecutorContext["agentOverrides"]>[string]
     markdownVariant?: string
-    callReasoning?: "medium"
+    callReasoning?: string
     reasoning: string | undefined
     variant: string | undefined
     effort?: "none"
@@ -122,6 +123,31 @@ describe("resolveSubagentExecution agent overrides", () => {
     if ("effort" in scenario) {
       expect(applySessionPromptParams("ses_reasoning_test", result.categoryModel)).toEqual({ reasoningEffort: scenario.effort })
     }
+  })
+
+  test.each([
+    { name: "normalized fallback spelling", fallback: "anthropic/claude-sonnet-4.5" },
+    { name: "earlier rung instead of longest prefix", fallback: "anthropic/claude-sonnet-4" },
+  ])("keeps selected reasoning for $name", async ({ fallback }) => {
+    // given: the selected rung differs from both defaults and a later exact-model rung
+    readProviderModelsCacheMock.mockReturnValue({
+      models: { anthropic: ["claude-sonnet-4-5"] }, connected: ["anthropic"], updatedAt: "2026-10-02",
+    })
+    readConnectedProvidersCacheMock.mockReturnValue(["anthropic"])
+    const ctx = createExecutorContext(async () => ({ data: [{
+      name: "configured-worker", mode: "subagent", model: "unavailable/missing",
+    }] }), {
+      agentOverrides: { "configured-worker": { reasoning: "high", category: "worker", models: [
+        "unavailable/missing", { model: fallback, reasoning: "medium" },
+        { model: "anthropic/claude-sonnet-4-5", reasoning: "xhigh" },
+      ] } },
+      userCategories: { worker: { reasoning: "low" } },
+    })
+    // when: the first reachable fallback is selected with normalized substring matching
+    const result = await resolveSubagentExecution(createBaseArgs({ subagent_type: "configured-worker" }), ctx, "sisyphus", "deep")
+    // then: provenance retains that rung's settings, not defaults or a re-matched rung
+    expect(result.error).toBeUndefined()
+    expect(result.categoryModel).toMatchObject({ providerID: "anthropic", modelID: "claude-sonnet-4-5", reasoning: "medium" })
   })
 
   test("does not inherit hardcoded fallback chain when agent override uses custom provider model", async () => {

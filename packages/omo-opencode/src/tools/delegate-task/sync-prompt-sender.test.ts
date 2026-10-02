@@ -1,4 +1,5 @@
 // Required for Bun's CommonJS-style module isolation in these tests.
+export {}
 declare const require: (name: string) => any
 
 const {
@@ -468,6 +469,7 @@ bunDescribe("sendSyncPrompt", () => {
     bunExpect(promptArgs.body.options).toEqual({ reasoningEffort: "high" })
     bunExpect(getSessionPromptParams("test-session")).toEqual({
       options: { reasoningEffort: "high" },
+      reasoningResolved: true,
     })
   })
 

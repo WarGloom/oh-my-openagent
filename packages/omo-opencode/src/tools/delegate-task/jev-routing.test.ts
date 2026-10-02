@@ -388,6 +388,7 @@ describe("Jev named-agent ladders", () => {
   test.each([
     { callReasoning: undefined, expectedReasoning: "medium" },
     { callReasoning: "low", expectedReasoning: "low" },
+    { callReasoning: "provider-custom", expectedReasoning: "provider-custom" },
   ])("task dispatch substitutes the real agent with reasoning $expectedReasoning", async ({ callReasoning, expectedReasoning }) => {
     const launch = mock(async () => ({ id: "task-worker", sessionId: "ses_worker", status: "running" }))
     const delegate = createDelegateTask(unsafeTestValue({
