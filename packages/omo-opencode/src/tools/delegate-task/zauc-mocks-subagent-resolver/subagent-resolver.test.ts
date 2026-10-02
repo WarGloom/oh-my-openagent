@@ -916,7 +916,7 @@ describe("resolveSubagentExecution", () => {
     })
   })
 
-  test("prefers exact promoted fallback match over earlier fuzzy prefix match", async () => {
+  test("keeps the selected fuzzy rung's settings instead of a later exact match", async () => {
     //#given
     readProviderModelsCacheMock.mockReturnValue({
       models: { openai: ["gpt-5.4-preview"] },
@@ -957,8 +957,8 @@ describe("resolveSubagentExecution", () => {
     expect(result.categoryModel).toEqual({
       providerID: "openai",
       modelID: "gpt-5.4-preview",
-      variant: "max",
-      reasoningEffort: "high",
+      variant: "low",
+      reasoningEffort: "medium",
     })
   })
 
@@ -1049,7 +1049,7 @@ describe("resolveSubagentExecution", () => {
     expect(result.categoryModel).toEqual({ providerID: "minimaxi", modelID: "MiniMax-M2.7-highspeed" })
   })
 
-  test("prefers the most specific prefix match when fallback entries share a prefix", async () => {
+  test("keeps the selected rung's settings when fallback entries share a prefix", async () => {
     //#given
     readProviderModelsCacheMock.mockReturnValue({
       models: { openai: ["gpt-4o-preview"] },
@@ -1090,8 +1090,8 @@ describe("resolveSubagentExecution", () => {
     expect(result.categoryModel).toEqual({
       providerID: "openai",
       modelID: "gpt-4o-preview",
-      variant: "max",
-      reasoningEffort: "high",
+      variant: "low",
+      reasoningEffort: "medium",
     })
   })
 

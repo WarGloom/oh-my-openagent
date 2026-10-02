@@ -31,7 +31,7 @@ export type DelegateModelResolutionInput = {
 }
 
 export type DelegateModelResolutionResult =
-  | { readonly model: string; readonly variant?: string; readonly fallbackEntry?: DelegateFallbackEntry; readonly matchedFallback?: boolean }
+  | { readonly model: string; readonly variant?: string; readonly fallbackEntry?: DelegateFallbackEntry; readonly userFallbackIndex?: number; readonly matchedFallback?: boolean }
   | { readonly skipped: true }
   | undefined
 
@@ -105,7 +105,7 @@ export function resolveModelForDelegateTask(
       const providerHint = parsed?.providerHint
       const primaryMatch = fuzzyMatchModel(userResult.model, new Set(input.availableModels), providerHint)
       if (!primaryMatch) {
-        for (const fallbackModel of userFallbackModels) {
+        for (const [userFallbackIndex, fallbackModel] of userFallbackModels.entries()) {
           const parsedFallback = parseUserFallbackModel(fallbackModel)
           if (!parsedFallback) continue
           const fbMatch = fuzzyMatchModel(
@@ -121,6 +121,7 @@ export function resolveModelForDelegateTask(
             return {
               model: fbMatch,
               variant: parsedFallback.variant,
+              userFallbackIndex,
               matchedFallback: true,
             }
           }
@@ -184,7 +185,7 @@ export function resolveModelForDelegateTask(
   const userFallbackModels = input.userFallbackModels
   if (userFallbackModels && userFallbackModels.length > 0) {
     if (input.availableModels.size === 0) {
-      for (const fallbackModel of userFallbackModels) {
+      for (const [userFallbackIndex, fallbackModel] of userFallbackModels.entries()) {
         const parsedFallback = parseUserFallbackModel(fallbackModel)
         if (!parsedFallback) continue
 
@@ -196,16 +197,16 @@ export function resolveModelForDelegateTask(
           continue
         }
 
-        return { model: parsedFallback.baseModel, variant: parsedFallback.variant, matchedFallback: true }
+        return { model: parsedFallback.baseModel, variant: parsedFallback.variant, userFallbackIndex, matchedFallback: true }
       }
     } else {
-      for (const fallbackModel of userFallbackModels) {
+      for (const [userFallbackIndex, fallbackModel] of userFallbackModels.entries()) {
         const parsedFallback = parseUserFallbackModel(fallbackModel)
         if (!parsedFallback) continue
 
         const match = fuzzyMatchModel(parsedFallback.baseModel, new Set(input.availableModels), parsedFallback.providerHint)
         if (match) {
-          return { model: match, variant: parsedFallback.variant, matchedFallback: true }
+          return { model: match, variant: parsedFallback.variant, userFallbackIndex, matchedFallback: true }
         }
       }
     }
