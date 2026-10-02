@@ -12,7 +12,8 @@ import { CATEGORY_MODEL_REQUIREMENTS } from "../../shared/model-requirements"
 import { normalizeFallbackModels, flattenToFallbackModelStrings } from "../../shared/model-resolver"
 import { buildFallbackChainFromModels, findMostSpecificFallbackEntry } from "../../shared/fallback-chain-from-models"
 import { getAgentConfigKey } from "../../shared/agent-display-names"
-import { ROUTINE_VERIFICATION_ROUTING_POLICY } from "../../shared/routine-verification-routing-policy"
+import { getAgentToolRestrictions } from "../../shared/agent-tool-restrictions"
+import { ROUTINE_VERIFICATION_ROUTING_POLICY, QUICK_VERIFICATION_BOUNDARY, scopeRoutineVerificationRoutingPolicy } from "../../shared/routine-verification-routing-policy"
 import { getAvailableModelsForDelegateTask } from "./available-models"
 import { resolveModelForDelegateTask } from "./model-selection"
 import type { DelegatedModelConfig } from "./types"
@@ -37,10 +38,16 @@ function resolveCategoryPromptAppendForModel(
       .join("\n\n")
 
   const dynamicResolver = CATEGORY_PROMPT_APPEND_RESOLVERS[categoryName]
+  const routingPolicy = scopeRoutineVerificationRoutingPolicy(
+    ROUTINE_VERIFICATION_ROUTING_POLICY,
+    getAgentToolRestrictions(SISYPHUS_JUNIOR_AGENT),
+  )
+  const quickBoundary = categoryName === "quick" ? QUICK_VERIFICATION_BOUNDARY : undefined
   if (!dynamicResolver) {
     return joinPromptSections([
       staticPromptAppend,
-      ROUTINE_VERIFICATION_ROUTING_POLICY,
+      routingPolicy,
+      quickBoundary,
     ])
   }
 
@@ -48,7 +55,8 @@ function resolveCategoryPromptAppendForModel(
   return joinPromptSections([
     dynamicBase,
     userPromptAppend,
-    ROUTINE_VERIFICATION_ROUTING_POLICY,
+    routingPolicy,
+    quickBoundary,
   ])
 }
 

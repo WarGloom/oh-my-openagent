@@ -1,6 +1,8 @@
 declare const require: (name: string) => any
 const { describe, test, expect, beforeEach, afterEach, spyOn, mock } = require("bun:test")
 import { resolveCategoryExecution } from "./category-resolver"
+import { buildSystemContent } from "./prompt-builder"
+import { buildBackgroundTaskPromptTools } from "../../features/background-agent/spawner/task-prompt-body"
 import { applyCategoryParams } from "./delegated-model-config"
 import type { DelegatedModelConfig } from "./types"
 import type { CategoryConfig } from "../../config/schema"
@@ -823,10 +825,10 @@ describe("resolveCategoryExecution", () => {
 		)
 	})
 
-	test("appends routine verification policy to custom category prompt append", async () => {
+	test.each(["repo-check", "deep-low"])("omits routine verification routing for task-denied category %s", async (category: string) => {
 		//#given
 		const args = {
-			category: "repo-check",
+			category,
 			prompt: "test prompt",
 			description: "Test task",
 			run_in_background: false,
@@ -836,27 +838,44 @@ describe("resolveCategoryExecution", () => {
 		}
 		const executorCtx = createMockExecutorContext()
 		executorCtx.userCategories = {
-			"repo-check": {
-				model: "openai/gpt-5.4",
+			[category]: {
+				model: "openai/gpt-6.1-sol",
 				prompt_append: "CUSTOM_CATEGORY_INSTRUCTION_XYZ",
 			},
 		}
 
 		//#when
 		const result = await resolveCategoryExecution(args, executorCtx, undefined, "anthropic/claude-sonnet-4-6")
+		const system = buildSystemContent({ agentName: result.agentToUse, categoryPromptAppend: result.categoryPromptAppend })
+		const tools = buildBackgroundTaskPromptTools({ agent: result.agentToUse, includeTeamToolDenylist: true })
 
 		//#then
 		expect(result.error).toBeUndefined()
-		expect(result.actualModel).toBe("openai/gpt-5.4")
-		expect(result.categoryPromptAppend).toBeDefined()
-		const promptAppend = result.categoryPromptAppend ?? ""
-		expect(promptAppend).toContain("CUSTOM_CATEGORY_INSTRUCTION_XYZ")
-		expect(promptAppend).toContain("Routine Verification Routing")
-		expect(promptAppend).toContain('category="quick"')
-		expect(promptAppend).toContain("If quick verification fails")
-		expect(promptAppend.indexOf("CUSTOM_CATEGORY_INSTRUCTION_XYZ")).toBeLessThan(
-			promptAppend.indexOf("Routine Verification Routing"),
-		)
+		expect(tools.task).toBe(false)
+		expect(tools.call_omo_agent).toBe(true)
+		expect(system).toContain("CUSTOM_CATEGORY_INSTRUCTION_XYZ")
+		expect(system).not.toContain("<Routine_Verification_Routing_Policy>")
+	})
+
+	test("keeps the quick verification boundary without category delegation routing", async () => {
+		//#given
+		const executorCtx = createMockExecutorContext()
+		executorCtx.userCategories = {
+			quick: { model: "openai/gpt-6-luna-fast", prompt_append: "QUICK_OVERRIDE_SENTINEL" },
+		}
+
+		//#when
+		const result = await resolveCategoryExecution({
+			category: "quick", prompt: PROMPT_INPUT_SENTINEL, description: DESCRIPTION_INPUT_SENTINEL,
+			run_in_background: false, load_skills: [], blockedBy: undefined, enableSkillTools: false,
+		}, executorCtx, undefined, undefined)
+		const system = buildSystemContent({ agentName: result.agentToUse, categoryPromptAppend: result.categoryPromptAppend })
+
+		//#then
+		expect(result.error).toBeUndefined()
+		expect(system).toContain("QUICK_OVERRIDE_SENTINEL")
+		expect(system).not.toContain("<Routine_Verification_Routing_Policy>")
+		expect(system).toContain("<Quick_Verification_No_Autonomous_Fixes>")
 	})
 
 	test("applyCategoryParams propagates category tools config (issue #5182)", () => {
