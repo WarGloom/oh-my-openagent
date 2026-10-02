@@ -472,7 +472,7 @@ describe("Jev named-agent ladders", () => {
   ]
   const context = {
     config: agentConfig,
-    client: unsafeTestValue({ app: { agents: async () => ({ data: agents }) } }),
+    client: unsafeTestValue<ExecutorContext["client"]>({ app: { agents: async () => ({ data: agents }) } }),
     directory: "/tmp",
   }
   let fetchSpy: ReturnType<typeof spyOn>
@@ -539,38 +539,57 @@ describe("Jev named-agent ladders", () => {
     expect(fetchSpy).not.toHaveBeenCalled()
   })
 
-  test("task dispatch substitutes the real agent without changing its declared model", async () => {
-    const launch = mock(async () => ({ id: "task-worker", sessionId: "ses_worker", status: "running" }))
-    const delegate = createDelegateTask(
-      unsafeTestValue({
-        manager: { launch },
-        directory: "/tmp",
-        jevRouting: agentConfig,
-        availableSubagentNames: ["cheap-agent", "strong-agent"],
-        client: {
-          app: context.client.app,
-          config: { get: async () => ({ data: {} }) },
-          session: { messages: async () => ({ data: [] }) },
+  test.each([
+    { callReasoning: undefined, expectedReasoning: "medium" },
+    { callReasoning: "low", expectedReasoning: "low" },
+    { callReasoning: "provider-custom", expectedReasoning: "provider-custom" },
+  ])(
+    "task dispatch substitutes the real agent with reasoning $expectedReasoning",
+    async ({ callReasoning, expectedReasoning }) => {
+      const launch = mock(async () => ({ id: "task-worker", sessionId: "ses_worker", status: "running" }))
+      const delegate = createDelegateTask(
+        unsafeTestValue({
+          manager: { launch },
+          directory: "/tmp",
+          jevRouting: agentConfig,
+          agentOverrides: { "cheap-agent": { model: "example/low", reasoning: "medium" } },
+          availableSubagentNames: ["cheap-agent", "strong-agent"],
+          client: {
+            app: context.client.app,
+            config: { get: async () => ({ data: {} }) },
+            session: { messages: async () => ({ data: [] }) },
+          },
+        }),
+      )
+      // given/when: an alias chooses the configured agent, optionally with a call override
+      await delegate.execute(
+        {
+          subagent_type: "worker",
+          reasoning: callReasoning,
+          prompt: "Simple",
+          run_in_background: true,
+          load_skills: [],
         },
-      }),
-    )
-    await delegate.execute(
-      { subagent_type: "worker", prompt: "Simple", run_in_background: true, load_skills: [] },
-      unsafeTestValue({
-        sessionID: "ses_parent",
-        messageID: "msg_parent",
-        agent: "sisyphus",
-        abort: new AbortController().signal,
-      }),
-    )
-    expect(launch).toHaveBeenCalledWith(
-      expect.objectContaining({ agent: "cheap-agent", model: expect.objectContaining({ modelID: "low" }) }),
-    )
-    expect(fetchSpy).toHaveBeenCalledTimes(1)
-  })
+        unsafeTestValue({
+          sessionID: "ses_parent",
+          messageID: "msg_parent",
+          agent: "sisyphus",
+          abort: new AbortController().signal,
+        }),
+      )
+      // then: the real agent's effort or the explicit override reaches background launch
+      expect(launch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agent: "cheap-agent",
+          model: expect.objectContaining({ modelID: "low", reasoning: expectedReasoning }),
+        }),
+      )
+      expect(fetchSpy).toHaveBeenCalledTimes(1)
+    },
+  )
 
   test("team named member resolves the alias to the effective agent", async () => {
-    const member = unsafeTestValue({
+    const member = unsafeTestValue<Parameters<typeof resolveMember>[0]>({
       kind: "subagent_type",
       name: "worker-one",
       subagent_type: "worker",

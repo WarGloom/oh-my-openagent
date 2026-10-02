@@ -35,6 +35,7 @@ export function applySessionPromptParams(sessionID: string, model: PromptParamMo
   }
 
   setSessionPromptParams(sessionID, {
+    ...(model.reasoning !== undefined ? { reasoningResolved: true } : {}),
     ...(model.temperature !== undefined ? { temperature: model.temperature } : {}),
     ...(model.top_p !== undefined ? { topP: model.top_p } : {}),
     ...(model.maxTokens !== undefined ? { maxOutputTokens: model.maxTokens } : {}),

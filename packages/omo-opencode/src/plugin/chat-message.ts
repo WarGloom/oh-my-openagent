@@ -4,6 +4,7 @@ import { updateSessionAgent } from "../features/claude-code-session-state"
 import { detectSlashCommand, extractPromptText } from "../hooks/auto-slash-command/detector"
 import { isRuntimeFallbackRetryTextParts, isSyntheticOrInternalOnlyTextParts, log } from "../shared"
 import { applyUltraworkModelOverrideOnMessage } from "./ultrawork-model-override"
+import { clearSessionPromptParams, getSessionPromptParams } from "../shared/session-prompt-params-state"
 import type { PluginContext } from "./types"
 import { handleGoalMessage } from "./chat-message/loop-commands"
 import { extractPromptText as extractGoalPromptText } from "./chat-message/prompt-text"
@@ -89,6 +90,10 @@ export function createChatMessageHandler(args: {
         sessionID: input.sessionID,
       })
       return
+    }
+
+    if (getSessionPromptParams(input.sessionID)?.reasoningResolved === true) {
+      clearSessionPromptParams(input.sessionID)
     }
 
     if (input.agent) {
