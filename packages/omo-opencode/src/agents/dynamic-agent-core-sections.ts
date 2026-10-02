@@ -5,6 +5,7 @@ import type {
 } from "./dynamic-agent-prompt-types"
 import type { AvailableTool } from "./dynamic-agent-prompt-types"
 import { getToolsPromptDisplay } from "./dynamic-agent-tool-categorization"
+import { hasQuickCategory } from "./dynamic-agent-category-skills-guide"
 
 /**
  * Builds an explicit agent identity preamble that overrides any base system prompt identity.
@@ -239,8 +240,7 @@ export function buildParallelDelegationSection(
 | You Want To Do | You MUST Do Instead |
 |---|---|
 | Write code yourself | Delegate to \`deep\` or \`unspecified-high\` agent, or the specific domain category |
-| Handle 3 changes sequentially | Spawn 3 agents in parallel |
-| Run tests/typecheck/build or collect logs only | Follow Routine Verification Routing above |
+| Handle 3 changes sequentially | Spawn 3 agents in parallel |${hasQuickCategory(categories) ? "\n| Run tests/typecheck/build or collect logs only | Follow Routine Verification Routing above |" : ""}
 | Fix failing verification | Delegate the fix to \`deep\`, \`unspecified-high\`, or the specific domain category |
 | "Quickly fix this one thing" | Still delegate to the proper implementation category - your "quick fix" is slower and worse than a subagent's |
 

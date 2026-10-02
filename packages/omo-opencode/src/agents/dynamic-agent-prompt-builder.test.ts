@@ -53,18 +53,19 @@ describe("buildCategorySkillsDelegationGuide", () => {
     expect(result.split("<Routine_Verification_Routing_Policy>").length - 1).toBe(includeQuick ? 1 : 0)
   })
 
-  it("emits routing policy exactly once in non-Claude default Sisyphus prompt", () => {
+  it.each([true, false])("keeps verification routing pointer aligned with quick category %s", (includeQuick: boolean) => {
     //#given
     const categories: AvailableCategory[] = [
       { name: "deep-low", description: "QA fixture" },
-      { name: "quick", description: "QA fixture" },
+      ...(includeQuick ? [{ name: "quick", description: "QA fixture" }] : []),
     ]
 
     //#when
     const prompt = buildDefaultSisyphusPrompt("google/gemini-3.1-pro", [], [], [], categories)
 
     //#then
-    expect(prompt.split("<Routine_Verification_Routing_Policy>").length - 1).toBe(1)
+    expect(prompt.split("<Routine_Verification_Routing_Policy>").length - 1).toBe(includeQuick ? 1 : 0)
+    expect(prompt.includes("Routine Verification Routing")).toBe(includeQuick)
   })
 })
 
