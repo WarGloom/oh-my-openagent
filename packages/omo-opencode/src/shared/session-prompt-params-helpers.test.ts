@@ -22,6 +22,7 @@ describe("applySessionPromptParams", () => {
     // then
     expect(getSessionPromptParams(sessionID)).toEqual({
       options: { reasoningEffort: "high" },
+      reasoningResolved: true,
     })
   })
 
@@ -40,6 +41,7 @@ describe("applySessionPromptParams", () => {
     // then
     expect(getSessionPromptParams(sessionID)).toEqual({
       options: { reasoningEffort: "none" },
+      reasoningResolved: true,
     })
   })
 

@@ -96,6 +96,7 @@ export async function prepareDelegateTaskArgs(
     category,
     model_routing: args.model_routing === false ? false : undefined,
     subagent_type: subagentType,
+    reasoning: typeof args.reasoning === "string" ? args.reasoning : undefined,
     requested_subagent_type: originalSubagentType,
     description,
     descriptionSource,
