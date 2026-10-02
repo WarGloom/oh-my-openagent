@@ -1,6 +1,10 @@
 import type { AvailableCategory, AvailableSkill } from "./dynamic-agent-prompt-types"
 import { ROUTINE_VERIFICATION_ROUTING_POLICY } from "../shared/routine-verification-routing-policy"
 
+export function hasQuickCategory(categories: readonly AvailableCategory[]): boolean {
+  return categories.some((category) => category.name === "quick")
+}
+
 function buildSkillsSection(skills: AvailableSkill[]): string {
   const builtinSkills = skills.filter((skill) => skill.location === "plugin")
   const customSkills = skills.filter((skill) => skill.location !== "plugin")
@@ -71,7 +75,7 @@ Each category is configured with a model optimized for that domain. Read the des
 
 ${categoryRows.join("\n")}
 
-${ROUTINE_VERIFICATION_ROUTING_POLICY}
+${hasQuickCategory(categories) ? ROUTINE_VERIFICATION_ROUTING_POLICY : ""}
 
 ${skillsSection}
 

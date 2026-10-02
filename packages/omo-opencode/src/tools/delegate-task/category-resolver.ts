@@ -12,7 +12,7 @@ import { CATEGORY_MODEL_REQUIREMENTS } from "../../shared/model-requirements"
 import { normalizeFallbackModels, flattenToFallbackModelStrings } from "../../shared/model-resolver"
 import { buildFallbackChainFromModels, findMostSpecificFallbackEntry } from "../../shared/fallback-chain-from-models"
 import { getAgentConfigKey } from "../../shared/agent-display-names"
-import { ROUTINE_VERIFICATION_ROUTING_POLICY } from "../../shared/routine-verification-routing-policy"
+import { QUICK_VERIFICATION_BOUNDARY } from "../../shared/routine-verification-routing-policy"
 import { getAvailableModelsForDelegateTask } from "./available-models"
 import { resolveModelForDelegateTask } from "./model-selection"
 import type { DelegatedModelConfig } from "./types"
@@ -39,12 +39,13 @@ function resolveCategoryPromptAppendForModel(
       .join("\n\n")
 
   const dynamicResolver = CATEGORY_PROMPT_APPEND_RESOLVERS[categoryName]
+  const quickBoundary = categoryName === "quick" ? QUICK_VERIFICATION_BOUNDARY : undefined
   if (!dynamicResolver) {
-    return joinPromptSections([staticPromptAppend, ROUTINE_VERIFICATION_ROUTING_POLICY])
+    return joinPromptSections([staticPromptAppend, quickBoundary])
   }
 
   const dynamicBase = dynamicResolver(actualModel)
-  return joinPromptSections([dynamicBase, userPromptAppend, ROUTINE_VERIFICATION_ROUTING_POLICY])
+  return joinPromptSections([dynamicBase, userPromptAppend, quickBoundary])
 }
 
 function fallbackEntryKey(entry: FallbackEntry): string {
