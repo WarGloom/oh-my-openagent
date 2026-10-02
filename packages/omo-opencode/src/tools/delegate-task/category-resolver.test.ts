@@ -867,7 +867,7 @@ describe("resolveCategoryExecution", () => {
 		//#when
 		const result = await resolveCategoryExecution({
 			category: "quick", prompt: PROMPT_INPUT_SENTINEL, description: DESCRIPTION_INPUT_SENTINEL,
-			run_in_background: false, load_skills: [], blockedBy: undefined, enableSkillTools: false,
+			run_in_background: false, load_skills: [],
 		}, executorCtx, undefined, undefined)
 		const system = buildSystemContent({ agentName: result.agentToUse, categoryPromptAppend: result.categoryPromptAppend })
 
