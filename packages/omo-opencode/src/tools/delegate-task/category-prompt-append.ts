@@ -1,5 +1,5 @@
 import { CATEGORY_PROMPT_APPEND_RESOLVERS } from "./constants"
-import { ROUTINE_VERIFICATION_ROUTING_POLICY } from "../../shared/routine-verification-routing-policy"
+import { QUICK_VERIFICATION_BOUNDARY } from "../../shared/routine-verification-routing-policy"
 
 function joinPromptSections(sections: Array<string | undefined>): string {
   return sections
@@ -15,9 +15,10 @@ export function resolveCategoryPromptAppendForModel(
   userPromptAppend: string | undefined,
 ): string | undefined {
   const dynamicResolver = CATEGORY_PROMPT_APPEND_RESOLVERS[categoryName]
+  const quickBoundary = categoryName === "quick" ? QUICK_VERIFICATION_BOUNDARY : undefined
   if (!dynamicResolver) {
-    return joinPromptSections([staticPromptAppend, ROUTINE_VERIFICATION_ROUTING_POLICY])
+    return joinPromptSections([staticPromptAppend, quickBoundary])
   }
   const dynamicBase = dynamicResolver(actualModel)
-  return joinPromptSections([dynamicBase, userPromptAppend, ROUTINE_VERIFICATION_ROUTING_POLICY])
+  return joinPromptSections([dynamicBase, userPromptAppend, quickBoundary])
 }
