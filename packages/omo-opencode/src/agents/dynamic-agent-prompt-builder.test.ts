@@ -1,6 +1,7 @@
 /// <reference types="bun-types" />
 
 import { describe, expect, it } from "bun:test"
+import { buildDefaultSisyphusPrompt } from "./sisyphus/default"
 import {
   buildCategorySkillsDelegationGuide,
   buildNonClaudePlannerSection,
@@ -38,18 +39,32 @@ describe("buildCategorySkillsDelegationGuide", () => {
     expect(result).toContain("SENTINEL_PROJECT_SKILL (project)")
   })
 
-  it("#given categories #when building #then includes routine verification routing policy", () => {
+  it.each([true, false])("emits routing policy only with quick category %s", (includeQuick: boolean) => {
     //#given
-    const allSkills = [...builtinSkills]
+    const categories: AvailableCategory[] = [
+      { name: "deep-low", description: "QA fixture" },
+      ...(includeQuick ? [{ name: "quick", description: "QA fixture" }] : []),
+    ]
 
     //#when
-    const result = buildCategorySkillsDelegationGuide(categories, allSkills)
+    const result = buildCategorySkillsDelegationGuide(categories, [])
 
     //#then
-    expect(result).toContain("Routine Verification Routing")
-    expect(result).toContain('category="quick"')
-    expect(result).toContain("must not make autonomous fixes")
-    expect(result).toContain("Never route UI/design, architecture, hard debugging")
+    expect(result.split("<Routine_Verification_Routing_Policy>").length - 1).toBe(includeQuick ? 1 : 0)
+  })
+
+  it("emits routing policy exactly once in non-Claude default Sisyphus prompt", () => {
+    //#given
+    const categories: AvailableCategory[] = [
+      { name: "deep-low", description: "QA fixture" },
+      { name: "quick", description: "QA fixture" },
+    ]
+
+    //#when
+    const prompt = buildDefaultSisyphusPrompt("google/gemini-3.1-pro", [], [], [], categories)
+
+    //#then
+    expect(prompt.split("<Routine_Verification_Routing_Policy>").length - 1).toBe(1)
   })
 })
 

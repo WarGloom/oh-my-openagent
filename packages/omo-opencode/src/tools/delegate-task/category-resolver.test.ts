@@ -2,7 +2,6 @@ declare const require: (name: string) => any
 const { describe, test, expect, beforeEach, afterEach, spyOn, mock } = require("bun:test")
 import { resolveCategoryExecution } from "./category-resolver"
 import { buildSystemContent } from "./prompt-builder"
-import { buildBackgroundTaskPromptTools } from "../../features/background-agent/spawner/task-prompt-body"
 import { applyCategoryParams } from "./delegated-model-config"
 import type { DelegatedModelConfig } from "./types"
 import type { CategoryConfig } from "../../config/schema"
@@ -847,12 +846,9 @@ describe("resolveCategoryExecution", () => {
 		//#when
 		const result = await resolveCategoryExecution(args, executorCtx, undefined, "anthropic/claude-sonnet-4-6")
 		const system = buildSystemContent({ agentName: result.agentToUse, categoryPromptAppend: result.categoryPromptAppend })
-		const tools = buildBackgroundTaskPromptTools({ agent: result.agentToUse, includeTeamToolDenylist: true })
 
 		//#then
 		expect(result.error).toBeUndefined()
-		expect(tools.task).toBe(false)
-		expect(tools.call_omo_agent).toBe(true)
 		expect(system).toContain("CUSTOM_CATEGORY_INSTRUCTION_XYZ")
 		expect(system).not.toContain("<Routine_Verification_Routing_Policy>")
 	})

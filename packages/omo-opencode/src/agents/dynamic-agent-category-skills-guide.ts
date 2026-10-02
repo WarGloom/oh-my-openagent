@@ -77,7 +77,7 @@ Each category is configured with a model optimized for that domain. Read the des
 
 ${categoryRows.join("\n")}
 
-${ROUTINE_VERIFICATION_ROUTING_POLICY}
+${categories.some((category) => category.name === "quick") ? ROUTINE_VERIFICATION_ROUTING_POLICY : ""}
 
 ${skillsSection}
 

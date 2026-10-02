@@ -2,7 +2,6 @@ import type { DefaultModeConfig } from "../config/schema/default-mode"
 import { reconcileSisyphusRuntimePrompt } from "../agents/sisyphus-runtime-prompt-reconciler"
 import { getSerenaNavigationPrompt } from "../shared/serena-navigation-prompt"
 import { resolveSessionTools } from "../shared/resolve-session-tools"
-import { resolveRoutineVerificationTools, scopeRoutineVerificationRoutingPolicy } from "../shared/routine-verification-routing-policy"
 import type { PluginContext } from "./types"
 
 const ULTRAWORK_MODE_TAG = "<ultrawork-mode>"
@@ -112,10 +111,6 @@ export function createSystemTransformHandler(
     const sessionTools = input.sessionID
       ? await resolveSessionTools(ctx.client, input.sessionID)
       : undefined
-    const effectiveTools = resolveRoutineVerificationTools(output.system, sessionTools)
-    for (let index = 0; index < output.system.length; index++) {
-      output.system[index] = scopeRoutineVerificationRoutingPolicy(output.system[index], effectiveTools)
-    }
     if (!hasSerenaToolAccess(sessionTools)) {
       return
     }

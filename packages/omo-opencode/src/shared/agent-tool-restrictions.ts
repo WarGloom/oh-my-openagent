@@ -64,11 +64,6 @@ type AgentToolRestrictionsOptions = {
   includeTeamToolDenylist?: boolean
 }
 
-export function hasCategoryDispatchCapability(tools: Readonly<Record<string, unknown>> = {}): boolean {
-  const task = tools.task ?? tools["*"]
-  return task !== false && task !== "deny"
-}
-
 export function getAgentToolRestrictions(agentName: string, options: AgentToolRestrictionsOptions = {}): Record<string, boolean> {
   const stripped = stripInvisibleAgentCharacters(agentName)
   const agentRestrictions = AGENT_RESTRICTIONS[stripped]

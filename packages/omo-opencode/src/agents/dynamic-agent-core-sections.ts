@@ -228,10 +228,6 @@ export function buildParallelDelegationSection(
 3. **NEVER work sequentially.** If 4 independent units exist, spawn 4 agents simultaneously. Not 1 at a time. Not 2 then 2.
 4. **NEVER implement directly** when delegation is possible. You write prompts, not code.
 
-<Routine_Verification_Routing_Policy>
-**ROUTINE VERIFICATION ROUTING:** Verification-only test/typecheck/build/log-collection work goes to \`category="quick"\`. \`quick\` may run and summarize verification, but it must not make autonomous fixes. If quick verification fails, report concise failures and escalate the fix to \`deep\`, \`unspecified-high\`, or the specific domain category. Never route UI/design, architecture, hard debugging, or non-trivial implementation/fixes to \`quick\`.
-</Routine_Verification_Routing_Policy>
-
 **YOUR PROMPT TO EACH AGENT MUST INCLUDE:**
 - GOAL with explicit success criteria (what "done" looks like)
 - File paths and constraints (where to work, what not to touch)
@@ -244,7 +240,7 @@ export function buildParallelDelegationSection(
 |---|---|
 | Write code yourself | Delegate to \`deep\` or \`unspecified-high\` agent, or the specific domain category |
 | Handle 3 changes sequentially | Spawn 3 agents in parallel |
-| Run tests/typecheck/build or collect logs only | <Routine_Verification_Routing_Policy>Delegate to \`category="quick"\`; summarize failures, do not fix in quick</Routine_Verification_Routing_Policy> |
+| Run tests/typecheck/build or collect logs only | Follow Routine Verification Routing above |
 | Fix failing verification | Delegate the fix to \`deep\`, \`unspecified-high\`, or the specific domain category |
 | "Quickly fix this one thing" | Still delegate to the proper implementation category - your "quick fix" is slower and worse than a subagent's |
 
