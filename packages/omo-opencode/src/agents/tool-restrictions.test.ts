@@ -139,7 +139,7 @@ describe("read-only agent tool restrictions", () => {
       }
     })
 
-    test("allows task delegation while remaining ineligible for team membership", () => {
+    test("denies task delegation without enabling team tools", () => {
       // given
       const agent = createMomusAgent(TEST_MODEL)
 
@@ -148,8 +148,10 @@ describe("read-only agent tool restrictions", () => {
       const sessionRestrictions = getAgentToolRestrictions("momus")
 
       // then
-      expect(permission["task"]).toBeUndefined()
+      expect(permission["task"]).toBe("deny")
       expect(sessionRestrictions["task"]).toBeUndefined()
+      expect(sessionRestrictions["team_create"]).toBe(false)
+      expect(sessionRestrictions["team_add_member"]).toBe(false)
     })
   })
 
@@ -167,7 +169,7 @@ describe("read-only agent tool restrictions", () => {
       }
     })
 
-    test("allows task delegation while remaining ineligible for team membership", () => {
+    test("denies task delegation without enabling team tools", () => {
       // given
       const agent = createMetisAgent(TEST_MODEL)
 
@@ -176,8 +178,10 @@ describe("read-only agent tool restrictions", () => {
       const sessionRestrictions = getAgentToolRestrictions("metis")
 
       // then
-      expect(permission["task"]).toBeUndefined()
+      expect(permission["task"]).toBe("deny")
       expect(sessionRestrictions["task"]).toBeUndefined()
+      expect(sessionRestrictions["team_create"]).toBe(false)
+      expect(sessionRestrictions["team_add_member"]).toBe(false)
     })
   })
 
