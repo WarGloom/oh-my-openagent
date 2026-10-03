@@ -8973,11 +8973,6 @@
           }
         }
       },
-      "required": [
-        "mode",
-        "timeout_ms",
-        "min_suitability"
-      ],
       "additionalProperties": false
     },
     "claude_code": {
