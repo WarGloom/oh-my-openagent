@@ -64,10 +64,10 @@ Session ID: ${task.sessionId}
     return timeA.localeCompare(timeB)
   })
 
-  const sessionError = sortedMessages
-    .filter((message) => message.info?.role === "assistant" && message.info?.error)
-    .map((message) => extractErrorMessage(message.info?.error))
-    .find((message): message is string => typeof message === "string" && message.length > 0)
+  const lastAssistantMessage = sortedMessages.findLast((message) => message.info?.role === "assistant")
+  const sessionError = lastAssistantMessage?.info?.error
+    ? extractErrorMessage(lastAssistantMessage.info.error)
+    : undefined
   if (sessionError) {
     return `Task Result
 
