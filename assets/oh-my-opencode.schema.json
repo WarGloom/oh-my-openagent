@@ -8973,11 +8973,6 @@
           }
         }
       },
-      "required": [
-        "mode",
-        "timeout_ms",
-        "min_suitability"
-      ],
       "additionalProperties": false
     },
     "claude_code": {
@@ -9390,6 +9385,18 @@
               "minimum": 0
             },
             "timeout_seconds": {
+              "type": "number",
+              "minimum": 0
+            },
+            "first_progress_timeout_seconds": {
+              "type": "number",
+              "minimum": 0
+            },
+            "stall_timeout_seconds": {
+              "type": "number",
+              "minimum": 0
+            },
+            "hard_timeout_seconds": {
               "type": "number",
               "minimum": 0
             },
