@@ -28948,6 +28948,81 @@
             "additionalProperties": false
           }
         },
+        "jev_routing": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "default": "off",
+              "type": "string",
+              "enum": [
+                "off",
+                "observe",
+                "active"
+              ]
+            },
+            "timeout_ms": {
+              "default": 2000,
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 5000
+            },
+            "min_suitability": {
+              "default": 0.6,
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "ladder": {
+              "minItems": 2,
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "default": {
+              "type": "string",
+              "minLength": 1
+            },
+            "agent_ladders": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "ladder": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "default": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "suitability": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "ladder",
+                  "default"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
         "claude_code": {
           "type": "object",
           "properties": {
@@ -29137,6 +29212,42 @@
             "disable_omo_env": {
               "type": "boolean"
             },
+            "anthropic_advisor": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "advisor_model": {
+                  "type": "string"
+                },
+                "max_uses": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "caching_ttl": {
+                  "type": "string",
+                  "enum": [
+                    "5m",
+                    "1h"
+                  ]
+                },
+                "agents": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "executor_models": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
             "hashline_edit": {
               "type": "boolean"
             },
@@ -29322,6 +29433,18 @@
                   "minimum": 0
                 },
                 "timeout_seconds": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "first_progress_timeout_seconds": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "stall_timeout_seconds": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "hard_timeout_seconds": {
                   "type": "number",
                   "minimum": 0
                 },
@@ -29680,7 +29803,7 @@
               "default": 8,
               "type": "integer",
               "minimum": 1,
-              "maximum": 8
+              "maximum": 16
             },
             "max_messages_per_run": {
               "default": 10000,
