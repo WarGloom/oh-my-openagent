@@ -6,6 +6,7 @@ import { rm } from "node:fs/promises"
 import type { BackgroundTask } from "../../background-agent/types"
 import { deleteTeam, type DeleteTeamBackgroundManager } from "./delete-team"
 import { createFixture, updateMemberStatuses } from "./shutdown-test-fixtures"
+import { transitionRuntimeState, loadRuntimeState } from "../team-state-store/store"
 
 type BackgroundTaskInput = Pick<BackgroundTask, "id" | "sessionId" | "teamRunId"> & {
   parentMessageId?: string
@@ -32,6 +33,50 @@ describe("deleteTeam cancels only this team's background tasks", () => {
         await rm(directoryPath, { recursive: true, force: true })
       }),
     )
+  })
+
+  test.each([false, true])("rejects pending member removal before cleanup with force=%s", async (force) => {
+    // given
+    const fixture = await createFixture()
+    temporaryDirectories.push(fixture.baseDir)
+    await updateMemberStatuses(fixture.teamRunId, fixture.config, {
+      "member-a": "shutdown_approved",
+      "member-b": "shutdown_approved",
+    })
+    const before = await transitionRuntimeState(
+      fixture.teamRunId,
+      (state) => ({
+        ...state,
+        members: state.members.map((member) =>
+          member.name === "member-a"
+            ? {
+                ...member,
+                removal: {
+                  operationId: crypto.randomUUID(),
+                  sessionId: member.sessionId ?? "session-a",
+                  startedAt: 1,
+                  phase: "requeueing",
+                  taskIds: [],
+                },
+              }
+            : member,
+        ),
+      }),
+      fixture.config,
+    )
+    const cancel = mock(async () => true)
+    // when / then
+    await expect(
+      deleteTeam(
+        fixture.teamRunId,
+        fixture.config,
+        undefined,
+        { getTasksByParentSession: () => [], cancelTask: cancel },
+        { force },
+      ),
+    ).rejects.toThrow()
+    expect(cancel).not.toHaveBeenCalled()
+    expect(await loadRuntimeState(fixture.teamRunId, fixture.config)).toEqual(before)
   })
 
   test("uses leadSessionId as the getTasksByParentSession key when force deleting", async () => {

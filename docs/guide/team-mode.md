@@ -31,7 +31,7 @@ Add to the `[opencode]` block of `~/.omo/omo.jsonc` (user) or `.omo/omo.jsonc` (
 }
 ```
 
-After enabling, restart opencode. The 12 `team_*` tools become available.
+After enabling and loading a plugin build that includes removal, restart OpenCode to load the updated tool registry. Check the tools exposed in that process before calling them; an older running process does not gain `team_remove_member` from an instruction update.
 
 > Bug-fix note: a fresh-install regression test covers this minimal config and startup logs the resolved `team_mode` state plus team tool count (`[tool-registry] Built tool registry`). If the tools still do not appear after restart, inspect `oh-my-opencode.log` for the loaded config path and `[tool-registry] Built tool registry` entry.
 
@@ -134,12 +134,13 @@ The curated agents are read-only and in-process, so they can't write mailbox sta
 
 Closure is the lead's responsibility, not the user's. Do NOT close a team just because every task row is terminal: close only once every member's results have been received AND accepted and no follow-up work remains. A task can be marked terminal before its result actually reaches and is accepted by the lead. When follow-up work is expected, extend the active run with `team_add_member` instead of closing.
 
-## 13 tools
+## 14 tools
 
 | Tool | Purpose |
 |------|---------|
 | `team_create` | Spawn a team. |
 | `team_add_member` | Add one member to an active run (lead only). Returns `{ teamRunId, memberName, sessionId, status }` once the member's durable row, inbox, and registry entry are ready. |
+| `team_remove_member` | Remove one non-lead member from an active run after verified stop (lead only). Requeue its unfinished tasks and preserve its history. |
 | `team_delete` | Tear down (lead only; rejects active members unless `force: true`). |
 | `team_shutdown_request` | Lead asks a member to wrap up. |
 | `team_approve_shutdown` / `team_reject_shutdown` | Member or lead responds. |
@@ -154,6 +155,22 @@ Closure is the lead's responsibility, not the user's. Do NOT close a team just b
 - `max_members` (default 8) is the roster cap; it counts active roster rows, including the lead and finished members. Finished members retain their slot until removal succeeds. A pending or failed removal retains capacity. Set `team_mode.max_members` to `16` to opt in for new runs only; existing runs keep their original bounds. `max_parallel_members` (default 4, maximum 8) stays a spawn fan-out limit, not a live-concurrency or roster cap. Provider and background-task concurrency limits are unchanged.
 - 32 KB per message body, 256 KB per recipient unread.
 - 10 000 messages per run, 120 minutes wall clock, 500 turns per member.
+
+## Replace a member
+
+Idle means waiting for input, not stalled or stopped. Reuse a suitable idle member before adding or replacing one.
+
+When replacement is needed:
+
+1. As the lead, call `team_remove_member({ teamRunId, memberName })` for the non-lead member. The runtime fences the old session, verifies it stopped, and then releases its slot. Shutdown approval alone proves neither stop nor free capacity.
+2. Inspect the receipt and `team_status`. On success, removal returns `{ teamRunId, memberName, removalId, removed: true, requeuedTaskIds }`. Claimed and in-progress tasks return to `pending` with no current owner or claim time. Their audit retains the prior owner, status, claim time, operation ID, and timestamp. Descriptions, dependency edges, metadata, and partial results remain available. Completed, deleted, and unrelated tasks do not change.
+3. Call `team_add_member({ teamRunId, member })` with a fresh member name. Removed names remain reserved within the run. Removal does not select or launch a replacement. The replacement claims the preserved task with `team_task_update({ teamRunId, taskId, status: "claimed" })`; this tool has no `owner` argument.
+
+If removal fails or stops partway through, the member stays fenced and retains its slot. Requeued tasks remain held until removal is published. Record the returned operation ID, failed stage, and retry status. Retry removal for the same member only when the failure permits it. An exact retry after success returns the same receipt and does not requeue replacement-owned work.
+
+Removal preserves messages, delivery records, transcripts, tasks, worktrees, and pane pointers. The old session cannot resume team mutations. Shutdown requests for a removed member remain history, not active approvals to wait for during closure. Separate whole-team deletion can clean archived resources later.
+
+The first removal writes a removal-protocol marker to the lead row. Older strict member schemas reject that run instead of dropping its history. Do not manage a removal-enabled run with an older loaded plugin; this marker does not make older code removal-capable.
 
 ## Worktrees (optional per member)
 

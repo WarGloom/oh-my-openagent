@@ -23,7 +23,9 @@ export interface TeamStatus {
     worktreePath?: string
     unreadMessages: number
     paneId?: string
+    removal?: RuntimeState["members"][number]["removal"]
   }>
+  removedMembers: NonNullable<RuntimeState["removedMembers"]>
   tasks: {
     pending: number
     claimed: number
@@ -152,7 +154,9 @@ export async function aggregateStatus(
       worktreePath: member.worktreePath,
       unreadMessages,
       paneId: member.tmuxPaneId,
+      removal: member.removal,
     })),
+    removedMembers: runtimeState.removedMembers ?? [],
     tasks: countTasks(tasks),
     shutdownRequests: runtimeState.shutdownRequests,
     concurrency: {

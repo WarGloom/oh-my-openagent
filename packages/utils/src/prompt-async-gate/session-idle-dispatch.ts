@@ -1,4 +1,5 @@
 import { log } from "../logger"
+import { canAdmitInternalPrompt, trackAdmittedPrompt } from "./session-stop-fence"
 import { isSessionActive, settleAfterSessionIdle } from "../session-idle-settle"
 import { sessionLatestAssistantBlocksInternalPrompt } from "./pending-tool-turn"
 import { rememberRecentPromptDispatch } from "./recent-dispatches"
@@ -126,15 +127,17 @@ export async function dispatchAfterSessionIdle<TInput>(args: {
             `[prompt-async-gate] ${sessionName} shouldDispatch`,
           )
         : dispatchDecision
-    if (resolvedDispatchDecision === false) {
+    if (resolvedDispatchDecision === false || !canAdmitInternalPrompt(sessionID)) {
       log(`[prompt-async-gate] ${sessionName} cancelled before dispatch`, { sessionID, source })
       return { status: "cancelled" }
     }
 
     log(`[prompt-async-gate] ${sessionName} dispatching`, { sessionID, source })
     dispatchAttempted = true
+    const request = dispatch(input)
+    trackAdmittedPrompt(sessionID, request)
     const response = await withDispatchTimeout(
-      dispatch(input),
+      request,
       dispatchTimeoutMs,
       `[prompt-async-gate] ${sessionName} dispatch`,
     )

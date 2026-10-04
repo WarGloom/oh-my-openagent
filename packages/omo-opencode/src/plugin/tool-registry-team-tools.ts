@@ -39,6 +39,11 @@ export function createTeamModeToolsRecord(args: {
       agentOverrides: pluginConfig.agents,
       disabledAgents: pluginConfig.disabled_agents,
     }),
+    team_remove_member: factories.createTeamRemoveMemberTool(
+      pluginConfig.team_mode,
+      ctx.client,
+      managers.backgroundManager,
+    ),
     team_delete: factories.createTeamDeleteTool(
       pluginConfig.team_mode,
       ctx.client,

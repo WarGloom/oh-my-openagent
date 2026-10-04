@@ -26,6 +26,7 @@ export function getRuntimeMember(runtimeState: RuntimeState, memberName: string)
   if (!member) {
     throw new Error(`unknown member '${memberName}'`)
   }
+  if (member.removal) throw new Error(`member '${memberName}' removal pending`)
 
   return member
 }
@@ -46,7 +47,7 @@ export function createSendContext(
   const sender = getRuntimeMember(runtimeState, senderName)
   return {
     isLead: sender.agentType === "leader",
-    activeMembers: runtimeState.members.map((member) => member.name),
+    activeMembers: runtimeState.members.filter((member) => !member.removal).map((member) => member.name),
   }
 }
 

@@ -12,6 +12,7 @@ import type { DeliveryReservation } from "./messaging-live-delivery-reservation"
 import { releaseReservationSafely } from "./messaging-live-delivery-reservation"
 import { markLiveDeliveryPending } from "./messaging-live-delivery-state"
 import type { TeamSendMessageDispatchTiming } from "./messaging-runtime"
+import { isTeamSessionDenied } from "../team-session-registry"
 
 type RuntimeMember = RuntimeState["members"][number]
 type LiveDeliveryEnvelope = ReturnType<typeof buildEnvelope>
@@ -44,6 +45,10 @@ export async function deliverLiveToRecipient(input: {
   } = input
 
   const recipientSessionId = recipientMember.sessionId
+  if (recipientMember.removal || (recipientSessionId && isTeamSessionDenied(recipientSessionId, config))) {
+    await releaseReservationSafely(reservation, { teamRunId, recipient: recipientName, messageId: message.messageId })
+    return
+  }
   if (recipientMember.pendingInjectedMessageIds.length > 0) {
     await releaseReservationSafely(reservation, {
       teamRunId,
@@ -106,6 +111,7 @@ export async function deliverLiveToRecipient(input: {
       sessionID: recipientSessionId,
       source: "team-live-delivery",
       queueBehavior: "defer",
+      shouldDispatch: () => !isTeamSessionDenied(recipientSessionId, config),
       settleMs,
       postDispatchHoldMs: dispatchTiming?.postDispatchHoldMs,
       input: {
