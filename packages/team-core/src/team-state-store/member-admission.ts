@@ -48,7 +48,10 @@ export function admitAddedMember(
     )
   }
 
-  if (state.members.some((member) => member.name === candidateName)) {
+  if (
+    state.members.some((member) => member.name === candidateName) ||
+    state.removedMembers?.some((record) => record.member.name === candidateName)
+  ) {
     throw new MemberAdmissionError(
       `team_add_member denied: member '${candidateName}' already exists in run ${state.teamRunId}. Member names are unique for the life of a run.`,
       "duplicate_name",

@@ -126,7 +126,12 @@ async function shouldDispatchFallbackMailboxWake(
     const runtimeState = await loadRuntimeState(input.teamRunId, input.config)
     const recipient = runtimeState.members.find((member) => member.name === input.recipientName)
     const recipientIsActive = recipient?.status === "running" || recipient?.status === "idle"
-    if (runtimeState.status !== "active" || recipient?.sessionId !== input.recipientSessionId || !recipientIsActive) {
+    if (
+      runtimeState.status !== "active" ||
+      recipient?.removal !== undefined ||
+      recipient?.sessionId !== input.recipientSessionId ||
+      !recipientIsActive
+    ) {
       return false
     }
 

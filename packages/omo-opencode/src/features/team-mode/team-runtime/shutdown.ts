@@ -63,6 +63,7 @@ export async function approveShutdown(
 ): Promise<void> {
   const runtimeState = await loadRuntimeState(teamRunId, config)
   getRuntimeMember(runtimeState, approverName)
+  getRuntimeMember(runtimeState, memberName)
   const shutdownRequestIndex = findLatestShutdownRequestIndex(runtimeState, memberName)
   if (shutdownRequestIndex < 0) {
     throw new Error(`shutdown request missing for '${memberName}'`)
@@ -76,6 +77,7 @@ export async function approveShutdown(
   const updatedRuntimeState = await transitionRuntimeState(
     teamRunId,
     (currentRuntimeState) => {
+      getRuntimeMember(currentRuntimeState, memberName)
       const currentRequestIndex = findLatestShutdownRequestIndex(currentRuntimeState, memberName)
       if (currentRequestIndex < 0) {
         throw new Error(`shutdown request missing for '${memberName}'`)
@@ -120,6 +122,7 @@ export async function rejectShutdown(
 ): Promise<void> {
   const runtimeState = await loadRuntimeState(teamRunId, config)
   getRuntimeMember(runtimeState, rejectorName)
+  getRuntimeMember(runtimeState, memberName)
   const shutdownRequestIndex = findLatestShutdownRequestIndex(runtimeState, memberName)
   if (shutdownRequestIndex < 0) {
     throw new Error(`shutdown request missing for '${memberName}'`)
@@ -140,6 +143,7 @@ export async function rejectShutdown(
   await transitionRuntimeState(
     teamRunId,
     (currentRuntimeState) => {
+      getRuntimeMember(currentRuntimeState, memberName)
       const currentRequestIndex = findLatestShutdownRequestIndex(currentRuntimeState, memberName)
       if (currentRequestIndex < 0) {
         throw new Error(`shutdown request missing for '${memberName}'`)

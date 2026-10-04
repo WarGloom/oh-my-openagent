@@ -1,10 +1,11 @@
 import type { TeamModeConfig } from "../config"
-import { getTaskFilePath, resolveBaseDir } from "../team-registry"
-import { atomicWrite } from "../team-state-store/locks"
+import { getTaskClaimLockPath, getTaskFilePath, resolveBaseDir } from "../team-registry"
+import { atomicWrite, withLock } from "../team-state-store/locks"
 import { TaskSchema } from "../types"
 import type { Task } from "../types"
 import { claimTask } from "./claim"
 import { getTask } from "./get"
+import { assertTaskMutationAllowed } from "./dependencies"
 
 const ALLOWED_TRANSITIONS: Readonly<Record<Task["status"], ReadonlyArray<Task["status"]>>> = {
   pending: ["claimed", "deleted"],
@@ -42,7 +43,7 @@ export async function updateTaskStatus(
 ): Promise<Task> {
   const task = await getTask(teamRunId, taskId, config)
 
-  if (task.status === newStatus) return task
+  await assertTaskMutationAllowed({ teamRunId, memberName, task }, config)
 
   if (task.status === "pending" && newStatus === "in_progress") {
     await claimTask(teamRunId, taskId, memberName, config)
@@ -54,24 +55,23 @@ export async function updateTaskStatus(
     return updateTaskStatus(teamRunId, taskId, newStatus, memberName, config)
   }
 
-  if (!isValidTransition(task.status, newStatus)) {
-    throw new InvalidTaskTransitionError(task.status, newStatus)
-  }
-
-  if (newStatus !== "deleted" && task.owner !== memberName) {
-    throw new CrossOwnerUpdateError()
-  }
-
-  const updatedTask = TaskSchema.parse({
-    ...task,
-    status: newStatus,
-    updatedAt: Date.now(),
-  })
-
-  await atomicWrite(
-    getTaskFilePath(resolveBaseDir(config), teamRunId, taskId),
-    `${JSON.stringify(updatedTask, null, 2)}\n`,
+  return withLock(
+    getTaskClaimLockPath(resolveBaseDir(config), teamRunId, taskId),
+    async () => {
+      const refreshedTask = await getTask(teamRunId, taskId, config)
+      await assertTaskMutationAllowed({ teamRunId, memberName, task: refreshedTask }, config)
+      if (refreshedTask.status === newStatus) return refreshedTask
+      if (!isValidTransition(refreshedTask.status, newStatus)) {
+        throw new InvalidTaskTransitionError(refreshedTask.status, newStatus)
+      }
+      if (newStatus !== "deleted" && refreshedTask.owner !== memberName) throw new CrossOwnerUpdateError()
+      const updatedTask = TaskSchema.parse({ ...refreshedTask, status: newStatus, updatedAt: Date.now() })
+      await atomicWrite(
+        getTaskFilePath(resolveBaseDir(config), teamRunId, taskId),
+        `${JSON.stringify(updatedTask, null, 2)}\n`,
+      )
+      return updatedTask
+    },
+    { ownerTag: memberName },
   )
-
-  return updatedTask
 }

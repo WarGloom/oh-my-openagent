@@ -1,6 +1,16 @@
 /// <reference types="bun-types" />
 
 import { tmpdir } from "node:os"
+import { mkdtemp, rm } from "node:fs/promises"
+import { join } from "node:path"
+import { TeamModeConfigSchema } from "../../config/schema/team-mode"
+import { TeamSpecSchema } from "@oh-my-opencode/team-core/types"
+import {
+  createRuntimeState,
+  loadRuntimeState,
+  transitionRuntimeState,
+} from "@oh-my-opencode/team-core/team-state-store/store"
+import { stopTeamMemberRemoval } from "../team-mode/team-runtime/remove-member"
 import { describe, test, expect, beforeEach, afterEach, afterAll, spyOn, mock } from "bun:test"
 import type { PluginInput } from "@opencode-ai/plugin"
 import * as sharedModule from "../../shared"
@@ -25,6 +35,11 @@ import { _resetForTesting as resetProcessCleanupState } from "./process-cleanup"
 import { clearBackgroundTaskRegistryForTesting } from "./task-registry"
 import type { FallbackEntry } from "../../shared/model-requirements"
 import type { BackgroundTask, ResumeInput } from "./types"
+import {
+  clearTeamSessionRegistry,
+  denyTeamSession,
+  TeamSessionRemovalDeniedError,
+} from "../team-mode/team-session-registry"
 
 afterAll(() => {
   mock.restore()
@@ -247,6 +262,95 @@ function createBackgroundManager(): BackgroundManager {
   }
   return new BackgroundManager({ pluginContext: createPluginInput(client) })
 }
+
+test.each([false, { data: false }])(
+  "removal correction: running manager cancellation cannot prove stop with %j",
+  async (abortResponse) => {
+    // given
+    const directory = await mkdtemp(join(tmpdir(), "removal-real-manager-"))
+    const config = TeamModeConfigSchema.parse({ enabled: true, base_dir: directory })
+    const spec = TeamSpecSchema.parse({
+      name: "alpha",
+      leadAgentId: "lead",
+      members: [
+        { name: "lead", kind: "subagent_type", subagent_type: "atlas" },
+        { name: "worker", kind: "subagent_type", subagent_type: "sisyphus" },
+      ],
+    })
+    const initial = await createRuntimeState(spec, "lead-session", "project", config)
+    await transitionRuntimeState(
+      initial.teamRunId,
+      (state) => ({
+        ...state,
+        status: "active",
+        members: state.members.map((member) => ({
+          ...member,
+          sessionId: `${member.name}-session`,
+          status: "running",
+        })),
+      }),
+      config,
+    )
+    const aborts: string[] = []
+    const client = {
+      session: {
+        abort: async ({ path }: { path: { id: string } }) => {
+          aborts.push(path.id)
+          return abortResponse
+        },
+      },
+    }
+    const manager = new BackgroundManager({ pluginContext: createPluginInput(client, directory) })
+    getTaskMap(manager).set(
+      "worker-task",
+      createMockTask({ id: "worker-task", parentSessionId: "lead-session", sessionId: "worker-session" }),
+    )
+    // when / then
+    try {
+      await expect(
+        stopTeamMemberRemoval({
+          teamRunId: initial.teamRunId,
+          memberName: "worker",
+          leadSessionId: "lead-session",
+          config,
+          client,
+          bgMgr: manager,
+        }),
+      ).rejects.toMatchObject({ code: "stop_unverified" })
+      expect(manager.getTask("worker-task")?.status).toBe("cancelled")
+      const stored = await loadRuntimeState(initial.teamRunId, config)
+      expect(stored.members).toHaveLength(2)
+      expect(stored.members.find((member) => member.name === "worker")?.removal?.phase).toBe("fenced")
+      expect(aborts).toEqual(["worker-session", "worker-session"])
+    } finally {
+      await manager.shutdown()
+      clearTeamSessionRegistry()
+      await rm(directory, { recursive: true, force: true })
+    }
+  },
+)
+
+test("removal fence rejects background resume and sync reattachment before task lookup", async () => {
+  // given
+  const manager = createBackgroundManager()
+  denyTeamSession("removed-session")
+  // when / then
+  try {
+    await expect(
+      manager.resume({
+        sessionId: "removed-session",
+        prompt: "continue",
+        parentSessionId: "parent",
+        parentMessageId: "message",
+      }),
+    ).rejects.toBeInstanceOf(TeamSessionRemovalDeniedError)
+    expect(() => manager.claimSyncContinuation("removed-session", "parent")).toThrow(TeamSessionRemovalDeniedError)
+    expect(() => manager.attachSyncContinuation("removed-session")).toThrow(TeamSessionRemovalDeniedError)
+  } finally {
+    clearTeamSessionRegistry()
+    await manager.shutdown()
+  }
+})
 
 function createBackgroundManagerWithOptions(
   options: Partial<ConstructorParameters<typeof BackgroundManager>[0]>,

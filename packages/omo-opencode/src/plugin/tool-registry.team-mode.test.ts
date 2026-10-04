@@ -125,10 +125,11 @@ describe("team-mode tool registry wiring", () => {
     expect(pluginConfig.team_mode?.enabled).toBe(true)
     expect(result.filteredTools).toHaveProperty("team_create")
     expect(result.filteredTools).toHaveProperty("team_add_member")
+    expect(result.filteredTools).toHaveProperty("team_remove_member")
     expect(result.filteredTools).toHaveProperty("team_send_message")
     expect(result.filteredTools).toHaveProperty("team_task_create")
     expect(result.filteredTools).toHaveProperty("team_status")
-    expect(Object.keys(result.filteredTools).filter((toolName) => toolName.startsWith("team_"))).toHaveLength(13)
+    expect(Object.keys(result.filteredTools).filter((toolName) => toolName.startsWith("team_"))).toHaveLength(14)
   })
 
   test.each([
