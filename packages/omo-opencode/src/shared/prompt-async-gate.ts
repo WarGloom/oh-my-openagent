@@ -1,4 +1,6 @@
 import { configureSharedSubunitLogger } from "@oh-my-opencode/utils"
+import { configureInternalPromptAdmissionGuard } from "@oh-my-opencode/utils/prompt-async-gate"
+import { isTeamSessionDenied } from "../features/team-mode/team-session-registry"
 import {
   LIVE_ROUTE_DISPATCH_LOG,
   LIVE_ROUTE_UNAVAILABLE_LOG,
@@ -14,6 +16,7 @@ import {
 import { log } from "./logger"
 
 configureSharedSubunitLogger(log)
+configureInternalPromptAdmissionGuard((sessionID) => !isTeamSessionDenied(sessionID))
 configurePromptDispatchRouteResolver({
   tryResolveDispatchClientSync,
   resolveDispatchClient,

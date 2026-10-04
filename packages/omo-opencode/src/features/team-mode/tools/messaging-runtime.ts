@@ -1,5 +1,5 @@
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
-import { lookupTeamSession } from "../team-session-registry"
+import { assertTeamSessionCanContinue, lookupTeamSession } from "../team-session-registry"
 import { loadRuntimeState } from "@oh-my-opencode/team-core/team-state-store/store"
 import type { Message, RuntimeState } from "@oh-my-opencode/team-core/types"
 
@@ -33,6 +33,7 @@ export const defaultTeamSendMessageToolDeps: TeamSendMessageToolDeps = {
 type RuntimeMember = RuntimeState["members"][number]
 
 export function shouldReserveRecipientMailbox(member: RuntimeMember, message: Message, senderName: string): boolean {
+  if (member.removal) return false
   if (message.to === "*") {
     return member.name !== senderName
   }
@@ -46,15 +47,21 @@ export async function resolveTeamRuntimeDetails(
   config: TeamModeConfig,
   deps: TeamSendMessageToolDeps,
 ): Promise<TeamRuntimeDetails> {
+  assertTeamSessionCanContinue(sessionID, config)
   const registryEntry = lookupTeamSession(sessionID)
   if (registryEntry?.teamRunId === teamRunId) {
     const runtimeState = await deps.loadRuntimeState(teamRunId, config)
+    const member = runtimeState.members.find((candidate) => candidate.name === registryEntry.memberName)
+    if (!member || member.removal || (member.sessionId !== undefined && member.sessionId !== sessionID)) {
+      return { teamRunId, isLead: false, senderName: "unknown", activeMembers: [] }
+    }
 
     return {
       teamRunId: runtimeState.teamRunId,
       isLead: registryEntry.role === "lead",
       senderName: registryEntry.memberName,
       activeMembers: runtimeState.members
+        .filter((entry) => !entry.removal)
         .map((entry) => entry.name)
         .filter((name) => name !== registryEntry.memberName),
     }
@@ -71,7 +78,10 @@ export async function resolveTeamRuntimeDetails(
       teamRunId: runtimeState.teamRunId,
       isLead,
       senderName,
-      activeMembers: runtimeState.members.map((entry) => entry.name).filter((name) => name !== senderName),
+      activeMembers: runtimeState.members
+        .filter((entry) => !entry.removal)
+        .map((entry) => entry.name)
+        .filter((name) => name !== senderName),
     }
   } catch (error) {
     error instanceof Error

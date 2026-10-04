@@ -8,6 +8,40 @@ import { createTask } from "./store"
 import { createTaskInput, createTasklistFixture } from "./test-support"
 import { CrossOwnerUpdateError, InvalidTaskTransitionError, updateTaskStatus } from "./update"
 
+test.each(["in_progress", "deleted", "pending"] as const)(
+  "updateTaskStatus rejects held %s mutations even with missing runtime",
+  async (status) => {
+    // given
+    const fixture = await createTasklistFixture()
+    try {
+      const operationId = crypto.randomUUID()
+      const task = await createTask(
+        fixture.teamRunId,
+        createTaskInput({
+          metadata: {
+            progress: "partial",
+            "omo.team-member-removal": {
+              hold: operationId,
+              audits: {
+                [operationId]: {
+                  priorOwner: "member-a",
+                  priorStatus: "in_progress",
+                  requeuedAt: 2,
+                },
+              },
+            },
+          },
+        }),
+        fixture.config,
+      )
+      // when / then
+      await expect(updateTaskStatus(fixture.teamRunId, task.id, status, "fresh", fixture.config)).rejects.toThrow()
+    } finally {
+      await fixture.cleanup()
+    }
+  },
+)
+
 test("updateTaskStatus supports the one-way claim to complete flow", async () => {
   // given
   const fixture = await createTasklistFixture()

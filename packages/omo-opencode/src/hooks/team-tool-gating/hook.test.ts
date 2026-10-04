@@ -86,6 +86,32 @@ async function runHook(
 }
 
 describe("createTeamToolGating", () => {
+  test.each(["write", "task", "team_create"])("denies %s from a fenced session even with no registry", async (tool) => {
+    // given
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-tool-removal-"))
+    temporaryDirectories.push(baseDir)
+    const state = createRuntimeState()
+    const fenced: RuntimeState = {
+      ...state,
+      members: state.members.map((member) =>
+        member.name === "m1"
+          ? {
+              ...member,
+              removal: {
+                operationId: "11111111-1111-4111-8111-111111111112",
+                sessionId: "member-session-1",
+                startedAt: 1,
+                phase: "fenced",
+                taskIds: [],
+              },
+            }
+          : member,
+      ),
+    }
+    await seedTeams(baseDir, fenced)
+    // when / then
+    await expect(runHook(tool, "member-session-1", {}, undefined, baseDir)).rejects.toThrow()
+  })
   const temporaryDirectories: string[] = []
 
   beforeEach(() => {

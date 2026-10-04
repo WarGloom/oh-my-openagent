@@ -1,4 +1,5 @@
 import { join } from "node:path"
+import { assertTeamSessionCanContinue, isTeamSessionDenied } from "../team-mode/team-session-registry"
 import { isProviderExhaustionFallbackEligible } from "@oh-my-opencode/model-core"
 import type { PluginInput } from "@opencode-ai/plugin"
 import type { BackgroundTaskConfig, TmuxConfig } from "../../config/schema"
@@ -1285,6 +1286,7 @@ export class BackgroundManager {
   }
 
   claimSyncContinuation(sessionID: string, parentSessionID: string): (() => void) | undefined {
+    assertTeamSessionCanContinue(sessionID)
     const task = this.findBySession(sessionID)
     if (!task) {
       return undefined
@@ -1438,6 +1440,7 @@ export class BackgroundManager {
    * The returned detach restarts the cleanup grace window once the waiter leaves.
    */
   attachSyncContinuation(sessionID: string): () => void {
+    assertTeamSessionCanContinue(sessionID)
     this.syncAttachedSessions.add(sessionID)
     return () => {
       if (!this.syncAttachedSessions.delete(sessionID)) return
@@ -1686,6 +1689,7 @@ export class BackgroundManager {
   }
 
   async resume(input: ResumeInput): Promise<BackgroundTask> {
+    assertTeamSessionCanContinue(input.sessionId)
     const existingTask = this.findBySession(input.sessionId)
     if (!existingTask) {
       throw new Error(`Task not found for session: ${input.sessionId}`)
@@ -1813,6 +1817,13 @@ export class BackgroundManager {
     if (this.shutdownTriggered) {
       this.concurrencyManager.release(concurrencyKey)
       return existingTask
+    }
+    // The team may have removed this member while the resume waited for a slot.
+    try {
+      assertTeamSessionCanContinue(input.sessionId)
+    } catch (error) {
+      this.concurrencyManager.release(concurrencyKey)
+      throw error
     }
     if (!existingTask.sessionId) throw new Error(`Task has no sessionID: ${existingTask.id}`)
     existingTask.pendingResume = undefined
@@ -2765,6 +2776,7 @@ export class BackgroundManager {
     errorInfo: { name?: string; message?: string; statusCode?: number },
     source: string,
   ): Promise<boolean> {
+    if (task.sessionId && isTeamSessionDenied(task.sessionId)) return false
     if (this.shouldWaitForFallbackRetryOutput(task, source)) {
       return true
     }
