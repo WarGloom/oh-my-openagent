@@ -10,6 +10,21 @@ import { createTask } from "./store"
 import { createTaskInput, createTasklistFixture } from "./test-support"
 import { updateTaskStatus } from "./update"
 
+test("claimTask rejects a removal-held pending task when publication state is missing", async () => {
+  // given
+  const fixture = await createTasklistFixture()
+  try {
+    const operationId = crypto.randomUUID()
+    const task = await createTask(fixture.teamRunId, createTaskInput({ metadata: {
+      "omo.team-member-removal": { hold: operationId, audits: { [operationId]: {
+        priorOwner: "member-a", priorStatus: "claimed", priorClaimedAt: 1, requeuedAt: 2,
+      } } },
+    } }), fixture.config)
+    // when / then
+    await expect(claimTask(fixture.teamRunId, task.id, "fresh", fixture.config)).rejects.toThrow()
+  } finally { await fixture.cleanup() }
+})
+
 test("claimTask allows exactly one concurrent claimant", async () => {
   // given
   const fixture = await createTasklistFixture()

@@ -1,5 +1,6 @@
 import type { TeamModeConfig } from "../../config/schema/team-mode"
 import { findResolvedMemberSession } from "../../features/team-mode/member-session-resolution"
+import { isTeamSessionDenied } from "../../features/team-mode/team-session-registry"
 import {
   applyMemberSessionRouting,
   buildMemberPromptBody,
@@ -68,7 +69,7 @@ export function createTeamIdleWakeHint(ctx: TeamIdleWakeHintContext, config: Tea
 
       const runtimeState = await loadRuntimeState(runtimeMember.teamRunId, config)
       const memberEntry = runtimeState.members.find((member) => member.name === runtimeMember.memberName)
-      if (!memberEntry) {
+      if (!memberEntry || memberEntry.removal) {
         return
       }
 
@@ -112,7 +113,7 @@ export function createTeamIdleWakeHint(ctx: TeamIdleWakeHintContext, config: Tea
 
       const latestRuntimeState = await loadRuntimeState(runtimeMember.teamRunId, config)
       const latestMemberEntry = latestRuntimeState.members.find((member) => member.name === runtimeMember.memberName)
-      if (!latestMemberEntry) {
+      if (!latestMemberEntry || latestMemberEntry.removal) {
         return
       }
       const spawnRaceStillPending = runtimeMember.sessionId === undefined && latestMemberEntry.sessionId === undefined
@@ -193,6 +194,7 @@ export function createTeamIdleWakeHint(ctx: TeamIdleWakeHintContext, config: Tea
           settleMs: options?.idleSettleMs,
           postDispatchHoldMs: options?.postDispatchHoldMs,
           queueBehavior: "defer",
+          shouldDispatch: () => !isTeamSessionDenied(sessionID, config),
           input: {
             path: { id: sessionID },
             body: buildMemberPromptBody(latestMemberEntry, reservedBatch.promptText),

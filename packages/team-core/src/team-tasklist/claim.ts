@@ -5,7 +5,7 @@ import { getTaskClaimLockPath, getTaskClaimsDir, getTaskFilePath, resolveBaseDir
 import { atomicWrite, detectStaleLock, reapStaleLock, withLock } from "../team-state-store/locks"
 import { TaskSchema } from "../types"
 import type { Task } from "../types"
-import { canClaim } from "./dependencies"
+import { assertTaskMutationAllowed, canClaim } from "./dependencies"
 import { getTask } from "./get"
 import { listTasks } from "./list"
 
@@ -73,6 +73,7 @@ export async function claimTask(
 
   return withLock(claimLockPath, async () => {
     const refreshedTask = await getTask(teamRunId, taskId, config)
+    await assertTaskMutationAllowed({ teamRunId, memberName, task: refreshedTask }, config)
     if (refreshedTask.status !== "pending") {
       throw new AlreadyClaimedError()
     }

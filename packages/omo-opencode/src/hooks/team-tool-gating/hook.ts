@@ -1,7 +1,7 @@
 import type { Hooks, PluginInput } from "@opencode-ai/plugin"
 
 import type { TeamModeConfig } from "../../config/schema/team-mode"
-import { lookupTeamSession } from "../../features/team-mode/team-session-registry"
+import { assertTeamSessionCanContinue, lookupTeamSession } from "../../features/team-mode/team-session-registry"
 import type { RuntimeState } from "../../features/team-mode/types"
 import {
   listActiveTeams,
@@ -28,9 +28,16 @@ function getStringArg(args: Record<string, unknown>, key: string): string | unde
   return typeof value === "string" ? value : undefined
 }
 
-function resolveParticipantFromRegistry(sessionID: string): TeamParticipant | undefined {
+async function resolveParticipantFromRegistry(sessionID: string, config: TeamModeConfig): Promise<TeamParticipant | undefined> {
   const entry = lookupTeamSession(sessionID)
   if (!entry) return undefined
+  const state = await loadRuntimeState(entry.teamRunId, config).catch((error: unknown) => {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined
+    throw error
+  })
+  if (!state) return undefined
+  const member = state.members.find(candidate => candidate.name === entry.memberName)
+  if (!member || member.removal || (member.sessionId !== undefined && member.sessionId !== sessionID)) return undefined
   if (entry.role === "lead") {
     return { role: "lead", teamRunId: entry.teamRunId }
   }
@@ -38,7 +45,7 @@ function resolveParticipantFromRegistry(sessionID: string): TeamParticipant | un
 }
 
 async function resolveParticipant(sessionID: string, config: TeamModeConfig): Promise<TeamParticipant> {
-  const fromRegistry = resolveParticipantFromRegistry(sessionID)
+  const fromRegistry = await resolveParticipantFromRegistry(sessionID, config)
   if (fromRegistry) {
     return fromRegistry
   }
@@ -56,7 +63,7 @@ async function resolveParticipant(sessionID: string, config: TeamModeConfig): Pr
     }
 
     const matchedMember = runtimeState.members.find((member) => member.sessionId === sessionID)
-    if (matchedMember) {
+    if (matchedMember && !matchedMember.removal) {
       return {
         role: "member",
         teamRunId: runtimeState.teamRunId,
@@ -87,6 +94,7 @@ export function createTeamToolGating(_ctx: PluginInput, config: TeamModeConfig |
       if (!config?.enabled) {
         return
       }
+      assertTeamSessionCanContinue(input.sessionID, config)
 
       const toolName = input.tool
       if (!toolName.startsWith("team_") && toolName !== "delegate-task") {
@@ -110,9 +118,13 @@ export function createTeamToolGating(_ctx: PluginInput, config: TeamModeConfig |
       const teamRunId = getStringArg(output.args, "teamRunId")
       const memberName = getStringArg(output.args, "memberName")
 
-      if (toolName === "team_delete" || toolName === "team_shutdown_request" || toolName === "team_add_member") {
+      if (toolName === "team_delete" || toolName === "team_shutdown_request" || toolName === "team_add_member" || toolName === "team_remove_member") {
         if (!isLeadOfTargetTeam(participant, teamRunId)) {
           throw new Error(`${toolName} is lead-only`)
+        }
+        if (toolName === "team_remove_member" && teamRunId !== undefined) {
+          const state = await loadRuntimeState(teamRunId, config)
+          if (state.leadSessionId !== input.sessionID || state.status !== "active") throw new Error("team_remove_member is lead-only for an active run")
         }
 
         return

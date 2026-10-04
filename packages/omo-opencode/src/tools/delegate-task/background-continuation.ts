@@ -9,6 +9,7 @@ import { getTaskID } from "./task-id"
 import { z } from "zod"
 import { claimRetainedSessionRecovery } from "../../features/background-agent/task-registry"
 import { executeSyncContinuation } from "./sync-continuation"
+import { assertTeamSessionCanContinue } from "../../features/team-mode/team-session-registry"
 
 export async function executeBackgroundContinuation(
   args: DelegateTaskArgs,
@@ -24,6 +25,7 @@ export async function executeBackgroundContinuation(
     if (!taskID) {
       throw new Error("task_id is required to continue a background task")
     }
+    assertTeamSessionCanContinue(taskID)
 
     const task = await manager.resume({
       sessionId: taskID,

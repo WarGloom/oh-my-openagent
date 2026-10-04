@@ -122,6 +122,7 @@ async function shouldDispatchFallbackMailboxWake(input: {
     const recipientIsActive = recipient?.status === "running" || recipient?.status === "idle"
     if (
       runtimeState.status !== "active"
+      || recipient?.removal !== undefined
       || recipient?.sessionId !== input.recipientSessionId
       || !recipientIsActive
     ) {

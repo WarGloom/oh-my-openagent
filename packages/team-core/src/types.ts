@@ -133,6 +133,14 @@ const RuntimeStateMemberModelSchema = z.object({
   }).optional(),
 }).strict()
 
+export const MemberRemovalSchema = z.object({
+  operationId: z.string().uuid(),
+  sessionId: z.string().min(1),
+  startedAt: z.number().int().positive(),
+  phase: z.enum(["fenced", "stopped", "requeueing"]),
+  taskIds: z.array(z.string()),
+}).strict()
+
 const RuntimeStateMemberSchema = z.object({
   name: z.string(),
   sessionId: z.string().optional(),
@@ -147,7 +155,16 @@ const RuntimeStateMemberSchema = z.object({
   worktreePath: z.string().optional(),
   lastInjectedTurnMarker: z.string().optional(),
   pendingInjectedMessageIds: z.array(z.string()).default([]),
-  provisioningClaimId: z.string().optional()
+  provisioningClaimId: z.string().optional(),
+  removal: MemberRemovalSchema.optional(),
+  removalProtocolVersion: z.literal(1).optional(),
+}).strict()
+
+const RemovedMemberSchema = z.object({
+  member: RuntimeStateMemberSchema,
+  operationId: z.string().uuid(),
+  removedAt: z.number().int().positive(),
+  requeuedTaskIds: z.array(z.string()),
 }).strict()
 
 const RuntimeBoundsSchema = z.object({
@@ -185,6 +202,7 @@ export const RuntimeStateSchema = z.object({
   leadSessionId: z.string().optional(),
   tmuxLayout: RuntimeStateTmuxLayoutSchema.optional(),
   members: z.array(RuntimeStateMemberSchema),
+  removedMembers: z.array(RemovedMemberSchema).default([]),
   shutdownRequests: z.array(ShutdownRequestSchema).default([]),
   bounds: RuntimeBoundsSchema,
 })
@@ -272,7 +290,11 @@ export type SubagentMember = z.infer<typeof SubagentMemberSchema>
 export type Message = z.infer<typeof MessageSchema>
 export type Task = z.infer<typeof TaskSchema>
 export type RuntimeStateMember = z.infer<typeof RuntimeStateMemberSchema>
-export type RuntimeState = z.infer<typeof RuntimeStateSchema>
+export type MemberRemoval = z.infer<typeof MemberRemovalSchema>
+export type RemovedMember = z.infer<typeof RemovedMemberSchema>
+export type RuntimeState = Omit<z.infer<typeof RuntimeStateSchema>, "removedMembers"> & {
+  removedMembers?: RemovedMember[]
+}
 
 export type ActiveTeamSummary = Readonly<
   Pick<RuntimeState, "teamRunId" | "teamName" | "status" | "leadSessionId"> & {

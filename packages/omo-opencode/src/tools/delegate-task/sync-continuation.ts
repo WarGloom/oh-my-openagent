@@ -23,6 +23,7 @@ import type { BackgroundTask } from "../../features/background-agent/types"
 import { applySessionPromptParams } from "../../shared/session-prompt-params-helpers"
 import { z } from "zod"
 import { dispatchInternalPrompt } from "../../shared/prompt-async-gate"
+import { assertTeamSessionCanContinue } from "../../features/team-mode/team-session-registry"
 
 type ResumeModel = { providerID: string; modelID: string }
 
@@ -120,6 +121,7 @@ export async function executeSyncContinuation(
   if (!continuationID) {
     throw new Error("task_id is required to continue a sync task")
   }
+  assertTeamSessionCanContinue(continuationID)
   if (await isSyncSessionDeleted(client, continuationID)) {
     log("[task] Refusing to continue deleted sync session", { sessionID: continuationID })
     return formatDeletedSyncSessionError(continuationID)
@@ -164,6 +166,7 @@ export async function executeSyncContinuation(
         resumeContext.anchorMessageCount = messages.length
         resumeContext.anchorMessageID = messages.at(-1)?.info.id
       }
+      assertTeamSessionCanContinue(continuationID)
       if (resumeContext.missingSession) {
         toastManager?.removeTask(taskId)
         return `Session ${continuationID} no longer exists; cannot resume this session. Start a new task using saved task context.`

@@ -1,6 +1,6 @@
 import type { TeamModeConfig } from "../../config/schema/team-mode"
 import { log } from "../../shared/logger"
-import { lookupTeamSession } from "./team-session-registry"
+import { isTeamSessionDenied, lookupTeamSession } from "./team-session-registry"
 import { listActiveTeams, loadRuntimeState } from "./team-state-store/store"
 
 export type ResolvedMemberSession = {
@@ -14,6 +14,7 @@ export async function findResolvedMemberSession(
   config: TeamModeConfig,
   logContext: string,
 ): Promise<ResolvedMemberSession | null> {
+  if (isTeamSessionDenied(sessionID, config)) return null
   const registryEntry = lookupTeamSession(sessionID)
   if (registryEntry?.role === "member") {
     try {
@@ -23,7 +24,7 @@ export async function findResolvedMemberSession(
           && (member.sessionId === undefined || member.sessionId === sessionID),
       )
 
-      if (memberEntry !== undefined) {
+      if (memberEntry !== undefined && !memberEntry.removal) {
         return {
           teamRunId: runtimeState.teamRunId,
           memberName: memberEntry.name,
@@ -45,7 +46,7 @@ export async function findResolvedMemberSession(
     try {
       const runtimeState = await loadRuntimeState(activeTeam.teamRunId, config)
       const memberEntry = runtimeState.members.find((member) => member.sessionId === sessionID)
-      if (memberEntry !== undefined) {
+      if (memberEntry !== undefined && !memberEntry.removal) {
         return {
           teamRunId: runtimeState.teamRunId,
           memberName: memberEntry.name,
