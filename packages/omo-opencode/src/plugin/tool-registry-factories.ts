@@ -1,5 +1,6 @@
 import {
   createTeamAddMemberTool,
+  createTeamRemoveMemberTool,
   createTeamApproveShutdownTool,
   createTeamCreateTool,
   createTeamDeleteTool,
@@ -54,6 +55,7 @@ export type ToolRegistryFactories = {
   createHashlineEditTool: typeof createHashlineEditTool
   createTeamApproveShutdownTool: typeof createTeamApproveShutdownTool
   createTeamAddMemberTool: typeof createTeamAddMemberTool
+  createTeamRemoveMemberTool: typeof createTeamRemoveMemberTool
   createTeamCreateTool: typeof createTeamCreateTool
   createTeamDeleteTool: typeof createTeamDeleteTool
   createTeamRejectShutdownTool: typeof createTeamRejectShutdownTool
@@ -87,6 +89,7 @@ export const defaultToolRegistryFactories: ToolRegistryFactories = {
   createHashlineEditTool,
   createTeamApproveShutdownTool,
   createTeamAddMemberTool,
+  createTeamRemoveMemberTool,
   createTeamCreateTool,
   createTeamDeleteTool,
   createTeamRejectShutdownTool,

@@ -92,7 +92,7 @@ Do not use \`oracle\`, \`prometheus\`, or other non-eligible agents here. For th
 
 ## Lifecycle
 
-Teams are **ephemeral**. Add members to an active run with \`team_add_member\`; removing or replacing members requires delete-then-create. Lingering teams burn sessions, mailbox quota, and member-turn budget every idle minute.
+Teams are **ephemeral**. Reuse a suitable idle member first: idle means waiting for input, not stalled or stopped. When replacement is needed, the lead removes one member with \`team_remove_member\`, then adds a fresh name with \`team_add_member\`. Do not delete and recreate the team to replace one member.
 
 One cycle:
 
@@ -106,11 +106,11 @@ One cycle:
 
 A team is **closable** when ALL of the following hold, as observed by \`team_task_list({ teamRunId })\` and \`team_status({ teamRunId })\`:
 
-- Every task is in a terminal state (\`completed\` or \`failed\`), AND every member's results have been received and accepted by the lead. All tasks being terminal is NOT sufficient on its own: a task can be marked terminal before its result actually reaches and is accepted by the lead.
-- No outstanding \`team_shutdown_request\` is still awaiting approval.
+- Every task is in a terminal state (\`completed\` or \`deleted\`), AND every member's results have been received and accepted by the lead. All tasks being terminal is NOT sufficient on its own: a task can be marked terminal before its result actually reaches and is accepted by the lead.
+- No shutdown request for an active roster member is awaiting approval. Requests for removed members are history, not active closure waits.
 - The user has not asked you to keep the team open for follow-up. When follow-up work IS expected, extend the active run with \`team_add_member\` instead of closing; the run stays open while the user asked to keep it.
 
-Closure is **the lead's responsibility**, not the user's. Do not wait to be told. The check runs after every \`team_task_update\` that completes or fails a task: if the contract holds, close in the same turn. Closure now is cheaper than closure after the next user message, because by then the model has paged out the context.
+Closure is **the lead's responsibility**, not the user's. Do not wait to be told. Check after every \`team_task_update\` that completes or deletes a task. If the contract holds, close in the same turn.
 
 ### Closure Sequence
 
@@ -125,7 +125,19 @@ If step 2 errors because a member is still active, re-run \`team_status\`. Use \
 
 ## Task ownership
 
-Any agent can set or change task ownership via \`team_task_update\` with the \`owner\` field. Members typically claim work by setting \`owner: "<their-name>"\` and \`status: "claimed"\` (or directly \`"in_progress"\`). The lead can also pre-assign work by creating tasks with \`owner\` set.
+Members claim work with \`team_task_update({ teamRunId, taskId, status: "claimed" })\`. Ownership comes from the calling session. Use only exposed arguments: task update has no \`owner\` field, and task creation creates pending work rather than assigning an owner.
+
+### Remove and replace a member
+
+The lead calls \`team_remove_member({ teamRunId, memberName })\` for one non-lead member of an active run. The runtime fences the old session and verifies stop before it releases work or capacity. Shutdown approval alone is not stop proof and does not free a slot.
+
+Success returns \`{ teamRunId, memberName, removalId, removed: true, requeuedTaskIds }\`. Only the removed member's claimed and in-progress tasks return to pending, without their current owner or claim time. The audit retains prior owner, status, claim time, operation ID, and timestamp. Descriptions, dependencies, metadata, and partial results remain intact; terminal and unrelated tasks do not change.
+
+On partial failure, the fenced member retains its slot and requeued tasks remain held until publication. Record the operation ID, failed stage, and retry status; retry removal for that member only when permitted. An exact retry after success returns the same receipt without duplicating audits or requeueing replacement-owned work.
+
+Inspect \`team_status\`, then add a replacement with a fresh name. Removed names stay reserved for this run; replacement is not automatic. The replacement claims the preserved task through its own session. Messages, delivery records, transcripts, tasks, worktrees, and pane pointers are preserved. Removed sessions cannot resume team mutations; a later separate \`team_delete\` can clean archived resources.
+
+The first removal sets a removal-protocol marker on the lead row. Older strict member schemas reject the run rather than discard its history. Do not manage that run with an older loaded plugin.
 
 ## Automatic message delivery
 
@@ -149,7 +161,7 @@ Members and the lead use \`team_status({ teamRunId })\` to see who is active, th
 Members should:
 
 1. Check \`team_task_list\` periodically, **especially after completing each task**, to find newly unblocked work.
-2. Claim unassigned, unblocked tasks via \`team_task_update\` (set \`owner\` and \`status: "claimed"\` or \`"in_progress"\`). Prefer tasks in ID order (lowest first): earlier tasks usually establish context for later ones.
+2. Claim unassigned, unblocked tasks via \`team_task_update({ teamRunId, taskId, status: "claimed" })\`. Prefer tasks in ID order (lowest first): earlier tasks usually establish context for later ones.
 3. Create new tasks via \`team_task_create\` when they identify additional work.
 4. Mark tasks completed via \`team_task_update\` with \`status: "completed"\`, then re-check the task list.
 5. If all available tasks are blocked, send a \`team_send_message\` to the lead to either resolve blockers or assign different work.
@@ -164,6 +176,7 @@ Members should:
 
 - \`team_create\` - create a team from a declaration.
 - \`team_add_member\` - add one member to an active run (lead-only); returns once the member's durable row, inbox, and registry entry are ready.
+- \`team_remove_member\` - remove one non-lead member after verified stop, requeue unfinished work, and preserve history.
 - \`team_delete\` - remove a team.
 - \`team_shutdown_request\` - start the shutdown flow.
 
@@ -200,7 +213,7 @@ Members should:
 
 ## Notes
 
-Team mode is a docs-only skill. The team_* tools are registered globally when \`team_mode.enabled=true\`.
+Team mode is a docs-only skill. Use only tools exposed by the loaded process. \`team_remove_member\` requires an integrated removal-capable plugin build and a separately authorized OpenCode restart; instruction updates do not refresh an older running tool registry.
 Use \`~/.omo/teams/{name}/config.json\` plus worktree or tmux visibility to understand how the team is laid out.
 `,
 }

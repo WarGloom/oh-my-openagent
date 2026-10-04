@@ -56,6 +56,26 @@ describe("query tools", () => {
       status: "active",
       createdAt: 1,
       members: [{ name: "worker", status: "running", unreadMessages: 0 }],
+      removedMembers: Array.from({ length: 25 }, (_, index) => ({
+        member: {
+          name: `worker-${index}`,
+          sessionId: `ses_archived_worker_${index}`,
+          agentType: "general-purpose" as const,
+          status: "completed" as const,
+          subagent_type: "sisyphus-junior",
+          category: "unspecified-low",
+          model: { providerID: "openai", modelID: "gpt-6.1-sol", reasoningEffort: "medium", maxTokens: 32000 },
+          worktreePath: `/tmp/opencode/team-worktrees/team-alpha/worker-${index}`,
+          tmuxPaneId: `%${index + 10}`,
+          tmuxGridPaneId: `%${index + 50}`,
+          lastInjectedTurnMarker: `turn-${index}`,
+          pendingInjectedMessageIds: Array.from({ length: 10 }, (_, message) => `message-${index}-${message}`),
+          removalProtocolVersion: 1 as const,
+        },
+        operationId: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+        removedAt: 1791360000000 + index,
+        requeuedTaskIds: Array.from({ length: 10 }, (_, task) => `task-${index}-${task}`),
+      })),
       tasks: { pending: 0, claimed: 0, in_progress: 0, completed: 0, deleted: 0, total: 0 },
       shutdownRequests: [],
       concurrency: { runningOnSameModel: 0, queuedOnSameModel: 0 },
@@ -70,10 +90,21 @@ describe("query tools", () => {
     const tool = createTeamStatusTool(config, mockClient, undefined, deps)
 
     // when
-    const result = JSON.parse(await tool.execute({ teamRunId: "team-run-1" }, createMockContext()))
+    const original = JSON.stringify(expectedStatus)
+    const compact = await tool.execute({ teamRunId: "team-run-1" }, createMockContext())
+    const explicitCompact = await tool.execute({ teamRunId: "team-run-1", includeRemovedDetails: false }, createMockContext())
+    const detailed = await tool.execute({ teamRunId: "team-run-1", includeRemovedDetails: true }, createMockContext())
 
     // then
-    expect(result).toEqual(expectedStatus)
+    expect(JSON.parse(compact)).toEqual({ ...expectedStatus, removedMembers: [], removedMemberCount: 25 })
+    expect(explicitCompact).toBe(compact)
+    expect(JSON.parse(detailed)).toEqual(expectedStatus)
+    expect(JSON.stringify(expectedStatus)).toBe(original)
+    const compactBytes = Buffer.byteLength(compact)
+    const detailedBytes = Buffer.byteLength(detailed)
+    expect(compactBytes).toBeLessThan(1500)
+    expect(compactBytes).toBeLessThan(detailedBytes / 10)
+    console.info(`team_status bytes: compact=${compactBytes}, detailed=${detailedBytes}`)
   })
 
   test("team_list includes declared-only teams", async () => {

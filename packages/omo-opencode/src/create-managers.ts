@@ -8,7 +8,7 @@ import type { MonitorManager } from "./features/monitor"
 import { createMonitorManager } from "./features/monitor"
 import { SkillMcpManager } from "./features/skill-mcp-manager"
 import { reconcileTeamBackgroundOutcome } from "./features/team-mode/team-runtime/background-member-outcome"
-import { lookupTeamSession } from "./features/team-mode/team-session-registry"
+import { configureTeamSessionRemoval, isKnownTeamSession } from "./features/team-mode/team-session-registry"
 import { TuiStateMirror } from "./features/tui-sidebar/mirror-manager"
 import { createModelFallbackControllerAccessor } from "./hooks/model-fallback"
 import { initTaskToastManager } from "./features/task-toast-manager"
@@ -71,6 +71,7 @@ export function createManagers(args: {
   const { ctx, pluginConfig, tmuxConfig, modelCacheState, backgroundNotificationHookEnabled, runtimeSkillSourceUrl } = args
   const deps = { ...defaultCreateManagersDeps, ...args.deps }
   const unsubscribeSkillDiagnostics = subscribeSkillDiagnostics((diagnostic) => showSkillSecurityNotice(ctx, diagnostic.message, diagnostic.category))
+  configureTeamSessionRemoval(pluginConfig.team_mode)
 
   // Only mark the server as in-process when the SDK actually exposes a
   // serverUrl. `tmuxConfig.enabled` alone is not proof of a running server —
@@ -91,7 +92,7 @@ export function createManagers(args: {
     // manager to ignore those sessions prevents the polling loop from racing
     // pane closes against team-layout and stops them from being surfaced
     // twice in the subagent panel.
-    shouldSkipSession: (sessionId) => lookupTeamSession(sessionId) !== undefined,
+    shouldSkipSession: isKnownTeamSession,
   })
   const modelFallbackControllerAccessor = createModelFallbackControllerAccessor()
   let backgroundManager: BackgroundManager | undefined

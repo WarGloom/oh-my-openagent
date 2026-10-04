@@ -40,11 +40,16 @@ export function createTeamStatusTool(
   void client
 
   return tool({
-    description: "Return live team run status: members, session IDs, task counts, unread message counts, shutdown state, and concurrency. It does not return message bodies or conversation history.",
+    description: "Return live team run status: members, session IDs, task counts, unread message counts, shutdown state, and concurrency. Removed members are counted only by default; set includeRemovedDetails to retrieve full archived records. It does not return message bodies or conversation history.",
     args: {
       teamRunId: tool.schema.string().describe("Team run ID"),
+      includeRemovedDetails: tool.schema.boolean().optional().describe("Include full removed-member archives (default: false)"),
     },
-    execute: async (args: { teamRunId: string }) => JSON.stringify(await deps.aggregateStatus(args.teamRunId, config, backgroundManager)),
+    execute: async (args: { teamRunId: string; includeRemovedDetails?: boolean }) => {
+      const status = await deps.aggregateStatus(args.teamRunId, config, backgroundManager)
+      if (args.includeRemovedDetails) return JSON.stringify(status)
+      return JSON.stringify({ ...status, removedMembers: [], removedMemberCount: status.removedMembers.length })
+    },
   })
 }
 

@@ -1,4 +1,6 @@
 import { log } from "./logger"
+import { clearInternalPromptFencesForTesting } from "./prompt-async-gate/session-stop-fence"
+export { configureInternalPromptAdmissionGuard, fenceInternalPrompts } from "./prompt-async-gate/session-stop-fence"
 import {
   LIVE_ROUTE_DISPATCH_LOG,
   LIVE_ROUTE_UNAVAILABLE_LOG,
@@ -312,6 +314,7 @@ export async function dispatchInternalPrompt<TInput = PromptAsyncInput>(
 }
 
 export function releaseAllPromptAsyncReservationsForTesting(): void {
+  clearInternalPromptFencesForTesting()
   clearPromptReservationsForTesting()
   clearPromptQueueStateForTesting()
   clearRecentPromptDispatchesForTesting()
