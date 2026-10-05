@@ -11,6 +11,7 @@ import { dispatchInternalPrompt, releaseAllPromptAsyncReservationsForTesting } f
 import {
   clearTeamSessionRegistry,
   configureTeamSessionRemoval,
+  hasActiveTeamMemberWork,
   isTeamSessionDenied,
   lookupTeamSession,
   registerTeamSession,
@@ -221,5 +222,44 @@ test("removal correction: two cold roots retain authority when a second context 
   } finally {
     clearTeamSessionRegistry()
     await Promise.all([rootA, rootB].map((root) => rm(root, { recursive: true, force: true })))
+  }
+})
+
+test("hasActiveTeamMemberWork reports only working non-lead members of an active run led by the session", async () => {
+  // given
+  const root = await mkdtemp(path.join(tmpdir(), "team-member-work-"))
+  const config = TeamModeConfigSchema.parse({ enabled: true, base_dir: root })
+  const run = crypto.randomUUID()
+  const stateFor = (memberStatus: string, runStatus = "active") =>
+    RuntimeStateSchema.parse({
+      version: 1,
+      teamRunId: run,
+      teamName: "alpha",
+      specSource: "project",
+      createdAt: 1,
+      status: runStatus,
+      leadSessionId: "lead-session",
+      bounds: {},
+      members: [
+        { name: "lead", sessionId: "lead-session", agentType: "general-purpose", status: "running" },
+        { name: "worker", sessionId: "worker-session", agentType: "general-purpose", status: memberStatus },
+      ],
+    })
+  const write = (memberStatus: string, runStatus?: string) =>
+    writeFile(path.join(root, "runtime", run, "state.json"), JSON.stringify(stateFor(memberStatus, runStatus)))
+  await mkdir(path.join(root, "runtime", run), { recursive: true })
+  try {
+    // when / then
+    await write("running")
+    expect(hasActiveTeamMemberWork("lead-session", config)).toBe(true)
+    expect(hasActiveTeamMemberWork("worker-session", config)).toBe(false)
+    expect(hasActiveTeamMemberWork("other-session", config)).toBe(false)
+    await write("idle")
+    expect(hasActiveTeamMemberWork("lead-session", config)).toBe(false)
+    await write("running", "shutdown_requested")
+    expect(hasActiveTeamMemberWork("lead-session", config)).toBe(false)
+  } finally {
+    clearTeamSessionRegistry()
+    await rm(root, { recursive: true, force: true })
   }
 })
