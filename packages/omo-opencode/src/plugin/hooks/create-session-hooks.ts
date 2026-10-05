@@ -40,6 +40,7 @@ import { safeCreateHook } from "../../shared/safe-create-hook"
 import { sessionExists } from "../../tools"
 import { isTmuxIntegrationEnabled } from "../../create-runtime-tmux-config"
 import { createModelFallbackTitleUpdater } from "./model-fallback-title-updater"
+import { hasActiveTeamMemberWork } from "../../features/team-mode/team-session-registry"
 
 export type SessionHooks = {
   preemptiveCompaction: ReturnType<typeof createPreemptiveCompactionHook> | null
@@ -172,7 +173,8 @@ export function createSessionHooks(args: {
           getSessionExists: async (sessionId) => await sessionExists(sessionId),
           hasMonitorWork: monitorManager ? (sessionId) => monitorManager.hasMonitorWork(sessionId) : undefined,
           hasBackgroundWork: (sessionId) => backgroundManager.getTasksByParentSession(sessionId)
-            .some((task) => task.status === "running" || task.status === "pending"),
+            .some((task) => task.status === "running" || task.status === "pending")
+            || (pluginConfig.team_mode?.enabled === true && hasActiveTeamMemberWork(sessionId, pluginConfig.team_mode)),
         }))
     : null
 
