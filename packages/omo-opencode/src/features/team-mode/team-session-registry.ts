@@ -91,6 +91,15 @@ export function isKnownTeamSession(sessionId: string): boolean {
     || state.leadSessionId === sessionId || state.members.some(member => member.sessionId === sessionId))
 }
 
+/** True while a team run led by this session has a non-lead member that is still working.
+ *  Reads the persisted runtime state: member background tasks can report completed between turns. */
+export function hasActiveTeamMemberWork(leadSessionId: string, config?: TeamModeConfig): boolean {
+  return readSessionRuntimeStates(leadSessionId, config).some(state => state !== null
+    && state.status === "active"
+    && state.leadSessionId === leadSessionId
+    && state.members.some(member => member.sessionId !== leadSessionId && (member.status === "running" || member.status === "pending")))
+}
+
 export function registerTeamSession(sessionId: string, entry: TeamSessionEntry): void {
   if (isTeamSessionDenied(sessionId)) return
   registry.set(sessionId, entry)
