@@ -4,7 +4,6 @@ import { GoalToolResponseSchema } from "./types"
 
 export type GoalToolsDeps = {
   readonly controller: GoalController
-  readonly getSessionID: () => string | undefined
 }
 
 function formatResponse(goal: ReturnType<GoalController["getGoal"]>): string {
@@ -22,11 +21,8 @@ The objective should be concise (under 2000 characters) and describe the desired
       objective: tool.schema.string().describe("Concise outcome the session should achieve"),
       session_id: tool.schema.string().optional().describe("Session ID to target (default: current session)"),
     },
-    execute: async (args, _context) => {
-      const sessionID = args.session_id ?? deps.getSessionID()
-      if (sessionID === undefined) {
-        return "Error: no session_id available"
-      }
+    execute: async (args, context) => {
+      const sessionID = args.session_id ?? context.sessionID
       const goal = deps.controller.setGoal(sessionID, args.objective)
       return formatResponse(goal)
     },
@@ -43,11 +39,8 @@ Use this to pause, resume, complete, or change the objective of the current goal
       objective: tool.schema.string().optional().describe("New objective text"),
       session_id: tool.schema.string().optional().describe("Session ID to target (default: current session)"),
     },
-    execute: async (args, _context) => {
-      const sessionID = args.session_id ?? deps.getSessionID()
-      if (sessionID === undefined) {
-        return "Error: no session_id available"
-      }
+    execute: async (args, context) => {
+      const sessionID = args.session_id ?? context.sessionID
       if (args.objective !== undefined) {
         deps.controller.setGoal(sessionID, args.objective)
       }
@@ -71,11 +64,8 @@ Returns the current objective, status, and usage accounting. Returns null if no 
     args: {
       session_id: tool.schema.string().optional().describe("Session ID to target (default: current session)"),
     },
-    execute: async (args, _context) => {
-      const sessionID = args.session_id ?? deps.getSessionID()
-      if (sessionID === undefined) {
-        return "Error: no session_id available"
-      }
+    execute: async (args, context) => {
+      const sessionID = args.session_id ?? context.sessionID
       return formatResponse(deps.controller.getGoal(sessionID))
     },
   })
