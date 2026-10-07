@@ -1,7 +1,23 @@
+/// <reference types="bun-types" />
+
 import { describe, expect, test } from "bun:test"
+import type { ToolContext } from "@opencode-ai/plugin/tool"
 import type { GoalController } from "./controller"
 import { createGoalTools } from "./tools"
 import type { Goal } from "./types"
+
+function makeContext(sessionID = "s1"): ToolContext {
+  return {
+    sessionID,
+    messageID: "m1",
+    agent: "test",
+    directory: "/tmp",
+    worktree: "/tmp",
+    abort: new AbortController().signal,
+    metadata: () => {},
+    ask: async () => {},
+  }
+}
 
 function makeGoal(overrides?: Partial<Goal>): Goal {
   const now = Date.now()
@@ -36,12 +52,56 @@ function makeDeps(controller: Partial<GoalController> = {}, sessionID?: string) 
 }
 
 describe("createGoalTools", () => {
+  for (const globalSessionID of [undefined, "wrong-session"]) {
+    for (const explicitSessionID of [undefined, "explicit-session"]) {
+      test(`all goal tools bind invocation with global=${globalSessionID}, explicit=${explicitSessionID}`, async () => {
+        // given
+        const calls: [string, string][] = []
+        const controller = {
+          setGoal: (sessionID: string, objective: string) => {
+            calls.push(["set", sessionID])
+            return makeGoal({ sessionID, objective })
+          },
+          getGoal: (sessionID: string) => {
+            calls.push(["get", sessionID])
+            return makeGoal({ sessionID })
+          },
+          markComplete: (sessionID: string) => {
+            calls.push(["complete", sessionID])
+            return makeGoal({ sessionID, status: "complete" })
+          },
+        }
+        const tools = createGoalTools(makeDeps(controller, globalSessionID))
+        // when
+        for (const invocation of ["invocation-one", "invocation-two"]) {
+          const context = makeContext(invocation)
+          const args = { session_id: explicitSessionID }
+          await tools.create_goal.execute({ ...args, objective: "Ship" }, context)
+          await tools.get_goal.execute(args, context)
+          await tools.update_goal.execute({ ...args, objective: "Updated", status: "complete" }, context)
+        }
+        // then
+        expect(calls).toEqual(
+          ["invocation-one", "invocation-two"].flatMap((invocation) => {
+            const target = explicitSessionID ?? invocation
+            return [
+              ["set", target],
+              ["get", target],
+              ["set", target],
+              ["complete", target],
+              ["get", target],
+            ]
+          }),
+        )
+      })
+    }
+  }
   test("create_goal calls controller.setGoal with current session", async () => {
     const setGoal = (sessionID: string, objective: string) => makeGoal({ sessionID, objective })
     const deps = makeDeps({ setGoal }, "s1")
     const tools = createGoalTools(deps)
 
-    const result = await tools.create_goal.execute({ objective: "Ship" }, {} as never)
+    const result = await tools.create_goal.execute({ objective: "Ship" }, makeContext())
 
     expect(result).toContain("Ship")
     expect(result).toContain('"status": "active"')
@@ -56,18 +116,9 @@ describe("createGoalTools", () => {
     const deps = makeDeps({ setGoal }, undefined)
     const tools = createGoalTools(deps)
 
-    await tools.create_goal.execute({ objective: "Ship", session_id: "s2" }, {} as never)
+    await tools.create_goal.execute({ objective: "Ship", session_id: "s2" }, makeContext())
 
     expect(calls).toEqual([["s2", "Ship"]])
-  })
-
-  test("create_goal errors without session", async () => {
-    const deps = makeDeps({}, undefined)
-    const tools = createGoalTools(deps)
-
-    const result = await tools.create_goal.execute({ objective: "Ship" }, {} as never)
-
-    expect(result).toContain("no session_id")
   })
 
   test("update_goal completes goal", async () => {
@@ -80,7 +131,7 @@ describe("createGoalTools", () => {
     const deps = makeDeps({ markComplete, getGoal }, "s1")
     const tools = createGoalTools(deps)
 
-    const result = await tools.update_goal.execute({ status: "complete" }, {} as never)
+    const result = await tools.update_goal.execute({ status: "complete" }, makeContext())
 
     expect(markCalls).toEqual(["s1"])
     expect(result).toContain('"status": "complete"')
@@ -96,7 +147,7 @@ describe("createGoalTools", () => {
     const deps = makeDeps({ setGoal, getGoal }, "s1")
     const tools = createGoalTools(deps)
 
-    const result = await tools.update_goal.execute({ objective: "New" }, {} as never)
+    const result = await tools.update_goal.execute({ objective: "New" }, makeContext())
 
     expect(setCalls).toEqual([["s1", "New"]])
     expect(result).toContain("New")
@@ -111,7 +162,7 @@ describe("createGoalTools", () => {
     const deps = makeDeps({ getGoal }, "s1")
     const tools = createGoalTools(deps)
 
-    const result = await tools.get_goal.execute({}, {} as never)
+    const result = await tools.get_goal.execute({}, makeContext())
 
     expect(getCalls).toEqual(["s1"])
     expect(result).toContain("Read")
@@ -121,7 +172,7 @@ describe("createGoalTools", () => {
     const deps = makeDeps({ getGoal: () => null }, "s1")
     const tools = createGoalTools(deps)
 
-    const result = await tools.get_goal.execute({}, {} as never)
+    const result = await tools.get_goal.execute({}, makeContext())
 
     expect(result).toContain('"goal": null')
   })

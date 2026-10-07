@@ -175,7 +175,6 @@ export function createCoreTools(args: {
       tools,
       createGoalTools({
         controller: goalController,
-        getSessionID: getMainSessionID,
       }),
     )
   }
