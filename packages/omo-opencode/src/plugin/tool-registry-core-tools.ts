@@ -160,7 +160,6 @@ export function createCoreTools(args: {
     const goalController: GoalController = createGoalController({ projectDir: ctx.directory })
     Object.assign(tools, createGoalTools({
       controller: goalController,
-      getSessionID: getMainSessionID,
     }))
   }
 
