@@ -1,12 +1,11 @@
-import type { PluginModule } from "@opencode-ai/plugin"
-import { opencodeV2Server } from "./opencode-v2/server-entry"
 import { createPluginModule } from "./testing/create-plugin-module"
+import type { DualPluginModule } from "./v2"
 
-const pluginModule: PluginModule = createPluginModule()
+const pluginModule: DualPluginModule = createPluginModule()
 
 export const omoPlugin = pluginModule.server
 
-export default { ...pluginModule, setup: opencodeV2Server.setup }
+export default pluginModule
 
 export type {
   AgentName,
