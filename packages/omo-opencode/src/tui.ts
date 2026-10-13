@@ -20,6 +20,9 @@ import type { RosterRow, SidebarView } from "./features/tui-sidebar/state-types"
 import { opencodeV2Tui } from "./opencode-v2/tui-entry"
 import { log } from "./shared/logger"
 import { trackLoadedPluginSandbox } from "./hooks/auto-update-checker/checker/sandbox-refresh"
+import { setupV2Tui, type V2TuiSetup } from "./v2"
+
+type DualTuiPluginModule = TuiPluginModule & { readonly setup: V2TuiSetup }
 
 type SolidRuntime<Node> = {
   readonly createElement: (tag: string) => Node
@@ -157,8 +160,9 @@ export function handleTuiPollError(
   throw error
 }
 
-const module: TuiPluginModule = {
+const module: DualTuiPluginModule = {
   id: "oh-my-openagent:tui",
+  setup: setupV2Tui,
   tui: async (api) => {
     // The TUI plugin runs on OpenCode's main thread, the only thread that
     // emits `exit`; it applies a sandbox refresh the server plugin requested.
