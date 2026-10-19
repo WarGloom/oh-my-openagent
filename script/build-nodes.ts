@@ -23,7 +23,7 @@ export const BUILD_NODES: BuildNode[] = [
 	{ id: "declarations", command: "tsc", args: ["--emitDeclarationOnly"], deps: [] },
 	{ id: "cli", command: "bun", args: ["build", "packages/omo-opencode/src/cli/index.ts", "--outdir", "dist/cli", "--target", "bun", "--format", "esm"], deps: [] },
 	{ id: "cli-node", command: "bun", args: ["run", "build:cli-node"], deps: [] },
-	{ id: "codex-install", command: "bun", args: ["run", "build:codex-install"], deps: [] },
+	{ id: "codex-install", command: "bun", args: ["run", "script/ensure-codex-install.ts"], deps: [] },
 	{ id: "schema", command: "bun", args: ["run", "build:schema"], deps: [] },
 	{ id: "omo-schema", command: "bun", args: ["run", "build:omo-schema"], deps: [] },
 ]
