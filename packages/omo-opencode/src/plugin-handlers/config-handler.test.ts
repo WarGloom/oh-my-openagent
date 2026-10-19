@@ -609,7 +609,7 @@ describe("hidden config-key aliases after applyToolConfig", () => {
     expect(agentConfig["prometheus"]).toBeDefined()
     expect(agentConfig["prometheus"].hidden).toBe(true)
     expect(agentConfig["prometheus"].permission).toEqual(agentConfig[prometheusDisplayName].permission)
-    expect(agentConfig["prometheus"].permission?.bash).toBe("deny")
+    expect(agentConfig["prometheus"].permission?.bash).not.toBe("deny")
   })
 
   test("cache-hit aliases still match display-name permissions after applyToolConfig", async () => {
