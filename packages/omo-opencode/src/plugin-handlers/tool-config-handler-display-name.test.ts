@@ -21,7 +21,7 @@ function createDisplayNameParams(displayName: string): {
 }
 
 describe("applyToolConfig with custom display names", () => {
-	it("#given prometheus has custom displayName #when tool config applies #then bash remains denied", () => {
+	it("#given prometheus has custom displayName #when tool config applies #then bash is left to user rules", () => {
 		// given
 		const displayName = "Prometheus Custom Planner";
 		const params = createDisplayNameParams(displayName);
@@ -33,8 +33,8 @@ describe("applyToolConfig with custom display names", () => {
 		const agent = params.agentResult[displayName] as {
 			permission: Record<string, unknown>;
 		};
-		expect(agent.permission.bash).toBe("deny");
-		expect(agent.permission.interactive_bash).toBe("deny");
+		expect(agent.permission.bash).toBeUndefined();
+		expect(agent.permission.interactive_bash).toBeUndefined();
 		expect(agent.permission.task).toBe("allow");
 	});
 });
