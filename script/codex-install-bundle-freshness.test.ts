@@ -7,6 +7,7 @@ import {
   digestCodexInstallerSources,
   parseCodexInstallerArtifact,
 } from "./build-codex-install"
+import { isCodexInstallerArtifactCurrent } from "./ensure-codex-install"
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url))
 const trackedBundlePath = "packages/omo-codex/scripts/install-dist/install-local.mjs"
@@ -51,5 +52,19 @@ describe("committed Codex installer bundle", () => {
       bundle: trackedBundlePath,
       sourceDigest: currentSourceDigest,
     })
+  })
+
+  test("#given the tracked bundle #when the build checks it #then it is kept, and an edited body is rebuilt", async () => {
+    // given
+    const trackedBundle = readTrackedBundle()
+    const editedBundle = `${trackedBundle}\n// edited`
+
+    // when
+    const keepTracked = await isCodexInstallerArtifactCurrent(trackedBundle)
+    const keepEdited = await isCodexInstallerArtifactCurrent(editedBundle)
+
+    // then
+    expect(keepTracked).toBe(true)
+    expect(keepEdited).toBe(false)
   })
 })
