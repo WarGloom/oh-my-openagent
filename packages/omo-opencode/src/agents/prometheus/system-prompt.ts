@@ -3,7 +3,6 @@ import { buildNativeAgentPrompt } from "../native-model-prompt"
 
 export const PROMETHEUS_PERMISSION = {
   edit: "allow" as const,
-  bash: "allow" as const,
   webfetch: "allow" as const,
   question: "allow" as const,
 }
