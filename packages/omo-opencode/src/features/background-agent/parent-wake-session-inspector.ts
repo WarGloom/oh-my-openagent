@@ -5,6 +5,7 @@ import { getErrorText } from "./error-classifier"
 import type { PendingParentWake } from "./parent-wake-dedupe"
 import type { ParentWakeSessionMessage } from "./parent-wake-session-message"
 import {
+  admittedParentWakeIsInsideOpenAssistantTurn,
   getParentWakeSessionHistoryDeferralDecision,
   hasAssistantOrToolOutputAfterParentWake,
   hasAssistantOutputAfterParentWakeAdmission,
@@ -97,6 +98,14 @@ export class ParentWakeSessionInspector {
       messages,
       wake,
     })
+  }
+
+  async isAdmittedWakeInsideOpenAssistantTurn(sessionID: string, wake: PendingParentWake): Promise<boolean> {
+    if (wake.noReplyAdmittedAt === undefined) {
+      return false
+    }
+    const messages = await this.loadMessages(sessionID)
+    return admittedParentWakeIsInsideOpenAssistantTurn({ messages, wake })
   }
 
   async hasAssistantOrToolOutputAfterDispatchedWake(

@@ -180,6 +180,52 @@ describe("parent wake active defer ceiling", () => {
     }
   })
 
+  test("#given retained noReply wake landed inside the busy parent's open turn #when the active ceiling passes #then no reply duplicate is sent", async () => {
+    // given
+    const originalDateNow = Date.now
+    let now = 100_000
+    Date.now = () => now
+    const sessionStatuses: Record<string, { type: string }> = { "parent-1": { type: "idle" } }
+    let messages: SessionMessageStub[] = BLOCKED_MESSAGES
+    const { notifier, promptAsyncCalls } = createNotifier({
+      sessionStatuses,
+      messagesProvider: () => messages,
+    })
+    notifier.queuePendingParentWake("parent-1", FINAL_WAKE, { agent: "sisyphus" }, true)
+
+    try {
+      await notifier.flushPendingParentWake("parent-1")
+      expect(promptAsyncCalls).toHaveLength(1)
+      expect(promptAsyncCalls[0]?.body.noReply).toBe(true)
+
+      // when: the parent is still streaming the turn that started before the deposit
+      now = 220_000
+      sessionStatuses["parent-1"] = { type: "busy" }
+      messages = [
+        BLOCKED_MESSAGES[0]!,
+        {
+          info: { role: "assistant", time: { created: 99_500 } },
+          parts: [{ type: "reasoning", text: "still thinking" }],
+        },
+        {
+          info: { role: "user", time: { created: 100_000 } },
+          parts: [{ type: "text", text: FINAL_WAKE, synthetic: true }],
+        },
+      ]
+      releaseParentWakeHold("parent-1")
+      notifier.clearPendingParentWakeTimer("parent-1")
+      await notifier.flushPendingParentWake("parent-1")
+
+      // then
+      expect(promptAsyncCalls).toHaveLength(1)
+      expect(notifier.getPendingParentWakes().get("parent-1")?.shouldReply).toBe(true)
+      expect(notifier.getPendingParentWakeTimers().has("parent-1")).toBe(true)
+    } finally {
+      Date.now = originalDateNow
+      notifier.shutdown()
+    }
+  })
+
   test("#given retained noReply wake and fresh activity exceed active ceiling #then it dispatches once safe", async () => {
     // given
     const originalDateNow = Date.now
