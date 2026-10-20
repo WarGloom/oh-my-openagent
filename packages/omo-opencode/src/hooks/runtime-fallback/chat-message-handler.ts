@@ -89,15 +89,18 @@ export function createChatMessageHandler(deps: HookDeps) {
   }
 
   function applyRuntimeModel(
-    message: { model?: { providerID: string; modelID: string }; variant?: string },
+    message: { model?: { providerID: string; modelID: string; variant?: string }; variant?: string },
     runtimeModel: string,
   ): void {
     const parsedModel = parseModelString(runtimeModel)
     if (!parsedModel) return
 
+    // OpenCode reads the effort from message.model.variant for both the request and the
+    // assistant message; the top-level variant stays for hosts that still read it.
     message.model = {
       providerID: parsedModel.providerID,
       modelID: parsedModel.modelID,
+      ...(parsedModel.variant ? { variant: parsedModel.variant } : {}),
     }
 
     if (parsedModel.variant) {
@@ -116,7 +119,7 @@ export function createChatMessageHandler(deps: HookDeps) {
     },
     output: {
       message: {
-        model?: { providerID: string; modelID: string }
+        model?: { providerID: string; modelID: string; variant?: string }
         variant?: string
       }
       parts?: Array<{ type: string; text?: string }>
