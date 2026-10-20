@@ -226,6 +226,35 @@ export function hasAssistantOutputAfterParentWakeAdmission(input: {
   return false
 }
 
+// An OpenCode turn re-reads history before every step, so a noReply deposit admitted while
+// the latest assistant turn is still open reaches the model on that turn's next step. A reply
+// dispatch on top of it delivers the same notification twice.
+export function admittedParentWakeIsInsideOpenAssistantTurn(input: {
+  readonly messages: readonly ParentWakeSessionMessage[] | undefined
+  readonly wake: PendingParentWake
+}): boolean {
+  const admittedAt = input.wake.noReplyAdmittedAt
+  if (admittedAt === undefined || !input.messages) {
+    return false
+  }
+  for (let index = input.messages.length - 1; index >= 0; index--) {
+    const message = input.messages[index]
+    if (!message || getParentWakeMessageRole(message) !== "assistant") {
+      continue
+    }
+    const createdAt = getParentWakeMessageCreatedAt(message)
+    const finish = message.info?.finish ?? message.finish
+    const completedAt = message.info?.time?.completed ?? message.time?.completed
+    const error = message.info?.error ?? message.error
+    return createdAt !== undefined
+      && createdAt <= admittedAt
+      && finish === undefined
+      && completedAt === undefined
+      && error === undefined
+  }
+  return false
+}
+
 export function hasAssistantOrToolOutputAfterParentWake(input: {
   readonly messages: readonly ParentWakeSessionMessage[] | undefined
   readonly wake: PendingParentWake
