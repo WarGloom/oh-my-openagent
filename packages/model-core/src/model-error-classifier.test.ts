@@ -447,6 +447,21 @@ describe("model-error-classifier", () => {
     //#then
     expect(result).toBe(true)
   })
+
+  test.each([
+    "Meridian's session bookkeeping is saturated: a bookkeeping lock is busy. This is proxy load, not the request; retry shortly.",
+    "Meridian’s session bookkeeping is saturated: the bookkeeping queue is full. This is proxy load, not the request; retry shortly.",
+    "Shared session mapping changed before publication",
+  ])("treats Meridian proxy-load retry %p as retryable so a background task falls back instead of failing", (message) => {
+    //#given
+    const error = { name: "SessionRetry", message }
+
+    //#when
+    const result = shouldRetryError(error)
+
+    //#then
+    expect(result).toBe(true)
+  })
 })
 
 export {}
