@@ -79,6 +79,16 @@ export class ParentWakeFlushRunner {
       })
       return
     }
+    if (
+      forceDispatchAfterActiveDefer
+      && await this.deps.sessionInspector.isAdmittedWakeInsideOpenAssistantTurn(sessionID, latestWake)
+    ) {
+      this.schedulePendingParentWakeFlush(sessionID)
+      log("[background-agent] Kept retained parent wake queued because the busy parent turn reads its admitted notification:", {
+        sessionID,
+      })
+      return
+    }
 
     if (!forceDispatchAfterActiveDefer && this.hasRecentParentSessionActivity(sessionID)) {
       if (this.deferReplyWakeWhileUnsafe(sessionID, latestWake)) {
