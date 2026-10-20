@@ -436,6 +436,7 @@ describe("createChatMessageHandler runtime fallback model override", () => {
       model: {
         providerID: "openai",
         modelID: "gpt-5.4",
+        variant: "high",
       },
       variant: "high",
     })
@@ -646,6 +647,7 @@ describe("createChatMessageHandler runtime fallback model override", () => {
       model: {
         providerID: "openai",
         modelID: "gpt-5.4",
+        variant: "high",
       },
       variant: "high",
     })
