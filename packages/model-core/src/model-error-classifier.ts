@@ -85,6 +85,10 @@ const RETRYABLE_MESSAGE_PATTERNS = [
   "account(s) failed (server errors or auth issues)",
   // Proxy idle-stall guard (Meridian): the upstream stopped sending mid-turn.
   "upstream stalled",
+  // Meridian proxy-load transients (503 overloaded_error and the shared-session publish race).
+  // Without them a background task fails as soon as the provider auto-retry is exhausted.
+  "session bookkeeping is saturated",
+  "shared session mapping changed before publication",
 ]
 
 const AUTO_RETRY_GATE_PATTERNS = [
