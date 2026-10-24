@@ -47,7 +47,7 @@ function buildRosterSection(roster: MemberPromptRosterEntry[], selfName: string)
     if (entry.isLead) markers.push("lead")
     if (entry.name === selfName) markers.push("you")
     const suffix = markers.length > 0 ? ` (${markers.join(", ")})` : ""
-    const role = entry.role ? ` — ${entry.role}` : ""
+    const role = entry.role ? ` (${entry.role})` : ""
     return `- ${entry.name}${suffix}${role}`
   })
 
