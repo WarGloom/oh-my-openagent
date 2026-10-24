@@ -13,7 +13,7 @@ Team mode gives Claude Code Agent Teams parity. It is off by default. Enable it 
 - Split a large job across several agents.
 - Keep a lead agent focused while member agents work in parallel.
 - Use worktree mode for isolated code changes, or tmux visualization when you want live session layout.
-- Do NOT use Team Mode for independent or solitary work — use \`task\`/delegate-task instead. Team Mode is for members whose work genuinely depends on each other and who must coordinate.
+- Do NOT use Team Mode for independent or solitary work. Use \`task\`/delegate-task instead. Team Mode is for members whose work genuinely depends on each other and who must coordinate.
 
 ## Declare a team
 
