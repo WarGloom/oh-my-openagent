@@ -77,7 +77,7 @@ describe("sync-session-cleanup", () => {
     fakeTimers.restore()
   })
 
-  test("schedules the deletion with the provided delay", () => {
+  test("schedules the release with the provided delay and keeps the SDK session for task_id resumption", () => {
     //#given - a client whose session.delete resolves
     const { client, deleteMock } = createClient()
 
@@ -91,9 +91,8 @@ describe("sync-session-cleanup", () => {
     //#when - the recorded callback fires
     fakeTimers.timers[0]?.callback()
 
-    //#then - session.delete is called once for that session id
-    expect(deleteMock).toHaveBeenCalledTimes(1)
-    expect(deleteMock).toHaveBeenCalledWith({ path: { id: "ses_sscd_a" } })
+    //#then - the SDK session is retained so a later task_id continuation can resume it
+    expect(deleteMock).not.toHaveBeenCalled()
   })
 
   test("falls back to TASK_CLEANUP_DELAY_MS when the delay argument is undefined", () => {
