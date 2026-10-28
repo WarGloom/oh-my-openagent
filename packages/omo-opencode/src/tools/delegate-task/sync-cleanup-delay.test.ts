@@ -102,7 +102,7 @@ describe("sync cleanup delay threading", () => {
     handedBackSyncSessions.clear()
   })
 
-  test("#when a sync task completes with a configured delay #then its deletion uses that delay", async () => {
+  test("#when a sync task completes with a configured delay #then its release uses that delay and keeps the session", async () => {
     const sessionID = SESSION_IDS[0]
     const { client, deleteSession } = createClient()
 
@@ -122,7 +122,7 @@ describe("sync cleanup delay threading", () => {
     const deletionTimer = pendingTimers().slice(-1)[0]
     expect(deletionTimer?.delay).toBe(120000)
     deletionTimer?.callback()
-    expect(deleteSession).toHaveBeenCalledWith({ path: { id: sessionID } })
+    expect(deleteSession).not.toHaveBeenCalled()
   })
 
   test("#when a sync task completes without a configured delay #then its deletion uses the default", async () => {
