@@ -633,6 +633,34 @@ describe("createTeamSendMessageTool", () => {
     expect(inboxEntries.some((entry) => entry.startsWith(".delivering-"))).toBe(false)
   })
 
+  test("#given runtime marks recipient errored #when team_send_message sends a peer message #then it live-delivers so the member gets a new turn", async () => {
+    // given: the member's last turn ended with an error (for example after an OpenCode restart)
+    const fixture = await createTeamFixture()
+    const { loadRuntimeState: loadState, saveRuntimeState: saveState } = await import("../team-state-store/store")
+    const state = await loadState(fixture.teamRunId, fixture.config)
+    const memberTwo = state.members.find((member) => member.name === "m2")
+    if (!memberTwo) throw new Error("m2 runtime member missing")
+    memberTwo.status = "errored"
+    await saveState(state, fixture.config)
+    const { client, calls } = createRecordingClient()
+    const liveTool = createTeamSendMessageTool(fixture.config, client)
+
+    // when
+    await liveTool.execute(
+      {
+        teamRunId: fixture.teamRunId,
+        to: "m2",
+        body: "continue",
+      },
+      fixture.toolContext(fixture.memberOneSessionId),
+    )
+
+    // then
+    expect(calls).toHaveLength(1)
+    expect(calls[0].sessionId).toBe(fixture.memberTwoSessionId)
+    expect(calls[0].parts[0]?.text ?? "").toContain("continue")
+  })
+
   test("#given recipient OpenCode session is busy #when team_send_message attempts live delivery #then it releases the message for later mailbox injection", async () => {
     // given
     const fixture = await createTeamFixture()
