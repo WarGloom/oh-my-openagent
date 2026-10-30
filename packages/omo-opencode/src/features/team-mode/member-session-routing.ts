@@ -2,6 +2,7 @@ import { stripAgentListSortPrefix } from "../../shared/agent-display-names"
 import { resolveRegisteredAgentName } from "../claude-code-session-state"
 import { applySessionPromptParams } from "../../shared/session-prompt-params-helpers"
 import { SessionCategoryRegistry } from "../../shared/session-category-registry"
+import { getStoredSessionModel } from "../../shared/session-model-state"
 import type { RuntimeStateMember } from "./types"
 
 type PromptGenerationModel = {
@@ -67,5 +68,21 @@ export function buildMemberPromptBody(member: RuntimeStateMember, text: string):
     ...(member.model?.variant ? { variant: member.model.variant } : {}),
     ...buildPromptGenerationParams(member.model),
     parts: [{ type: "text", text }],
+  }
+}
+
+export function buildRecipientPromptBody(
+  sessionID: string,
+  member: RuntimeStateMember,
+  text: string,
+): TeamMemberPromptBody {
+  const body = buildMemberPromptBody(member, text)
+  if (body.model) return body
+  const live = getStoredSessionModel(sessionID)
+  if (!live) return body
+  return {
+    ...body,
+    model: { providerID: live.providerID, modelID: live.modelID },
+    ...(live.variant ? { variant: live.variant } : {}),
   }
 }

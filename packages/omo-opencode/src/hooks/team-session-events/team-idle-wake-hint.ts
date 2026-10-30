@@ -1,7 +1,7 @@
 import type { TeamModeConfig } from "../../config/schema/team-mode"
 import { findResolvedMemberSession } from "../../features/team-mode/member-session-resolution"
 import { isTeamSessionDenied } from "../../features/team-mode/team-session-registry"
-import { applyMemberSessionRouting, buildMemberPromptBody } from "../../features/team-mode/member-session-routing"
+import { applyMemberSessionRouting, buildRecipientPromptBody } from "../../features/team-mode/member-session-routing"
 import { loadRuntimeState } from "../../features/team-mode/team-state-store/store"
 import { resolveSessionEventID } from "../../shared/event-session-id"
 import { isAmbiguousPostDispatchPromptFailure } from "../../shared/prompt-failure-classifier"
@@ -204,7 +204,7 @@ export function createTeamIdleWakeHint(
           shouldDispatch: () => !isTeamSessionDenied(sessionID, config),
           input: {
             path: { id: sessionID },
-            body: buildMemberPromptBody(latestMemberEntry, reservedBatch.promptText),
+            body: buildRecipientPromptBody(sessionID, latestMemberEntry, reservedBatch.promptText),
             query: { directory: ctx.directory },
           },
         })
