@@ -137,6 +137,6 @@ describe("pollSyncSession status fallback", () => {
     expect(result).toBe(
       "Poll no-progress timeout reached after 50ms without message or part progress while OpenCode status was unavailable for session ses_missing_status_stalled",
     )
-    expect(abortCount).toBe(1)
+    expect(abortCount).toBe(0)
   })
 })

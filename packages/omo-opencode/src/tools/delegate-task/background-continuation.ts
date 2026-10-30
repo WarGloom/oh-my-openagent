@@ -7,8 +7,13 @@ import { buildTaskMetadataBlock } from "../../features/tool-metadata-store/task-
 import { resolveMetadataModel } from "./resolve-metadata-model"
 import { getTaskID } from "./task-id"
 import { z } from "zod"
-import { claimRetainedSessionRecovery } from "../../features/background-agent/task-registry"
-import { executeSyncContinuation } from "./sync-continuation"
+import {
+  claimRetainedSessionRecovery,
+  claimUnarchivedSessionRecovery,
+  MISSING_RETAINED_TASK_ERROR,
+} from "../../features/background-agent/task-registry"
+import type { BackgroundTask } from "../../features/background-agent/types"
+import { recoverUnarchivedTask } from "./unarchived-session-recovery"
 import { assertTeamSessionCanContinue } from "../../features/team-mode/team-session-registry"
 
 export async function executeBackgroundContinuation(
@@ -27,32 +32,47 @@ export async function executeBackgroundContinuation(
     }
     assertTeamSessionCanContinue(taskID)
 
-    const task = await manager
-      .resume({
-        sessionId: taskID,
-        prompt: args.prompt,
-        system: systemContent,
-        parentSessionId: parentContext.sessionID,
-        parentMessageId: parentContext.messageID,
-        parentModel: parentContext.model,
-        parentAgent: parentContext.agent,
-        parentTools: getSessionTools(parentContext.sessionID),
-      })
-      .catch(async (error: unknown) => {
-        if (!(error instanceof Error) || error.message !== `Task not found for session: ${taskID}`) throw error
-        return undefined
-      })
+    const resumeInput = {
+      sessionId: taskID,
+      prompt: args.prompt,
+      system: systemContent,
+      parentSessionId: parentContext.sessionID,
+      parentMessageId: parentContext.messageID,
+      parentModel: parentContext.model,
+      parentAgent: parentContext.agent,
+      parentTools: getSessionTools(parentContext.sessionID),
+    }
+    let task = await manager.resume(resumeInput).catch(async (error: unknown) => {
+      if (!(error instanceof Error) || error.message !== `Task not found for session: ${taskID}`) throw error
+      return undefined
+    })
     if (!task) {
-      const claim = claimRetainedSessionRecovery(taskID, parentContext.sessionID)
+      // The manager dropped the finished task but its SDK session was retained: re-register the
+      // archived record so the continuation runs in the background under its original task ID.
+      // After an OpenCode restart the archive is empty, so the record is rebuilt from the session.
+      let archived: BackgroundTask | undefined
+      let release: () => void
+      try {
+        const claim = claimRetainedSessionRecovery(taskID, parentContext.sessionID)
+        archived = claim.task
+        release = claim.release
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== MISSING_RETAINED_TASK_ERROR) throw error
+        release = claimUnarchivedSessionRecovery(taskID, parentContext.sessionID).release
+      }
       try {
         const sessionSchema = z.object({
           id: z.literal(taskID),
           parentID: z.literal(parentContext.sessionID),
+          title: z.string().optional(),
           error: z.undefined().optional(),
         })
-        z.union([sessionSchema, z.object({ data: sessionSchema, error: z.undefined().optional() })]).parse(
-          await executorCtx.client.session.get({ path: { id: taskID } }),
-        )
+        const session = z
+          .union([
+            sessionSchema,
+            z.object({ data: sessionSchema, error: z.undefined().optional() }).transform((value) => value.data),
+          ])
+          .parse(await executorCtx.client.session.get({ path: { id: taskID } }))
         const statuses = z.record(z.string(), z.object({ type: z.enum(["idle", "busy", "retry"]) }))
         const statusResponse = z
           .union([
@@ -62,19 +82,13 @@ export async function executeBackgroundContinuation(
           .parse(await executorCtx.client.session.status())
         if (statusResponse[taskID] && statusResponse[taskID].type !== "idle")
           throw new Error("Retained-session recovery denied: SDK session is busy.")
-        const result = await executeSyncContinuation(
-          { ...args, run_in_background: false },
-          ctx,
-          executorCtx,
-          parentContext,
-          undefined,
-          systemContent,
-          claim.task,
+        manager.adoptRetainedTask(
+          archived ?? (await recoverUnarchivedTask(executorCtx.client, taskID, parentContext, session.title)),
         )
-        return `Synchronous recovery of retained session ${taskID}; no replacement agent or background task was created.\n\n${result}`
       } finally {
-        claim.release()
+        release()
       }
+      task = await manager.resume(resumeInput)
     }
     const sessionId = task.sessionId
     const backgroundTaskId = task.id

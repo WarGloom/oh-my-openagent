@@ -605,10 +605,10 @@ describe("pollSyncSession", () => {
       expect(result).toBe(
         "Poll inactivity timeout reached after 50ms without active OpenCode status for session ses_timeout",
       )
-      expect(abortCount).toBe(1)
+      expect(abortCount).toBe(0)
     })
 
-    test("aborts active session when message progress stalls", async () => {
+    test("returns control without aborting an active session whose message progress stalls", async () => {
       // given: OpenCode reports busy but messages do not change
       const { pollSyncSession } = require("./sync-session-poller")
 
@@ -649,11 +649,11 @@ describe("pollSyncSession", () => {
         5000,
       )
 
-      // then: aborts the stalled child session
+      // then: reports the timeout but leaves the child running
       expect(result).toBe(
         "Poll no-progress timeout reached after 50ms without message or part progress for active session ses_stalled",
       )
-      expect(abortCount).toBe(1)
+      expect(abortCount).toBe(0)
       expect(messageCallCount).toBeGreaterThan(1)
     })
 
@@ -953,6 +953,78 @@ describe("pollSyncSession", () => {
       expect(abortCount).toBe(0)
       expect(statusCallCount).toBe(5)
       expect(messageCallCount).toBe(5)
+    })
+
+    test("treats a running tool as progress when a resumed session is longer than the fetched message page", async () => {
+      // given: a retained session with 150 prior messages, resumed and now running one long tool call
+      const { pollSyncSession } = require("./sync-session-poller")
+      const priorMessages = Array.from({ length: 150 }, (_, index) => ({
+        info: {
+          id: `msg_${String(index).padStart(3, "0")}`,
+          role: index % 2 === 0 ? "user" : "assistant",
+          time: { created: index },
+          finish: index % 2 === 0 ? undefined : "stop",
+        },
+        parts: [{ type: "text", text: `old ${index}` }],
+      }))
+      const anchor = priorMessages[priorMessages.length - 1]
+      let abortCount = 0
+      let statusCallCount = 0
+      const mockClient = {
+        session: {
+          abort: async () => {
+            abortCount++
+          },
+          messages: async (input: { query?: { limit?: number } }) => {
+            const running = statusCallCount < 8
+            const history = [
+              ...priorMessages,
+              {
+                info: { id: "msg_900", role: "user", time: { created: 1000 } },
+                parts: [{ type: "text", text: "continue" }],
+              },
+              {
+                info: {
+                  id: "msg_901",
+                  role: "assistant",
+                  time: { created: 1001 },
+                  finish: running ? undefined : "end_turn",
+                },
+                parts: running
+                  ? [{ type: "tool", tool: "bash", state: { status: "running", input: {}, title: "uv run pytest" } }]
+                  : [{ type: "text", text: "final result" }],
+              },
+            ]
+            const limit = input.query?.limit
+            return { data: limit === undefined ? history : history.slice(-limit) }
+          },
+          status: async () => {
+            statusCallCount++
+            return { data: { ses_long_resumed: { type: statusCallCount < 8 ? "busy" : "idle" } } }
+          },
+        },
+      }
+
+      // when: the tool call outlasts the no-progress budget
+      const result = await pollSyncSession(
+        createMockCtx(),
+        mockClient,
+        {
+          sessionID: "ses_long_resumed",
+          agentToUse: "test-agent",
+          toastManager: null,
+          taskId: undefined,
+          anchorMessageCount: priorMessages.length,
+          anchorMessageID: anchor.info.id,
+          activeNoProgressTimeoutMs: 50,
+        },
+        5000,
+      )
+
+      // then: the child is not aborted and the poll ends on the final turn
+      expect(result).toBeNull()
+      expect(abortCount).toBe(0)
+      expect(statusCallCount).toBe(8)
     })
   })
 
