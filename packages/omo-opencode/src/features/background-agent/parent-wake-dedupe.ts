@@ -154,11 +154,7 @@ export function isBackgroundTaskProgressNotification(notification: string): bool
     return false
   }
 
-  return notification
-    .split("\n")
-    .some((line) =>
-      /^\*\*\d+ tasks? still in progress\.\*\* You WILL be notified when ALL complete\.$/.test(line.trim()),
-    )
+  return notification.split("\n").some((line) => /^\*\*\d+ tasks? still in progress\.\*\*(\s|$)/.test(line.trim()))
 }
 
 export function isBackgroundTaskRetryNotification(notification: string): boolean {
