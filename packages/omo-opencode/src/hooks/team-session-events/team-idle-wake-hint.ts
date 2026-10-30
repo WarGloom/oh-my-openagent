@@ -3,7 +3,7 @@ import { findResolvedMemberSession } from "../../features/team-mode/member-sessi
 import { isTeamSessionDenied } from "../../features/team-mode/team-session-registry"
 import {
   applyMemberSessionRouting,
-  buildMemberPromptBody,
+  buildRecipientPromptBody,
 } from "../../features/team-mode/member-session-routing"
 import { loadRuntimeState } from "../../features/team-mode/team-state-store/store"
 import { resolveSessionEventID } from "../../shared/event-session-id"
@@ -197,7 +197,7 @@ export function createTeamIdleWakeHint(ctx: TeamIdleWakeHintContext, config: Tea
           shouldDispatch: () => !isTeamSessionDenied(sessionID, config),
           input: {
             path: { id: sessionID },
-            body: buildMemberPromptBody(latestMemberEntry, reservedBatch.promptText),
+            body: buildRecipientPromptBody(sessionID, latestMemberEntry, reservedBatch.promptText),
             query: { directory: ctx.directory },
           },
         })
