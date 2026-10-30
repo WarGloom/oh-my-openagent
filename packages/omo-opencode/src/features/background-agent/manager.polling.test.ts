@@ -1077,13 +1077,13 @@ describe("BackgroundManager pollRunningTasks", () => {
       expect(promptAsync).toHaveBeenCalledTimes(1)
     })
 
-    test("#when no fallback retry is available #then fails the task and aborts the child session", async () => {
+    test("#when quota is exhausted and no fallback retry is available #then fails the task and aborts the child session", async () => {
       //#given
       const abort = mock(async () => ({}))
       const promptAsync = mock(async () => ({}))
       const manager = createManagerWithClient({
         status: async () => ({
-          data: { "ses-retry-no-fallback": { type: "retry", message: "quota exhausted", attempt: 1 } },
+          data: { "ses-retry-no-fallback": { type: "retry", message: "You have exceeded your quota", attempt: 1 } },
         }),
         abort,
         promptAsync,
@@ -1098,9 +1098,41 @@ describe("BackgroundManager pollRunningTasks", () => {
 
       //#then
       expect(task.status).toBe("error")
-      expect(task.error).toBe("quota exhausted")
+      expect(task.error).toBe("You have exceeded your quota")
       expect(abort).toHaveBeenCalled()
       expect(promptAsync).not.toHaveBeenCalled()
+    })
+
+    test("#when a transient proxy error is retrying and no fallback retry is available #then keeps the task running for the host retry", async () => {
+      //#given
+      const abort = mock(async () => ({}))
+      const promptAsync = mock(async () => ({}))
+      const manager = createManagerWithClient({
+        status: async () => ({
+          data: {
+            "ses-retry-transient": {
+              type: "retry",
+              message: "Session bookkeeping is unavailable; retry shortly.",
+              attempt: 1,
+              next: Date.now() + 2_000,
+            },
+          },
+        }),
+        abort,
+        promptAsync,
+      })
+      const task = createRunningTask("ses-retry-transient")
+      injectTask(manager, task)
+
+      //#when
+      const poll = manager["pollRunningTasks"]
+      await poll.call(manager)
+
+      //#then
+      expect(task.status).toBe("running")
+      expect(abort).not.toHaveBeenCalled()
+      expect(promptAsync).not.toHaveBeenCalled()
+      await manager.shutdown()
     })
   })
 

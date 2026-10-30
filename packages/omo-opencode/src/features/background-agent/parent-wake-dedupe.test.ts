@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { mergeParentWakeNotifications } from "./parent-wake-dedupe"
+import { buildBackgroundTaskNotificationText } from "./background-task-notification-template"
+import { isBackgroundTaskProgressNotification, mergeParentWakeNotifications } from "./parent-wake-dedupe"
 
 describe("mergeParentWakeNotifications", () => {
   test("#given distinct final background wake notifications #when the newer final is merged #then both final summaries are preserved", () => {
@@ -42,5 +43,20 @@ describe("mergeParentWakeNotifications", () => {
 
     // then
     expect(notifications).toEqual([finalNotification, bodyMentionsProgress])
+  })
+
+  test("#given a real partial-result notification #when the dedupe classifies it #then the template stays recognized as progress", () => {
+    // given
+    const progressNotification = buildBackgroundTaskNotificationText({
+      task: { id: "task-a", description: "first", status: "completed" },
+      duration: "1s",
+      statusText: "COMPLETED",
+      allComplete: false,
+      remainingCount: 1,
+      completedTasks: [],
+    })
+
+    // when / then
+    expect(isBackgroundTaskProgressNotification(progressNotification)).toBe(true)
   })
 })
