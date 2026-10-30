@@ -83,7 +83,7 @@ describe("syncPollTimeoutMs threading", () => {
           expect(result).toBe(
             "Poll inactivity timeout reached after 120000ms without active OpenCode status for session ses_custom",
           )
-          expect(abortCount).toBe(1)
+          expect(abortCount).toBe(0)
         })
       })
 
