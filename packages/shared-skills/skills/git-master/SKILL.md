@@ -9,14 +9,22 @@ Use this skill when the user asks you to operate on Git history or answer a Git-
 
 ## Mode Gate
 
-Classify the request first:
+Classify the request first. A request that also requires new commits uses `COMMIT`.
 
+- `PUBLISH_EXISTING`: push or publish an already prepared and accepted commit. Follow Publish Existing and finish there, before Ground Truth or commit analysis.
 - `COMMIT`: stage and commit local changes.
 - `REBASE`: rebase, squash, fixup, autosquash, reorder, split, or otherwise rewrite branch history.
 - `HISTORY`: answer when, where, who, why, or which commit changed something.
 - `STATUS`: inspect branch, diff, or working-tree state without changing it.
 
 Do not commit, rebase, push, force-push, reset, stash-pop, or delete anything unless the user explicitly asked for that operation. When a workflow the user started mandates one of them (ulw-loop commits each verified unit, ulw-execute lands its branches), that workflow's instruction is the ask. If the request is only investigative, report findings and stop.
+
+## Publish Existing
+
+1. Bind the authorized repository, destination branch, accepted commit and tree, and expected destination head for the lease. For an existing PR or stack, also bind its intended base name and live base OID and any required parent PR chain. Use current named remote refs and live PR metadata, not cached base hashes or history alone. Do not invent a PR or assume a default base.
+2. Before pushing, recheck the destination ref. Permit confirmed absence only when branch creation is explicitly authorized and the lease expects absence. For an existing PR or stack, recheck the PR head and base name and OID, the required remote base branch, and each required parent. If a lookup fails or is unknown, a required base or parent is absent, deleted or merged, or any approved head or base changed, stop before push. An empty base ref or auto-retarget is not clean. Report the evidence and obtain the appropriate authorization; do not silently retarget, rebase or recreate a parent.
+3. Push only with the user's authorization and exact expected lease, preserving normal hooks, the accepted tree, PR title and body, base, and others' changes. Retain still-valid required QA receipts. If a hook changes accepted inputs, stop; do not repair them in this mode. Do not create or stage commits, inspect message style or 30-commit history, reset, stash, rewrite, rebase, autosquash, or run a test campaign or full CI merely to publish unchanged accepted work.
+4. After pushing, verify the exact destination ref. For an existing PR or stack, verify the PR head, named base and OID, and parent chain again. Report `commit_published`, `head_is_current`, `merge_into_named_base`, `parent_pr_blockers`, and `required_reviews_and_checks` separately with exact head and applicable base and verified pass, fail, pending, or unknown. Mark PR-only fields not applicable when there is no PR, not clean. Distinguish source conflicts, diff size, and review or check blockers. Publication does not establish PR readiness or stack readiness. Report only the requested outcome; do not automatically wait, poll, or request reviews. Merge, mark ready, auto-merge, self-approval, and protection changes require separate authority.
 
 ## Ground Truth
 
