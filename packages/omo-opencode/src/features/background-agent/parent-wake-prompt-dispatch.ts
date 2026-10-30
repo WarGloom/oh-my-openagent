@@ -55,7 +55,7 @@ export async function sendParentWakePrompt(input: ParentWakePromptDispatchInput)
           ...input.latestWake.promptContext,
           ...(liveSelection ? {
             model: liveSelection.model,
-            variant: liveSelection.variant,
+            ...(liveSelection.variant ? { variant: liveSelection.variant } : {}),
             agent: liveSelection.agent ?? input.latestWake.promptContext.agent,
           } : {}),
           parts: [

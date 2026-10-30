@@ -24,7 +24,8 @@ describe("buildBackgroundTaskNotificationText", () => {
       // then
       expect(notification).not.toContain("[BACKGROUND TASK COMPLETED]")
       expect(notification).toContain("[BACKGROUND TASK RESULT READY]")
-      expect(notification).toContain("You WILL be notified when ALL complete.")
+      expect(notification).toContain('background_output(task_id="task-1")')
+      expect(notification).not.toContain("when ALL complete")
     })
 
   })

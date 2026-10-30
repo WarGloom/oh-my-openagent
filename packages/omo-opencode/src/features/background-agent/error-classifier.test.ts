@@ -449,5 +449,3 @@ describe("extractErrorStatusCode", () => {
     expect(extractErrorStatusCode({ status: "401" })).toBe(401)
   })
 })
-  })
-})

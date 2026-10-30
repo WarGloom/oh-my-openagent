@@ -126,8 +126,8 @@ ${header}
 **Description:** ${safeDescription(task)}
 **Duration:** ${duration}${errorInfo}
 
-**${remainingCount} task${remainingCount === 1 ? "" : "s"} still in progress.** You WILL be notified when ALL complete.
-${isFailure ? "**ACTION REQUIRED:** This task failed. Check the error and decide whether to retry, cancel remaining tasks, or continue." : "Do NOT poll - continue productive work."}
-Use \`background_output(task_id="${task.id}")\` to retrieve this result when ready.
+**${remainingCount} task${remainingCount === 1 ? "" : "s"} still in progress.** This result is ready now. You do not need to wait for the other tasks to retrieve it.
+${isFailure ? "**ACTION REQUIRED:** This task failed. Check the error and decide whether to retry, cancel remaining tasks, or continue." : "Do NOT poll the running tasks - you will be notified as each one finishes."}
+Retrieve this result with \`background_output(task_id="${task.id}")\` as soon as you can act on it. Wait for the final notification only if your next step needs every result.
 </system-reminder>`)
 }
