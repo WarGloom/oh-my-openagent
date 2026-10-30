@@ -126,11 +126,14 @@ export function forgetBackgroundTask(taskID: string): void {
   registry.completedTasks.delete(taskID)
 }
 
-export function claimRetainedSessionRecovery(
+export const MISSING_RETAINED_TASK_ERROR =
+  "Retained-session recovery denied: no owned completed task with trusted agent/model metadata. The archive may have expired or the process restarted; do not substitute another agent."
+
+function reserveRecoveryClaim(
+  registry: BackgroundTaskRegistry,
   sessionID: string,
   parentSessionID: string,
-): { task: BackgroundTask; release: () => void } {
-  const registry = getRegistry()
+): Set<string> {
   const claims = (registry.recoveryClaims ??= new Set<string>())
   if (
     sessionID === parentSessionID ||
@@ -139,15 +142,37 @@ export function claimRetainedSessionRecovery(
   ) {
     throw new Error("Retained-session recovery denied: session is active, claimed, or the caller itself.")
   }
+  return claims
+}
+
+export function claimRetainedSessionRecovery(
+  sessionID: string,
+  parentSessionID: string,
+): { task: BackgroundTask; release: () => void } {
+  const registry = getRegistry()
+  const claims = reserveRecoveryClaim(registry, sessionID, parentSessionID)
   const task = [...registry.completedTasks.values()].find((candidate) => candidate.sessionId === sessionID)
   if (!task || task.status !== "completed" || task.parentSessionId !== parentSessionID || !task.agent || !task.model) {
-    throw new Error(
-      "Retained-session recovery denied: no owned completed task with trusted agent/model metadata. The archive may have expired or the process restarted; do not substitute another agent.",
-    )
+    throw new Error(MISSING_RETAINED_TASK_ERROR)
   }
   claims.add(sessionID)
   return {
     task: cloneRegisteredTask(task),
+    release: () => {
+      claims.delete(sessionID)
+    },
+  }
+}
+
+/** Reserves a retained session that has no archived record, e.g. after an OpenCode restart. The caller must prove ownership from the session itself. */
+export function claimUnarchivedSessionRecovery(sessionID: string, parentSessionID: string): { release: () => void } {
+  const registry = getRegistry()
+  const claims = reserveRecoveryClaim(registry, sessionID, parentSessionID)
+  if ([...registry.completedTasks.values()].some((candidate) => candidate.sessionId === sessionID)) {
+    throw new Error(MISSING_RETAINED_TASK_ERROR)
+  }
+  claims.add(sessionID)
+  return {
     release: () => {
       claims.delete(sessionID)
     },
