@@ -259,6 +259,30 @@ describe("session-manager tools", () => {
     expect(result).toBe("results:0\n\nSkipped 1 session that could not be read: ses_gone (NotFoundError: Session not found: ses_gone)")
   })
 
+  test("global session listing reuses the in-process transport when no HTTP listener runs", async () => {
+    //#given
+    const requested: string[] = []
+    const inProcessFetch = async (input: RequestInfo | URL) => {
+      requested.push(input instanceof Request ? input.url : String(input))
+      return Response.json([])
+    }
+    const client = { _client: { getConfig: () => ({ baseUrl: "http://localhost:4096", fetch: inProcessFetch }) } }
+    let globalClient: unknown
+    createSessionManagerTools(
+      { directory: projectDir, client, serverUrl: new URL("http://placeholder.invalid:1") } as unknown as PluginInput,
+      { setStorageClient: (_client, global) => { globalClient = global } },
+    )
+
+    //#when
+    const list = (globalClient as { experimental: { session: { list: (input: object) => Promise<unknown> } } })
+      .experimental.session.list({ limit: 1 })
+    await list
+
+    //#then
+    expect(requested).toHaveLength(1)
+    expect(requested[0]).toStartWith("http://localhost:4096/")
+  })
+
   test("session_info executes with valid session", async () => {
     const { session_info } = createTestTools()
     const result = await session_info.execute({ session_id: "ses_test123" }, mockContext)

@@ -23,12 +23,31 @@ import { describeSessionError, formatSkippedSessions, type SkippedSession } from
 const SEARCH_TIMEOUT_MS = 60_000
 const MAX_SESSIONS_TO_SCAN = 50
 
-function createGlobalSessionSdkClient(serverUrl: URL | undefined) {
-  if (!serverUrl) return undefined
+// Without an HTTP listener OpenCode gives plugins a placeholder serverUrl and serves ctx.client through an
+// in-process fetch, so the global client must reuse that transport instead of dialing the placeholder.
+function readClientTransport(client: unknown): { baseUrl?: string; fetch?: typeof fetch } {
+  const internal = typeof client === "object" && client !== null ? Reflect.get(client, "_client") : undefined
+  const getConfig = typeof internal === "object" && internal !== null ? Reflect.get(internal, "getConfig") : undefined
+  if (typeof getConfig !== "function") return {}
+  const config: unknown = Reflect.apply(getConfig, internal, [])
+  if (typeof config !== "object" || config === null) return {}
+  const baseUrl: unknown = Reflect.get(config, "baseUrl")
+  const fetchImpl: unknown = Reflect.get(config, "fetch")
+  return {
+    ...(typeof baseUrl === "string" ? { baseUrl } : {}),
+    ...(typeof fetchImpl === "function" ? { fetch: fetchImpl as typeof fetch } : {}),
+  }
+}
+
+function createGlobalSessionSdkClient(serverUrl: URL | undefined, client: unknown) {
+  const transport = readClientTransport(client)
+  const baseUrl = transport.fetch ? transport.baseUrl ?? serverUrl?.toString() : serverUrl?.toString()
+  if (!baseUrl) return undefined
 
   const authorization = getServerBasicAuthHeader()
   return createGlobalSessionClient({
-    baseUrl: serverUrl.toString(),
+    baseUrl,
+    ...(transport.fetch ? { fetch: transport.fetch } : {}),
     ...(authorization ? { headers: { Authorization: authorization } } : {}),
   })
 }
@@ -102,7 +121,7 @@ export function createSessionManagerTools(
     ...deps,
   }
   // Initialize storage clients for SDK-based operations (beta mode)
-  resolvedDeps.setStorageClient(ctx.client, createGlobalSessionSdkClient(ctx.serverUrl))
+  resolvedDeps.setStorageClient(ctx.client, createGlobalSessionSdkClient(ctx.serverUrl, ctx.client))
 
   const session_list: ToolDefinition = tool({
     description: SESSION_LIST_DESCRIPTION,
