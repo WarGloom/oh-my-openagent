@@ -15,6 +15,7 @@ import { sendMessage } from "../../features/team-mode/team-mailbox/send"
 import { getInboxDir, resolveBaseDir } from "../../features/team-mode/team-registry/paths"
 import { saveRuntimeState } from "../../features/team-mode/team-state-store/store"
 import type { RuntimeState } from "../../features/team-mode/types"
+import { clearSessionModel, setSessionModel } from "../../shared/session-model-state"
 import { releaseAllPromptAsyncReservationsForTesting, releasePromptAsyncReservation } from "../shared/prompt-async-gate"
 import { createTeamIdleWakeHint } from "./team-idle-wake-hint"
 
@@ -22,6 +23,8 @@ type WakeHintPromptInput = {
   readonly path: { readonly id: string }
   readonly body: {
     readonly parts: readonly { readonly type: "text"; readonly text: string }[]
+    readonly model?: { readonly providerID: string; readonly modelID: string }
+    readonly variant?: string
   }
   readonly query: { readonly directory: string }
 }
@@ -110,6 +113,7 @@ async function sendCompletionToLead(
 
 afterEach(async () => {
   releaseAllPromptAsyncReservationsForTesting()
+  clearSessionModel("lead-session")
   await Promise.all(
     temporaryDirectories.splice(0).map(async (directoryPath) => {
       await rm(directoryPath, { recursive: true, force: true })
@@ -118,6 +122,50 @@ afterEach(async () => {
 })
 
 describe("createTeamIdleWakeHint leader delivery", () => {
+  test.each([
+    { variant: "xhigh", memberModel: undefined },
+    { variant: "high", memberModel: undefined },
+    { variant: undefined, memberModel: undefined },
+    { variant: "xhigh", memberModel: { providerID: "openai", modelID: "gpt-6.1-sol", variant: "low" } },
+    { variant: "xhigh", memberModel: { providerID: "openai", modelID: "gpt-6.1-sol" } },
+  ])(
+    "#given a changed session selection %j #when the lead receives an idle mailbox wake #then current selection or configured member routing reaches dispatch",
+    async ({ variant, memberModel }) => {
+      // given
+      const config = createConfig(await createTemporaryBaseDir())
+      const teamRunId = randomUUID()
+      const runtimeState = createLeaderRuntimeState(teamRunId)
+      runtimeState.members = runtimeState.members.map((member) =>
+        member.name === "lead" ? { ...member, model: memberModel } : member,
+      )
+      await seedRuntimeState(runtimeState, config)
+      await sendCompletionToLead(teamRunId, config, "completion", 100)
+      setSessionModel("lead-session", { providerID: "anthropic", modelID: "claude-opus-5-5", variant: "low" })
+      const promptAsyncSpy = mock(async (_input: WakeHintPromptInput) => ({}))
+      const handler = createTeamIdleWakeHint(
+        {
+          directory: "/tmp/project",
+          client: { session: { promptAsync: promptAsyncSpy } },
+        },
+        config,
+        immediatePromptGateOptions,
+      )
+      setSessionModel("lead-session", { providerID: "anthropic", modelID: "claude-opus-5-5", variant })
+
+      // when
+      await handler({ event: { type: "session.idle", properties: { sessionID: "lead-session" } } })
+
+      // then
+      expect(promptAsyncSpy).toHaveBeenCalledTimes(1)
+      expect(promptAsyncSpy.mock.calls[0]?.[0].body.model).toEqual(
+        memberModel
+          ? { providerID: "openai", modelID: "gpt-6.1-sol" }
+          : { providerID: "anthropic", modelID: "claude-opus-5-5" },
+      )
+      expect(promptAsyncSpy.mock.calls[0]?.[0].body.variant).toBe(memberModel ? memberModel.variant : variant)
+    },
+  )
+
   test("#given repeated member completions to an idle leader #when each cycle idles after delivery #then every completion wakes the leader", async () => {
     // given
     const baseDir = await createTemporaryBaseDir()

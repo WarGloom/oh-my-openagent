@@ -2,7 +2,7 @@ import type { TeamModeConfig } from "../../../config/schema/team-mode"
 import { dispatchInternalPrompt, isInternalPromptDispatchAccepted } from "../../../hooks/shared/prompt-async-gate"
 import { log } from "../../../shared/logger"
 import { isAmbiguousPostDispatchPromptFailure } from "../../../shared/prompt-failure-classifier"
-import { applyMemberSessionRouting, buildMemberPromptBody } from "../member-session-routing"
+import { applyMemberSessionRouting, buildRecipientPromptBody } from "../member-session-routing"
 import { buildEnvelope } from "@oh-my-opencode/team-core/team-mailbox/poll"
 import { commitDeliveryReservation } from "@oh-my-opencode/team-core/team-mailbox/reservation"
 import type { Message, RuntimeState } from "@oh-my-opencode/team-core/types"
@@ -71,7 +71,7 @@ export async function deliverLiveToRecipient(input: {
     return
   }
 
-  if (recipientMember.status !== "idle") {
+  if (recipientMember.status !== "idle" && recipientMember.status !== "errored") {
     log("[team-mailbox] live delivery unavailable, recipient is not idle", {
       reason: "recipient-not-idle",
       teamRunId,
@@ -116,7 +116,7 @@ export async function deliverLiveToRecipient(input: {
       postDispatchHoldMs: dispatchTiming?.postDispatchHoldMs,
       input: {
         path: { id: recipientSessionId },
-        body: buildMemberPromptBody(recipientMember, envelope),
+        body: buildRecipientPromptBody(recipientSessionId, recipientMember, envelope),
         query: { directory: recipientMember.worktreePath ?? directory },
       },
     })

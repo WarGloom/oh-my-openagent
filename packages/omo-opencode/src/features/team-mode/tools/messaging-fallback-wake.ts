@@ -9,7 +9,7 @@ import {
   recordReservedMailboxBatchPending,
   type ReservedMailboxBatch,
 } from "../../../hooks/team-session-events/reserved-mailbox-batch"
-import { buildMemberPromptBody } from "../member-session-routing"
+import { buildRecipientPromptBody } from "../member-session-routing"
 import { readUnreadMessageById } from "@oh-my-opencode/team-core/team-mailbox/inbox"
 import { loadRuntimeState } from "@oh-my-opencode/team-core/team-state-store/store"
 import type { RuntimeState } from "@oh-my-opencode/team-core/types"
@@ -33,7 +33,7 @@ export async function enqueueFallbackMailboxWake(input: {
   let admissionGeneration = 0
   const promptInput = {
     path: { id: input.recipientSessionId },
-    body: buildMemberPromptBody(input.recipientMember, ""),
+    body: buildRecipientPromptBody(input.recipientSessionId, input.recipientMember, ""),
     query: { directory: input.recipientMember.worktreePath ?? input.directory },
   }
   const promptResult = await dispatchInternalPrompt({
@@ -60,7 +60,11 @@ export async function enqueueFallbackMailboxWake(input: {
       try {
         const stillEligible = await shouldDispatchFallbackMailboxWake(input, false)
         if (generation !== admissionGeneration || !stillEligible) return false
-        promptInput.body = buildMemberPromptBody(input.recipientMember, reserved.promptText)
+        promptInput.body = buildRecipientPromptBody(
+          input.recipientSessionId,
+          input.recipientMember,
+          reserved.promptText,
+        )
         batch = reserved
         handedOff = true
         return true
@@ -125,7 +129,8 @@ async function shouldDispatchFallbackMailboxWake(
   try {
     const runtimeState = await loadRuntimeState(input.teamRunId, input.config)
     const recipient = runtimeState.members.find((member) => member.name === input.recipientName)
-    const recipientIsActive = recipient?.status === "running" || recipient?.status === "idle"
+    const recipientIsActive =
+      recipient?.status === "running" || recipient?.status === "idle" || recipient?.status === "errored"
     if (
       runtimeState.status !== "active" ||
       recipient?.removal !== undefined ||
