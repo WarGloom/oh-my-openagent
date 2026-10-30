@@ -1,4 +1,4 @@
-import { handedBackSyncSessions, subagentSessions } from "../../features/claude-code-session-state"
+import { handedBackSyncSessions, subagentSessions, syncSubagentSessions } from "../../features/claude-code-session-state"
 import { getTaskToastManager } from "../../features/task-toast-manager"
 import type { ModelFallbackInfo } from "../../features/task-toast-manager/types"
 import type { FallbackEntry } from "../../shared/model-requirements"
@@ -11,6 +11,7 @@ import { type SyncTaskDeps, syncTaskDeps } from "./sync-task-deps"
 import { publishSyncTaskMetadata } from "./sync-task-metadata"
 import { runSyncTaskLoop } from "./sync-task-runner"
 import { cleanupSyncSessionSideEffects, registerSyncSessionSideEffects } from "./sync-session-lifecycle"
+import { handOffTimedOutSyncSession } from "./sync-timeout-handoff"
 import type { DelegatedModelConfig, DelegateTaskArgs, ToolContextWithMetadata } from "./types"
 
 export async function executeSyncTask(
@@ -29,6 +30,7 @@ export async function executeSyncTask(
   const toastManager = getTaskToastManager()
   let taskId: string | undefined
   let syncSessionID: string | undefined
+  let handedOffSessionID: string | undefined
   let spawnReservation:
     | Awaited<ReturnType<ExecutorContext["manager"]["reserveSubagentSpawn"]>>
     | undefined
@@ -141,6 +143,20 @@ export async function executeSyncTask(
         toastManager: toastManager ?? undefined,
         registerSyncSession,
         publishSyncMetadata,
+        handOffTimedOutSession: async (timedOutSessionID, pollMessage) => {
+          const handOffMessage = await handOffTimedOutSyncSession({
+            manager,
+            sessionID: timedOutSessionID,
+            parentSessionID: parentContext.sessionID,
+            description: args.description,
+            agent: agentToUse,
+            parentAgent: parentContext.agent,
+            category: args.category,
+            pollMessage,
+          })
+          if (handOffMessage) handedOffSessionID = timedOutSessionID
+          return handOffMessage
+        },
       })
     } finally {
       if (toastManager && taskId !== undefined) {
@@ -158,7 +174,10 @@ export async function executeSyncTask(
       category: args.category,
     })
   } finally {
-    if (syncSessionID) {
+    if (syncSessionID && syncSessionID === handedOffSessionID) {
+      // The background manager now owns the still-running child: keep it alive and tracked.
+      syncSubagentSessions.delete(syncSessionID)
+    } else if (syncSessionID) {
       cleanupSyncSessionSideEffects(syncSessionID, executorCtx)
       handedBackSyncSessions.add(syncSessionID)
 

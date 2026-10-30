@@ -1279,4 +1279,80 @@ describe("executeSyncTask - cleanup on error paths", () => {
 
 })
 
+describe("completed sync task background continuation", () => {
+  test.each(["none", "prompt", "poll"])("resumes the completed sync session with its final identity after %s fallback", async (fallback) => {
+    // given: a real sync execution and manager, with only SDK I/O and sync waiting replaced
+    const { executeSyncTask } = require("./sync-task")
+    const { executeBackgroundContinuation } = require("./background-continuation")
+    const { syncTaskDeps } = require("./sync-task-deps")
+    const { BackgroundManager } = require("../../features/background-agent/manager")
+    const { clearBackgroundTaskRegistryForTesting } = require("../../features/background-agent/task-registry")
+    const { releaseAllPromptAsyncReservationsForTesting } = require("../../hooks/shared/prompt-async-gate")
+    const { handedBackSyncSessions } = require("../../features/claude-code-session-state")
+    const { clearAllDelegatedChildSessionBootstrap } = require("../../shared/delegated-child-session-bootstrap")
+    clearBackgroundTaskRegistryForTesting()
+    const sessionID = `ses_sync_retention_${fallback}`
+    const parentSessionID = "ses_sync_retention_parent"
+    const originalModel = { providerID: "openai", modelID: "gpt-6.1-terra", variant: "high", reasoningEffort: "high" }
+    const fallbackModel = { providerID: "anthropic", modelID: "claude-opus-4-8", variant: "max", reasoningEffort: "medium" }
+    const expectedModel = fallback === "none" ? originalModel : fallbackModel
+    const create = mock(async () => ({ data: { id: sessionID } }))
+    const promptAsync = mock(async (_input: { path: { id: string }; body: Record<string, unknown> }) => ({}))
+    const client = { session: {
+      get: async ({ path }: { path: { id: string } }) => ({ data: { id: path.id, parentID: path.id === sessionID ? parentSessionID : undefined, directory: "/tmp" } }),
+      create,
+      status: async () => ({ data: {} }),
+      messages: async () => ({ data: [] }),
+      promptAsync,
+      abort: async () => ({}),
+    } }
+    const manager = new BackgroundManager({ pluginContext: { client, directory: "/tmp" } })
+    const executorCtx = { client, manager, directory: "/tmp" }
+    const metadataCalls: CapturedMetadata[] = []
+    const ctx = { sessionID: parentSessionID, callID: `call_retention_${fallback}`, abort: new AbortController().signal,
+      metadata: (input: CapturedMetadata) => { metadataCalls.push(input) } }
+    const parentContext = { sessionID: parentSessionID, messageID: "msg_parent", agent: "sisyphus",
+      model: { providerID: "parent", modelID: "must-not-be-used" } }
+    const args = { prompt: "finish the task", description: "sync retention", category: "deep-low", run_in_background: false, load_skills: [] }
+    let prompts = 0
+    let polls = 0
+    try {
+      const completed = await executeSyncTask(args, ctx, executorCtx, parentContext, "sisyphus-junior", originalModel,
+        undefined, undefined, [
+          { providers: ["openai"], model: originalModel.modelID, variant: originalModel.variant, reasoningEffort: originalModel.reasoningEffort },
+          { providers: ["anthropic"], model: fallbackModel.modelID, variant: fallbackModel.variant, reasoningEffort: fallbackModel.reasoningEffort },
+        ], {
+          ...syncTaskDeps,
+          sendSyncPrompt: async () => ++prompts === 1 && fallback === "prompt" ? "rate limit exceeded" : null,
+          pollSyncSession: async () => ++polls === 1 && fallback === "poll" ? "rate limit exceeded" : null,
+          fetchSyncResult: async () => ({ ok: true, textContent: "finished" }),
+        })
+      expect(completed).toContain(`session_id: ${sessionID}`)
+      expect(metadataCalls.at(-1)?.metadata.model).toMatchObject({ providerID: expectedModel.providerID, modelID: expectedModel.modelID })
+      const returnedSessionID = completed.match(/session_id: (\S+)/)?.[1]
+
+      // when: the parent continues the returned session in the background with a different caller agent hint
+      const continued = await executeBackgroundContinuation({ ...args, task_id: returnedSessionID, subagent_type: "oracle",
+        prompt: "continue the same task", run_in_background: true }, ctx, executorCtx, parentContext)
+
+      // then: the existing claim/adopt/resume path dispatches once, using the original agent and final model
+      expect(continued).toContain("Background task continued.")
+      expect(promptAsync).toHaveBeenCalledTimes(1)
+      expect(promptAsync.mock.calls[0]?.[0]).toMatchObject({ path: { id: sessionID }, body: {
+        agent: "sisyphus-junior", model: { providerID: expectedModel.providerID, modelID: expectedModel.modelID }, variant: expectedModel.variant,
+      } })
+      expect(manager.findBySession(sessionID)).toMatchObject({ sessionId: sessionID, parentSessionId: parentSessionID,
+        agent: "sisyphus-junior", model: expectedModel, category: "deep-low", status: "running" })
+      expect(create).toHaveBeenCalledTimes(1)
+      expect(metadataCalls.at(-1)?.metadata).toMatchObject({ run_in_background: true, sessionId: sessionID, agent: "sisyphus-junior" })
+    } finally {
+      await manager.shutdown()
+      releaseAllPromptAsyncReservationsForTesting()
+      clearBackgroundTaskRegistryForTesting()
+      clearAllDelegatedChildSessionBootstrap()
+      handedBackSyncSessions.delete(sessionID)
+    }
+  })
+})
+
 export {}
