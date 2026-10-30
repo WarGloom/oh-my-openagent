@@ -45,7 +45,6 @@ import {
   ensureCurrentAttempt,
   finalizeAttempt,
   findAttemptBySession,
-  getCurrentAttempt,
   startAttempt,
 } from "./attempt-lifecycle"
 import {
@@ -53,7 +52,6 @@ import {
   buildBackgroundTaskNotificationText,
 } from "./background-task-notification-template"
 import { writeBackgroundTaskMarker } from "./background-task-marker"
-import { formatParentVisibleError, limitParentVisibleNotification } from "./parent-visible-error-sanitizer"
 import {
   findNearestMessageExcludingCompaction,
   resolvePromptContextFromSessionMessages,
@@ -76,7 +74,6 @@ import {
   isTerminalSessionError,
 } from "./error-classifier"
 import {
-  formatInternalReminderData,
   formatRetrySessionTitle,
   tryFallbackRetry,
 } from "./fallback-retry-handler"
@@ -365,27 +362,6 @@ function sessionMessageHasMeaningfulOutput(message: SessionMessageWithContent): 
         ? part.content.trim().length > 0
         : Array.isArray(part.content) && part.content.length > 0))
   )
-}
-
-function formatAttemptModelSummary(attempt: Pick<BackgroundTaskAttempt, "providerId" | "modelId"> | undefined): string | undefined {
-  if (!attempt?.providerId || !attempt.modelId) {
-    return undefined
-  }
-
-  return `${attempt.providerId}/${attempt.modelId}`
-}
-
-function getPreviousAttempt(task: BackgroundTask, attemptID: string | undefined): BackgroundTaskAttempt | undefined {
-  if (!attemptID || !task.attempts || task.attempts.length === 0) {
-    return undefined
-  }
-
-  const attemptIndex = task.attempts.findIndex((attempt) => attempt.attemptId === attemptID)
-  if (attemptIndex <= 0) {
-    return undefined
-  }
-
-  return task.attempts[attemptIndex - 1]
 }
 
 function cloneAttempts(task: BackgroundTask): BackgroundTaskAttempt[] | undefined {
@@ -1637,6 +1613,57 @@ export class BackgroundManager {
     return task
   }
 
+  /**
+   * Take over a sync child whose parent-side poll budget ran out while the child still works.
+   * A poll timeout never aborts the child; from here the manager polls it and sends the normal
+   * terminal notification to the parent under the returned background task ID.
+   */
+  async adoptTimedOutSyncSession(input: {
+    sessionId: string
+    parentSessionId: string
+    description: string
+    agent?: string
+    parentAgent?: string
+  }): Promise<BackgroundTask> {
+    const existingTask = this.findBySession(input.sessionId)
+    if (!existingTask) {
+      return this.trackTask({ ...input, taskId: `bg_${crypto.randomUUID().slice(0, 8)}` })
+    }
+    if (existingTask.parentSessionId !== input.parentSessionId) {
+      throw new Error(`Task ${existingTask.id} belongs to a different parent session`)
+    }
+    if (TERMINAL_BACKGROUND_TASK_STATUSES.has(existingTask.status)) {
+      const completionTimer = this.completionTimers.get(existingTask.id)
+      if (completionTimer) {
+        clearTimeout(completionTimer)
+        this.completionTimers.delete(existingTask.id)
+      }
+      existingTask.status = "running"
+      existingTask.completedAt = undefined
+      existingTask.error = undefined
+      existingTask.startedAt = new Date()
+      existingTask.progress = {
+        ...existingTask.progress,
+        toolCalls: existingTask.progress?.toolCalls ?? 0,
+        lastUpdate: new Date(),
+      }
+    }
+    return this.trackTask({ ...input, taskId: existingTask.id })
+  }
+
+  /**
+   * Re-register a completed task whose manager record expired while its SDK session was retained,
+   * so a run_in_background continuation goes through resume() and keeps its background task ID.
+   * The removal timer drops the record again if resume() never takes it over.
+   */
+  adoptRetainedTask(task: BackgroundTask): void {
+    if (this.tasks.has(task.id) || (task.sessionId !== undefined && this.findBySession(task.sessionId))) {
+      throw new Error(`Task ${task.id} is already tracked`)
+    }
+    this.addTask(task)
+    this.scheduleTaskRemoval(task.id)
+  }
+
   async resume(input: ResumeInput): Promise<BackgroundTask> {
     assertTeamSessionCanContinue(input.sessionId)
     const existingTask = this.findBySession(input.sessionId)
@@ -1648,14 +1675,6 @@ export class BackgroundManager {
       throw new Error(`Task has no sessionID: ${existingTask.id}`)
     }
 
-    if (existingTask.parentSessionId !== input.parentSessionId) {
-      log("[background-agent] Resume rejected - foreign parent session:", {
-        taskId: existingTask.id,
-        expectedParent: existingTask.parentSessionId,
-        providedParent: input.parentSessionId,
-      })
-      throw new Error("Resume forbidden: task belongs to a different parent session")
-    }
     if (this.activeSyncClaims.has(existingTask.id)) {
       throw new Error(`Task ${existingTask.id} already has an active sync continuation`)
     }
@@ -2628,7 +2647,6 @@ export class BackgroundManager {
     }
 
     const previousSessionID = task.sessionId
-    let retryingNotification: string | undefined
     const sameSessionRetry = async ({ task, sessionID, nextModel }: {
       task: BackgroundTask
       sessionID: string
@@ -2685,38 +2703,9 @@ export class BackgroundManager {
       processKey: (key: string) => this.processKey(key),
       directory: this.directory,
       onSameSessionRetry: sameSessionRetry,
-      onRetrying: ({ task, source, previousSessionID, failedModel: retryFailedModel, failedError: retryFailedError }) => {
-        const currentAttempt = getCurrentAttempt(task)
-        const previousAttempt = getPreviousAttempt(task, currentAttempt?.attemptId)
-        const sourceLine = source ? `\n- Source: ${formatInternalReminderData(source, 120)}` : ""
-        const failedSessionID = previousAttempt?.sessionId ?? previousSessionID
-        const failedSessionLine = failedSessionID ? `\n- Failed session: \`${failedSessionID}\`` : ""
-        const failedModel = formatAttemptModelSummary(previousAttempt) ?? retryFailedModel
-        const failedModelLine = failedModel ? `\n- Failed model: \`${failedModel}\`` : ""
-        const failedError = previousAttempt?.error ?? retryFailedError
-        const failedErrorLine = failedError ? `\n- Error: ${formatParentVisibleError(failedError)}` : ""
-        const nextModel = formatAttemptModelSummary(currentAttempt)
-        retryingNotification = limitParentVisibleNotification(`<system-reminder>
-[BACKGROUND TASK RETRYING]
-**ID:** \`${task.id}\`
-**Description:** ${formatInternalReminderData(task.description)}${sourceLine}${failedSessionLine}${failedModelLine}${failedErrorLine}${nextModel ? `\n- Next model: \`${nextModel}\`` : ""}
-
-The task is retrying on a fallback model after a retryable failure.
-</system-reminder>`)
-      },
     })
     this.rememberFallbackRetryResult(previousSessionID, result)
     const retried = await result
-    if (retried && retryingNotification) {
-      const parentPromptContext = await this.resolveParentWakePromptContext(task)
-      this.queuePendingParentWake(
-        task.parentSessionId,
-        retryingNotification,
-        parentPromptContext,
-        false,
-        PENDING_PARENT_WAKE_DEBOUNCE_MS,
-      )
-    }
     if (retried && previousSessionID && task.sessionId !== previousSessionID) {
       this.clearSessionOutputObserved(previousSessionID)
       this.clearSessionTodoObservation(previousSessionID)
@@ -3113,6 +3102,18 @@ The task is retrying on a fallback model after a retryable failure.
     if (task.status !== "running") {
       log("[background-agent] Task already completed, skipping:", { taskId: task.id, status: task.status, source })
       return false
+    }
+
+    // message.updated and session.status start fallback retries without awaiting them. While such a
+    // retry still aborts the failed attempt, the task looks running and idle; completing it here would
+    // report the failed attempt as COMPLETED and arm a removal timer that later drops the retried task.
+    const inFlightRetry = task.sessionId ? this.fallbackRetryResultsBySession.get(task.sessionId) : undefined
+    if (inFlightRetry && inFlightRetry.result === undefined) {
+      const retried = await inFlightRetry.promise.catch(() => false)
+      if (retried || task.status !== "running") {
+        log("[background-agent] Completion skipped: a fallback retry took over the attempt:", { taskId: task.id, source, retried })
+        return false
+      }
     }
 
     // Reserve a notification-preparation slot for the parent BEFORE flipping the

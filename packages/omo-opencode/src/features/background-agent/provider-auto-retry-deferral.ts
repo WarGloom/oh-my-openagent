@@ -33,10 +33,10 @@ export function getProviderAutoRetryDeferral(
   status: RetryStatusInfo,
   now = Date.now(),
 ): ProviderAutoRetryDeferral | undefined {
-  if (!task.fallbackChain || !hasMoreFallbacks(task.fallbackChain, task.attemptCount ?? 0)) {
-    clearProviderAutoRetryDeferral(task)
-    return undefined
-  }
+  // Without a viable fallback the host's own bounded auto-retry is the only recovery left, so a transient
+  // failure (e.g. a proxy 503) must not end the task on its first retry status. The host emits
+  // session.error once its retries run out, which ends the task through the normal error path.
+  const hasViableFallback = !!task.fallbackChain && hasMoreFallbacks(task.fallbackChain, task.attemptCount ?? 0)
 
   const retryMessage = status.message ?? ""
   if (isProviderExhaustionFallbackEligible({ name: "SessionRetry", message: retryMessage })) {
@@ -46,7 +46,10 @@ export function getProviderAutoRetryDeferral(
 
   const retryAttempt = extractRetryAttempt(status.attempt, retryMessage)
   const parsedRetryAttempt = Number.parseInt(retryAttempt, 10)
-  if (!Number.isFinite(parsedRetryAttempt) || parsedRetryAttempt > PROVIDER_AUTO_RETRY_ATTEMPTS_BEFORE_FALLBACK) {
+  if (
+    !Number.isFinite(parsedRetryAttempt)
+    || (hasViableFallback && parsedRetryAttempt > PROVIDER_AUTO_RETRY_ATTEMPTS_BEFORE_FALLBACK)
+  ) {
     clearProviderAutoRetryDeferral(task)
     return undefined
   }
