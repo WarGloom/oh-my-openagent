@@ -753,6 +753,46 @@ describe("executeSyncContinuation - toast cleanup error paths", () => {
     handedBackSyncSessions.clear()
   })
 
+  test("hands a child whose parent poll timed out to the background manager instead of aborting it", async () => {
+    //#given - the parent-side poll budget runs out while the resumed child still works
+    const abortCalls: Array<{ path: { id: string } }> = []
+    const mockClient = {
+      session: {
+        messages: async () => ({ data: [{ info: { id: "msg_001", role: "user", time: { created: 1000 } } }] }),
+        prompt: async () => ({}),
+        promptAsync: async () => ({}),
+        abort: async (input: { path: { id: string } }) => {
+          abortCalls.push(input)
+          return {}
+        },
+        status: async () => ({ data: { ses_timeout_handoff: { type: "idle" } } }),
+      },
+    }
+    const adoptTimedOutSyncSession = mock(async (input: { sessionId: string }) => ({ id: "bg_handoff", sessionId: input.sessionId, status: "running" }))
+    const { executeSyncContinuation } = require("./sync-continuation")
+    const deps = {
+      pollSyncSession: async () => "Poll no-progress timeout reached after 300000ms without message or part progress for active session ses_timeout_handoff",
+      fetchSyncResult: mock(async () => ({ ok: true as const, textContent: "must not be read" })),
+    }
+
+    //#when
+    const result = await executeSyncContinuation(
+      { task_id: "ses_timeout_handoff", prompt: "continue", description: "long tests", load_skills: [], run_in_background: false },
+      { sessionID: "parent-session", callID: "call-timeout", metadata: () => {} },
+      { client: mockClient, manager: { adoptTimedOutSyncSession } },
+      { sessionID: "parent-session", messageID: "parent-message", agent: "sisyphus" },
+      deps,
+    )
+
+    //#then - the child keeps running under a background task ID and the parent is not blocked further
+    expect(adoptTimedOutSyncSession).toHaveBeenCalledTimes(1)
+    expect(adoptTimedOutSyncSession.mock.calls[0][0]).toMatchObject({ sessionId: "ses_timeout_handoff", parentSessionId: "parent-session", description: "long tests", parentAgent: "sisyphus" })
+    expect(result).toContain("Background Task ID: bg_handoff")
+    expect(result).toContain("was not aborted")
+    expect(deps.fetchSyncResult).not.toHaveBeenCalled()
+    expect(abortCalls).toEqual([])
+  })
+
   test("removes toast when abort happens", async () => {
     //#given - create a context with abort signal
     const controller = new AbortController()

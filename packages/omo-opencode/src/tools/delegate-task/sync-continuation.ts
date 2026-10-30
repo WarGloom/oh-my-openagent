@@ -24,6 +24,8 @@ import { applySessionPromptParams } from "../../shared/session-prompt-params-hel
 import { z } from "zod"
 import { dispatchInternalPrompt } from "../../shared/prompt-async-gate"
 import { assertTeamSessionCanContinue } from "../../features/team-mode/team-session-registry"
+import { isSyncPollTimeout } from "./sync-session-poller"
+import { handOffTimedOutSyncSession } from "./sync-timeout-handoff"
 
 type ResumeModel = { providerID: string; modelID: string }
 
@@ -255,6 +257,19 @@ export async function executeSyncContinuation(
         hasActiveChildBackgroundTasks,
         hasPendingParentWake,
       }, syncPollTimeoutMs)
+      if (isSyncPollTimeout(pollError)) {
+        const handOffMessage = await handOffTimedOutSyncSession({
+          manager: executorCtx.manager,
+          sessionID: continuationID,
+          parentSessionID: parentContext.sessionID,
+          description: args.description,
+          agent: resumeAgent,
+          parentAgent: parentContext.agent,
+          category: args.category,
+          pollMessage: pollError,
+        })
+        return handOffMessage ?? pollError
+      }
       if (pollError && shouldAttemptPollErrorRecovery(pollError)) {
         if (anchorMessageCount === undefined) {
           return pollError

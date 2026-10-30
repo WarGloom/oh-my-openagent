@@ -14,6 +14,13 @@ export { isSessionComplete } from "./sync-session-turns"
 const ACTIVE_SESSION_STATUSES = new Set(["busy", "retry", "running"])
 const CHILD_WAKE_GRACE_MS = 5_000
 const MAX_NON_ACTIVE_STATUS_STALENESS_POLLS = 10
+const INACTIVITY_TIMEOUT_PREFIX = "Poll inactivity timeout reached"
+const NO_PROGRESS_TIMEOUT_PREFIX = "Poll no-progress timeout reached"
+
+export function isSyncPollTimeout(pollResult: string | null): pollResult is string {
+  return pollResult !== null
+    && (pollResult.startsWith(INACTIVITY_TIMEOUT_PREFIX) || pollResult.startsWith(NO_PROGRESS_TIMEOUT_PREFIX))
+}
 
 function wait(milliseconds: number): Promise<void> {
   const sharedBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)
@@ -69,11 +76,21 @@ async function fetchSessionMessages(
   return Array.isArray(rawData) ? (rawData as SessionMessage[]) : []
 }
 
-function getSessionProgressSignature(
+function getMessagesAfterAnchor(
   messages: SessionMessage[],
+  anchorMessageID: string | undefined,
   anchorMessageCount: number | undefined,
-): string | null {
-  const observedMessages = anchorMessageCount === undefined ? messages : messages.slice(anchorMessageCount)
+): SessionMessage[] {
+  // fetchSessionMessages reads only the newest page, so a full-history anchor count
+  // cannot index into it once the session is longer than that page. Prefer the anchor ID.
+  if (anchorMessageID !== undefined) {
+    const anchorIndex = messages.findIndex((message) => message.info?.id === anchorMessageID)
+    return anchorIndex === -1 ? messages : messages.slice(anchorIndex + 1)
+  }
+  return anchorMessageCount === undefined ? messages : messages.slice(anchorMessageCount)
+}
+
+function getSessionProgressSignature(observedMessages: SessionMessage[]): string | null {
   if (observedMessages.length === 0) {
     return null
   }
@@ -117,11 +134,7 @@ function getSessionProgressSignature(
   ].join("|")
 }
 
-function hasRunningToolPart(
-  messages: SessionMessage[],
-  anchorMessageCount: number | undefined,
-): boolean {
-  const observedMessages = anchorMessageCount === undefined ? messages : messages.slice(anchorMessageCount)
+function hasRunningToolPart(observedMessages: SessionMessage[]): boolean {
   return observedMessages.some((message) =>
     (message.parts ?? []).some((part) => part.type === "tool" && part.state?.status === "running")
   )
@@ -297,10 +310,11 @@ export async function pollSyncSession(
         continue
       }
 
-      const progressSignature = getSessionProgressSignature(messages, input.anchorMessageCount)
+      const observedMessages = getMessagesAfterAnchor(messages, input.anchorMessageID, input.anchorMessageCount)
+      const progressSignature = getSessionProgressSignature(observedMessages)
       const hasProgress =
         (progressSignature !== null && progressSignature !== lastProgressSignature) ||
-        hasRunningToolPart(messages, input.anchorMessageCount)
+        hasRunningToolPart(observedMessages)
       if (progressSignature !== null) lastProgressSignature = progressSignature
       if (hasProgress) {
         inactiveStart = Date.now()
@@ -362,7 +376,9 @@ export async function pollSyncSession(
         continue
       }
 
-      const progressSignature = getSessionProgressSignature(messages, input.anchorMessageCount)
+      const progressSignature = getSessionProgressSignature(
+        getMessagesAfterAnchor(messages, input.anchorMessageID, input.anchorMessageCount),
+      )
       const hasProgress = progressSignature !== null && progressSignature !== lastProgressSignature
       if (progressSignature !== null) lastProgressSignature = progressSignature
       if (hasProgress) inactiveStart = Date.now()
@@ -442,24 +458,20 @@ export async function pollSyncSession(
   }
 
   if (timeoutReason !== null) {
-    log("[task] Poll timeout reached", { sessionID: input.sessionID, pollCount, timeoutReason })
-    const abortReason = timeoutReason === "active_no_progress"
-      ? "active_no_progress_timeout"
-      : timeoutReason === "missing_status_no_progress"
-        ? "missing_status_no_progress_timeout"
-        : "poll_timeout"
-    await abortSyncSession(client, input.sessionID, abortReason)
+    // A parent-side poll budget says nothing about the child's health: leave it running
+    // so the caller can hand it to the background manager instead of killing its work.
+    log("[task] Poll timeout reached; leaving child session running", { sessionID: input.sessionID, pollCount, timeoutReason })
   }
 
   if (timeoutReason === "active_no_progress") {
-    return `Poll no-progress timeout reached after ${activeNoProgressTimeoutMs}ms without message or part progress for active session ${input.sessionID}`
+    return `${NO_PROGRESS_TIMEOUT_PREFIX} after ${activeNoProgressTimeoutMs}ms without message or part progress for active session ${input.sessionID}`
   }
 
   if (timeoutReason === "missing_status_no_progress") {
-    return `Poll no-progress timeout reached after ${activeNoProgressTimeoutMs}ms without message or part progress while OpenCode status was unavailable for session ${input.sessionID}`
+    return `${NO_PROGRESS_TIMEOUT_PREFIX} after ${activeNoProgressTimeoutMs}ms without message or part progress while OpenCode status was unavailable for session ${input.sessionID}`
   }
 
   return timeoutReason === "inactive"
-    ? `Poll inactivity timeout reached after ${maxPollTimeMs}ms without active OpenCode status for session ${input.sessionID}`
+    ? `${INACTIVITY_TIMEOUT_PREFIX} after ${maxPollTimeMs}ms without active OpenCode status for session ${input.sessionID}`
     : null
 }

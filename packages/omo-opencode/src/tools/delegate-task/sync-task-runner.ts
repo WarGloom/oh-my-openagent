@@ -1,4 +1,5 @@
 import type { TaskToastManager } from "../../features/task-toast-manager/manager"
+import { archiveBackgroundTask } from "../../features/background-agent/task-registry"
 import type { ModelFallbackState } from "../../hooks/model-fallback/hook"
 import type { FallbackEntry } from "../../shared/model-requirements"
 import { shouldRetryError } from "../../shared/model-error-classifier"
@@ -8,6 +9,7 @@ import { buildRecoveredSyncTaskCompletion, buildSyncTaskCompletion } from "./syn
 import { shouldAttemptPollErrorRecovery } from "./sync-poll-error-recovery"
 import type { SyncTaskDeps } from "./sync-task-deps"
 import { getNextSyncFallbackModel, retrySyncPromptWithFallbacks } from "./sync-task-fallback"
+import { isSyncPollTimeout } from "./sync-session-poller"
 import type { DelegatedModelConfig, DelegateTaskArgs, ToolContextWithMetadata } from "./types"
 
 type SyncTaskRunnerInput = {
@@ -36,6 +38,7 @@ type SyncTaskRunnerInput = {
     currentModel: DelegatedModelConfig | undefined,
     spawnDepth: number,
   ) => Promise<void>
+  readonly handOffTimedOutSession?: (sessionID: string, pollMessage: string) => Promise<string | undefined>
 }
 
 function shouldRetryPollErrorWithFallback(pollError: string, deps: SyncTaskDeps): boolean {
@@ -60,6 +63,7 @@ export async function runSyncTaskLoop(input: SyncTaskRunnerInput): Promise<strin
     toastManager,
     registerSyncSession,
     publishSyncMetadata,
+    handOffTimedOutSession,
   } = input
   const { client, directory, sisyphusAgentConfig } = executorCtx
   const hasActiveChildBackgroundTasks = executorCtx.manager?.hasActiveChildTasks?.bind(executorCtx.manager)
@@ -155,6 +159,10 @@ export async function runSyncTaskLoop(input: SyncTaskRunnerInput): Promise<strin
       hasActiveChildBackgroundTasks,
       hasPendingParentWake,
     }, syncPollTimeoutMs)
+    if (isSyncPollTimeout(pollError)) {
+      // The child is still working: a parent poll budget is not a model failure to retry.
+      return (await handOffTimedOutSession?.(activeSessionID, pollError)) ?? pollError
+    }
     if (pollError) {
       if (shouldAttemptPollErrorRecovery(pollError)) {
         const recoveredResult = await deps.fetchSyncResult(client, activeSessionID, anchorMessageCount, {
@@ -193,6 +201,28 @@ export async function runSyncTaskLoop(input: SyncTaskRunnerInput): Promise<strin
     }
 
     await publishSyncMetadata(activeSessionID, effectiveCategoryModel, spawnDepth)
+
+    if (!ctx.abort?.aborted) {
+      archiveBackgroundTask({
+        id: `sync_${activeSessionID}`,
+        sessionId: activeSessionID,
+        parentSessionId: parentContext.sessionID,
+        parentMessageId: parentContext.messageID,
+        parentAgent: parentContext.agent,
+        description: args.description,
+        prompt: args.prompt,
+        agent: agentToUse,
+        model: effectiveCategoryModel,
+        category: args.category,
+        spawnDepth,
+        status: "completed",
+        startedAt: startTime,
+        completedAt: new Date(),
+        concurrencyGroup: effectiveCategoryModel
+          ? `${effectiveCategoryModel.providerID}/${effectiveCategoryModel.modelID}`
+          : agentToUse,
+      })
+    }
 
     return buildSyncTaskCompletion({
       activeSessionID,
