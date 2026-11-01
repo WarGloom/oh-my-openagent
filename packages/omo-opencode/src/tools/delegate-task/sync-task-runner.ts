@@ -3,6 +3,7 @@ import { archiveBackgroundTask } from "../../features/background-agent/task-regi
 import type { ModelFallbackState } from "../../hooks/model-fallback/hook"
 import type { FallbackEntry } from "../../shared/model-requirements"
 import { shouldRetryError } from "../../shared/model-error-classifier"
+import { hasNativeRuntimeFallback } from "../../hooks/runtime-fallback/native-controller"
 import { getDeliverableTag } from "./constants"
 import type { ExecutorContext, ParentContext } from "./executor-types"
 import { buildRecoveredSyncTaskCompletion, buildSyncTaskCompletion } from "./sync-completion-message"
@@ -46,6 +47,9 @@ function shouldRetryPollErrorWithFallback(pollError: string, deps: SyncTaskDeps)
   return shouldRetryError(errorInfo) || (deps.isProviderExhaustionFallbackEligible?.(errorInfo) ?? false)
 }
 
+/** Polls (one poll interval each) that a native-owned child may stay on the same failure before it is final. */
+export const NATIVE_RECOVERY_POLL_LIMIT = 30
+
 export async function runSyncTaskLoop(input: SyncTaskRunnerInput): Promise<string> {
   const {
     args,
@@ -83,6 +87,9 @@ export async function runSyncTaskLoop(input: SyncTaskRunnerInput): Promise<strin
   let activeSessionID = input.sessionID
   let anchorMessageCount: number | undefined
   let fallbackPromptPending = false
+  let awaitingNativeRecovery = false
+  let nativeRecoveryError: string | undefined
+  let nativeRecoveryPolls = 0
 
   const prepareFallbackPrompt = async (fallbackModel: DelegatedModelConfig): Promise<string | null> => {
     await registerSyncSession(activeSessionID, fallbackModel, false)
@@ -106,17 +113,19 @@ export async function runSyncTaskLoop(input: SyncTaskRunnerInput): Promise<strin
       fallbackPromptPending = false
     }
 
-    let promptError = await deps.sendSyncPrompt(client, {
-      sessionID: activeSessionID,
-      agentToUse,
-      args,
-      systemContent,
-      directory,
-      toastManager,
-      taskId,
-      sisyphusAgentConfig,
-      categoryModel: effectiveCategoryModel,
-    })
+    let promptError = awaitingNativeRecovery
+      ? null
+      : await deps.sendSyncPrompt(client, {
+          sessionID: activeSessionID,
+          agentToUse,
+          args,
+          systemContent,
+          directory,
+          toastManager,
+          taskId,
+          sisyphusAgentConfig,
+          categoryModel: effectiveCategoryModel,
+        })
     if (promptError) {
       const promptResult = await retrySyncPromptWithFallbacks({
         sessionID: activeSessionID,
@@ -186,6 +195,16 @@ export async function runSyncTaskLoop(input: SyncTaskRunnerInput): Promise<strin
             textContent: recoveredResult.textContent,
           })
         }
+      }
+
+      // Native fallback continues this same session on the next model; re-prompting here would duplicate the task.
+      if (hasNativeRuntimeFallback(client) && shouldRetryPollErrorWithFallback(pollError, deps)) {
+        if (pollError !== nativeRecoveryError) nativeRecoveryPolls = 0
+        nativeRecoveryError = pollError
+        if (nativeRecoveryPolls >= NATIVE_RECOVERY_POLL_LIMIT) return pollError
+        nativeRecoveryPolls++
+        awaitingNativeRecovery = true
+        continue
       }
 
       const nextFallbackModel = shouldRetryPollErrorWithFallback(pollError, deps)
