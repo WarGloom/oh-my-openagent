@@ -39,7 +39,7 @@ function toV2Model(model: NonNullable<CreateBody["model"]>): V2ModelRef | undefi
 /**
  * `client.session.*` in the 1.x shape, on the 2.x session domain. Reads come from `session.context`
  * translated by `translateMessages`; busy state comes from the event-fed tracker. Calls with no
- * 2.x counterpart (list, children, fork, revert, ...) are not defined here and fail loudly.
+ * 2.x counterpart (children, fork, revert, ...) are not defined here and fail loudly.
  */
 export function createSessionNamespace(context: V2PluginContext, deps: SessionNamespaceDeps) {
   const reported = new Set<string>()
@@ -62,6 +62,34 @@ export function createSessionNamespace(context: V2PluginContext, deps: SessionNa
   }
 
   return {
+    list: (
+      args: {
+        readonly query?: {
+          readonly directory?: string
+          readonly parentID?: string | null
+          readonly parent?: string
+          readonly limit?: number
+        }
+      } = {},
+    ) =>
+      settle(async () => {
+        const query = args.query
+        const parentID = query?.parentID === undefined ? query?.parent : query.parentID
+        const sessions = []
+        let cursor: string | null | undefined
+        do {
+          const page = await context.session.list({
+            ...(query?.directory === undefined ? {} : { directory: query.directory }),
+            ...(parentID === undefined ? {} : { parentID }),
+            ...(query?.limit === undefined ? {} : { limit: query.limit - sessions.length }),
+            ...(cursor == null ? {} : { cursor }),
+          })
+          sessions.push(...page.data.map(toV1Session))
+          cursor = page.cursor.next
+        } while (cursor && (query?.limit === undefined || sessions.length < query.limit))
+        return sessions
+      }),
+
     messages: (args: SessionRef & { readonly query?: { readonly limit?: number } }) =>
       settle(async () => {
         const all = await loadMessages(args.path.id)

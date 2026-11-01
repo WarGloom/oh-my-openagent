@@ -80,11 +80,11 @@ describe("createV2Setup", () => {
       await setup(createContext())
 
       // when
-      const call = client?.session.list()
+      const call = client?.session.children({ path: { id: "ses_1" } })
 
       // then
       await expect(call).rejects.toBeInstanceOf(V2UnsupportedOperationError)
-      await expect(call).rejects.toMatchObject({ operation: "client.session.list" })
+      await expect(call).rejects.toMatchObject({ operation: "client.session.children" })
     })
 
     it("#when the client is awaited directly #then it is not mistaken for a thenable", async () => {
