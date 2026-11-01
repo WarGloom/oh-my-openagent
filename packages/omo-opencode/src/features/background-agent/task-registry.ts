@@ -1,3 +1,4 @@
+import { cloneParentWake, type PendingParentWake } from "./parent-wake-dedupe"
 import type { BackgroundTask } from "./types"
 
 const MAX_COMPLETED_TASK_REGISTRY_SIZE = 100
@@ -7,6 +8,8 @@ type BackgroundTaskRegistry = {
   activeTasks: Map<string, (() => BackgroundTask) & { readonly retainedDirectory?: string }>
   completedTasks: Map<string, BackgroundTask>
   recoveryClaims?: Set<string>
+  /** Parent wakes queued but not yet delivered when a manager unloaded, keyed by its directory. */
+  retainedParentWakes?: Map<string, Map<string, PendingParentWake>>
 }
 
 type GlobalWithBackgroundTaskRegistry = typeof globalThis & {
@@ -203,9 +206,27 @@ export function claimUnarchivedSessionRecovery(sessionID: string, parentSessionI
   }
 }
 
+export function retainParentWakesForReload(directory: string, wakes: ReadonlyMap<string, PendingParentWake>): void {
+  if (wakes.size === 0) return
+  const registry = getRegistry()
+  registry.retainedParentWakes ??= new Map()
+  registry.retainedParentWakes.set(
+    directory,
+    new Map(Array.from(wakes, ([sessionID, wake]) => [sessionID, cloneParentWake(wake)])),
+  )
+}
+
+export function takeParentWakesAfterReload(directory: string): Map<string, PendingParentWake> {
+  const registry = getRegistry()
+  const wakes = registry.retainedParentWakes?.get(directory) ?? new Map<string, PendingParentWake>()
+  registry.retainedParentWakes?.delete(directory)
+  return wakes
+}
+
 export function clearBackgroundTaskRegistryForTesting(): void {
   const registry = getRegistry()
   registry.activeTasks.clear()
   registry.completedTasks.clear()
   registry.recoveryClaims?.clear()
+  registry.retainedParentWakes?.clear()
 }
