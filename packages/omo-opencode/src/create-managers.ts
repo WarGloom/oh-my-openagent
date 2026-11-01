@@ -130,6 +130,7 @@ export function createManagers(args: {
     },
     pluginContext: ctx,
     preserveSessionsOnShutdown: isV2PluginInput(ctx),
+    awaitOpenAssistantOutput: isV2PluginInput(ctx),
     config: pluginConfig.background_task,
     tmuxConfig,
     onSubagentSessionCreated: async (event: SubagentSessionCreatedEvent) => {

@@ -47,4 +47,6 @@ export type ParentWakeNotifierOptions = {
    */
   readonly userMessageInProgressWindowMs: number
   readonly parentSessionActivityInProgressWindowMs?: number
+  /** Treat a reply that started after the wake but has not finished as pending, not as missing (V2 hosts). */
+  readonly awaitOpenAssistantOutput?: boolean
 }

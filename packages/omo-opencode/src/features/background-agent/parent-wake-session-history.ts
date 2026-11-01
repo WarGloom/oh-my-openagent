@@ -15,6 +15,7 @@ import {
   type PendingParentWake,
 } from "./parent-wake-dedupe"
 import {
+  getParentWakeMessageCompletedAt,
   getParentWakeMessageCreatedAt,
   getParentWakeMessagePartActivityAt,
 } from "./parent-wake-message-activity"
@@ -264,6 +265,21 @@ export function hasAssistantOrToolOutputAfterParentWake(input: {
   }
   const dispatchedAt = input.wake.dispatchedAt
   return input.messages.some((message) => parentWakeMessageHasOutputAfterWake(message, dispatchedAt))
+}
+
+/** An assistant reply created after the wake was dispatched that has neither finished nor failed yet. */
+export function hasOpenAssistantTurnAfterParentWake(input: {
+  readonly messages: readonly ParentWakeSessionMessage[]
+  readonly wake: PendingParentWake
+}): boolean {
+  const dispatchedAt = input.wake.dispatchedAt
+  if (dispatchedAt === undefined) return false
+  return input.messages.some((message) => {
+    if (getParentWakeMessageRole(message) !== "assistant") return false
+    if ((message.info?.error ?? message.error) !== undefined) return false
+    const createdAt = getParentWakeMessageCreatedAt(message)
+    return createdAt !== undefined && createdAt >= dispatchedAt && getParentWakeMessageCompletedAt(message) === undefined
+  })
 }
 
 function getParentWakeMessageRole(message: ParentWakeSessionMessage): string | undefined {
