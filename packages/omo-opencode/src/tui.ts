@@ -12,7 +12,7 @@ import { TeamSessionCache } from "./features/tui-sidebar/team-session-cache"
 import type { RosterRow, SidebarView } from "./features/tui-sidebar/state-types"
 import { log } from "./shared/logger"
 import { trackLoadedPluginSandbox } from "./hooks/auto-update-checker/checker/sandbox-refresh"
-import { setupV2Tui, type V2TuiSetup } from "./v2"
+import { setupV2Tui, type V2TuiSetup } from "./v2/tui-setup"
 
 type DualTuiPluginModule = TuiPluginModule & { readonly setup: V2TuiSetup }
 
