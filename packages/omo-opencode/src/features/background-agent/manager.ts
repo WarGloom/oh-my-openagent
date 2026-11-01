@@ -2440,6 +2440,7 @@ export class BackgroundManager {
           },
         )
       }
+      if (this.nativeLifecycle) return
       handleSessionIdleBackgroundEvent({
         properties: props as Record<string, unknown>,
         findBySession: (id) => {
