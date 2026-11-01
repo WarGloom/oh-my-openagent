@@ -194,7 +194,7 @@ export async function installSessionHooks(
     registrations.push(await registerSystemTransform(context, v1["experimental.chat.system.transform"]))
   }
   if (v1["experimental.chat.messages.transform"] !== undefined) {
-    registrations.push(await registerMessagesTransform(context, v1["experimental.chat.messages.transform"], deps.warn))
+    registrations.push(await registerMessagesTransform(context, v1["experimental.chat.messages.transform"]))
   }
   if (v1["experimental.session.compacting"] !== undefined) {
     registrations.push(await registerCompaction(context, v1["experimental.session.compacting"]))
