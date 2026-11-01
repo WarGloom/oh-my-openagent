@@ -3,6 +3,62 @@ import type { Hooks } from "@opencode-ai/plugin"
 import type { V2ContextHookEvent } from "./context-types"
 import { createFakePluginContext } from "./fake-plugin-context"
 import { installSessionHooks } from "./session-hooks"
+import { createMessagesTransformHandler } from "../plugin/messages-transform"
+
+function signedConversation(): V2ContextHookEvent["messages"] {
+  return [
+    {
+      role: "user",
+      id: "u1",
+      content: [
+        {
+          type: "text",
+          text: "delegate",
+          cache: { type: "ephemeral" },
+          providerMetadata: { anthropic: { cacheControl: { type: "ephemeral" } } },
+        },
+        { type: "media", media: { mediaType: "image/png", source: { type: "base64", data: "aW1hZ2U=" } } },
+      ],
+      metadata: { custom: "user" },
+    },
+    {
+      role: "assistant",
+      id: "a1",
+      content: [
+        {
+          type: "reasoning",
+          text: "thought",
+          encrypted: "signature-example",
+          providerMetadata: { anthropic: { signature: "signature-example" } },
+        },
+        { type: "reasoning", text: "", providerMetadata: { anthropic: { redactedData: "redacted-data" } } },
+        { type: "text", text: "checking", cache: { type: "ephemeral" } },
+        {
+          type: "tool-call",
+          id: "c1",
+          name: "task",
+          input: { prompt: "READY" },
+          providerMetadata: { custom: { call: true } },
+        },
+      ],
+      metadata: { custom: "assistant" },
+    },
+    {
+      role: "tool",
+      id: "t1",
+      content: [
+        {
+          type: "tool-result",
+          id: "c1",
+          name: "task",
+          result: { type: "content", value: [{ type: "text", text: "READY" }] },
+          providerMetadata: { custom: { result: true } },
+        },
+      ],
+      metadata: { custom: "result" },
+    },
+  ]
+}
 
 const MODEL = { providerID: "anthropic", id: "claude-opus-4" }
 
@@ -21,6 +77,84 @@ async function runWith(messages: V2ContextHookEvent["messages"], hook: unknown):
 }
 
 describe("messages transform bridge", () => {
+  it("#given delegation followed by a host system update #when the V1 handler runs #then recovery follows the result and update", async () => {
+    // given
+    const messages = signedConversation()
+    const update = {
+      role: "system",
+      id: "mcp-update",
+      content: [{ type: "text", text: "new MCP guidance" }],
+      metadata: { notice: "instructions", instructionSources: ["core/mcp-guidance"] },
+    }
+    messages.push(update)
+
+    // when
+    const event = await runWith(messages, createMessagesTransformHandler({ hooks: {} }))
+
+    // then
+    expect(event.messages.map((message) => message.role)).toEqual(["user", "assistant", "tool", "system", "user"])
+    expect(event.messages[2]?.content).toEqual(signedConversation()[2]?.content)
+    expect(event.messages[3]).toBe(update)
+    expect(event.messages[4]?.id).toBe("a1_prefill_recovery")
+  })
+
+  describe("#given provider fields and a settled tool result", () => {
+    it("#when the handler makes no changes #then every field and original object survives", async () => {
+      // given
+      const messages = signedConversation()
+      const originals = [...messages]
+      const snapshot = structuredClone(messages)
+
+      // when
+      const event = await runWith(messages, async () => {})
+
+      // then
+      expect(event.messages).toEqual(snapshot)
+      for (const [index, original] of originals.entries()) {
+        expect(event.messages[index]).toBe(original)
+      }
+    })
+
+    it("#when a hook appends to the last user message #then only that message changes", async () => {
+      // given
+      const messages = signedConversation()
+      const originals = [...messages]
+      const snapshot = structuredClone(messages)
+      const hook = async (
+        _input: unknown,
+        output: { messages: Array<{ info: Record<string, unknown>; parts: Array<Record<string, unknown>> }> },
+      ) => {
+        output.messages.findLast((message) => message.info.role === "user")?.parts.push({ type: "text", text: "extra" })
+      }
+
+      // when
+      const event = await runWith(messages, hook)
+
+      // then
+      expect(event.messages[0]).not.toBe(originals[0])
+      const userContent = snapshot[0]?.content
+      expect(event.messages[0]?.content).toEqual([
+        ...(Array.isArray(userContent) ? userContent : []),
+        { type: "text", text: "extra" },
+      ])
+      expect(event.messages.slice(1)).toEqual(snapshot.slice(1))
+      expect(event.messages[1]).toBe(originals[1])
+      expect(event.messages[2]).toBe(originals[2])
+    })
+  })
+
+  it("#given a fatal handler error #when context runs #then the context hook rejects with that error", async () => {
+    // given
+    const failure = new Error("side context unavailable")
+
+    // when / then
+    await expect(
+      runWith([{ role: "user", content: [{ type: "text", text: "hi" }] }], async () => {
+        throw failure
+      }),
+    ).rejects.toBe(failure)
+  })
+
   describe("#given an additive context injector", () => {
     it("#when it appends text to the last user turn #then the request's last user message carries it", async () => {
       // given
