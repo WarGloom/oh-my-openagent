@@ -6,6 +6,7 @@ import type { V2ModelRef, V2PluginContext, V2Registration } from "./context-type
 import { registerMessagesTransform, type V1MessageView } from "./messages-transform-bridge"
 import { registerNativeTeamStatus } from "./native-team-status"
 import { registerNativeMonitorStatus } from "./native-monitor-status"
+import { registerNativeCategoryReminder } from "./native-category-reminder"
 
 type V1ChatRequestInput = {
   readonly sessionID: string
@@ -205,8 +206,10 @@ export async function installSessionHooks(
   const transformHooks = messages === undefined ? undefined : getMessagesTransformHooks(messages)
   const teamStatus = transformHooks?.teamModeStatusInjector
   const monitorStatus = transformHooks?.monitorStatusInjector
+  const categoryReminder = transformHooks?.categorySkillReminder
   if (teamStatus) registrations.push(await registerNativeTeamStatus(context, teamStatus))
   if (monitorStatus) registrations.push(await registerNativeMonitorStatus(context, monitorStatus))
+  if (categoryReminder) registrations.push(await registerNativeCategoryReminder(context, categoryReminder))
 
   if (v1["chat.message"] !== undefined) registrations.push(await registerPrompt(context, v1["chat.message"], deps.warn))
   if (v1["chat.params"] !== undefined) registrations.push(await registerChatParams(context, v1["chat.params"]))
@@ -216,9 +219,14 @@ export async function installSessionHooks(
   }
   if (messages !== undefined) {
     const transform =
-      (teamStatus || monitorStatus) && transformHooks
+      (teamStatus || monitorStatus || categoryReminder) && transformHooks
         ? createMessagesTransformHandler({
-            hooks: { ...transformHooks, teamModeStatusInjector: null, monitorStatusInjector: null },
+            hooks: {
+              ...transformHooks,
+              teamModeStatusInjector: null,
+              monitorStatusInjector: null,
+              categorySkillReminder: null,
+            },
           })
         : messages
     registrations.push(
