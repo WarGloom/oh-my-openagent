@@ -42,6 +42,7 @@ import {
 import { startBackgroundCheck as startTmuxCheck } from "../tools/interactive-bash"
 import { runOpenCodeStartupMigration } from "../startup-migration"
 import { createV2Setup, type DualPluginModule } from "../v2"
+import { isV2PluginInput } from "../v2/create-plugin-input"
 
 type StartupToastClient = {
   readonly tui?: {
@@ -281,6 +282,7 @@ export function createPluginModule(overrides: Partial<PluginModuleDeps> = {}): D
       deps.startTmuxCheck()
     }
     const disabledHooks = new Set(pluginConfig.disabled_hooks ?? [])
+    if (isV2PluginInput(input)) disabledHooks.add("directory-agents-injector")
 
     const isHookEnabled = (hookName: HookName): boolean => !disabledHooks.has(hookName)
     const safeHookEnabled = pluginConfig.experimental?.safe_hook_creation ?? true
