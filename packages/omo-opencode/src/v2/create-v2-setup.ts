@@ -5,6 +5,7 @@ import { startEventBridge } from "./event-bridge"
 import { installHooks } from "./install-hooks"
 import { createSessionTracker } from "./session-tracker"
 import { log } from "../shared/logger"
+import { installNativeRuntimeFallback } from "./native-runtime-fallback"
 
 export type V2SetupDeps = {
   readonly serverPlugin: Plugin
@@ -32,12 +33,24 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
     const bridge = startEventBridge(context, { tracker, warn })
     let hooks: Hooks
     let uninstall: () => Promise<void>
+    let fallback: Awaited<ReturnType<typeof installNativeRuntimeFallback>>
     try {
       const input = createPluginInput(context, { tracker, warn })
       hooks = await deps.serverPlugin(input, { ...context.options })
+      fallback = await installNativeRuntimeFallback(context, hooks)
+      bridge.setInterceptor(fallback?.beforeEvent)
       uninstall = await installHooks(context, hooks, { warn })
+      if (fallback) {
+        const installedFallback = fallback
+        const uninstallHooks = uninstall
+        uninstall = async () => {
+          await installedFallback.dispose()
+          await uninstallHooks()
+        }
+      }
     } catch (error) {
       bridge.stop()
+      await fallback?.dispose()
       throw error
     }
     bridge.setHandler(hooks.event)

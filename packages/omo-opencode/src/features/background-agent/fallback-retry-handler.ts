@@ -16,6 +16,7 @@ import { abortWithTimeout, type AbortSessionClient } from "./abort-with-timeout"
 import { ensureCurrentAttempt, scheduleRetryAttempt } from "./attempt-lifecycle"
 import { filterProvidersServingModel } from "./fallback-provider-model-filter"
 import { sanitizeParentVisibleError } from "./parent-visible-error-sanitizer"
+import { hasNativeRuntimeFallback } from "../../hooks/runtime-fallback/native-controller"
 
 type FallbackRetryClient = {
   readonly session: AbortSessionClient["session"] & {
@@ -182,6 +183,7 @@ export async function tryFallbackRetry(args: {
   }) => Promise<boolean>
   deps?: Partial<FallbackRetryHandlerDeps>
 }): Promise<boolean> {
+  if (hasNativeRuntimeFallback(args.client)) return false
   const {
     task,
     errorInfo,
