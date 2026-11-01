@@ -4,6 +4,7 @@ import { log } from "../logger"
 import { transitionRuntimeStateAsync } from "../team-state-store/store"
 import { withInboxConsumerLease } from "./consumer-lease"
 import { listUnreadMessages } from "./inbox"
+import { selectMailboxMember, selectUnreadMailboxMessages } from "./eligibility"
 import { buildEnvelope } from "./poll"
 import { releaseDeliveryReservation, reserveMessageForDelivery, type DeliveryReservation } from "./reservation"
 
@@ -27,11 +28,12 @@ export async function deliverMailboxV2(input: DeliveryInput): Promise<readonly s
         await transitionRuntimeStateAsync(
           input.teamRunId,
           async (state) => {
-            const member = state.members.find((candidate) => candidate.name === input.memberName)
-            if (!member?.sessionId || member.sessionId !== input.sessionID || member.removal) return state
-            const pending = new Set(member.pendingInjectedMessageIds)
-            const messages = (await listUnreadMessages(input.teamRunId, input.memberName, input.config)).filter(
-              (message) => !pending.has(message.messageId),
+            const selection = selectMailboxMember(state, input.memberName, input.sessionID)
+            if (selection.kind !== "matched" || !selection.member.sessionId || selection.member.removal) return state
+            const member = selection.member
+            const messages = selectUnreadMailboxMessages(
+              member,
+              await listUnreadMessages(input.teamRunId, input.memberName, input.config),
             )
             if (messages.length === 0) return state
             const messageIds = messages.map((message) => message.messageId)
@@ -55,9 +57,9 @@ export async function deliverMailboxV2(input: DeliveryInput): Promise<readonly s
               }, 5_000)
               try {
                 const digest = createHash("sha256")
-                  .update(JSON.stringify([member.sessionId, message.messageId]))
+                  .update(JSON.stringify([input.sessionID, message.messageId]))
                   .digest("hex")
-                await input.admit({ sessionID: member.sessionId, id: `msg_${digest}`, text: buildEnvelope(message) })
+                await input.admit({ sessionID: input.sessionID, id: `msg_${digest}`, text: buildEnvelope(message) })
               } finally {
                 clearTimeout(warning)
               }
