@@ -173,6 +173,8 @@ export class TuiStateMirror {
 function toJobRow(task: BackgroundTaskSnapshot): JobRow {
   return {
     title: task.title || `${task.agent} background task`,
+    ...(task.model === undefined ? {} : { model: task.model }),
+    ...(task.reasoningEffort === undefined ? {} : { reasoningEffort: task.reasoningEffort }),
     status: task.status,
     toolCalls: task.toolCalls,
     lastTool: task.lastTool,
