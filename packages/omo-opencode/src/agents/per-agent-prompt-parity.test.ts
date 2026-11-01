@@ -10,7 +10,7 @@ import { createOracleAgent } from "./oracle"
 import { createMomusAgent } from "./momus"
 import { createMetisAgent } from "./metis"
 import { getPrometheusPrompt } from "./prometheus/system-prompt"
-import { adaptNativePrompt, reconcileNativeModelPrompts } from "./native-model-prompt"
+import { adaptNativePrompt, NATIVE_VERIFICATION_BOUNDARY, reconcileNativeModelPrompts } from "./native-model-prompt"
 import { frameNativePrompt } from "./native-prompt-frame"
 import { REFUSAL_IS_FINAL_RULE } from "./refusal-rule"
 import { createGrepTools } from "../tools/grep/tools"
@@ -96,7 +96,7 @@ describe("Native rendered-content parity (#9851)", () => {
             promptGuidelines: [],
             contextFiles: [],
             skills: [],
-            surface: "terminal" as const,
+            surface: "chat" as const,
             appName: "OmO",
           }
           const preset = resolvePreset(model, { promptPreset: "auto" }, options)
@@ -107,6 +107,7 @@ describe("Native rendered-content parity (#9851)", () => {
             adaptNativePrompt(core, agent.useTaskSystem),
             // An agent that carries the refusal rule has it stated once in the frame: by the core, or right after it.
             ...(agent.refusalRule && !core.includes(REFUSAL_IS_FINAL_RULE) ? [REFUSAL_IS_FINAL_RULE] : []),
+            NATIVE_VERIFICATION_BOUNDARY,
             identity,
           ].join("\n\n")
           // The Hephaestus role rides in the frame context, and a GPT-6.2 preset is rendered without it (#14186).

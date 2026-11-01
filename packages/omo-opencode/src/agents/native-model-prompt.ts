@@ -55,10 +55,17 @@ export function nativePromptOptions(
     promptGuidelines: [],
     contextFiles: [],
     skills: [],
-    surface: "terminal",
+    // The terminal surface makes every reply carry a fixed-label status block (Ask/For you/Now/Next)
+    // that senpi's own terminal folds into one muted line; OpenCode would show it raw. The chat
+    // surface keeps the same work rules and reports the outcome as plain text.
+    surface: "chat",
     appName: "OmO",
   }
 }
+
+/** The chat surface lets other evidence stand in for a skipped check; keep that substitution honest. */
+export const NATIVE_VERIFICATION_BOUNDARY =
+  "Evidence from one check covers a check that did not run only when it establishes the same claim; disclose any unmet required check or material verification gap, and never report an unrun check as passed."
 
 /** The sole host transform; model-core prose is otherwise preserved byte for byte. */
 export function adaptNativePrompt(prompt: string, useTaskSystem = false): string {
@@ -94,7 +101,9 @@ function composeNativeAgentPrompt(input: NativeAgentPromptInput): NativePromptPa
     : ""
   // The rule sits in the frame, the one part a model switch rebuilds: a core that states it needs no second copy.
   const refusalRule = input.refusalRule && !core.includes(REFUSAL_IS_FINAL_RULE) ? REFUSAL_IS_FINAL_RULE : ""
-  const body = [adaptNativePrompt(core, input.useTaskSystem), refusalRule, modelIdentity].filter(Boolean).join("\n\n")
+  const body = [adaptNativePrompt(core, input.useTaskSystem), refusalRule, NATIVE_VERIFICATION_BOUNDARY, modelIdentity]
+    .filter(Boolean)
+    .join("\n\n")
   // The Hephaestus role rides in the frame context, so a model switch can drop it for a standalone preset and restore it.
   const hephaestusRole = restriction === "hephaestus" && role.length > 0
   const standalone = hephaestusRole && isStandaloneHephaestusPreset(preset?.name)
