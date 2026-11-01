@@ -5,6 +5,7 @@ import { createMessagesTransformHandler, getMessagesTransformHooks } from "../pl
 import type { V2ModelRef, V2PluginContext, V2Registration } from "./context-types"
 import { registerMessagesTransform, type V1MessageView } from "./messages-transform-bridge"
 import { registerNativeTeamStatus } from "./native-team-status"
+import { registerNativeMonitorStatus } from "./native-monitor-status"
 
 type V1ChatRequestInput = {
   readonly sessionID: string
@@ -203,7 +204,9 @@ export async function installSessionHooks(
   const messages = v1["experimental.chat.messages.transform"]
   const transformHooks = messages === undefined ? undefined : getMessagesTransformHooks(messages)
   const teamStatus = transformHooks?.teamModeStatusInjector
+  const monitorStatus = transformHooks?.monitorStatusInjector
   if (teamStatus) registrations.push(await registerNativeTeamStatus(context, teamStatus))
+  if (monitorStatus) registrations.push(await registerNativeMonitorStatus(context, monitorStatus))
 
   if (v1["chat.message"] !== undefined) registrations.push(await registerPrompt(context, v1["chat.message"], deps.warn))
   if (v1["chat.params"] !== undefined) registrations.push(await registerChatParams(context, v1["chat.params"]))
@@ -213,8 +216,10 @@ export async function installSessionHooks(
   }
   if (messages !== undefined) {
     const transform =
-      teamStatus && transformHooks
-        ? createMessagesTransformHandler({ hooks: { ...transformHooks, teamModeStatusInjector: null } })
+      (teamStatus || monitorStatus) && transformHooks
+        ? createMessagesTransformHandler({
+            hooks: { ...transformHooks, teamModeStatusInjector: null, monitorStatusInjector: null },
+          })
         : messages
     registrations.push(
       await registerMessagesTransform(context, (input, output) => Reflect.apply(transform, undefined, [input, output])),
