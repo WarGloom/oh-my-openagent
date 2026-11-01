@@ -118,6 +118,8 @@ export interface BackgroundTask {
 
 export interface BackgroundTaskSnapshot {
   readonly title: string
+  readonly model?: string
+  readonly reasoningEffort?: string
   readonly status: BackgroundTaskStatus
   readonly toolCalls: number | null
   readonly lastTool: string | null
