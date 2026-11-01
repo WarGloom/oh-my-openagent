@@ -58,6 +58,9 @@ it("#given only a synthetic user turn #when context is built #then the reminder 
     // when
     await fake.triggerContext(event("msg_internal", "internal"))
     expect(fake.sessionCalls.filter((call) => call.kind === "synthetic")).toHaveLength(0)
+    history = [{ type: "user", id: "msg_marked", text: "internal", time: { created: 2 } }]
+    await fake.triggerContext(event("msg_marked", "internal <!-- OMO_INTERNAL_INITIATOR -->"))
+    expect(fake.sessionCalls.filter((call) => call.kind === "synthetic")).toHaveLength(0)
     history = [{ type: "user", id: "msg_real", text: "real", time: { created: 2 } }]
     await fake.triggerContext(event("msg_real", "real"))
     // then

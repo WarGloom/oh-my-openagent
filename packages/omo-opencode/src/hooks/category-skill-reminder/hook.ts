@@ -57,19 +57,23 @@ function markReminderShown(state: SessionState): void {
 }
 
 type MessageWithParts = { info: Message; parts: Part[] }
+type ReminderCandidate = {
+  readonly info: { readonly role: string; readonly sessionID?: unknown; readonly id?: unknown }
+  readonly parts: readonly { readonly type?: string; readonly text?: string; readonly synthetic?: boolean }[]
+}
 
-interface ReminderInjectionTarget {
-  message: MessageWithParts
+interface ReminderInjectionTarget<T extends ReminderCandidate> {
+  message: T
   messageID: string
   sessionID: string
   state: SessionState
   textPartIndex: number
 }
 
-function findLatestReminderTarget(
-  messages: MessageWithParts[],
+function findLatestReminderTarget<T extends ReminderCandidate>(
+  messages: readonly T[],
   sessionStates: Map<string, SessionState>,
-): ReminderInjectionTarget | undefined {
+): ReminderInjectionTarget<T> | undefined {
   for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
     const message = messages[messageIndex]
     if (message?.info.role !== "user") continue
@@ -193,6 +197,8 @@ export function createCategorySkillReminderHook(
   return {
     nativeReminder: (sessionID: string): string | undefined =>
       reminderPending(sessionStates.get(sessionID)) ? reminderMessage : undefined,
+    nativeHasReminderTarget: (messages: readonly ReminderCandidate[]): boolean =>
+      findLatestReminderTarget(messages, sessionStates) !== undefined,
     nativeMarkReminder: (sessionID: string): void => {
       const state = sessionStates.get(sessionID)
       if (!reminderPending(state)) return
