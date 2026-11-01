@@ -28,6 +28,7 @@ type MonitorStatusInjectorOutput = {
 }
 
 export type MonitorStatusInjectorHook = {
+  readonly nativeStatusForSession: (sessionID: string) => string | undefined
   "experimental.chat.messages.transform"?: (
     input: MonitorStatusInjectorInput,
     output: MonitorStatusInjectorOutput,
@@ -107,7 +108,13 @@ export function createMonitorStatusInjectorHook(
   monitorManager: MonitorManager,
   config: { enabled: boolean },
 ): MonitorStatusInjectorHook {
+  const statusForSession = (sessionID: string): string | undefined => {
+    if (!config.enabled) return undefined
+    const active = monitorManager.list(sessionID).filter(isActiveMonitor)
+    return active.length === 0 ? undefined : buildStatusLine(active)
+  }
   return {
+    nativeStatusForSession: statusForSession,
     "experimental.chat.messages.transform": async (input, output): Promise<void> => {
       if (!config.enabled || output.messages.length === 0) {
         return
@@ -118,12 +125,10 @@ export function createMonitorStatusInjectorHook(
         return
       }
 
-      const activeMonitors = monitorManager.list(sessionID).filter(isActiveMonitor)
-      if (activeMonitors.length === 0) {
+      const statusLine = statusForSession(sessionID)
+      if (statusLine === undefined) {
         return
       }
-
-      const statusLine = buildStatusLine(activeMonitors)
       const existingStatusPart = findInjectedStatusPart(output.messages)
       if (existingStatusPart !== undefined) {
         existingStatusPart.text = statusLine
