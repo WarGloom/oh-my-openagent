@@ -1,4 +1,5 @@
 import type { Hooks } from "@opencode-ai/plugin"
+import { log } from "../shared/logger"
 import type { V2ModelRef, V2PluginContext, V2Registration } from "./context-types"
 import { registerMessagesTransform, type V1MessageView } from "./messages-transform-bridge"
 
@@ -77,6 +78,7 @@ async function registerPrompt(
     let agent: string | undefined
     try {
       agent = (await context.session.get({ sessionID: event.sessionID })).agent
+      log("[prompt-bridge] session agent lookup succeeded", { sessionID: event.sessionID, agent })
     } catch (error) {
       warn(`prompt bridge agent lookup failed: ${error instanceof Error ? error.message : String(error)}`)
     }
