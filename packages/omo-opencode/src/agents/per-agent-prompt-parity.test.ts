@@ -10,7 +10,7 @@ import { createOracleAgent } from "./oracle"
 import { createMomusAgent } from "./momus"
 import { createMetisAgent } from "./metis"
 import { getPrometheusPrompt } from "./prometheus/system-prompt"
-import { adaptNativePrompt, reconcileNativeModelPrompts } from "./native-model-prompt"
+import { adaptNativePrompt, NATIVE_VERIFICATION_BOUNDARY, reconcileNativeModelPrompts } from "./native-model-prompt"
 import { frameNativePrompt } from "./native-prompt-frame"
 import { createGrepTools } from "../tools/grep/tools"
 import { createGlobTools } from "../tools/glob/tools"
@@ -59,12 +59,12 @@ describe("Native rendered-content parity (#9851)", () => {
         // Independent Native inputs: never derive the oracle's snippets from the adapter under test.
         const options = {
           cwd: "", selectedTools: toolNames, toolSnippets, promptGuidelines: [],
-          contextFiles: [], skills: [], surface: "terminal" as const, appName: "OmO",
+          contextFiles: [], skills: [], surface: "chat" as const, appName: "OmO",
         }
         const preset = resolvePreset(model, { promptPreset: "auto" }, options)
         const core = preset?.prompt ?? buildDynamicSystemPrompt(options)
         const identity = "Model: " + JSON.stringify({ provider: model.provider, id: model.id, preset: preset?.name ?? null })
-        const framed = frameNativePrompt([adaptNativePrompt(core, agent.useTaskSystem), identity].join("\n\n"), {
+        const framed = frameNativePrompt([adaptNativePrompt(core, agent.useTaskSystem), NATIVE_VERIFICATION_BOUNDARY, identity].join("\n\n"), {
           model: id, tools: toolNames, toolSnippets,
           ...(agent.permits ? { restriction: "hephaestus" as const } : {}),
           ...(agent.useTaskSystem ? { useTaskSystem: true } : {}),

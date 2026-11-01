@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { buildDynamicSystemPrompt, resolvePreset } from "@code-yeongyu/senpi/prompt-presets"
 import { getPrometheusPrompt, PROMETHEUS_SYSTEM_PROMPT } from "./system-prompt"
-import { adaptNativePrompt, nativePromptOptions } from "../native-model-prompt"
+import { adaptNativePrompt, NATIVE_VERIFICATION_BOUNDARY, nativePromptOptions } from "../native-model-prompt"
 import { frameNativePrompt } from "../native-prompt-frame"
 
 describe("Prometheus role and host capabilities", () => {
@@ -13,7 +13,7 @@ describe("Prometheus role and host capabilities", () => {
     expect(native).toBeDefined()
     const identity = "Model: " + JSON.stringify({ ...model, preset: native?.name ?? null })
     expect(getPrometheusPrompt("synthetic/claude-opus-5-5"))
-      .toBe(frameNativePrompt([adaptNativePrompt(native?.prompt ?? ""), identity].join("\n\n"), {
+      .toBe(frameNativePrompt([adaptNativePrompt(native?.prompt ?? ""), NATIVE_VERIFICATION_BOUNDARY, identity].join("\n\n"), {
         model: "synthetic/claude-opus-5-5", tools,
       }) + "\n\n" + PROMETHEUS_SYSTEM_PROMPT)
   })
@@ -22,7 +22,7 @@ describe("Prometheus role and host capabilities", () => {
     const core = buildDynamicSystemPrompt(nativePromptOptions(tools))
     const identity = 'Model: {"provider":"synthetic","id":"unknown","preset":null}'
     expect(getPrometheusPrompt("synthetic/unknown", ["read", "question"]))
-      .toBe(frameNativePrompt([adaptNativePrompt(core), identity].join("\n\n"), {
+      .toBe(frameNativePrompt([adaptNativePrompt(core), NATIVE_VERIFICATION_BOUNDARY, identity].join("\n\n"), {
         model: "synthetic/unknown", tools,
       }) + "\n\n" + PROMETHEUS_SYSTEM_PROMPT)
   })

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { buildDynamicSystemPrompt, resolvePreset } from "@code-yeongyu/senpi/prompt-presets"
 import {
   adaptNativePrompt,
+  NATIVE_VERIFICATION_BOUNDARY,
   buildNativeAgentPrompt,
   nativePromptOptions,
   resolveNativePromptModel,
@@ -43,7 +44,7 @@ describe("OpenCode host transform", () => {
     const core = buildDynamicSystemPrompt(options)
     const identity = 'Model: {"provider":"synthetic","id":"vendor/model-id","preset":null}'
     expect(buildNativeAgentPrompt("synthetic/vendor/model-id", "ROLE_SENTINEL"))
-      .toBe(frameNativePrompt([adaptNativePrompt(core), identity].join("\n\n"), {
+      .toBe(frameNativePrompt([adaptNativePrompt(core), NATIVE_VERIFICATION_BOUNDARY, identity].join("\n\n"), {
         model: "synthetic/vendor/model-id", tools: [],
       }) + "\n\nROLE_SENTINEL")
   })
@@ -65,7 +66,7 @@ describe("OpenCode host transform", () => {
     const native = resolvePreset(model, { promptPreset: "auto" }, options)
     expect(native).toBeDefined()
     const identity = 'Model: {"provider":"anthropic","id":"claude-opus-5-5","preset":"claude-opus-5-5"}'
-    const framed = frameNativePrompt([adaptNativePrompt(native?.prompt ?? ""), identity].join("\n\n"), {
+    const framed = frameNativePrompt([adaptNativePrompt(native?.prompt ?? ""), NATIVE_VERIFICATION_BOUNDARY, identity].join("\n\n"), {
       model: "anthropic/claude-opus-5-5", tools: [],
     })
     expect(buildNativeAgentPrompt("anthropic/claude-opus-5-5", "ROLE_A"))
