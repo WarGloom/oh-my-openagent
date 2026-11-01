@@ -2341,6 +2341,7 @@ export class BackgroundManager {
           log("[background-agent] Failed to flush pending parent wake:", { sessionID, error })
         })
       }
+      if (this.nativeLifecycle) return
       handleSessionIdleBackgroundEvent({
         properties: props as Record<string, unknown>,
         findBySession: (id) => {
