@@ -34,6 +34,11 @@ type MessagesTransformHooks = {
   monitorStatusInjector?: CreatedHooks["monitorStatusInjector"]
   categorySkillReminder?: CreatedHooks["categorySkillReminder"]
 }
+const transformHooks = new WeakMap<Function, MessagesTransformHooks>()
+
+export function getMessagesTransformHooks(handler: Function): MessagesTransformHooks | undefined {
+  return transformHooks.get(handler)
+}
 type MessagesTransformHookKey = keyof MessagesTransformHooks
 type MessagesTransformHookEntry = {
   readonly key: MessagesTransformHookKey
@@ -238,7 +243,7 @@ async function runMessagesTransformHookSafely<I, O>(
 export function createMessagesTransformHandler(args: {
   hooks: MessagesTransformHooks
 }): (input: Record<string, never>, output: MessagesTransformOutput) => Promise<void> {
-  return async (input, output): Promise<void> => {
+  const transform = async (input: Record<string, never>, output: MessagesTransformOutput): Promise<void> => {
     for (const hook of MESSAGES_TRANSFORM_HOOKS) {
       const handler = args.hooks[hook.key]?.["experimental.chat.messages.transform"]
       if (hook.fatal) {
@@ -250,4 +255,6 @@ export function createMessagesTransformHandler(args: {
 
     ensureUserTurnAfterAssistantTail(output)
   }
+  transformHooks.set(transform, args.hooks)
+  return transform
 }
