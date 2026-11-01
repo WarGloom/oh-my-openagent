@@ -1,4 +1,6 @@
-import type { V2ContextHookEvent, V2PluginContext, V2Registration, V2RequestMessage, V2RequestMessagePart } from "./context-types"
+import type { V2ContextHookEvent, V2PluginContext, V2Registration, V2RequestMessage, V2RequestMessagePart, V2SessionMessage } from "./context-types"
+import { log } from "../shared/logger"
+import { enrichMessageViews } from "./message-history-enrichment"
 
 /** The 1.x `{ info, parts }` shape OMO's messages transform reads and mutates. */
 export type V1MessageView = {
@@ -169,6 +171,13 @@ export async function registerMessagesTransform(
 ): Promise<V2Registration> {
   return context.session.hook("context", async (event) => {
     const output = eventToV1(event)
+    let history: ReadonlyArray<V2SessionMessage> | undefined
+    try {
+      history = await context.session.context({ sessionID: event.sessionID })
+    } catch (error) {
+      log("[messages-transform] session history enrichment failed", { error, sessionID: event.sessionID })
+    }
+    if (history !== undefined) enrichMessageViews(output.messages, history)
     await handler({}, output)
     event.messages.splice(0, event.messages.length, ...output.prefix, ...v1ToEvent(output.messages))
   })
