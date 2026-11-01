@@ -32,7 +32,7 @@ type V1CompactingOutput = { context: string[]; prompt?: string }
  * lets the strict `Hooks` object assign here.
  */
 interface V1SessionHooks {
-  "chat.message"?(input: { sessionID: string; messageID: string }, output: V1ChatMessageOutput): Promise<void> | void
+  "chat.message"?(input: { sessionID: string; messageID: string; agent?: string }, output: V1ChatMessageOutput): Promise<void> | void
   "chat.params"?(input: V1ChatRequestInput, output: V1ChatParamsOutput): Promise<void> | void
   "chat.headers"?(input: V1ChatRequestInput, output: V1ChatHeadersOutput): Promise<void> | void
   "experimental.chat.system.transform"?(
@@ -53,15 +53,23 @@ function requestInput(sessionID: string, agent: string, model: V2ModelRef): V1Ch
   }
 }
 
-async function registerPrompt(context: V2PluginContext, handler: NonNullable<V1SessionHooks["chat.message"]>): Promise<V2Registration> {
+async function registerPrompt(context: V2PluginContext, handler: NonNullable<V1SessionHooks["chat.message"]>, warn: (message: string) => void): Promise<V2Registration> {
   return context.session.hook("prompt", async (event) => {
+    // The 2.x prompt event has no agent (it runs before agent selection), so read the session's
+    // agent once. A failed read never throws; the handler then runs with agent undefined.
+    let agent: string | undefined
+    try {
+      agent = (await context.session.get({ sessionID: event.sessionID })).agent
+    } catch (error) {
+      warn(`prompt bridge agent lookup failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
     const original = event.prompt.text
     const parts = [{ type: "text", text: original, id: event.messageID, sessionID: event.sessionID, messageID: event.messageID }]
     const output: V1ChatMessageOutput = { message: { id: event.messageID, sessionID: event.sessionID, role: "user", time: { created: Date.now() } }, parts }
-    await handler({ sessionID: event.sessionID, messageID: event.messageID }, output)
+    await handler({ sessionID: event.sessionID, messageID: event.messageID, ...(agent === undefined ? {} : { agent }) }, output)
     // The 2.x prompt event carries only `prompt.text`, so every text part the handlers leave (the
-    // original, edits, and appended mode prompts) is written back in order. The event has no agent,
-    // model or variant, so agent- and model-dependent chat.message effects cannot run here.
+    // original, edits, and appended mode prompts) is written back in order. The event has no model
+    // or variant, so model-dependent chat.message effects cannot run here.
     const text = output.parts
       .filter((part) => part.type === "text" && typeof part.text === "string")
       .map((part) => part.text as string)
@@ -135,7 +143,7 @@ export async function installSessionHooks(
   const v1: V1SessionHooks = hooks
   const registrations: V2Registration[] = []
 
-  if (v1["chat.message"] !== undefined) registrations.push(await registerPrompt(context, v1["chat.message"]))
+  if (v1["chat.message"] !== undefined) registrations.push(await registerPrompt(context, v1["chat.message"], deps.warn))
   if (v1["chat.params"] !== undefined) registrations.push(await registerChatParams(context, v1["chat.params"]))
   if (v1["chat.headers"] !== undefined) registrations.push(await registerChatHeaders(context, v1["chat.headers"]))
   if (v1["experimental.chat.system.transform"] !== undefined) {
