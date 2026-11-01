@@ -35,6 +35,34 @@ function firstSnapshot(snapshots: readonly BackgroundTaskSnapshot[]): Background
 }
 
 describe("toBackgroundTaskSnapshots", () => {
+  test.each([
+    {
+      model: {
+        providerID: "openai",
+        modelID: "gpt-6.1-sol",
+        reasoning: "high",
+        reasoningEffort: "low",
+        variant: "medium",
+      },
+      effort: "high",
+    },
+    {
+      model: { providerID: "openai", modelID: "gpt-6.1-sol", reasoningEffort: "low", variant: "medium" },
+      effort: "low",
+    },
+    { model: { providerID: "openai", modelID: "gpt-6.1-sol", variant: "medium" }, effort: "medium" },
+  ])(
+    "#given a task model #when taking its snapshot #then model and effective effort survive: $effort",
+    ({ model, effort }) => {
+      // given
+      const task = createTask({ model })
+      // when
+      const snapshot = firstSnapshot(toBackgroundTaskSnapshots([task]))
+      // then
+      expect(snapshot).toMatchObject({ model: "gpt-6.1-sol", reasoningEffort: effort })
+    },
+  )
+
   test("returns an empty array when there are no tasks", () => {
     //#given
     const tasks: readonly BackgroundTask[] = []
