@@ -5,6 +5,9 @@ import { join } from "node:path"
 import { getLocale, initI18n, t } from "../shared/i18n"
 import { PLUGIN_NAME } from "../shared"
 import { createPluginModule } from "./create-plugin-module"
+import { createPluginInput } from "../v2/create-plugin-input"
+import { createFakePluginContext } from "../v2/fake-plugin-context"
+import { createSessionTracker } from "../v2/session-tracker"
 
 const sourcePlugin = new URL("../index.ts", import.meta.url).href
 
@@ -120,6 +123,42 @@ function createTestPluginModule(
 }
 
 describe("createPluginModule()", () => {
+  it("#given V2 and V1 plugin inputs #when hooks are created #then only V2 disables duplicate directory agents injection", async () => {
+    // given
+    const directory = mkdtempSync(join(tmpdir(), "omo-native-agents-config-"))
+    const previousConfig = process.env.OPENCODE_CONFIG_DIR
+    process.env.OPENCODE_CONFIG_DIR = directory
+    const enabled: boolean[] = []
+    const plugin = createTestPluginModule({
+      createHooks: (args) => {
+        enabled.push(args.isHookEnabled("directory-agents-injector"))
+        return mockCreateHooks() as never
+      },
+      initLiveServerRoute: () => {},
+      setLiveParentWakeRoutingDisabled: () => {},
+      warmLiveServerProbe: () => {},
+      recordPluginTelemetry: () => {},
+      startOmoProcessSweep: async () => {},
+    })
+    const input = createPluginInput(createFakePluginContext().context, {
+      tracker: createSessionTracker(),
+      warn: () => {},
+    })
+    try {
+      // when
+      const v2 = await plugin.server(input)
+      const v1 = await plugin.server({ ...input })
+      // then
+      expect(enabled).toEqual([false, true])
+      await v2.dispose?.()
+      await v1.dispose?.()
+    } finally {
+      if (previousConfig === undefined) delete process.env.OPENCODE_CONFIG_DIR
+      else process.env.OPENCODE_CONFIG_DIR = previousConfig
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   beforeEach(() => {
     mockDetectDuplicateOmoPlugin.mockClear()
     mockGetDuplicateOmoPluginWarning.mockClear()
