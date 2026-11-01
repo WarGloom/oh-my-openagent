@@ -3,6 +3,7 @@ import type { V2PluginContext, V2Registration } from "./context-types"
 import { installConfigBridge, type BeforeCommandHook, type ConfigHook } from "./config-bridge"
 import { toV2Tool } from "./tool-bridge"
 import { installToolHooks } from "./tool-hooks"
+import { installSessionHooks } from "./session-hooks"
 
 export type InstallHooksDeps = {
   readonly warn: (message: string) => void
@@ -55,6 +56,17 @@ export async function installHooks(
 
   if (hooks["tool.execute.before"] !== undefined || hooks["tool.execute.after"] !== undefined) {
     registrations.push({ dispose: await installToolHooks(context, hooks) })
+  }
+
+  const bridgesSessionHook =
+    hooks["chat.message"] !== undefined ||
+    hooks["chat.params"] !== undefined ||
+    hooks["chat.headers"] !== undefined ||
+    hooks["experimental.chat.system.transform"] !== undefined ||
+    hooks["experimental.chat.messages.transform"] !== undefined ||
+    hooks["experimental.session.compacting"] !== undefined
+  if (bridgesSessionHook) {
+    registrations.push({ dispose: await installSessionHooks(context, hooks, { warn: deps.warn }) })
   }
 
   let disposed = false
