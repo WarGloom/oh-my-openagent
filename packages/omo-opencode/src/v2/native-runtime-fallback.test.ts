@@ -117,6 +117,17 @@ describe("native runtime fallback", () => {
     expect(getSessionPromptParams("ses_main")).toMatchObject({ temperature: 0.2, options: { reasoningEffort: "high" } })
   })
 
+  test("drops a variant the host model does not offer instead of failing the retry", async () => {
+    // given
+    const sonnet = hostModel("anthropic", "claude-sonnet-4-6")
+    const f = fixture({ agents: { sisyphus: { models: ["anthropic/first", { model: "anthropic/claude-sonnet-4-6", reasoning: "high" }] } } }, [], first, [hostModel("anthropic", "first"), { ...sonnet, variants: [{ id: "low" }] }])
+    await install(f)
+    // when
+    await f.fake.triggerRetry(retry({ type: "provider.rate-limit", message: "rate limit", status: 429 }))
+    // then
+    expect(f.fake.sessionCalls).toEqual([{ kind: "switchModel", sessionID: "ses_main", model: { providerID: "anthropic", id: "claude-sonnet-4-6", variant: undefined } }])
+  })
+
   test("skips a chain entry whose provider the host does not serve", async () => {
     // given
     const f = fixture({ agents: { sisyphus: { models: ["anthropic/first", "missing/model", "anthropic/second"] } } }, [], first, [hostModel("anthropic", "first"), hostModel("anthropic", "second")])
@@ -201,7 +212,7 @@ describe("native runtime fallback", () => {
     expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["switchModel", "synthetic"])
     const continuation = f.fake.sessionCalls.find((call) => call.kind === "synthetic")
     expect(continuation?.input).toMatchObject({ sessionID: "ses_main", resume: true, delivery: "steer" })
-    expect(continuation?.input.id).toMatch(/^msg_[a-f0-9]{64}$/)
+    expect(continuation?.input.id).toBeUndefined()
   })
 
   test("keeps recovered failures away from legacy error and idle consumers through real setup", async () => {
