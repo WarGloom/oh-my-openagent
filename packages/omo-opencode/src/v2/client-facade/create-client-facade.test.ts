@@ -4,6 +4,8 @@ import { createFakePluginContext } from "../fake-plugin-context"
 import { createSessionTracker } from "../session-tracker"
 import { V2UnsupportedOperationError } from "../unsupported-operation-error"
 import { createClientFacade } from "./create-client-facade"
+import { buildTuiRuntimeSnapshot } from "../../features/tui-sidebar/snapshot-builder"
+import { TeamModeConfigSchema } from "@oh-my-opencode/team-core/config"
 
 const facadeDeps = () => ({ tracker: createSessionTracker(), warn: () => {} })
 
@@ -30,6 +32,39 @@ function agent(overrides: Partial<V2AgentInfo> & Pick<V2AgentInfo, "id">): V2Age
 }
 
 describe("createClientFacade", () => {
+  it("#given team mode and a V2 session #when building a mirror snapshot #then the facade provides the session list", async () => {
+    // given
+    const fake = createFakePluginContext({ directory: "/work/app" })
+    const info = await fake.context.session.get({ sessionID: "ses_lead" })
+    const context = {
+      ...fake.context,
+      session: { ...fake.context.session, list: async () => ({ data: [info], cursor: {} }) },
+    }
+    const client = createClientFacade(context, facadeDeps())
+    const seen: string[] = []
+
+    // when
+    const snapshot = await buildTuiRuntimeSnapshot({
+      client,
+      projectDir: "/work/app",
+      teamModeConfig: TeamModeConfigSchema.parse({ enabled: true }),
+      teamRuntimeProvider: {
+        listActiveTeams: async () => {
+          seen.push("teams")
+          return []
+        },
+        loadRuntimeState: async () => {
+          throw new Error("unexpected runtime")
+        },
+        listTasks: async () => [],
+      },
+    })
+
+    // then
+    expect(snapshot.teams).toEqual([])
+    expect(seen).toEqual(["teams"])
+  })
+
   describe("#given provider.list", () => {
     it("#when called #then connected providers are those with at least one enabled model", async () => {
       // given
@@ -147,11 +182,11 @@ describe("createClientFacade", () => {
       const client = createClientFacade(context, facadeDeps())
 
       // when
-      const call = client.session.list()
+      const call = client.session.children({ path: { id: "ses_1" } })
 
       // then
       await expect(call).rejects.toBeInstanceOf(V2UnsupportedOperationError)
-      await expect(call).rejects.toMatchObject({ operation: "client.session.list" })
+      await expect(call).rejects.toMatchObject({ operation: "client.session.children" })
     })
 
     it("#when it lives in a mapped namespace #then it still rejects naming the exact call", async () => {
