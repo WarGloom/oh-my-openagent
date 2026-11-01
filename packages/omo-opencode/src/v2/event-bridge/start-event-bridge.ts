@@ -9,6 +9,7 @@ type HookEvent = Parameters<EventHook>[0]["event"]
 export type EventBridge = {
   /** Sets (or clears) the V1 `event` hook; events before this is set only update the tracker. */
   readonly setHandler: (handler: EventHook | undefined) => void
+  readonly setInterceptor: (interceptor: ((event: V2Event) => Promise<boolean>) | undefined) => void
   readonly stop: () => void
 }
 
@@ -51,6 +52,7 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 export function startEventBridge(context: V2PluginContext, deps: EventBridgeDeps): EventBridge {
   const abort = new AbortController()
   let handler: EventHook | undefined
+  let interceptor: ((event: V2Event) => Promise<boolean>) | undefined
   let queue: Promise<void> = Promise.resolve()
 
   const dispatch = (event: HookEvent): void => {
@@ -66,6 +68,22 @@ export function startEventBridge(context: V2PluginContext, deps: EventBridgeDeps
   }
 
   const handle = (event: V2Event): void => {
+    if (interceptor && event.type === "session.execution.failed") {
+      queue = queue.then(async () => {
+        try {
+          if (await interceptor?.(event)) return
+        } catch (error) {
+          deps.warn(`native recovery failed: ${messageOf(error)}`)
+        }
+        const translated = toV1Events(event, deps.tracker)
+        deps.tracker.observe(event)
+        for (const v1 of translated) await handler?.({ event: v1 as HookEvent })
+      }).catch((error: unknown) => deps.warn(`event hook failed: ${messageOf(error)}`))
+      return
+    }
+    if (interceptor && event.type === "session.deleted") {
+      queue = queue.then(async () => { await interceptor?.(event) })
+    }
     const translated = toV1Events(event, deps.tracker)
     deps.tracker.observe(event)
     for (const v1 of translated) dispatch(v1 as HookEvent)
@@ -110,12 +128,14 @@ export function startEventBridge(context: V2PluginContext, deps: EventBridgeDeps
   })()
 
   return {
+    setInterceptor: (next) => { interceptor = next },
     setHandler: (next) => {
       handler = next
     },
     stop: () => {
       abort.abort()
       handler = undefined
+      interceptor = undefined
     },
   }
 }
