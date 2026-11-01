@@ -4,7 +4,7 @@ import type { ViewNode } from "./element-helpers"
 import { assertNever } from "./state-types"
 import { teamLines, teamNodes } from "./team-section"
 import type { TeamSectionInteraction } from "./team-section"
-import type { ConfigBanner, JobBoardState, LoopState, SidebarView } from "./state-types"
+import type { ConfigBanner, JobBoardState, JobRow, LoopState, SidebarView } from "./state-types"
 
 type ThemeLike = {
   readonly error?: unknown
@@ -135,8 +135,8 @@ function jobNodes(jobs: JobBoardState, theme: ThemeLike): ViewNode[] {
           theme,
           jobs.jobs.map((job) =>
             text(
-              { fg: theme.text },
-              `${truncate(job.title)} ${job.status} ${job.toolCalls ?? 0} ${job.lastTool ?? "none"}`,
+              { fg: theme.text, truncate: true, wrapMode: "none" },
+              `${truncate(job.title)}${jobModelLabel(job)} ${job.status} ${job.toolCalls ?? 0} ${job.lastTool ?? "none"}`,
             ),
           ),
         ),
@@ -153,7 +153,7 @@ function jobLines(jobs: JobBoardState): string[] {
     case "list":
       return jobs.jobs.flatMap((job) => [
         "Jobs",
-        `${job.title} ${job.status} calls ${job.toolCalls ?? 0} last ${job.lastTool ?? "none"}`,
+        `${job.title}${jobModelLabel(job)} ${job.status} calls ${job.toolCalls ?? 0} last ${job.lastTool ?? "none"}`,
       ])
     default:
       return assertNever(jobs)
@@ -168,6 +168,12 @@ function monitorNodes(labels: readonly string[], theme: ThemeLike): ViewNode[] {
       ...labels.map((label) => text({ fg: theme.textMuted }, truncate(singleLine(label)))),
     ]),
   ]
+}
+
+function jobModelLabel(job: JobRow): string {
+  return job.model === undefined
+    ? ""
+    : ` · ${job.model}${job.reasoningEffort === undefined ? "" : ` ${job.reasoningEffort}`} ·`
 }
 
 function monitorLines(labels: readonly string[]): string[] {
