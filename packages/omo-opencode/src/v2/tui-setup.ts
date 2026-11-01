@@ -29,7 +29,8 @@ export const setupV2Tui: V2TuiSetup = async (ctx) => {
     const currentSession = sessionID
     inFlight = true
     try {
-      const next = await readView(directory, currentSession, cache)
+      const sessionDirectory = ctx.data.session.get(currentSession)?.location.directory ?? directory
+      const next = await readView(sessionDirectory, currentSession, cache)
       if (disposed || currentSession !== sessionID) return
       const nextKey = viewKey(next)
       if (key !== nextKey) {
