@@ -24,6 +24,7 @@ import { markServerRunningInProcess } from "./shared/tmux/tmux-utils/server-heal
 import type { ModelFallbackControllerAccessor } from "./hooks/model-fallback"
 import { subscribeSkillDiagnostics } from "@oh-my-opencode/skills-loader-core/opencode-skill-loader"
 import { showSkillSecurityNotice } from "./plugin/skill-security-notice"
+import { isV2PluginInput } from "./v2/create-plugin-input"
 
 type CreateManagersDeps = {
   BackgroundManagerClass: typeof BackgroundManager
@@ -128,6 +129,7 @@ export function createManagers(args: {
       })
     },
     pluginContext: ctx,
+    preserveSessionsOnShutdown: isV2PluginInput(ctx),
     config: pluginConfig.background_task,
     tmuxConfig,
     onSubagentSessionCreated: async (event: SubagentSessionCreatedEvent) => {

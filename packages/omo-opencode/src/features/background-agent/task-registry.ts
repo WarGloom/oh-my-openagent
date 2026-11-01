@@ -4,7 +4,7 @@ const MAX_COMPLETED_TASK_REGISTRY_SIZE = 100
 const REGISTRY_KEY = "__omoBackgroundTaskRegistry"
 
 type BackgroundTaskRegistry = {
-  activeTasks: Map<string, () => BackgroundTask>
+  activeTasks: Map<string, (() => BackgroundTask) & { readonly retainedDirectory?: string }>
   completedTasks: Map<string, BackgroundTask>
   recoveryClaims?: Set<string>
 }
@@ -118,7 +118,7 @@ export function getRegisteredBackgroundTask(taskID: string): BackgroundTask | un
   const registry = getRegistry()
   const activeTask = registry.activeTasks.get(taskID)
   if (activeTask) {
-    return activeTask()
+    return cloneRegisteredTask(activeTask())
   }
 
   const completedTask = registry.completedTasks.get(taskID)
@@ -129,6 +129,22 @@ export function forgetBackgroundTask(taskID: string): void {
   const registry = getRegistry()
   registry.activeTasks.delete(taskID)
   registry.completedTasks.delete(taskID)
+}
+
+export function retainBackgroundTaskForReload(task: BackgroundTask, directory: string): void {
+  const retained = { ...task, progress: cloneProgress(task.progress), attempts: cloneAttempts(task.attempts), onSessionCreated: undefined }
+  getRegistry().activeTasks.set(task.id, Object.assign(() => retained, { retainedDirectory: directory }))
+}
+
+export function takeBackgroundTasksAfterReload(directory: string): BackgroundTask[] {
+  const registry = getRegistry()
+  const tasks: BackgroundTask[] = []
+  for (const [id, readTask] of registry.activeTasks) {
+    if (readTask.retainedDirectory !== directory) continue
+    tasks.push(readTask())
+    registry.activeTasks.delete(id)
+  }
+  return tasks
 }
 
 export const MISSING_RETAINED_TASK_ERROR = "Retained-session recovery denied: no owned completed task with trusted agent/model metadata. The archive may have expired or the process restarted; do not substitute another agent."
