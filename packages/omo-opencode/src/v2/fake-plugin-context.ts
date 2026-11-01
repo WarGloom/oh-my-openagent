@@ -15,6 +15,7 @@ import type {
   V2ModelRequestHookEvent,
   V2CompactionHookEvent,
   V2RetryHookEvent,
+  V2IdleHookEvent,
   V2Event,
   V2ModelRef,
   V2McpEditor,
@@ -83,6 +84,7 @@ export type FakePluginContext = {
   readonly triggerModelRequest: (event: V2ModelRequestHookEvent) => Promise<V2ModelRequestHookEvent>
   readonly triggerCompaction: (event: V2CompactionHookEvent) => Promise<V2CompactionHookEvent>
   readonly triggerRetry: (event: V2RetryHookEvent) => Promise<V2RetryHookEvent>
+  readonly triggerIdle: (event: V2IdleHookEvent) => Promise<V2IdleHookEvent>
   readonly sessionHookCount: () => number
 }
 
@@ -153,6 +155,7 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
   const modelRequestHooks: Array<(event: V2ModelRequestHookEvent) => Promise<void> | void> = []
   const compactionHooks: Array<(event: V2CompactionHookEvent) => Promise<void> | void> = []
   const retryHooks: Array<(event: V2RetryHookEvent) => Promise<void> | void> = []
+  const idleHooks: Array<(event: V2IdleHookEvent) => Promise<void> | void> = []
   const sessionModels = new Map<string, V2ModelRef>()
 
   const rebuildAgents = (): void => {
@@ -344,7 +347,7 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
         sessionCalls.push({ kind: "switchModel", ...input })
       },
       hook: ((
-        name: "prompt" | "context" | "model.request" | "compaction" | "retry",
+        name: "prompt" | "context" | "model.request" | "compaction" | "retry" | "experimental.idle",
         callback: (event: never) => Promise<void> | void,
       ) => {
         const list = (
@@ -356,7 +359,9 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
                 ? modelRequestHooks
                 : name === "compaction"
                   ? compactionHooks
-                  : retryHooks
+                  : name === "retry"
+                    ? retryHooks
+                    : idleHooks
         ) as Array<typeof callback>
         list.push(callback)
         return Promise.resolve({
@@ -420,7 +425,16 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
       for (const hook of retryHooks) await hook(event)
       return event
     },
+    triggerIdle: async (event) => {
+      for (const hook of idleHooks) await hook(event)
+      return event
+    },
     sessionHookCount: () =>
-      promptHooks.length + contextHooks.length + modelRequestHooks.length + compactionHooks.length + retryHooks.length,
+      promptHooks.length +
+      contextHooks.length +
+      modelRequestHooks.length +
+      compactionHooks.length +
+      retryHooks.length +
+      idleHooks.length,
   }
 }
