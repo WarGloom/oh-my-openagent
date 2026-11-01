@@ -9,7 +9,7 @@ import { STALE_MS } from "./constants"
 import { canonicalProjectDir, mirrorStorageDir } from "./mirror-path"
 import type { JobRow } from "./state-types"
 
-const SESSION_JOBS_MIRROR_VERSION = 3
+const SESSION_JOBS_MIRROR_VERSION = 4
 const HASH_LENGTH = 16
 
 const BACKGROUND_TASK_STATUS_VALUES = [
@@ -24,6 +24,8 @@ const BACKGROUND_TASK_STATUS_VALUES = [
 const JobRowSchema = z
   .object({
     title: z.string(),
+    model: z.string().optional(),
+    reasoningEffort: z.string().optional(),
     status: z.enum(BACKGROUND_TASK_STATUS_VALUES),
     toolCalls: z.number().int().nonnegative().nullable(),
     lastTool: z.string().nullable(),
