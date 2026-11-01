@@ -7,6 +7,8 @@ import { releaseReservationSafely } from "./messaging-live-delivery-reservation"
 import { deliverLiveToRecipient } from "./messaging-live-delivery-recipient"
 import { loadRuntimeStateForLiveDelivery } from "./messaging-live-delivery-state"
 import type { TeamSendMessageToolDeps } from "./messaging-runtime"
+import { isTeamSessionDenied } from "../team-session-registry"
+import { log } from "../../../shared/logger"
 
 export type { LiveDeliveryClient } from "./messaging-live-delivery-client"
 
@@ -25,6 +27,16 @@ export async function deliverLive(
   const envelope = buildEnvelope(message)
 
   for (const recipientName of deliveredTo) {
+    if (client.session.nativeTeamMailbox) {
+      const member = runtimeState.members.find((entry) => entry.name === recipientName)
+      if (!member?.sessionId || member.removal || member.status === "completed" || member.status === "shutdown_approved" || isTeamSessionDenied(member.sessionId, config)) continue
+      try {
+        await client.session.nativeTeamMailbox({ teamRunId, memberName: recipientName, sessionID: member.sessionId, config })
+      } catch (error) {
+        log("[team-mailbox] V2 live delivery failed", { teamRunId, recipientName, error })
+      }
+      continue
+    }
     const reservation = await reserveMessageForDelivery(teamRunId, recipientName, message.messageId, config)
     if (reservation === null) continue
 
