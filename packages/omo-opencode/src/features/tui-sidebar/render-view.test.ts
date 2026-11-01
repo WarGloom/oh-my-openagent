@@ -38,7 +38,7 @@ const activeSections: ComputeViewSections = {
 }
 
 describe("tui sidebar renderView", () => {
-  it("#given a job model and effort #when rendering #then the row includes both and truncates within the sidebar", () => {
+  it("#given a job model and effort #when rendering #then both stay visible on their own line under the job row", () => {
     // given
     const view = computeView({
       ...activeSections,
@@ -49,8 +49,12 @@ describe("tui sidebar renderView", () => {
     // then
     expect(describeView(view)).toContain("RND-1031 dev · gpt-6.1-sol high · running")
     expect(nodes[0]?.children?.[2]?.children?.[1]).toMatchObject({
-      text: "RND-1031 dev · gpt-6.1-sol high · running 2 read",
+      text: "RND-1031 dev running 2 read",
       props: { truncate: true, wrapMode: "none" },
+    })
+    expect(nodes[0]?.children?.[2]?.children?.[2]).toMatchObject({
+      text: "gpt-6.1-sol high",
+      props: { fg: theme.textMuted, truncate: true, wrapMode: "none" },
     })
   })
 
