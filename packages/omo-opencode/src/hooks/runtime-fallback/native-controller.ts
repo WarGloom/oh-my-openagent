@@ -52,6 +52,7 @@ export function createNativeFallbackController(deps: HookDeps) {
 
   return {
     get enabled() { return deps.config.enabled },
+    get retryOnErrors() { return deps.config.retry_on_errors },
     get active() { return active },
     activate() {
       active = true
