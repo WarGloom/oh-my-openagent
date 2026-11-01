@@ -1,6 +1,7 @@
 import type { Hooks } from "@opencode-ai/plugin"
 import type { RuntimeFallbackHook } from "../hooks/runtime-fallback/types"
 import type { NativeFallbackController } from "../hooks/runtime-fallback/native-controller"
+import { classifyErrorType, extractErrorName, isRetryableError } from "../hooks/runtime-fallback/error-classifier"
 import { SessionCategoryRegistry } from "../shared/session-category-registry"
 import { filterProvidersServingModel } from "../features/background-agent/fallback-provider-model-filter"
 import { log } from "../shared/logger"
@@ -52,18 +53,49 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
   const controller = controllers.get(hooks)
   if (!controller) return undefined
   const recoveredFailures = new Map<string, string>()
-  const registration = await context.session.hook("retry", async (event) => {
+  const recover = async (
+    input: { sessionID: string; agent: string | undefined; model: string | undefined; error: V2StructuredError; attempt?: number },
+    apply: (model: V2ModelRef) => Promise<void>,
+  ): Promise<boolean> => {
+    const error = classifierError(input.error)
+    const errorType = classifyErrorType(error)
+    const retryable = isRetryableError(error, controller.retryOnErrors)
+    const details = {
+      sessionID: input.sessionID,
+      source: input.attempt === undefined ? "terminal" : "retry",
+      attempt: input.attempt,
+      model: input.model,
+      error: { type: input.error.type, name: extractErrorName(error), classification: errorType, status: input.error.status, message: input.error.message.slice(0, 300) },
+    }
+    if (!retryable) {
+      log("[runtime-fallback] Native recovery decision", { ...details, outcome: "declined as not retryable" })
+      return false
+    }
+    // V1 session-status-handler.ts:142-159 gives non-quota errors one provider retry.
+    const immediate = errorType === "quota_exceeded" || errorType === "model_not_found"
+    if (input.attempt !== undefined && input.attempt <= 1 && !immediate) {
+      log("[runtime-fallback] Native recovery decision", { ...details, outcome: "left to V2's same-model retry" })
+      return false
+    }
     const host = await hostModels(context)
-    const recovered = await controller.recover({
+    const recovered = await controller.recover({ ...input, error, isAvailable: host.isAvailable }, async (payload) => {
+      const model = host.modelRef(input.sessionID, payload)
+      log("[runtime-fallback] Native recovery decision", { ...details, outcome: `fallback to ${model.providerID}/${model.id}` })
+      await apply(model)
+      return { ...payload, variant: model.variant }
+    })
+    if (!recovered) log("[runtime-fallback] Native recovery decision", { ...details, outcome: "declined because no chain models remain" })
+    return recovered
+  }
+  const registration = await context.session.hook("retry", async (event) => {
+    const recovered = await recover({
       sessionID: event.sessionID,
       agent: event.agent,
       model: `${event.model.providerID}/${event.model.id}`,
-      error: classifierError(event.error),
-      isAvailable: host.isAvailable,
-    }, async (payload) => {
-      const model = host.modelRef(event.sessionID, payload)
+      error: event.error,
+      attempt: event.attempt,
+    }, async (model) => {
       await context.session.switchModel({ sessionID: event.sessionID, model })
-      return { ...payload, variant: model.variant }
     })
     if (recovered) event.decision = { retry: true, delay: 0 }
   })
@@ -83,21 +115,18 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
       if (event.type !== "session.execution.failed" || !("error" in data)) return false
       const error = data.error
       if (typeof error !== "object" || error === null || !("type" in error) || typeof error.type !== "string" || !("message" in error) || typeof error.message !== "string") return false
-      const failure = classifierError({ type: error.type, message: error.message, status: "status" in error && typeof error.status === "number" ? error.status : undefined })
+      const failure = { type: error.type, message: error.message, status: "status" in error && typeof error.status === "number" ? error.status : undefined }
       const history = await context.session.context({ sessionID })
       const last = history.at(-1)
       if (last && last.type !== "idle") return true
       const failureID = last?.id ?? JSON.stringify(data)
       if (recoveredFailures.get(sessionID) === failureID) return true
       const session = await context.session.get({ sessionID })
-      const host = await hostModels(context)
-      return controller.recover({ sessionID, agent: session.agent, model: session.model && `${session.model.providerID}/${session.model.id}`, error: failure, isAvailable: host.isAvailable }, async (payload) => {
-        const model = host.modelRef(sessionID, payload)
+      return recover({ sessionID, agent: session.agent, model: session.model && `${session.model.providerID}/${session.model.id}`, error: failure }, async (model) => {
         await context.session.switchModel({ sessionID, model })
         // No explicit id: the host assigns an ascending id, so turn-order readers see the continuation after the failure.
         await context.session.synthetic({ sessionID, text: "Continue the existing task after the model failure. Preserve completed work.", delivery: "steer", resume: true })
         recoveredFailures.set(sessionID, failureID)
-        return { ...payload, variant: model.variant }
       })
     },
     async dispose() {
