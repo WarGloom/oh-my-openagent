@@ -133,6 +133,8 @@ import {
   forgetBackgroundTask,
   getRegisteredBackgroundTask,
   rememberBackgroundTask,
+  retainBackgroundTaskForReload,
+  takeBackgroundTasksAfterReload,
 } from "./task-registry"
 import type { BackgroundTask, BackgroundTaskAttempt, BackgroundTaskSnapshot, LaunchInput, ResumeInput } from "./types"
 
@@ -399,6 +401,7 @@ export interface BackgroundManagerConfig {
   ) => Promise<void>
   onShutdown?: () => void | Promise<void>
   enableParentSessionNotifications?: boolean
+  preserveSessionsOnShutdown?: boolean
   modelFallbackControllerAccessor?: ModelFallbackControllerAccessor
   log?: typeof log
 }
@@ -415,6 +418,7 @@ export class BackgroundManager {
   private pollingInFlight = false
   private concurrencyManager: ConcurrencyManager
   private shutdownTriggered = false
+  private readonly preserveSessionsOnShutdown: boolean
   private config?: BackgroundTaskConfig
   private tmuxEnabled: boolean
   private onSubagentSessionCreated?: OnSubagentSessionCreated
@@ -458,6 +462,7 @@ export class BackgroundManager {
     this.pendingByParent = new Map()
     this.client = pluginContext.client
     this.directory = pluginContext.directory
+    this.preserveSessionsOnShutdown = options.preserveSessionsOnShutdown ?? false
     this.concurrencyManager = new ConcurrencyManager(options.config)
     this.config = options.config
     this.tmuxEnabled = options?.tmuxConfig?.enabled ?? false
@@ -488,6 +493,9 @@ export class BackgroundManager {
       },
     )
     this.registerProcessCleanup()
+    if (this.preserveSessionsOnShutdown) {
+      for (const task of takeBackgroundTasksAfterReload(this.directory)) this.adoptRetainedTask(task)
+    }
   }
 
   private async abortSessionWithLogging(sessionID: string, reason: string): Promise<boolean> {
@@ -1702,16 +1710,32 @@ export class BackgroundManager {
   }
 
   /**
-   * Re-register a completed task whose manager record expired while its SDK session was retained,
-   * so a run_in_background continuation goes through resume() and keeps its background task ID.
-   * The removal timer drops the record again if resume() never takes it over.
+   * Re-register a retained task after manager replacement, keeping its background task ID.
+   * Running children resume polling without another prompt; completed records keep the
+   * removal timer used by retained-session continuation recovery.
    */
   adoptRetainedTask(task: BackgroundTask): void {
     if (this.tasks.has(task.id) || (task.sessionId !== undefined && this.findBySession(task.sessionId))) {
       throw new Error(`Task ${task.id} is already tracked`)
     }
     this.addTask(task)
-    this.scheduleTaskRemoval(task.id)
+    if (task.status === "running" && task.sessionId) {
+      const key = this.getRawConcurrencyKeyFromTask(task)
+      this.concurrencyManager.restore(key)
+      task.concurrencyKey = this.concurrencyManager.getConcurrencyKey(key)
+      subagentSessions.add(task.sessionId)
+      delegatedTaskSessions.add(task.sessionId)
+      setSessionAgent(task.sessionId, task.agent)
+      if (task.category) SessionCategoryRegistry.register(task.sessionId, task.category)
+      if (task.rootSessionId) this.registerRootDescendant(task.rootSessionId)
+      const pending = this.pendingByParent.get(task.parentSessionId) ?? new Set<string>()
+      pending.add(task.id)
+      this.pendingByParent.set(task.parentSessionId, pending)
+      this.updateBackgroundTaskMarker(task.parentSessionId)
+      this.startPolling()
+    } else {
+      this.scheduleTaskRemoval(task.id)
+    }
   }
 
   async resume(input: ResumeInput): Promise<BackgroundTask> {
@@ -2130,6 +2154,7 @@ export class BackgroundManager {
   }
 
   handleEvent(event: Event): void {
+    if (this.preserveSessionsOnShutdown && this.shutdownTriggered) return
     const props = event.properties
 
     if (event.type.startsWith(SESSION_NEXT_EVENT_PREFIX)) {
@@ -3286,6 +3311,7 @@ export class BackgroundManager {
    * Returns true if task was successfully completed, false if already completed by another path.
    */
   private async tryCompleteTask(task: BackgroundTask, source: string): Promise<boolean> {
+    if (this.preserveSessionsOnShutdown && this.shutdownTriggered) return false
     // Guard: Check if task is still running (could have been completed by another path)
     if (task.status !== "running") {
       log("[background-agent] Task already completed, skipping:", { taskId: task.id, status: task.status, source })
@@ -3853,6 +3879,7 @@ export class BackgroundManager {
   }
 
   private async pollRunningTasks(): Promise<void> {
+    if (this.preserveSessionsOnShutdown && this.shutdownTriggered) return
     if (this.pollingInFlight) return
     this.pollingInFlight = true
     try {
@@ -3877,6 +3904,7 @@ export class BackgroundManager {
         }
       }
 
+      if (this.preserveSessionsOnShutdown && this.shutdownTriggered) return
       this.pruneStaleTasksAndNotifications(allStatuses)
 
       await this.checkAndInterruptStaleTasks(allStatuses)
@@ -3962,6 +3990,7 @@ export class BackgroundManager {
             sessionStatusType: sessionStatus?.type,
             fallbackDispatchedAt: task.fallbackDispatchedAt,
           })
+          if (this.preserveSessionsOnShutdown && this.shutdownTriggered) return
           if (task.fallbackDispatchGeneration !== fallbackDispatchGeneration) continue
           switch (sessionOutput) {
             case "ready":
@@ -4077,6 +4106,14 @@ export class BackgroundManager {
     this.shutdownTriggered = true
     log("[background-agent] Shutting down BackgroundManager")
     this.stopPolling()
+    const retainedTaskIDs = new Set<string>()
+    if (this.preserveSessionsOnShutdown) {
+      for (const task of this.tasks.values()) {
+        if (task.status !== "running" || !task.sessionId) continue
+        retainBackgroundTaskForReload(task, this.directory)
+        retainedTaskIDs.add(task.id)
+      }
+    }
     const trackedSessionIDs = new Set<string>()
     const abortRequests: Array<{ sessionID: string; promise: Promise<unknown> }> = []
     const queuedResumeParents = new Set<string>()
@@ -4097,7 +4134,7 @@ export class BackgroundManager {
         trackedSessionIDs.add(task.sessionId)
       }
 
-      if (task.status === "running" && task.sessionId) {
+      if (task.status === "running" && task.sessionId && !retainedTaskIDs.has(task.id)) {
         abortRequests.push({
           sessionID: task.sessionId,
           promise: abortWithTimeout(this.client, task.sessionId),
@@ -4130,7 +4167,7 @@ export class BackgroundManager {
     for (const task of this.tasks.values()) {
       if (TERMINAL_BACKGROUND_TASK_STATUSES.has(task.status)) {
         archiveBackgroundTask(task)
-      } else {
+      } else if (!retainedTaskIDs.has(task.id)) {
         forgetBackgroundTask(task.id)
       }
 
