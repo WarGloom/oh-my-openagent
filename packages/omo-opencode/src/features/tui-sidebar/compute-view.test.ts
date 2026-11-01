@@ -248,6 +248,23 @@ describe("tui sidebar computeView", () => {
     expect(keys[1]).not.toBe(keys[0])
   })
 
+  it("#given a job whose model and effort change with the same status #when computing keys #then the key changes", () => {
+    // given
+    const base = { config: validConfig, roster, agents: idleAgents, loop: idleLoop, teams: { kind: "none" as const } }
+    const job = { title: "child", status: "running" as const, toolCalls: 0, lastTool: null }
+    const firstView = computeView({ ...base, jobs: { kind: "list", jobs: [{ ...job, model: "claude-qa-missing" }] } })
+    const secondView = computeView({
+      ...base,
+      jobs: { kind: "list", jobs: [{ ...job, model: "claude-haiku-4-5", reasoningEffort: "medium" }] },
+    })
+
+    // when
+    const keys = [viewKey(firstView), viewKey(secondView)]
+
+    // then
+    expect(keys[1]).not.toBe(keys[0])
+  })
+
   it("#given equivalent views built with different literal key order #when computing keys #then viewKey is stable", () => {
     // given
     const first: SidebarView = {
