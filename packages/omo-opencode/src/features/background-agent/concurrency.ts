@@ -97,6 +97,11 @@ export class ConcurrencyManager {
     })
   }
 
+  restore(model: string): void {
+    const key = this.getConcurrencyKey(model)
+    this.counts.set(key, (this.counts.get(key) ?? 0) + 1)
+  }
+
   release(model: string): void {
     const key = this.getConcurrencyKey(model)
     const queue = this.queues.get(key)

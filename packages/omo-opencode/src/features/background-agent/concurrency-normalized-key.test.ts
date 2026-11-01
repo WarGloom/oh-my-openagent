@@ -3,6 +3,19 @@ import type { BackgroundTaskConfig } from "../../config/schema"
 import { ConcurrencyManager } from "./concurrency"
 
 describe("ConcurrencyManager normalized acquire/release keys", () => {
+  test("#given restored sessions above a new provider limit #when they finish #then new admissions wait for all restored slots", () => {
+    // given
+    const manager = new ConcurrencyManager({ providerConcurrency: { openai: 1 } })
+    manager.restore("openai/gpt-6.1-sol")
+    manager.restore("openai/gpt-6-sol")
+    // when / then
+    expect(manager.tryAcquire("openai/gpt-6.1-sol")).toBe(false)
+    manager.release("openai")
+    expect(manager.tryAcquire("openai/gpt-6.1-sol")).toBe(false)
+    manager.release("openai")
+    expect(manager.tryAcquire("openai/gpt-6.1-sol")).toBe(true)
+  })
+
   test("should release a raw model acquisition through the normalized provider key", async () => {
     // given
     const rawModel = "anthropic/claude-sonnet-4-6"
