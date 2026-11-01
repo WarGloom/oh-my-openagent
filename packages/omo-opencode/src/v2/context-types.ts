@@ -289,7 +289,11 @@ export type V2AssistantContent =
       readonly time: { readonly created: number; readonly ran?: number; readonly completed?: number }
     }
 
-type V2MessageBase = { readonly id: string; readonly time: { readonly created: number } }
+type V2MessageBase = {
+  readonly id: string
+  readonly time: { readonly created: number }
+  readonly metadata?: Readonly<Record<string, unknown>>
+}
 
 /** The 2.x session message log entries the translator understands; others are ignored by type. */
 export type V2SessionMessage =

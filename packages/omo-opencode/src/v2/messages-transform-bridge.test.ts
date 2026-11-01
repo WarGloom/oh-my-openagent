@@ -1,9 +1,13 @@
-import { describe, expect, it } from "bun:test"
+import { describe, expect, it, mock } from "bun:test"
 import type { Hooks } from "@opencode-ai/plugin"
-import type { V2ContextHookEvent } from "./context-types"
+import type { V2ContextHookEvent, V2SessionMessage } from "./context-types"
 import { createFakePluginContext } from "./fake-plugin-context"
 import { installSessionHooks } from "./session-hooks"
 import { createMessagesTransformHandler } from "../plugin/messages-transform"
+import { ContextCollector } from "../features/context-injector/collector"
+import { createContextInjectorMessagesTransformHook } from "../features/context-injector/injector"
+import { createMonitorStatusInjectorHook } from "../hooks/monitor-status-injector/hook"
+import type { MonitorCounters, MonitorManager, MonitorRecord } from "../features/monitor/types"
 
 function signedConversation(): V2ContextHookEvent["messages"] {
   return [
@@ -68,15 +72,167 @@ function contextEvent(messages: V2ContextHookEvent["messages"]): V2ContextHookEv
 
 type MessagesHook = NonNullable<Hooks["experimental.chat.messages.transform"]>
 
-async function runWith(messages: V2ContextHookEvent["messages"], hook: unknown): Promise<V2ContextHookEvent> {
-  const fake = createFakePluginContext()
+async function runWith(
+  messages: V2ContextHookEvent["messages"],
+  hook: unknown,
+  history: ReadonlyArray<V2SessionMessage> = [],
+  model = MODEL,
+): Promise<V2ContextHookEvent> {
+  const fake = createFakePluginContext({ sessionMessages: history })
   await installSessionHooks(fake.context, { "experimental.chat.messages.transform": hook as MessagesHook } as Hooks, {
     warn: () => {},
   })
-  return fake.triggerContext(contextEvent(messages))
+  return fake.triggerContext({ ...contextEvent(messages), model })
 }
 
 describe("messages transform bridge", () => {
+  it("#given synthetic history #when context is pending #then it waits for a real prompt", async () => {
+    // given
+    const collector = new ContextCollector()
+    collector.register("ses_1", { id: "context", source: "custom", content: "pending-context" })
+    const hook = createContextInjectorMessagesTransformHook(collector)["experimental.chat.messages.transform"]
+    const synthetic = { role: "user", id: "synthetic", content: [{ type: "text", text: "internal message" }] }
+    const history: V2SessionMessage[] = [
+      { type: "synthetic", id: "synthetic", text: "internal message", time: { created: 1 } },
+    ]
+
+    // when
+    const first = await runWith([synthetic], hook, history)
+    const second = await runWith(
+      [synthetic, { role: "user", id: "human", content: [{ type: "text", text: "human prompt" }] }],
+      hook,
+      [...history, { type: "user", id: "human", text: "human prompt", time: { created: 2 } }],
+    )
+
+    // then
+    expect(first.messages[0]).toBe(synthetic)
+    expect(second.messages[0]).toBe(synthetic)
+    expect(second.messages[1]?.content).toEqual([
+      { type: "text", text: "pending-context" },
+      { type: "text", text: "human prompt" },
+    ])
+  })
+
+  it("#given an existing synthetic monitor status #when the monitor hook runs #then it updates the status without another insertion", async () => {
+    // given
+    const counters: MonitorCounters = {
+      totalLines: 0,
+      matchedLines: 0,
+      unmatchedLines: 0,
+      droppedMatched: 0,
+      droppedUnmatched: 0,
+      bytesDropped: 0,
+      lastSequence: 0,
+    }
+    const record: MonitorRecord = {
+      id: "mon_1",
+      command: "watch",
+      label: "watch",
+      mode: "idle",
+      parentSessionId: "ses_1",
+      startedAt: new Date(0),
+      status: "running",
+      counters,
+    }
+    const manager: MonitorManager = {
+      start: async () => record,
+      stop: async () => {},
+      list: () => [record],
+      get: () => record,
+      getOutput: () => ({ lines: [], counters }),
+      stopSessionMonitors: async () => {},
+      handleEvent: () => {},
+      shutdown: async () => {},
+    }
+    const hook = createMonitorStatusInjectorHook(manager, { enabled: true })["experimental.chat.messages.transform"]
+    const history: V2SessionMessage[] = [
+      { type: "synthetic", id: "status", text: "Active monitors: old", time: { created: 1 } },
+    ]
+    const messages = [
+      { role: "user", id: "status", content: [{ type: "text", text: "Active monitors: old" }] },
+      { role: "user", id: "prompt", content: [{ type: "text", text: "go" }] },
+    ]
+
+    // when
+    const event = await runWith(messages, hook, history)
+
+    // then
+    expect(event.messages).toHaveLength(2)
+    expect(event.messages[0]?.content).toEqual([
+      { type: "text", text: "Active monitors: mon_1 (watch, running, 0 matched) - call monitor_stop to stop" },
+    ])
+  })
+
+  it("#given persisted compaction continuation metadata #when an assistant tail is transformed #then recovery is appended", async () => {
+    // given
+    const history: V2SessionMessage[] = [
+      {
+        type: "synthetic",
+        id: "continue",
+        text: "continue",
+        metadata: { compaction_continue: true },
+        time: { created: 1 },
+      },
+    ]
+    const messages = [
+      { role: "user", id: "continue", content: [{ type: "text", text: "continue" }] },
+      { role: "assistant", id: "answer", content: [{ type: "text", text: "done" }] },
+    ]
+
+    // when
+    const event = await runWith(messages, createMessagesTransformHandler({ hooks: {} }), history, {
+      providerID: "openai",
+      id: "gpt-test",
+    })
+
+    // then
+    expect(event.messages.at(-1)?.id).toBe("answer_prefill_recovery")
+  })
+
+  it("#given a failed history read #when the hook runs #then the original message passes through", async () => {
+    // given
+    const fake = createFakePluginContext()
+    const contextRead = mock(async () => {
+      throw new Error("history unavailable")
+    })
+    const context = { ...fake.context, session: { ...fake.context.session, context: contextRead } }
+    await installSessionHooks(context, { "experimental.chat.messages.transform": async () => {} } as Hooks, {
+      warn: () => {},
+    })
+    const message = { role: "user", id: "u1", content: [{ type: "text", text: "hello" }] }
+
+    // when
+    const event = await fake.triggerContext(contextEvent([message]))
+
+    // then
+    expect(contextRead).toHaveBeenCalledTimes(1)
+    expect(event.messages[0]).toBe(message)
+  })
+
+  it("#given correlated metadata #when no handler changes the view #then original provider objects pass through unchanged", async () => {
+    // given
+    const messages = signedConversation()
+    const originals = [...messages]
+    const snapshot = structuredClone(messages)
+    const history: V2SessionMessage[] = [
+      { type: "synthetic", id: "u1", text: "delegate", metadata: { compaction_continue: true }, time: { created: 1 } },
+    ]
+    const fake = createFakePluginContext()
+    const contextRead = mock(async () => history)
+    const context = { ...fake.context, session: { ...fake.context.session, context: contextRead } }
+    await installSessionHooks(context, { "experimental.chat.messages.transform": async () => {} } as Hooks, {
+      warn: () => {},
+    })
+
+    // when
+    const event = await fake.triggerContext(contextEvent(messages))
+
+    // then
+    expect(contextRead).toHaveBeenCalledTimes(1)
+    expect(event.messages).toEqual(snapshot)
+    for (const [index, original] of originals.entries()) expect(event.messages[index]).toBe(original)
+  })
+
   it("#given delegation followed by a host system update #when the V1 handler runs #then recovery follows the result and update", async () => {
     // given
     const messages = signedConversation()
