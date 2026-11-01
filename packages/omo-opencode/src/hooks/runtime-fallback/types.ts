@@ -1,4 +1,5 @@
 import type { RuntimeFallbackConfig, OhMyOpenCodeConfig } from "../../config"
+import type { NativeFallbackController } from "./native-controller"
 
 export interface RuntimeFallbackInterval {
   unref: () => void
@@ -73,6 +74,7 @@ export interface RuntimeFallbackOptions {
 }
 
 export interface RuntimeFallbackHook {
+  native?: NativeFallbackController
   event: (input: { event: { type: string; properties?: unknown } }) => Promise<void>
   "chat.message"?: (input: { sessionID: string; agent?: string; model?: { providerID: string; modelID: string }; variant?: string }, output: { message: { model?: { providerID: string; modelID: string }; variant?: string }; parts?: Array<{ type: string; text?: string }> }) => Promise<void>
   "tool.execute.before"?: (input: { tool: string; sessionID: string; callID?: string }, output: unknown) => Promise<void>

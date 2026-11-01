@@ -4,6 +4,7 @@ import { DEFAULT_CONFIG } from "./constants"
 import { createEventHandler } from "./event-handler"
 import { createFirstPromptWatchdog, observeEventForWatchdog } from "./first-prompt-watchdog"
 import { createMessageUpdateHandler } from "./message-update-handler"
+import { createNativeFallbackController } from "./native-controller"
 import type { HookDeps, RuntimeFallbackHook, RuntimeFallbackInterval, RuntimeFallbackOptions, RuntimeFallbackPluginInput, RuntimeFallbackTimeout } from "./types"
 
 declare function setInterval(callback: () => void, delay?: number): RuntimeFallbackInterval
@@ -73,6 +74,7 @@ export function createRuntimeFallbackHook(
   }
 
   const helpers = factories.createAutoRetryHelpers(deps)
+  const native = createNativeFallbackController(deps)
   const baseEventHandler = factories.createEventHandler(deps, helpers)
   const messageUpdateHandler = factories.createMessageUpdateHandler(deps, helpers)
   const chatMessageHandler = factories.createChatMessageHandler(deps)
@@ -97,6 +99,7 @@ export function createRuntimeFallbackHook(
   }
 
   const eventHandler = async ({ event }: { event: { type: string; properties?: unknown } }) => {
+    if (native.active) return
     ensureInterval()
 
     if (config.enabled) {
@@ -119,6 +122,7 @@ export function createRuntimeFallbackHook(
     input: { tool: string; sessionID: string; callID?: string },
     source: "tool.execute.before" | "tool.execute.after",
   ): Promise<void> => {
+    if (native.active) return
     if (!config.enabled || !input.sessionID) return
 
     helpers.refreshSessionFallbackTimeout(input.sessionID, `${source}:${input.tool}`)
@@ -126,6 +130,7 @@ export function createRuntimeFallbackHook(
   }
 
   const dispose = () => {
+    native.dispose()
     if (cleanupInterval) {
       clearInterval(cleanupInterval)
     }
@@ -155,8 +160,11 @@ export function createRuntimeFallbackHook(
   }
 
   return {
+    native,
     event: eventHandler,
-    "chat.message": chatMessageHandler,
+    "chat.message": async (input, output) => {
+      if (!native.active) await chatMessageHandler(input, output)
+    },
     "tool.execute.before": async (input, _output) => {
       await refreshAfterToolProgress(input, "tool.execute.before")
     },
