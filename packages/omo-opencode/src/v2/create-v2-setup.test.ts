@@ -14,6 +14,31 @@ function createContext(overrides: Partial<V2PluginContext> = {}): V2PluginContex
 }
 
 describe("createV2Setup", () => {
+  it("#given paged native sessions from before reload #when setup starts #then its client already reports the running child", async () => {
+    // given
+    const fake = createFakePluginContext()
+    const info = await fake.context.session.get({ sessionID: "running" })
+    const list = async (input?: { readonly cursor?: string }) =>
+      input?.cursor
+        ? { data: [{ ...info, time: { ...info.time, busy: 5000 } }], cursor: {} }
+        : { data: [], cursor: { next: "second-page" } }
+    let statuses: unknown
+    const setup = createV2Setup({
+      serverPlugin: async ({ client }) => {
+        statuses = (await client.session.status()).data
+        return {}
+      },
+    })
+    // when
+    const cleanup = await setup({ ...fake.context, session: { ...fake.context.session, list } })
+    try {
+      // then
+      expect(statuses).toEqual({ running: { type: "busy" } })
+    } finally {
+      await cleanup()
+    }
+  })
+
   describe("#given a V2 plugin context", () => {
     it("#when setup runs #then the V1 server plugin receives a PluginInput built from the context", async () => {
       // given
