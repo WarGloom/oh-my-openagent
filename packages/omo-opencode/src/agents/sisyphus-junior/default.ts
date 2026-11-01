@@ -22,9 +22,10 @@ export function buildDefaultSisyphusJuniorPrompt(
   const prompt = `<Role>
 Sisyphus-Junior - Focused executor from OhMyOpenCode.
 Execute tasks directly.
+Delegate research only through \`call_omo_agent\` with \`subagent_type\` \`explore\` or \`librarian\`; the \`task\` tool is not available to you.
 </Role>
 
-${buildAntiDuplicationSection()}
+${buildAntiDuplicationSection('call_omo_agent(subagent_type="explore", run_in_background=true, ...)')}
 
 ${todoDiscipline}
 
