@@ -1,0 +1,291 @@
+import { afterEach, describe, expect, test } from "bun:test"
+import type { Hooks } from "@opencode-ai/plugin"
+import { OhMyOpenCodeConfigSchema, type OhMyOpenCodeConfig } from "../config"
+import { createRuntimeFallbackHook } from "../hooks/runtime-fallback/hook"
+import { hasNativeRuntimeFallback } from "../hooks/runtime-fallback/native-controller"
+import { SessionCategoryRegistry } from "../shared/session-category-registry"
+import { tryFallbackRetry } from "../features/background-agent/fallback-retry-handler"
+import { ConcurrencyManager } from "../features/background-agent/concurrency"
+import type { BackgroundTask } from "../features/background-agent/types"
+import { createPluginInput } from "./create-plugin-input"
+import { createV2Setup } from "./create-v2-setup"
+import { createFakePluginContext } from "./fake-plugin-context"
+import { bindNativeRuntimeFallback, installNativeRuntimeFallback } from "./native-runtime-fallback"
+import { createSessionTracker } from "./session-tracker"
+import type { V2ModelRef, V2RetryHookEvent, V2SessionMessage, V2StructuredError } from "./context-types"
+
+const first = { providerID: "anthropic", id: "first" }
+const second = { providerID: "anthropic", id: "second" }
+const cleanups: Array<() => void | Promise<void>> = []
+
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
+  SessionCategoryRegistry.clear()
+})
+
+function fixture(
+  config: Partial<OhMyOpenCodeConfig> = { agents: { sisyphus: { models: ["anthropic/first", "anthropic/second"] } } },
+  history: readonly V2SessionMessage[] = [],
+  model: V2ModelRef | null = first,
+) {
+  const fake = createFakePluginContext({
+    sessionAgent: "sisyphus",
+    sessionInfo: { model: model ?? undefined },
+    sessionMessages: history,
+  })
+  const input = createPluginInput(fake.context, { tracker: createSessionTracker(), warn: () => {} })
+  const runtime = createRuntimeFallbackHook(input, {
+    pluginConfig: OhMyOpenCodeConfigSchema.parse(config),
+    config: { enabled: true, max_fallback_attempts: 2, timeout_seconds: 0, notify_on_fallback: false },
+  })
+  cleanups.push(() => runtime.dispose?.())
+  const hooks: Hooks = {}
+  bindNativeRuntimeFallback(hooks, runtime)
+  return { fake, input, runtime, hooks }
+}
+
+function retry(error: V2StructuredError, overrides: Partial<V2RetryHookEvent> = {}): V2RetryHookEvent {
+  return {
+    sessionID: "ses_main",
+    agent: "Sisyphus",
+    model: first,
+    attempt: 2,
+    decision: { retry: false },
+    error,
+    ...overrides,
+  }
+}
+
+async function install(f: ReturnType<typeof fixture>) {
+  const installed = await installNativeRuntimeFallback(f.fake.context, f.hooks)
+  if (!installed) throw new Error("Native fallback was not installed")
+  cleanups.push(() => installed.dispose())
+  return installed
+}
+
+describe("native runtime fallback", () => {
+  test.each([
+    { type: "provider.rate-limit", message: "slow down", status: 429 },
+    { type: "provider.auth", message: "no credential" },
+    { type: "provider.quota", message: "balance unavailable" },
+    { type: "provider.content-filter", message: "response blocked" },
+  ])("switches before native retry for $type without another user prompt", async (error) => {
+    // given
+    const f = fixture()
+    await install(f)
+    // when
+    const event = await f.fake.triggerRetry(retry(error))
+    // then
+    expect(event.decision).toEqual({ retry: true, delay: 0 })
+    expect(f.fake.sessionCalls).toEqual([
+      { kind: "switchModel", sessionID: "ses_main", model: { ...second, variant: undefined } },
+    ])
+  })
+
+  test.each([
+    { type: "provider.invalid-request", message: "invalid argument", status: 400 },
+    { type: "permission.rejected", message: "access denied" },
+    { type: "unknown", message: "model tried to call unavailable tool" },
+    { type: "unknown", message: "context length exceeded" },
+  ])("preserves the native decision for non-fallback $type", async (error) => {
+    // given
+    const f = fixture()
+    await install(f)
+    const event = retry(error, { decision: { retry: true, delay: 4567 } })
+    const decision = event.decision
+    // when
+    await f.fake.triggerRetry(event)
+    // then
+    expect(event.decision).toBe(decision)
+    expect(f.fake.sessionCalls).toEqual([])
+  })
+
+  test("uses the delegated session category chain and variant instead of the main agent chain", async () => {
+    // given
+    const f = fixture({
+      agents: { sisyphus: { models: ["anthropic/first", "anthropic/wrong"] } },
+      categories: { quick: { models: ["anthropic/first", "anthropic/second(high)"] } },
+    })
+    SessionCategoryRegistry.register("ses_child", "quick")
+    await install(f)
+    // when
+    await f.fake.triggerRetry(
+      retry({ type: "provider.rate-limit", message: "rate limit", status: 429 }, { sessionID: "ses_child" }),
+    )
+    // then
+    expect(f.fake.sessionCalls).toEqual([
+      { kind: "switchModel", sessionID: "ses_child", model: { ...second, variant: "high" } },
+    ])
+  })
+
+  test("advances shared state once per failure and stops at chain exhaustion", async () => {
+    // given
+    const f = fixture()
+    await install(f)
+    const error = { type: "provider.rate-limit", message: "rate limit", status: 429 }
+    await f.fake.triggerRetry(retry(error))
+    // when
+    const exhausted = await f.fake.triggerRetry(retry(error, { model: second, attempt: 3, decision: { retry: false } }))
+    // then
+    expect(exhausted.decision).toEqual({ retry: false })
+    expect(f.fake.sessionCalls.filter((call) => call.kind === "switchModel")).toHaveLength(1)
+  })
+
+  test("rolls back selection when a durable model switch fails", async () => {
+    // given
+    const f = fixture()
+    const original = f.fake.context.session.switchModel
+    let fail = true
+    const context = {
+      ...f.fake.context,
+      session: {
+        ...f.fake.context.session,
+        switchModel: async (input: Parameters<typeof original>[0]) => {
+          if (fail) throw new Error("switch failed")
+          await original(input)
+        },
+      },
+    }
+    const installed = await installNativeRuntimeFallback(context, f.hooks)
+    cleanups.push(() => installed?.dispose())
+    await expect(f.fake.triggerRetry(retry({ type: "provider.auth", message: "no credential" }))).rejects.toThrow(
+      "switch failed",
+    )
+    fail = false
+    // when
+    await f.fake.triggerRetry(retry({ type: "provider.auth", message: "no credential" }))
+    // then
+    expect((await context.session.get({ sessionID: "ses_main" })).model).toEqual({ ...second, variant: undefined })
+  })
+
+  test("respects the shared maximum fallback attempt count", async () => {
+    // given
+    const f = fixture({
+      agents: { sisyphus: { models: ["anthropic/first", "anthropic/second", "anthropic/third", "anthropic/fourth"] } },
+    })
+    await install(f)
+    const error = { type: "provider.auth", message: "no credential" }
+    await f.fake.triggerRetry(retry(error))
+    await f.fake.triggerRetry(retry(error, { model: second, attempt: 3 }))
+    // when
+    await f.fake.triggerRetry(retry(error, { model: { providerID: "anthropic", id: "third" }, attempt: 4 }))
+    // then
+    expect(f.fake.sessionCalls.filter((call) => call.kind === "switchModel")).toHaveLength(2)
+  })
+
+  test("prevents a task-owned V1 retry from replaying a native-owned child prompt", async () => {
+    // given
+    const f = fixture()
+    await install(f)
+    const task: BackgroundTask = {
+      id: "task_1",
+      sessionId: "ses_child",
+      parentSessionId: "ses_parent",
+      parentMessageId: "msg_parent",
+      agent: "sisyphus",
+      prompt: "original child request",
+      description: "child",
+      status: "running",
+      attemptCount: 0,
+      fallbackChain: [{ model: "second", providers: ["anthropic"] }],
+      model: { providerID: "anthropic", modelID: "first" },
+    }
+    // when
+    const handled = await tryFallbackRetry({
+      task,
+      client: f.input.client,
+      errorInfo: { statusCode: 429, message: "rate limit" },
+      source: "session.error",
+      concurrencyManager: new ConcurrencyManager(),
+      idleDeferralTimers: new Map(),
+      queuesByKey: new Map(),
+      processKey: () => {},
+      deps: { readConnectedProvidersCache: () => null, readProviderModelsCache: () => null },
+    })
+    // then
+    expect(handled).toBe(false)
+    expect(task.status).toBe("running")
+    expect(f.fake.sessionCalls).toEqual([])
+  })
+
+  test("recovers preparation failure with one idempotent synthetic continuation", async () => {
+    // given
+    const error = { type: "provider.no-route", message: "Model unavailable" }
+    const history: V2SessionMessage[] = [
+      { type: "user", id: "msg_user", text: "original task", time: { created: 1 } },
+      { type: "idle", id: "msg_failure", outcome: "failed", error, time: { created: 2 } },
+    ]
+    const f = fixture(undefined, history)
+    const installed = await install(f)
+    const event = { type: "session.execution.failed", data: { sessionID: "ses_main", error } }
+    // when
+    const consumed = await installed.beforeEvent(event)
+    const replayConsumed = await installed.beforeEvent(event)
+    // then
+    expect([consumed, replayConsumed]).toEqual([true, true])
+    expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["switchModel", "synthetic"])
+    const continuation = f.fake.sessionCalls.find((call) => call.kind === "synthetic")
+    expect(continuation?.input).toMatchObject({ sessionID: "ses_main", resume: true, delivery: "steer" })
+    expect(continuation?.input.id).toMatch(/^msg_[a-f0-9]{64}$/)
+  })
+
+  test("keeps recovered failures away from legacy error and idle consumers through real setup", async () => {
+    // given
+    const error = { type: "provider.auth", message: "no credential" }
+    const f = fixture(undefined, [{ type: "idle", id: "msg_failed", outcome: "failed", error, time: { created: 1 } }])
+    const barrier = Promise.withResolvers<void>()
+    const events: string[] = []
+    f.hooks.event = async ({ event }) => {
+      events.push(event.type)
+      if (event.type === "session.created") barrier.resolve()
+    }
+    const cleanup = await createV2Setup({
+      serverPlugin: async () => f.hooks,
+      warn: (message) => {
+        throw new Error(message)
+      },
+    })(f.fake.context)
+    cleanups.push(cleanup)
+    // when
+    f.fake.emit({ type: "session.execution.failed", data: { sessionID: "ses_main", error } })
+    f.fake.emit({ type: "session.created", data: { sessionID: "ses_barrier" } })
+    await barrier.promise
+    // then
+    expect(events).toEqual(["session.created"])
+    expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["switchModel", "synthetic"])
+  })
+
+  test("bootstraps an inherited agent model when preparation fails before a model is selected", async () => {
+    // given
+    const error = { type: "provider.no-route", message: "No model is available" }
+    const f = fixture(
+      undefined,
+      [{ type: "idle", id: "msg_failed", outcome: "failed", error, time: { created: 1 } }],
+      null,
+    )
+    const installed = await install(f)
+    // when
+    const recovered = await installed.beforeEvent({
+      type: "session.execution.failed",
+      data: { sessionID: "ses_main", error },
+    })
+    // then
+    expect(recovered).toBe(true)
+    expect((await f.fake.context.session.get({ sessionID: "ses_main" })).model).toEqual({
+      ...second,
+      variant: undefined,
+    })
+  })
+
+  test("releases native ownership and retry hooks when disposed", async () => {
+    // given
+    const f = fixture()
+    const installed = await install(f)
+    expect(hasNativeRuntimeFallback(f.input.client)).toBe(true)
+    // when
+    await installed.dispose()
+    // then
+    expect(hasNativeRuntimeFallback(f.input.client)).toBe(false)
+    expect(f.fake.sessionHookCount()).toBe(0)
+  })
+})
