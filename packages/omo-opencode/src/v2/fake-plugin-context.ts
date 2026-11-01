@@ -314,6 +314,7 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
       },
     },
     session: {
+      list: async () => ({ data: [], cursor: {} }),
       get: async ({ sessionID }) => fakeSessionInfo(sessionID, options),
       create: async (input) => {
         sessionCalls.push({ kind: "create", input })
