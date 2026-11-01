@@ -29,6 +29,31 @@ const log: V2SessionMessage[] = [
 ]
 
 describe("createSessionNamespace", () => {
+  it("#given paged V2 sessions #when list is called with filters and a limit #then it maps and collects the requested sessions", async () => {
+    // given
+    const { fake } = setup({ directory: "/work/app", sessionInfo: { parentID: "parent" } })
+    const first = await fake.context.session.get({ sessionID: "ses_1" })
+    const second = await fake.context.session.get({ sessionID: "ses_2" })
+    const list = mock(async (input?: Parameters<typeof fake.context.session.list>[0]) => input?.cursor
+      ? { data: [second], cursor: {} }
+      : { data: [first], cursor: { next: "page-2" } })
+    const context = { ...fake.context, session: { ...fake.context.session, list } }
+    const session = createSessionNamespace(context, { tracker: createSessionTracker(), warn: () => {} })
+
+    // when
+    const result = await session.list({ query: { directory: "/work/app", parentID: "parent", limit: 2 } })
+
+    // then
+    expect(result.data).toMatchObject([
+      { id: "ses_1", parentID: "parent", directory: "/work/app" },
+      { id: "ses_2", parentID: "parent", directory: "/work/app" },
+    ])
+    expect(list.mock.calls).toEqual([
+      [{ directory: "/work/app", parentID: "parent", limit: 2 }],
+      [{ directory: "/work/app", parentID: "parent", limit: 1, cursor: "page-2" }],
+    ])
+  })
+
   describe("#given messages and message", () => {
     it("#when messages is called #then the 2.x log arrives as 1.x messages in a data envelope", async () => {
       // given
