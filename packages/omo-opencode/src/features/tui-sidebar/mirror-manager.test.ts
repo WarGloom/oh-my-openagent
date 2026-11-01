@@ -130,7 +130,10 @@ describe("TuiStateMirror", () => {
     const projectDir = makeTempDir("two-session-project")
     const mirror = createMirror({
       projectDir,
-      backgroundManager: createBackgroundManager([sessionATask, sessionBTask]),
+      backgroundManager: createBackgroundManager([
+        sessionATask,
+        { ...sessionBTask, model: "gpt-6.1-sol", reasoningEffort: "high" },
+      ]),
     })
 
     // when
@@ -141,7 +144,14 @@ describe("TuiStateMirror", () => {
       { title: "atlas background task", status: "running", toolCalls: null, lastTool: null },
     ])
     expect(readSessionJobsMirror(projectDir, "parent-session-b")).toEqual([
-      { title: "Review results", status: "completed", toolCalls: 3, lastTool: "read" },
+      {
+        title: "Review results",
+        status: "completed",
+        toolCalls: 3,
+        lastTool: "read",
+        model: "gpt-6.1-sol",
+        reasoningEffort: "high",
+      },
     ])
   })
 
