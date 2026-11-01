@@ -31,17 +31,18 @@ function contentParts(message: V2RequestMessage): V2RequestMessagePart[] {
       : []
 }
 
-function textPartsFrom(parts: ReadonlyArray<Record<string, unknown>>): Array<Record<string, unknown>> {
-  return parts.flatMap((part) =>
-    part.type === "text" && typeof part.text === "string" ? [{ type: "text", text: part.text }] : [],
-  )
+/** A 2.x content part as a 1.x part, keeping order. Text and reasoning map directly; anything else rides verbatim. */
+function toV1Part(part: V2RequestMessagePart): Record<string, unknown> {
+  if (part.type === "text" && typeof part.text === "string") return { type: "text", text: part.text }
+  if (part.type === "reasoning" && typeof part.text === "string") return { type: "reasoning", text: part.text }
+  return { type: typeof part.type === "string" ? part.type : "unknown", __v2raw: part }
 }
 
 /**
- * Lowered 2.x `event.messages` as 1.x `{ info, parts }`. Each tool result is folded back into the
- * assistant tool part that called it, so a call still awaiting its result stays non-terminal, the
- * exact shape OMO's `toolPairValidator` repairs. The original 2.x message and the paired tool-result
- * ride along on private keys so a round trip re-emits them unchanged.
+ * Lowered 2.x `event.messages` as 1.x `{ info, parts }`, in the same order. Each tool result is
+ * folded into the assistant tool part that called it, so a call still awaiting its result stays
+ * non-terminal, the shape OMO's `toolPairValidator` repairs. Originals ride on private keys so a
+ * round trip re-emits them unchanged.
  */
 function eventToV1(event: V2ContextHookEvent): V1MessageView[] {
   const views: V1MessageView[] = []
@@ -58,71 +59,54 @@ function eventToV1(event: V2ContextHookEvent): V1MessageView[] {
       }
       continue
     }
-    if (message.role === "assistant") {
-      const info: Record<string, unknown> = {
-        role: "assistant",
-        ...(typeof message.id === "string" ? { id: message.id } : {}),
-        sessionID: event.sessionID,
-        providerID: event.model.providerID,
-        modelID: event.model.id,
-      }
-      const parts: Array<Record<string, unknown>> = []
-      const extra: V2RequestMessagePart[] = []
-      for (const part of contentParts(message)) {
-        if (part.type === "text" && typeof part.text === "string") parts.push({ type: "text", text: part.text })
-        else if (part.type === "reasoning" && typeof part.text === "string")
-          parts.push({ type: "reasoning", text: part.text })
-        else if (part.type === "tool-call" && typeof part.id === "string") {
-          const toolPart: Record<string, unknown> = {
-            type: "tool",
-            callID: part.id,
-            tool: typeof part.name === "string" ? part.name : "",
-            state: { status: "running", input: part.input },
-            __v2call: part,
-          }
-          parts.push(toolPart)
-          callParts.set(part.id, toolPart)
-        } else extra.push(part)
-      }
-      views.push({ info: { ...info, __v2extra: extra }, parts })
-      continue
+    const info: Record<string, unknown> = {
+      role: message.role,
+      ...(typeof message.id === "string" ? { id: message.id } : {}),
+      sessionID: event.sessionID,
+      ...(message.role === "assistant" ? { providerID: event.model.providerID, modelID: event.model.id } : {}),
+      ...(isRecord(message.metadata) ? { __v2metadata: message.metadata } : {}),
     }
-    const originalContent = contentParts(message)
-    views.push({
-      info: {
-        role: message.role,
-        ...(typeof message.id === "string" ? { id: message.id } : {}),
-        sessionID: event.sessionID,
-        __v2content: originalContent,
-        __v2textCount: textPartsFrom(originalContent).length,
-        ...(isRecord(message.metadata) ? { __v2metadata: message.metadata } : {}),
-      },
-      parts: textPartsFrom(originalContent),
-    })
+    const parts: Array<Record<string, unknown>> = []
+    for (const part of contentParts(message)) {
+      if (message.role === "assistant" && part.type === "tool-call" && typeof part.id === "string") {
+        const toolPart: Record<string, unknown> = {
+          type: "tool",
+          callID: part.id,
+          tool: typeof part.name === "string" ? part.name : "",
+          state: { status: "running", input: part.input },
+          __v2call: part,
+        }
+        parts.push(toolPart)
+        callParts.set(part.id, toolPart)
+        continue
+      }
+      parts.push(toV1Part(part))
+    }
+    views.push({ info, parts })
   }
   return views
 }
 
-function nonToolContent(view: V1MessageView): V2RequestMessagePart[] {
-  const parts: V2RequestMessagePart[] = []
-  for (const part of view.parts) {
-    if (part.type === "text" && typeof part.text === "string") parts.push({ type: "text", text: part.text })
-    else if (part.type === "reasoning" && typeof part.text === "string")
-      parts.push({ type: "reasoning", text: part.text })
-    else if (part.type === "tool") {
+/** Content parts for one message, in order. Tool results are emitted separately, not inline. */
+function rebuildContent(view: V1MessageView): V2RequestMessagePart[] {
+  return view.parts.flatMap((part): V2RequestMessagePart[] => {
+    const raw = (part as { __v2raw?: V2RequestMessagePart }).__v2raw
+    if (raw !== undefined) return [raw]
+    if (part.type === "text" && typeof part.text === "string") return [{ type: "text", text: part.text }]
+    if (part.type === "reasoning" && typeof part.text === "string") return [{ type: "reasoning", text: part.text }]
+    if (part.type === "tool") {
       const call = (part as { __v2call?: V2RequestMessagePart }).__v2call
-      parts.push(
+      return [
         call ?? {
           type: "tool-call",
           id: String(part.callID ?? ""),
           name: String(part.tool ?? ""),
           input: (part.state as Record<string, unknown>)?.input,
         },
-      )
+      ]
     }
-  }
-  const extra = (view.info.__v2extra as V2RequestMessagePart[] | undefined) ?? []
-  return [...parts, ...extra]
+    return []
+  })
 }
 
 function toolResultMessages(view: V1MessageView): V2RequestMessage[] {
@@ -130,8 +114,7 @@ function toolResultMessages(view: V1MessageView): V2RequestMessage[] {
   for (const part of view.parts) {
     if (part.type !== "tool") continue
     const state = part.state as Record<string, unknown>
-    const terminal = state?.status === "completed" || state?.status === "error"
-    if (!terminal) continue
+    if (state?.status !== "completed" && state?.status !== "error") continue
     const original = (part as { __v2result?: V2RequestMessagePart }).__v2result
     if (original !== undefined) {
       results.push({ role: "tool", content: [original] })
@@ -153,31 +136,23 @@ function toolResultMessages(view: V1MessageView): V2RequestMessage[] {
   return results
 }
 
-function withID(info: Record<string, unknown>): { id?: string } {
-  return typeof info.id === "string" ? { id: info.id } : {}
-}
-
-/** Rebuilds lowered 2.x `event.messages` from the transformed 1.x views, re-pairing every repaired tool call. */
+/**
+ * Rebuilds lowered 2.x `event.messages` from the transformed 1.x views, in list order. Messages the
+ * hook inserted, removed or reordered carry through because the request is rebuilt from the view
+ * list, not aligned by index. Repaired tool calls re-pair with a synthesized error tool-result.
+ */
 function v1ToEvent(views: ReadonlyArray<V1MessageView>): V2RequestMessage[] {
   const messages: V2RequestMessage[] = []
   for (const view of views) {
     const role = String(view.info.role ?? "user")
-    if (role === "assistant") {
-      messages.push({ ...withID(view.info), role: "assistant", content: nonToolContent(view) })
-      messages.push(...toolResultMessages(view))
-      continue
-    }
-    const original = view.info.__v2content as V2RequestMessagePart[] | undefined
-    const appended = textPartsFrom(view.parts).slice(
-      typeof view.info.__v2textCount === "number" ? view.info.__v2textCount : 0,
-    )
-    const content = original === undefined ? textPartsFrom(view.parts) : [...original, ...appended]
-    messages.push({
-      ...withID(view.info),
+    const message: V2RequestMessage = {
+      ...(typeof view.info.id === "string" ? { id: view.info.id } : {}),
       role,
-      content: content as V2RequestMessagePart[],
+      content: rebuildContent(view),
       ...(isRecord(view.info.__v2metadata) ? { metadata: view.info.__v2metadata } : {}),
-    })
+    }
+    messages.push(message)
+    if (role === "assistant") messages.push(...toolResultMessages(view))
   }
   return messages
 }
@@ -185,8 +160,9 @@ function v1ToEvent(views: ReadonlyArray<V1MessageView>): V2RequestMessage[] {
 /**
  * Bridges `experimental.chat.messages.transform` onto the 2.x `context` hook by translating the
  * request's own `event.messages` into the 1.x shape, running the hook, and rebuilding the request
- * from the result. Additive context, repaired tool states, and an appended assistant-tail recovery
- * turn all reach the model request. No re-entrant session read.
+ * from the result. Additive context (in the hook's order), repaired tool states, inserted or
+ * reordered messages, and an appended assistant-tail recovery turn all reach the model request. No
+ * re-entrant session read.
  */
 export async function registerMessagesTransform(
   context: V2PluginContext,

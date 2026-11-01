@@ -165,4 +165,47 @@ describe("messages transform bridge", () => {
       ])
     })
   })
+
+  describe("#given a context injector that prepends text", () => {
+    it("#when it inserts context before the user's text #then the request keeps [context, prompt] order with the prompt once", async () => {
+      // given: the injector puts synthetic context before the first real user text
+      const hook = async (_input: unknown, output: { messages: Array<{ parts: Array<Record<string, unknown>> }> }) => {
+        output.messages.at(-1)?.parts.unshift({ type: "text", text: "<context>C</context>" })
+      }
+
+      // when
+      const event = await runWith([{ role: "user", content: [{ type: "text", text: "P" }] }], hook)
+
+      // then
+      expect(event.messages[0]?.content).toEqual([
+        { type: "text", text: "<context>C</context>" },
+        { type: "text", text: "P" },
+      ])
+    })
+  })
+
+  describe("#given an injector that prepends whole messages", () => {
+    it("#when it inserts two messages before the conversation #then event.messages is [inserted1, inserted2, ...original]", async () => {
+      // given
+      const hook = async (
+        _input: unknown,
+        output: { messages: Array<{ info: Record<string, unknown>; parts: Array<Record<string, unknown>> }> },
+      ) => {
+        output.messages.unshift(
+          { info: { role: "user" }, parts: [{ type: "text", text: "parent-1" }] },
+          { info: { role: "user" }, parts: [{ type: "text", text: "parent-2" }] },
+        )
+      }
+
+      // when
+      const event = await runWith([{ role: "user", content: [{ type: "text", text: "original" }] }], hook)
+
+      // then
+      expect(event.messages).toEqual([
+        { role: "user", content: [{ type: "text", text: "parent-1" }] },
+        { role: "user", content: [{ type: "text", text: "parent-2" }] },
+        { role: "user", content: [{ type: "text", text: "original" }] },
+      ])
+    })
+  })
 })
