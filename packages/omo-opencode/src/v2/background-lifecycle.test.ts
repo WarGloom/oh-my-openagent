@@ -146,26 +146,35 @@ async function fixture() {
       }
       dispose = await setup(context)
     },
+    reloadOverlapping: async () => {
+      const oldDispose = dispose
+      dispose = await setup(context)
+      await oldDispose()
+    },
     parentNotices: () => [...notices.values()].filter((notice) => notice.sessionID === "parent"),
   }
 }
 
 describe("V2 durable background lifecycle", () => {
-  it("#given a running task #when the plugin reloads #then it stays running without an interrupt and completes once", async () => {
-    // given
-    const f = await fixture()
-    await f.track()
-    // when
-    await f.reload()
-    expect(f.manager().getTask("bg_native")?.status).toBe("running")
-    await f.fake.triggerIdle({ sessionID: "child", background: [] })
-    await f.fake.triggerIdle({ sessionID: "child", background: [] })
-    // then
-    expect(f.fake.sessionCalls.filter((call) => call.kind === "interrupt")).toEqual([])
-    expect(f.parentNotices()).toHaveLength(1)
-    expect(f.manager().getTask("bg_native")?.status).toBe("completed")
-    expect(f.synthetic.mock.calls).toHaveLength(1)
-  })
+  it.each([false, true])(
+    "#given a running task #when the plugin reloads with overlapping generations=%s #then it stays running and completes once",
+    async (overlapping) => {
+      // given
+      const f = await fixture()
+      await f.track()
+      // when
+      if (overlapping) await f.reloadOverlapping()
+      else await f.reload()
+      expect(f.manager().findBySession("child")?.status).toBe("running")
+      await f.fake.triggerIdle({ sessionID: "child", background: [] })
+      await f.fake.triggerIdle({ sessionID: "child", background: [] })
+      // then
+      expect(f.fake.sessionCalls.filter((call) => call.kind === "interrupt")).toEqual([])
+      expect(f.parentNotices()).toHaveLength(1)
+      expect(f.manager().getTask("bg_native")?.status).toBe("completed")
+      expect(f.synthetic.mock.calls).toHaveLength(1)
+    },
+  )
 
   it("#given a durable child record #when host memory is lost #then setup rebuilds the same task and wakes recovered work", async () => {
     // given
