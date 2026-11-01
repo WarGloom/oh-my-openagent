@@ -357,6 +357,27 @@ export type V2RetryHookEvent = {
   decision: { retry: false } | { retry: true; delay: number }
 }
 
+export type V2IdleHookEvent = {
+  readonly sessionID: string
+  readonly background: ReadonlyArray<
+    | { readonly kind: "shell"; readonly sessionID: string; readonly shellID: string; readonly command: string }
+    | { readonly kind: "subagent"; readonly sessionID: string; readonly childSessionID: string; readonly agent: string; readonly description: string }
+    | { readonly kind: "image"; readonly sessionID: string; readonly path: string; readonly model: string }
+  >
+}
+
+type V2Json = null | boolean | number | string | ReadonlyArray<V2Json> | { readonly [key: string]: V2Json }
+
+export type V2StorageDomain = {
+  readonly get: (key: string) => Promise<unknown>
+  readonly set: (key: string, value: V2Json) => Promise<void>
+  readonly remove: (key: string) => Promise<void>
+  readonly scan: (options: { readonly prefix: string; readonly after?: string; readonly limit?: number }) => Promise<{
+    readonly entries: ReadonlyArray<{ readonly key: string; readonly value: unknown }>
+    readonly next?: string
+  }>
+}
+
 export type V2SessionDomain = {
   readonly instructions: { readonly entry: {
     readonly put: (input: { readonly sessionID: string; readonly key: string; readonly value: string }) => Promise<void>
@@ -387,6 +408,7 @@ export type V2SessionDomain = {
     (name: "model.request", callback: (event: V2ModelRequestHookEvent) => Promise<void> | void): Promise<V2Registration>
     (name: "compaction", callback: (event: V2CompactionHookEvent) => Promise<void> | void): Promise<V2Registration>
     (name: "retry", callback: (event: V2RetryHookEvent) => Promise<void> | void): Promise<V2Registration>
+    (name: "experimental.idle", callback: (event: V2IdleHookEvent) => Promise<void> | void): Promise<V2Registration>
   }
 }
 
@@ -426,6 +448,7 @@ export type V2PluginContext = {
   readonly command: V2CommandDomain
   readonly session: V2SessionDomain
   readonly event: V2EventDomain
+  readonly storage?: V2StorageDomain
 }
 
 export type V2PluginDefinition = {
