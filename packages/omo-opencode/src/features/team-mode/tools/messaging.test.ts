@@ -287,6 +287,39 @@ async function createTeamFixture() {
 }
 
 describe("createTeamSendMessageTool", () => {
+  test("#given an idle V2 lead #when a member sends a message #then the lead receives one synthetic wake", async () => {
+    // given
+    const fixture = await createTeamFixture()
+    const { createFakePluginContext } = await import("../../../v2/fake-plugin-context")
+    const { createSessionNamespace } = await import("../../../v2/client-facade/session-namespace")
+    const { createSessionTracker } = await import("../../../v2/session-tracker")
+    const fake = createFakePluginContext()
+    const admitted: Array<{ sessionID: string; text: string; resume?: boolean | null }> = []
+    const context = {
+      ...fake.context,
+      session: {
+        ...fake.context.session,
+        synthetic: async (input: { sessionID: string; text: string; resume?: boolean | null }) => {
+          admitted.push(input)
+        },
+      },
+    }
+    const client = { session: createSessionNamespace(context, { tracker: createSessionTracker(), warn: () => {} }) }
+    const tool = createTeamSendMessageTool(fixture.config, client)
+    // when
+    const result = parseToolResult(
+      await tool.execute(
+        { teamRunId: fixture.teamRunId, to: "lead", body: "ready" },
+        fixture.toolContext(fixture.memberOneSessionId),
+      ),
+    )
+    // then
+    expect(admitted).toHaveLength(1)
+    expect(admitted[0]?.sessionID).toBe(fixture.leadSessionId)
+    expect(admitted[0]?.resume).toBe(true)
+    expect(admitted[0]?.text).toContain(result.messageId)
+    expect(await listUnreadMessages(fixture.teamRunId, "team-lead", fixture.config)).toEqual([])
+  })
   test("corrective: post-reservation EIO releases the fallback batch without dispatch or acknowledgement", async () => {
     // given
     const fixture = await createTeamFixture()
