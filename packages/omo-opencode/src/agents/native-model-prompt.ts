@@ -46,10 +46,17 @@ export function nativePromptOptions(
     promptGuidelines: [],
     contextFiles: [],
     skills: [],
-    surface: "terminal",
+    // The terminal surface makes every reply carry a fixed-label status block (Ask/For you/Now/Next)
+    // that senpi's own terminal folds into one muted line; OpenCode would show it raw. The chat
+    // surface keeps the same work rules and reports the outcome as plain text.
+    surface: "chat",
     appName: "OmO",
   }
 }
+
+/** The chat surface lets other evidence stand in for a skipped check; keep that substitution honest. */
+export const NATIVE_VERIFICATION_BOUNDARY =
+  "Evidence from one check covers a check that did not run only when it establishes the same claim; disclose any unmet required check or material verification gap, and never report an unrun check as passed."
 
 /** The sole host transform; model-core prose is otherwise preserved byte for byte. */
 export function adaptNativePrompt(prompt: string, useTaskSystem = false): string {
@@ -76,7 +83,7 @@ export function buildNativeAgentPrompt(
   const modelIdentity = model
     ? `Model: ${JSON.stringify({ provider: identity.provider, id: identity.id, preset: preset?.name ?? null })}`
     : ""
-  const body = [adaptNativePrompt(core, useTaskSystem), modelIdentity].filter(Boolean).join("\n\n")
+  const body = [adaptNativePrompt(core, useTaskSystem), NATIVE_VERIFICATION_BOUNDARY, modelIdentity].filter(Boolean).join("\n\n")
   const framed = frameNativePrompt(body, {
     model: model ?? "",
     tools: [...selectedTools],
