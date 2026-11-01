@@ -240,7 +240,7 @@ export type V2SessionInfo = {
   readonly title?: string
   readonly cost: number
   readonly tokens: V2TokenUsage
-  readonly time: { readonly created: number; readonly updated: number; readonly idle?: number }
+  readonly time: { readonly created: number; readonly updated: number; readonly busy?: number; readonly idle?: number }
   readonly location: { readonly directory: string }
 }
 

@@ -31,6 +31,8 @@ const jobs = [
     status: "running",
     toolCalls: 2,
     lastTool: "grep",
+    model: "gpt-6.1-sol",
+    reasoningEffort: "high",
   },
 ] as const satisfies readonly JobRow[]
 
@@ -59,7 +61,7 @@ function validPayload(
   updatedAt: number = NOW,
 ): Record<string, unknown> {
   return {
-    version: 3,
+    version: 4,
     projectDir: canonicalProjectDir(projectDir),
     parentSessionId,
     updatedAt,
@@ -157,7 +159,7 @@ describe("session Jobs mirror IPC", () => {
 
     // then
     expect(JSON.parse(readFileSync(expectedFilePath(projectDir, parentSessionId), "utf-8"))).toEqual({
-      version: 3,
+      version: 4,
       projectDir: canonicalProjectDir(projectDir),
       parentSessionId,
       updatedAt: NOW,
@@ -167,6 +169,8 @@ describe("session Jobs mirror IPC", () => {
           status: "running",
           toolCalls: 2,
           lastTool: "grep",
+          model: "gpt-6.1-sol",
+          reasoningEffort: "high",
         },
       ],
       activeMonitorLabels: [],
@@ -184,7 +188,7 @@ describe("session Jobs mirror IPC", () => {
 
     // then
     expect(serialized).toEqual({
-      version: 3,
+      version: 4,
       projectDir: canonicalProjectDir(projectDir),
       parentSessionId: sessionId,
       updatedAt: NOW,
