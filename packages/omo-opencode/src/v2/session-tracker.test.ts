@@ -4,6 +4,37 @@ import { createSessionTracker } from "./session-tracker"
 const event = (type: string, data: Record<string, unknown>) => ({ type, data })
 
 describe("createSessionTracker", () => {
+  it("#given sessions already running at setup #when seeding native session timestamps #then busy state and parent links survive reload", () => {
+    // given
+    const tracker = createSessionTracker()
+    // when
+    tracker.seed([
+      { id: "running", parentID: "parent", time: { created: 1, updated: 4, busy: 4, idle: 3 } },
+      { id: "idle", time: { created: 1, updated: 4, busy: 2, idle: 4 } },
+      { id: "never-started", time: { created: 1, updated: 1 } },
+    ])
+    // then
+    expect(tracker.statuses()).toEqual({ running: { type: "busy" } })
+    expect(tracker.parentOf("running")).toBe("parent")
+  })
+
+  it("#given execution events during setup #when a stale native snapshot arrives #then it cannot resurrect ended sessions or clear new activity", () => {
+    // given
+    const tracker = createSessionTracker()
+    tracker.observe(event("session.execution.succeeded", { sessionID: "ended" }))
+    tracker.observe(event("session.execution.started", { sessionID: "running" }))
+    tracker.observe(event("session.deleted", { sessionID: "deleted" }))
+    // when
+    tracker.seed([
+      { id: "ended", time: { created: 1, updated: 3, busy: 3 } },
+      { id: "running", time: { created: 1, updated: 3, idle: 3 } },
+      { id: "deleted", parentID: "parent", time: { created: 1, updated: 3, busy: 3 } },
+    ])
+    // then
+    expect(tracker.statuses()).toEqual({ running: { type: "busy" } })
+    expect(tracker.parentOf("deleted")).toBeUndefined()
+  })
+
   describe("#given execution events", () => {
     it("#when a session starts executing #then it reports busy until the execution ends", () => {
       // given
