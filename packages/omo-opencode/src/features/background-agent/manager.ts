@@ -2,6 +2,7 @@ import { join } from "node:path"
 import { assertTeamSessionCanContinue, isTeamSessionDenied } from "../team-mode/team-session-registry"
 import { isProviderExhaustionFallbackEligible } from "@oh-my-opencode/model-core"
 import type { PluginInput } from "@opencode-ai/plugin"
+import type { NativeBackgroundLifecycle } from "./native-lifecycle"
 import type { BackgroundTaskConfig, TmuxConfig } from "../../config/schema"
 import type { ModelFallbackControllerAccessor } from "../../hooks/model-fallback"
 import {
@@ -393,6 +394,7 @@ const MAX_COMPLETED_TASK_ARCHIVE_SIZE = 100
 const PARENT_WAKE_FAILURE_REQUEUE_WINDOW_MS = 5_000
 
 export interface BackgroundManagerConfig {
+  nativeLifecycle?: NativeBackgroundLifecycle
   pluginContext: PluginInput
   config?: BackgroundTaskConfig
   tmuxConfig?: TmuxConfig
@@ -423,6 +425,7 @@ export class BackgroundManager {
   private concurrencyManager: ConcurrencyManager
   private shutdownTriggered = false
   private readonly preserveSessionsOnShutdown: boolean
+  private readonly nativeLifecycle?: NativeBackgroundLifecycle
   private config?: BackgroundTaskConfig
   private tmuxEnabled: boolean
   private onSubagentSessionCreated?: OnSubagentSessionCreated
@@ -467,6 +470,7 @@ export class BackgroundManager {
     this.client = pluginContext.client
     this.directory = pluginContext.directory
     this.preserveSessionsOnShutdown = options.preserveSessionsOnShutdown ?? false
+    this.nativeLifecycle = options.nativeLifecycle
     this.concurrencyManager = new ConcurrencyManager(options.config)
     this.config = options.config
     this.tmuxEnabled = options?.tmuxConfig?.enabled ?? false
@@ -499,7 +503,9 @@ export class BackgroundManager {
     )
     this.registerProcessCleanup()
     if (this.preserveSessionsOnShutdown) {
-      for (const task of takeBackgroundTasksAfterReload(this.directory)) this.adoptRetainedTask(task)
+      if (!this.nativeLifecycle) {
+        for (const task of takeBackgroundTasksAfterReload(this.directory)) this.adoptRetainedTask(task)
+      }
       // Completion notices queued for a busy parent before the reload are delivered by this manager.
       for (const [sessionID, wake] of takeParentWakesAfterReload(this.directory)) {
         for (const notification of wake.notifications) {
@@ -890,6 +896,7 @@ export class BackgroundManager {
       this.updateBackgroundTaskMarker(input.parentSessionId)
 
       // Trigger processing (fire-and-forget)
+      if (this.nativeLifecycle) await this.nativeLifecycle.save(task)
       void this.processKey(key)
 
       return { ...task }
@@ -1107,6 +1114,8 @@ export class BackgroundManager {
     }
     task.concurrencyKey = concurrencyKey
     task.concurrencyGroup = concurrencyKey
+
+    if (this.nativeLifecycle) await this.nativeLifecycle.save(task)
 
     if (task.retryNotification) {
       task.retryNotification = undefined
@@ -1636,6 +1645,8 @@ export class BackgroundManager {
         status: existingTask.status,
       })
 
+      if (this.nativeLifecycle) await this.nativeLifecycle.save(existingTask)
+
       return existingTask
     }
 
@@ -1684,6 +1695,8 @@ export class BackgroundManager {
     }
 
     log("[background-agent] Registered external task:", { taskId: task.id, sessionID: input.sessionId })
+
+    if (this.nativeLifecycle) await this.nativeLifecycle.save(task)
 
     return task
   }
@@ -1736,6 +1749,22 @@ export class BackgroundManager {
       throw new Error(`Task ${task.id} is already tracked`)
     }
     this.addTask(task)
+    if (this.nativeLifecycle && task.status === "pending" && !task.sessionId) {
+      const input: LaunchInput = { ...task }
+      const rawConcurrencyKey = this.getRawConcurrencyKeyFromInput(input)
+      const key = this.concurrencyManager.getConcurrencyKey(rawConcurrencyKey)
+      const queue = this.queuesByKey.get(key) ?? []
+      queue.push({ task, input, attemptID: ensureCurrentAttempt(task, task.model).attemptId, rawConcurrencyKey })
+      this.queuesByKey.set(key, queue)
+      if (task.rootSessionId) this.registerRootDescendant(task.rootSessionId)
+      this.markPreStartDescendantReservation(task)
+      const pending = this.pendingByParent.get(task.parentSessionId) ?? new Set<string>()
+      pending.add(task.id)
+      this.pendingByParent.set(task.parentSessionId, pending)
+      this.updateBackgroundTaskMarker(task.parentSessionId)
+      void this.processKey(key)
+      return
+    }
     if (task.status === "running" && task.sessionId) {
       const key = this.getRawConcurrencyKeyFromTask(task)
       this.concurrencyManager.restore(key)
@@ -1744,6 +1773,28 @@ export class BackgroundManager {
       delegatedTaskSessions.add(task.sessionId)
       setSessionAgent(task.sessionId, task.agent)
       if (task.category) SessionCategoryRegistry.register(task.sessionId, task.category)
+      if (this.nativeLifecycle) {
+        const body = buildTaskPromptBody({
+          kind: "launch",
+          agent: task.agent,
+          model: task.model,
+          prompt: task.prompt,
+          system: task.skillContent,
+          includeTeamToolDenylist: task.teamRunId === undefined,
+          userPermission: task.userPermission,
+        })
+        setSessionTools(task.sessionId, body.tools)
+        if (task.model) applySessionPromptParams(task.sessionId, task.model)
+        registerDelegatedChildSessionBootstrap({
+          sessionID: task.sessionId,
+          promptText: task.prompt,
+          fallbackChain: task.fallbackChain,
+          category: task.category,
+          system: task.skillContent,
+          tools: body.tools,
+          modelFallbackControllerAccessor: this.modelFallbackControllerAccessor,
+        })
+      }
       if (task.rootSessionId) this.registerRootDescendant(task.rootSessionId)
       const pending = this.pendingByParent.get(task.parentSessionId) ?? new Set<string>()
       pending.add(task.id)
@@ -1753,6 +1804,18 @@ export class BackgroundManager {
     } else {
       this.scheduleTaskRemoval(task.id)
     }
+  }
+
+  async completeNativeTask(sessionID: string): Promise<void> {
+    const task = this.findBySession(sessionID)
+    if (!this.nativeLifecycle || !task || this.hasActiveChildTasks(sessionID)) return
+    await this.tryCompleteTask(task, "v2.idle")
+  }
+
+  async notifyNativeTask(taskID: string): Promise<void> {
+    const task = this.getTask(taskID)
+    if (!this.nativeLifecycle || !task) return
+    await this.notifyParentSession(task)
   }
 
   async resume(input: ResumeInput): Promise<BackgroundTask> {
@@ -1966,6 +2029,8 @@ export class BackgroundManager {
       userPermission: existingTask.userPermission,
     })
     setSessionTools(existingTask.sessionId!, resumePromptBody.tools)
+
+    if (this.nativeLifecycle) await this.nativeLifecycle.save(existingTask)
 
     await dispatchInternalPrompt({
       mode: "async",
@@ -3328,6 +3393,7 @@ export class BackgroundManager {
    * Returns true if task was successfully completed, false if already completed by another path.
    */
   private async tryCompleteTask(task: BackgroundTask, source: string): Promise<boolean> {
+    if (this.nativeLifecycle && source !== "v2.idle") return false
     if (this.preserveSessionsOnShutdown && this.shutdownTriggered) return false
     // Guard: Check if task is still running (could have been completed by another path)
     if (task.status !== "running") {
@@ -3418,7 +3484,7 @@ export class BackgroundManager {
         SessionCategoryRegistry.remove(task.sessionId)
 
         // Awaited to prevent dangling promise during subagent teardown (Bun/WebKit SIGABRT)
-        await this.abortSessionWithLogging(task.sessionId, `task completion (${source})`)
+        if (!this.nativeLifecycle) await this.abortSessionWithLogging(task.sessionId, `task completion (${source})`)
 
         // @allow Notify tmux to close the pane immediately. client.session.abort() does not
         // reliably emit session.deleted, so the polling fallback (60-min SESSION_TIMEOUT_MS)
@@ -3456,6 +3522,7 @@ export class BackgroundManager {
 
   private async notifyParentSession(task: BackgroundTask): Promise<void> {
     await this.terminalOutcomeUpdates.get(task.id)
+    if (this.nativeLifecycle) await this.nativeLifecycle.save(task)
     const duration = formatDuration(task.startedAt ?? new Date(), task.completedAt)
 
     log("[background-agent] notifyParentSession called for task:", task.id)
@@ -3544,7 +3611,9 @@ export class BackgroundManager {
       completedTasks,
     })
 
-    if (this.enableParentSessionNotifications) {
+    if (this.enableParentSessionNotifications && this.nativeLifecycle) {
+      await this.nativeLifecycle.notify(task, notification)
+    } else if (this.enableParentSessionNotifications) {
       const parentPromptContext = await this.resolveParentWakePromptContext(task)
 
       log("[background-agent] notifyParentSession context:", {
@@ -3896,6 +3965,7 @@ export class BackgroundManager {
   }
 
   private async pollRunningTasks(): Promise<void> {
+    if (this.nativeLifecycle) return
     if (this.preserveSessionsOnShutdown && this.shutdownTriggered) return
     if (this.pollingInFlight) return
     this.pollingInFlight = true
@@ -4123,6 +4193,8 @@ export class BackgroundManager {
     this.shutdownTriggered = true
     log("[background-agent] Shutting down BackgroundManager")
     this.stopPolling()
+    const nativeLifecycle = this.nativeLifecycle
+    if (nativeLifecycle) await Promise.all([...this.tasks.values()].map((task) => nativeLifecycle.save(task)))
     const retainedTaskIDs = new Set<string>()
     if (this.preserveSessionsOnShutdown) {
       for (const task of this.tasks.values()) {
