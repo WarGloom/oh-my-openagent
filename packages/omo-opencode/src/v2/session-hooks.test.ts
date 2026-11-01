@@ -59,6 +59,47 @@ describe("installSessionHooks", () => {
       // then
       expect(event.prompt.text).toBe("do the work\n<ultrawork-mode>")
     })
+
+    it("#when a handler reads input.agent #then it gets the session agent from session.get", async () => {
+      // given
+      const fake = createFakePluginContext({ sessionAgent: "Atlas" })
+      let seen: string | undefined
+      const hook: NonNullable<Hooks["chat.message"]> = async (input) => {
+        seen = input.agent
+      }
+      await installSessionHooks(fake.context, { "chat.message": hook } as Hooks, { warn: () => {} })
+
+      // when
+      await fake.triggerPrompt(promptEvent())
+
+      // then
+      expect(seen).toBe("Atlas")
+    })
+
+    it("#when the session.get read fails #then the handler still runs with agent undefined", async () => {
+      // given
+      const fake = createFakePluginContext({ sessionAgent: "Atlas" })
+      const context = {
+        ...fake.context,
+        session: {
+          ...fake.context.session,
+          get: async () => {
+            throw new Error("boom")
+          },
+        },
+      }
+      let seen: { called: boolean; agent: string | undefined } = { called: false, agent: "unset" }
+      const hook: NonNullable<Hooks["chat.message"]> = async (input) => {
+        seen = { called: true, agent: input.agent }
+      }
+      await installSessionHooks(context, { "chat.message": hook } as Hooks, { warn: () => {} })
+
+      // when
+      await fake.triggerPrompt(promptEvent())
+
+      // then
+      expect(seen).toEqual({ called: true, agent: undefined })
+    })
   })
 
   describe("#given a chat.params hook", () => {
