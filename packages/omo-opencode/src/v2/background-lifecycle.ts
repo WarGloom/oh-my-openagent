@@ -3,7 +3,7 @@ import type { BackgroundManager } from "../features/background-agent/manager"
 import type { NativeBackgroundLifecycle } from "../features/background-agent/native-lifecycle"
 import type { BackgroundTask } from "../features/background-agent/types"
 import { TERMINAL_TASK_TTL_MS } from "../features/background-agent/constants"
-import { takeBackgroundTasksAfterReload } from "../features/background-agent/task-registry"
+import { getRegisteredBackgroundTask, takeBackgroundTasksAfterReload } from "../features/background-agent/task-registry"
 import type { V2IdleHookEvent, V2PluginContext, V2Registration, V2StorageDomain } from "./context-types"
 import { backgroundTaskRecord, encodeBackgroundTask } from "./background-task-record"
 
@@ -112,9 +112,13 @@ export class V2BackgroundLifecycle implements NativeBackgroundLifecycle {
     }
     for (const task of this.restored) {
       if (task.status === "pending" && !task.sessionId) continue
-      if (manager.getTask(task.id)) continue
+      const previous = getRegisteredBackgroundTask(task.id)
+      const runningInProcess =
+        previous?.sessionId === task.sessionId &&
+        previous?.parentSessionId === task.parentSessionId &&
+        previous.status === "running"
       manager.adoptRetainedTask(task)
-      if (!retainedIDs.has(task.id)) this.recovered.add(task.id)
+      if (!retainedIDs.has(task.id) && !runningInProcess) this.recovered.add(task.id)
     }
   }
 
