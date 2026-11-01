@@ -310,6 +310,43 @@ export type V2SessionMessage =
     })
   | (V2MessageBase & { readonly type: "shell" | "location-switched" })
 
+export type V2SessionRequestKind = "primary" | "compaction" | "title" | "generate"
+
+export type V2SystemPart = { type: string; text?: string } & Record<string, unknown>
+
+export type V2RequestMessagePart = { type: string; text?: string } & Record<string, unknown>
+
+export type V2RequestMessage = { role: string; content: string | V2RequestMessagePart[] } & Record<string, unknown>
+
+export type V2PromptHookEvent = {
+  readonly sessionID: string
+  readonly messageID: string
+  readonly prompt: { text: string } & Record<string, unknown>
+  metadata?: Record<string, unknown>
+}
+
+export type V2ContextHookEvent = {
+  readonly sessionID: string
+  readonly agent: string
+  readonly model: V2ModelRef
+  readonly system: V2SystemPart[]
+  readonly messages: V2RequestMessage[]
+  readonly options: Record<string, unknown>
+}
+
+export type V2ModelRequestHookEvent = {
+  readonly sessionID: string
+  readonly agent: string
+  readonly model: V2ModelRef
+  readonly kind: V2SessionRequestKind
+  baseURL?: string
+  readonly headers: Record<string, string>
+}
+
+export type V2CompactionResult = { summary: string } & Record<string, unknown>
+
+export type V2CompactionHookEvent = V2ContextHookEvent & { result?: V2CompactionResult }
+
 export type V2SessionDomain = {
   readonly get: (input: { readonly sessionID: string }) => Promise<V2SessionInfo>
   readonly create: (input: {
@@ -329,6 +366,12 @@ export type V2SessionDomain = {
   readonly synthetic: (input: V2SyntheticInput) => Promise<unknown>
   readonly switchAgent: (input: { readonly sessionID: string; readonly agent: string }) => Promise<void>
   readonly switchModel: (input: { readonly sessionID: string; readonly model: V2ModelRef }) => Promise<void>
+  readonly hook: {
+    (name: "prompt", callback: (event: V2PromptHookEvent) => Promise<void> | void): Promise<V2Registration>
+    (name: "context", callback: (event: V2ContextHookEvent) => Promise<void> | void): Promise<V2Registration>
+    (name: "model.request", callback: (event: V2ModelRequestHookEvent) => Promise<void> | void): Promise<V2Registration>
+    (name: "compaction", callback: (event: V2CompactionHookEvent) => Promise<void> | void): Promise<V2Registration>
+  }
 }
 
 export type V2CommandInvocation = {

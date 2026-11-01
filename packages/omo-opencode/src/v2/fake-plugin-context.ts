@@ -10,6 +10,10 @@ import type {
   V2SyntheticInput,
   V2ToolAfterEvent,
   V2ToolBeforeEvent,
+  V2PromptHookEvent,
+  V2ContextHookEvent,
+  V2ModelRequestHookEvent,
+  V2CompactionHookEvent,
   V2Event,
   V2ModelRef,
   V2McpEditor,
@@ -72,6 +76,12 @@ export type FakePluginContext = {
   readonly triggerToolBefore: (event: V2ToolBeforeEvent) => Promise<V2ToolBeforeEvent>
   readonly triggerToolAfter: (event: V2ToolAfterEvent) => Promise<V2ToolAfterEvent>
   readonly toolHookCount: () => number
+  /** Runs the registered session hooks in registration order and returns the event they mutated. */
+  readonly triggerPrompt: (event: V2PromptHookEvent) => Promise<V2PromptHookEvent>
+  readonly triggerContext: (event: V2ContextHookEvent) => Promise<V2ContextHookEvent>
+  readonly triggerModelRequest: (event: V2ModelRequestHookEvent) => Promise<V2ModelRequestHookEvent>
+  readonly triggerCompaction: (event: V2CompactionHookEvent) => Promise<V2CompactionHookEvent>
+  readonly sessionHookCount: () => number
 }
 
 function fakeSessionInfo(
@@ -141,6 +151,10 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
   const enders = new Set<() => void>()
   const beforeHooks: Array<(event: V2ToolBeforeEvent) => Promise<void> | void> = []
   const afterHooks: Array<(event: V2ToolAfterEvent) => Promise<void> | void> = []
+  const promptHooks: Array<(event: V2PromptHookEvent) => Promise<void> | void> = []
+  const contextHooks: Array<(event: V2ContextHookEvent) => Promise<void> | void> = []
+  const modelRequestHooks: Array<(event: V2ModelRequestHookEvent) => Promise<void> | void> = []
+  const compactionHooks: Array<(event: V2CompactionHookEvent) => Promise<void> | void> = []
 
   const rebuildAgents = (): void => {
     built = new Map((options.agents ?? []).map((agent) => [agent.id, toRecord(agent)]))
@@ -315,6 +329,23 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
       synthetic: async (input) => void sessionCalls.push({ kind: "synthetic", input }),
       switchAgent: async (input) => void sessionCalls.push({ kind: "switchAgent", ...input }),
       switchModel: async (input) => void sessionCalls.push({ kind: "switchModel", ...input }),
+      hook: ((name: "prompt" | "context" | "model.request" | "compaction", callback: (event: never) => Promise<void> | void) => {
+        const list = (
+          name === "prompt"
+            ? promptHooks
+            : name === "context"
+              ? contextHooks
+              : name === "model.request"
+                ? modelRequestHooks
+                : compactionHooks
+        ) as Array<typeof callback>
+        list.push(callback)
+        return Promise.resolve({
+          dispose: async () => {
+            list.splice(list.indexOf(callback), 1)
+          },
+        })
+      }) as V2PluginContext["session"]["hook"],
     },
     event: { subscribe },
   }
@@ -350,5 +381,22 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
       return event
     },
     toolHookCount: () => beforeHooks.length + afterHooks.length,
+    triggerPrompt: async (event) => {
+      for (const hook of promptHooks) await hook(event)
+      return event
+    },
+    triggerContext: async (event) => {
+      for (const hook of contextHooks) await hook(event)
+      return event
+    },
+    triggerModelRequest: async (event) => {
+      for (const hook of modelRequestHooks) await hook(event)
+      return event
+    },
+    triggerCompaction: async (event) => {
+      for (const hook of compactionHooks) await hook(event)
+      return event
+    },
+    sessionHookCount: () => promptHooks.length + contextHooks.length + modelRequestHooks.length + compactionHooks.length,
   }
 }
