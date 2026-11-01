@@ -2,7 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test"
 import type { Hooks } from "@opencode-ai/plugin"
 import { OhMyOpenCodeConfigSchema, type OhMyOpenCodeConfig } from "../config"
 import { createRuntimeFallbackHook } from "../hooks/runtime-fallback/hook"
-import { hasNativeRuntimeFallback } from "../hooks/runtime-fallback/native-controller"
+import { getNativeFallbackModel, hasNativeRuntimeFallback } from "../hooks/runtime-fallback/native-controller"
+import { toBackgroundTaskSnapshots } from "../features/background-agent/task-snapshot"
 import { SessionCategoryRegistry } from "../shared/session-category-registry"
 import { tryFallbackRetry } from "../features/background-agent/fallback-retry-handler"
 import { ConcurrencyManager } from "../features/background-agent/concurrency"
@@ -200,6 +201,45 @@ describe("native runtime fallback", () => {
         model: { providerID: "anthropic", id: "claude-sonnet-4-6", variant: undefined },
       },
     ])
+  })
+
+  test("reports the model and effort that native fallback applied in the job snapshot", async () => {
+    // given
+    const f = fixture(
+      {
+        agents: {
+          sisyphus: { models: ["anthropic/first", { model: "anthropic/claude-sonnet-4-6", reasoning: "high" }] },
+        },
+      },
+      [],
+      first,
+      [hostModel("anthropic", "first"), { ...hostModel("anthropic", "claude-sonnet-4-6"), variants: [{ id: "high" }] }],
+    )
+    const installed = await install(f)
+    const task: BackgroundTask = {
+      id: "task_snapshot",
+      sessionId: "ses_snapshot",
+      parentSessionId: "ses_parent",
+      parentMessageId: "msg_parent",
+      agent: "sisyphus",
+      prompt: "child",
+      description: "child",
+      status: "running",
+      model: { providerID: "anthropic", modelID: "first", variant: "low" },
+    }
+    cleanups.push(() =>
+      installed.beforeEvent({ type: "session.deleted", data: { sessionID: "ses_snapshot" } }).then(() => {}),
+    )
+    // when
+    await f.fake.triggerRetry(
+      retry({ type: "provider.rate-limit", message: "rate limit", status: 429 }, { sessionID: "ses_snapshot" }),
+    )
+    // then
+    expect(getNativeFallbackModel("ses_snapshot")).toMatchObject({
+      model: { providerID: "anthropic", modelID: "claude-sonnet-4-6" },
+      variant: "high",
+    })
+    expect(toBackgroundTaskSnapshots([task])[0]).toMatchObject({ model: "claude-sonnet-4-6", reasoningEffort: "high" })
   })
 
   test("skips a chain entry whose provider the host does not serve", async () => {

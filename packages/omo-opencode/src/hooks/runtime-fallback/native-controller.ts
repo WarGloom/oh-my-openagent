@@ -21,6 +21,15 @@ export function hasNativeRuntimeFallback(client: object): boolean {
   return nativeClients.has(client)
 }
 
+type RetryModel = NonNullable<ReturnType<typeof buildRetryModelPayload>>
+
+/** The model native fallback last applied to a session, so task records report the model that answered. */
+const nativeSessionModels = new Map<string, RetryModel>()
+
+export function getNativeFallbackModel(sessionID: string): RetryModel | undefined {
+  return nativeSessionModels.get(sessionID)
+}
+
 export type NativeFallbackInput = {
   readonly sessionID: string
   readonly agent: string | undefined
@@ -29,8 +38,6 @@ export type NativeFallbackInput = {
   /** Host model availability; a model it rejects is skipped like an unreachable V1 fallback. */
   readonly isAvailable?: (model: { providerID: string; modelID: string }) => boolean
 }
-
-type RetryModel = NonNullable<ReturnType<typeof buildRetryModelPayload>>
 
 export function createNativeFallbackController(deps: HookDeps) {
   let active = false
@@ -65,8 +72,12 @@ export function createNativeFallbackController(deps: HookDeps) {
       deps.sessionStates.delete(sessionID)
       deps.sessionLastAccess.delete(sessionID)
       if (promptParamSessions.delete(sessionID)) clearSessionPromptParams(sessionID)
+      nativeSessionModels.delete(sessionID)
     },
-    async recover(input: NativeFallbackInput, apply: (model: RetryModel) => Promise<void>): Promise<boolean> {
+    async recover(
+      input: NativeFallbackInput,
+      apply: (model: RetryModel) => Promise<RetryModel | void>,
+    ): Promise<boolean> {
       if (!deps.config.enabled || !isRetryableError(input.error, deps.config.retry_on_errors)) return false
       if (deps.sessionRetryInFlight.has(input.sessionID)) return false
       const agent = input.agent ? getAgentConfigKey(input.agent) : undefined
@@ -124,8 +135,9 @@ export function createNativeFallbackController(deps: HookDeps) {
       }
       deps.sessionRetryInFlight.add(input.sessionID)
       try {
-        await apply(payload)
+        const applied = await apply(payload)
         state.pendingFallbackModel = undefined
+        nativeSessionModels.set(input.sessionID, applied ?? payload)
         const requestSettings = {
           reasoningEffort: payload.reasoningEffort,
           temperature: entrySettings?.temperature,

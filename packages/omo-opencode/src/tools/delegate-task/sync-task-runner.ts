@@ -3,7 +3,7 @@ import { archiveBackgroundTask } from "../../features/background-agent/task-regi
 import type { ModelFallbackState } from "../../hooks/model-fallback/hook"
 import type { FallbackEntry } from "../../shared/model-requirements"
 import { shouldRetryError } from "../../shared/model-error-classifier"
-import { hasNativeRuntimeFallback } from "../../hooks/runtime-fallback/native-controller"
+import { getNativeFallbackModel, hasNativeRuntimeFallback } from "../../hooks/runtime-fallback/native-controller"
 import { getDeliverableTag } from "./constants"
 import type { ExecutorContext, ParentContext } from "./executor-types"
 import { buildRecoveredSyncTaskCompletion, buildSyncTaskCompletion } from "./sync-completion-message"
@@ -223,6 +223,16 @@ export async function runSyncTaskLoop(input: SyncTaskRunnerInput): Promise<strin
     const result = await deps.fetchSyncResult(client, activeSessionID, anchorMessageCount, { deliverableTag })
     if (!result.ok) {
       return result.error
+    }
+
+    const nativeModel = hasNativeRuntimeFallback(client) ? getNativeFallbackModel(activeSessionID) : undefined
+    if (nativeModel) {
+      effectiveCategoryModel = {
+        providerID: nativeModel.model.providerID,
+        modelID: nativeModel.model.modelID,
+        ...(nativeModel.variant === undefined ? {} : { variant: nativeModel.variant }),
+        ...(nativeModel.reasoningEffort === undefined ? {} : { reasoningEffort: nativeModel.reasoningEffort }),
+      }
     }
 
     await publishSyncMetadata(activeSessionID, effectiveCategoryModel, spawnDepth)
