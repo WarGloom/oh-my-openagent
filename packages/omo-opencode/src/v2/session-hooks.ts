@@ -77,8 +77,14 @@ async function registerPrompt(
       parts,
     }
     await handler({ sessionID: event.sessionID, messageID: event.messageID }, output)
-    const firstText = output.parts.find((part) => part.type === "text" && typeof part.text === "string")
-    if (firstText?.text !== undefined && firstText.text !== original) event.prompt.text = firstText.text
+    // The 2.x prompt event carries only `prompt.text`, so every text part the handlers leave (the
+    // original, edits, and appended mode prompts) is written back in order. The event has no agent,
+    // model or variant, so agent- and model-dependent chat.message effects cannot run here.
+    const text = output.parts
+      .filter((part) => part.type === "text" && typeof part.text === "string")
+      .map((part) => part.text as string)
+      .join("\n")
+    if (text !== original) event.prompt.text = text
   })
 }
 

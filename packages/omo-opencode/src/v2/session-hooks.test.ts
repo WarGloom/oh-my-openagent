@@ -44,6 +44,21 @@ describe("installSessionHooks", () => {
       // then
       expect(event.prompt.text).toBe("hello (reviewed)")
     })
+
+    it("#when a handler appends a second text part #then every text part reaches the prompt text in order", async () => {
+      // given
+      const fake = createFakePluginContext()
+      const hook: NonNullable<Hooks["chat.message"]> = async (_input, output) => {
+        output.parts.push({ type: "text", text: "<ultrawork-mode>" })
+      }
+      await installSessionHooks(fake.context, { "chat.message": hook } as Hooks, { warn: () => {} })
+
+      // when
+      const event = await fake.triggerPrompt(promptEvent({ prompt: { text: "do the work" } }))
+
+      // then
+      expect(event.prompt.text).toBe("do the work\n<ultrawork-mode>")
+    })
   })
 
   describe("#given a chat.params hook", () => {
