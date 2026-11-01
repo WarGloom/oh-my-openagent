@@ -61,6 +61,23 @@ test("#given a crash after admission #when delivery retries #then the same synth
   expect(delivered).toEqual([input.messageId])
 })
 
+test("#given an unread message already pending #when V2 checks the mailbox #then it is not readmitted", async () => {
+  // given
+  const input = await setup()
+  await transitionRuntimeState(input.teamRunId, (state) => ({
+    ...state,
+    members: state.members.map((member) => member.name === input.memberName
+      ? { ...member, pendingInjectedMessageIds: [input.messageId] }
+      : member),
+  }), input.config)
+  const admitted: string[] = []
+  // when
+  const delivered = await deliverMailboxV2({ ...input, admit: async ({ id }) => { admitted.push(id) } })
+  // then
+  expect(delivered).toEqual([])
+  expect(admitted).toEqual([])
+})
+
 test("#given a session replaced before delivery #when admission runs #then it targets the replacement", async () => {
   // given
   const input = await setup()
