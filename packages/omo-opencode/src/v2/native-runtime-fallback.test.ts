@@ -12,7 +12,8 @@ import { createV2Setup } from "./create-v2-setup"
 import { createFakePluginContext } from "./fake-plugin-context"
 import { bindNativeRuntimeFallback, installNativeRuntimeFallback } from "./native-runtime-fallback"
 import { createSessionTracker } from "./session-tracker"
-import type { V2ModelRef, V2RetryHookEvent, V2SessionMessage, V2StructuredError } from "./context-types"
+import { clearAllSessionPromptParams, getSessionPromptParams } from "../shared/session-prompt-params-state"
+import type { V2ModelInfo, V2ModelRef, V2RetryHookEvent, V2SessionMessage, V2StructuredError } from "./context-types"
 
 const first = { providerID: "anthropic", id: "first" }
 const second = { providerID: "anthropic", id: "second" }
@@ -21,10 +22,15 @@ const cleanups: Array<() => void | Promise<void>> = []
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
   SessionCategoryRegistry.clear()
+  clearAllSessionPromptParams()
 })
 
-function fixture(config: Partial<OhMyOpenCodeConfig> = { agents: { sisyphus: { models: ["anthropic/first", "anthropic/second"] } } }, history: readonly V2SessionMessage[] = [], model: V2ModelRef | null = first) {
-  const fake = createFakePluginContext({ sessionAgent: "sisyphus", sessionInfo: { model: model ?? undefined }, sessionMessages: history })
+function hostModel(providerID: string, modelID: string): V2ModelInfo {
+  return { id: modelID, modelID, providerID, name: modelID, status: "active", enabled: true, capabilities: { tools: true, input: ["text"], output: ["text"] }, variants: [], limit: { context: 200000, output: 64000 } }
+}
+
+function fixture(config: Partial<OhMyOpenCodeConfig> = { agents: { sisyphus: { models: ["anthropic/first", "anthropic/second"] } } }, history: readonly V2SessionMessage[] = [], model: V2ModelRef | null = first, models: readonly V2ModelInfo[] = []) {
+  const fake = createFakePluginContext({ sessionAgent: "sisyphus", sessionInfo: { model: model ?? undefined }, sessionMessages: history, models })
   const input = createPluginInput(fake.context, { tracker: createSessionTracker(), warn: () => {} })
   const runtime = createRuntimeFallbackHook(input, { pluginConfig: OhMyOpenCodeConfigSchema.parse(config), config: { enabled: true, max_fallback_attempts: 2, timeout_seconds: 0, notify_on_fallback: false } })
   cleanups.push(() => runtime.dispose?.())
@@ -88,6 +94,38 @@ describe("native runtime fallback", () => {
     await f.fake.triggerRetry(retry({ type: "provider.rate-limit", message: "rate limit", status: 429 }, { sessionID: "ses_child" }))
     // then
     expect(f.fake.sessionCalls).toEqual([{ kind: "switchModel", sessionID: "ses_child", model: { ...second, variant: "high" } }])
+  })
+
+  test("keeps a chain entry's own reasoning after fallback", async () => {
+    // given
+    const f = fixture({ agents: { sisyphus: { reasoning: "low", models: ["anthropic/first", { model: "anthropic/claude-sonnet-4-6", reasoning: "high" }] } } })
+    await install(f)
+    // when
+    await f.fake.triggerRetry(retry({ type: "provider.rate-limit", message: "rate limit", status: 429 }))
+    // then
+    expect(f.fake.sessionCalls).toEqual([{ kind: "switchModel", sessionID: "ses_main", model: { providerID: "anthropic", id: "claude-sonnet-4-6", variant: "high" } }])
+  })
+
+  test("sends a chain entry's reasoning as request options when the model has no matching variant", async () => {
+    // given
+    const f = fixture({ agents: { sisyphus: { models: ["anthropic/first", { model: "anthropic/second", reasoning: "high", temperature: 0.2 }] } } })
+    await install(f)
+    // when
+    await f.fake.triggerRetry(retry({ type: "provider.rate-limit", message: "rate limit", status: 429 }))
+    // then
+    expect(f.fake.sessionCalls).toEqual([{ kind: "switchModel", sessionID: "ses_main", model: { ...second, variant: undefined } }])
+    expect(getSessionPromptParams("ses_main")).toMatchObject({ temperature: 0.2, options: { reasoningEffort: "high" } })
+  })
+
+  test("skips a chain entry whose provider the host does not serve", async () => {
+    // given
+    const f = fixture({ agents: { sisyphus: { models: ["anthropic/first", "missing/model", "anthropic/second"] } } }, [], first, [hostModel("anthropic", "first"), hostModel("anthropic", "second")])
+    await install(f)
+    // when
+    const event = await f.fake.triggerRetry(retry({ type: "provider.rate-limit", message: "rate limit", status: 429 }))
+    // then
+    expect(event.decision).toEqual({ retry: true, delay: 0 })
+    expect(f.fake.sessionCalls).toEqual([{ kind: "switchModel", sessionID: "ses_main", model: { ...second, variant: undefined } }])
   })
 
   test("advances shared state once per failure and stops at chain exhaustion", async () => {
