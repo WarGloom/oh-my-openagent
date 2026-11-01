@@ -100,4 +100,82 @@ describe("V2 background task reload", () => {
       rmSync(directory, { recursive: true, force: true })
     }
   })
+
+  it("#given a child completes while its parent is busy #when the plugin reloads before the parent idles #then the parent gets the completion exactly once", async () => {
+    // given
+    const directory = mkdtempSync(join(tmpdir(), "omo-v2-reload-"))
+    const previousDataHome = process.env.XDG_DATA_HOME
+    process.env.XDG_DATA_HOME = join(directory, "data")
+    const fake = createFakePluginContext({ directory, sessionAgent: "Sisyphus" })
+    const messages: V2SessionMessage[] = []
+    const contextRead = spyOn(fake.context.session, "context").mockImplementation(async ({ sessionID }) => sessionID === "child" ? messages : [])
+    const delivered = Promise.withResolvers<V2PromptInput>()
+    const originalPrompt = fake.context.session.prompt
+    const originalSynthetic = fake.context.session.synthetic
+    const prompt = spyOn(fake.context.session, "prompt").mockImplementation(async (input) => {
+      await originalPrompt(input)
+      delivered.resolve(input)
+    })
+    const synthetic = spyOn(fake.context.session, "synthetic").mockImplementation(async (input) => {
+      await originalSynthetic(input)
+      delivered.resolve(input)
+    })
+    const generations: Managers[] = []
+    const cleanupManagers: Array<{ shutdown: () => void | Promise<void> }> = []
+    const config = OhMyOpenCodeConfigSchema.parse({ tui: { sidebar: { enabled: false } } })
+    const setup = createV2Setup({ serverPlugin: async (input) => {
+      const managers = createManagers({
+        ctx: input,
+        pluginConfig: config,
+        tmuxConfig: createRuntimeTmuxConfig(config),
+        modelCacheState: createModelCacheState(),
+        backgroundNotificationHookEnabled: true,
+        deps: { registerManagerForCleanupFn: (manager) => { cleanupManagers.push(manager) } },
+      })
+      generations.push(managers)
+      return {
+        event: async ({ event }) => { managers.backgroundManager.handleEvent(event) },
+        dispose: createPluginDispose({ ...managers, disposeHooks: () => {} }),
+      }
+    } })
+    let cleanup: (() => void | Promise<void>) | undefined
+    try {
+      cleanup = await setup(fake.context)
+      const first = generations[0]
+      if (!first) throw new Error("first generation missing")
+      const task = await first.backgroundManager.trackTask({ taskId: "bg_queued", sessionId: "child", parentSessionId: "parent", agent: "Sisyphus", description: "queued task", parentAgent: "Sisyphus", concurrencyKey: "openai/gpt-6.1-sol" })
+      task.startedAt = new Date(Date.now() - 10_000)
+      fake.emit({ type: "session.execution.started", data: { sessionID: "parent" } })
+      fake.emit({ type: "session.execution.started", data: { sessionID: "child" } })
+      messages.push({ type: "assistant", id: "answer", agent: "Sisyphus", model: { providerID: "openai", id: "gpt-6.1-sol" }, content: [{ type: "text", text: "finished before reload" }], finish: "stop", time: { created: Date.now() - 1000, completed: Date.now() } })
+      const queued = first.backgroundManager.awaitScheduledFlush("parent", first.backgroundManager.getScheduledFlushSettledCount("parent"))
+      fake.emit({ type: "session.execution.succeeded", data: { sessionID: "child" } })
+      await queued
+
+      // when
+      await cleanup()
+      cleanup = undefined
+      cleanup = await setup(fake.context)
+      const second = generations[1]
+      if (!second) throw new Error("second generation missing")
+      const settled = second.backgroundManager.awaitScheduledFlush("parent", second.backgroundManager.getScheduledFlushSettledCount("parent"))
+      fake.emit({ type: "session.execution.succeeded", data: { sessionID: "parent" } })
+      const notification = await delivered.promise
+      await settled
+
+      // then
+      expect(notification.sessionID).toBe("parent")
+      expect(notification.text).toContain("bg_queued")
+      expect(fake.sessionCalls.filter((call) => call.kind === "prompt" || call.kind === "synthetic")).toHaveLength(1)
+    } finally {
+      await cleanup?.()
+      for (const manager of cleanupManagers) await manager.shutdown()
+      contextRead.mockRestore()
+      prompt.mockRestore()
+      synthetic.mockRestore()
+      if (previousDataHome === undefined) delete process.env.XDG_DATA_HOME
+      else process.env.XDG_DATA_HOME = previousDataHome
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
 })
