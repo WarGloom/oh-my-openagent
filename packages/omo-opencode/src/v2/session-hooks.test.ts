@@ -8,6 +8,11 @@ import type {
 } from "./context-types"
 import { createFakePluginContext } from "./fake-plugin-context"
 import { installSessionHooks } from "./session-hooks"
+import { createSystemTransformHandler } from "../plugin/system-transform"
+import {
+  clearSisyphusRuntimePromptContext,
+  setSisyphusRuntimePromptContext,
+} from "../agents/sisyphus-runtime-prompt-reconciler"
 
 const MODEL = { providerID: "anthropic", id: "claude-opus-4" }
 
@@ -140,6 +145,38 @@ describe("installSessionHooks", () => {
   })
 
   describe("#given an experimental.chat.system.transform hook", () => {
+    it("#when reconciliation changes existing text #then V2 retains part identity, metadata, order, and appended guidance", async () => {
+      // given
+      setSisyphusRuntimePromptContext({
+        configuredModel: "openai/old",
+        bakedPrompt: "original-core",
+        rebuildPromptForModel: () => "updated-core",
+      })
+      const fake = createFakePluginContext()
+      const hook = createSystemTransformHandler({ ultrawork: true }, () => "guidance")
+      const first = { type: "text", text: "prefix original-core suffix", metadata: { source: "agent" } }
+      const second = { type: "text", text: "other", metadata: { source: "host" } }
+      try {
+        await installSessionHooks(fake.context, { "experimental.chat.system.transform": hook } as Hooks, {
+          warn: () => {},
+        })
+
+        // when
+        const event = await fake.triggerContext(contextEvent({ system: [first, second] }))
+
+        // then
+        expect(event.system).toEqual([
+          { type: "text", text: "prefix updated-core suffix", metadata: { source: "agent" } },
+          { type: "text", text: "other", metadata: { source: "host" } },
+          { type: "text", text: "guidance" },
+        ])
+        expect(event.system[0]).toBe(first)
+        expect(event.system[1]).toBe(second)
+      } finally {
+        clearSisyphusRuntimePromptContext()
+      }
+    })
+
     it("#when the context is built #then new system entries are appended as text parts without duplicating the seed", async () => {
       // given
       const fake = createFakePluginContext()
