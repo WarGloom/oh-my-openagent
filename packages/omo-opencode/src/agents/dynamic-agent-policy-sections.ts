@@ -117,7 +117,9 @@ export function buildUltraworkSection(
   return lines.join("\n")
 }
 
-export function buildAntiDuplicationSection(): string {
+export function buildAntiDuplicationSection(
+  exampleCall = 'task(subagent_type="explore", run_in_background=true, ...)',
+): string {
   return `<Anti_Duplication>
 ## Anti-Duplication Rule (CRITICAL)
 
@@ -156,11 +158,11 @@ When you need the delegated results but they're not ready:
 
 \`\`\`typescript
 // WRONG: After delegating, re-doing the search
-task(subagent_type="explore", run_in_background=true, ...)
+${exampleCall}
 // Then immediately grep for the same thing yourself - FORBIDDEN
 
 // CORRECT: Continue non-overlapping work
-task(subagent_type="explore", run_in_background=true, ...)
+${exampleCall}
 // Work on a different, unrelated file while they search
 // End your response and wait for the notification
 // Do not use shell sleep, timeout, polling loops, or blocking commands to wait
