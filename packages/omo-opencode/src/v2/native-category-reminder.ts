@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto"
 import type { createCategorySkillReminderHook } from "../hooks/category-skill-reminder/hook"
-import { isRealUserTextPart } from "../shared/internal-initiator-marker"
 import { log } from "../shared/logger"
 import type { V2PluginContext, V2Registration } from "./context-types"
 
@@ -14,13 +13,15 @@ export async function registerNativeCategoryReminder(
     try {
       const history = await context.session.context({ sessionID: event.sessionID })
       const records = new Map(history.map((record) => [record.id, record]))
-      const realUser = event.messages.some((message) => {
-        if (message.role !== "user" || typeof message.id !== "string") return false
-        const synthetic = records.get(message.id)?.type === "synthetic"
+      const messages = event.messages.map((message) => {
+        const synthetic = typeof message.id === "string" && records.get(message.id)?.type === "synthetic"
         const parts = typeof message.content === "string" ? [{ type: "text", text: message.content }] : message.content
-        return parts.some((part) => isRealUserTextPart({ type: part.type, text: part.text, synthetic }))
+        return {
+          info: { role: message.role, sessionID: event.sessionID, id: message.id },
+          parts: parts.map((part) => ({ type: part.type, text: part.text, synthetic })),
+        }
       })
-      if (!realUser) return
+      if (!hook.nativeHasReminderTarget(messages)) return
       const digest = createHash("sha256").update(`category-reminder\0${event.sessionID}`).digest("hex")
       await context.session.synthetic({
         sessionID: event.sessionID,
