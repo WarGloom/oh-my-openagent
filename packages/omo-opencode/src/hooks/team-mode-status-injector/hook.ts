@@ -2,6 +2,7 @@ import type { KeywordDetectorConfig } from "../../config/schema/keyword-detector
 import type { TeamModeConfig } from "../../config/schema/team-mode"
 import { isRealUserMessage } from "../../shared/internal-initiator-marker"
 import { detectKeywordsWithType, extractPromptText } from "../keyword-detector/detector"
+import { listActiveTeams, loadRuntimeState } from "@oh-my-opencode/team-core/team-state-store/store"
 
 type TransformPart = {
   type: string
@@ -31,6 +32,8 @@ type TeamModeStatusInjectorOutput = {
 }
 
 export type TeamModeStatusInjectorHook = {
+  readonly nativeStatusForPrompt: (parts: TransformPart[]) => string | undefined
+  readonly nativeHasActiveTeam: (sessionID: string) => Promise<boolean>
   "experimental.chat.messages.transform"?: (
     input: TeamModeStatusInjectorInput,
     output: TeamModeStatusInjectorOutput,
@@ -79,17 +82,18 @@ function hasInjectedTeamModeStatus(messages: MessageWithParts[]): boolean {
 function latestUserMessageRequestsTeamMode(
   messages: MessageWithParts[],
   userMessageIndex: number,
+  config: TeamModeConfig,
   keywordDetectorConfig?: KeywordDetectorConfig,
 ): boolean {
   const message = messages[userMessageIndex]
   if (message === undefined) {
     return false
   }
-  if (!isRealUserMessage(message)) {
-    return false
-  }
+  return teamModeStatusForPrompt(message.parts, config, keywordDetectorConfig) !== undefined
+}
 
-  const promptText = extractPromptText(message.parts)
+function teamModeRequested(parts: TransformPart[], keywordDetectorConfig?: KeywordDetectorConfig): boolean {
+  const promptText = extractPromptText(parts)
   return detectKeywordsWithType(
     promptText,
     undefined,
@@ -98,7 +102,16 @@ function latestUserMessageRequestsTeamMode(
   ).some((keyword) => keyword.type === "team")
 }
 
-function buildTeamModeStatusContent(): string {
+export function teamModeStatusForPrompt(
+  parts: TransformPart[],
+  config: TeamModeConfig,
+  keywordDetectorConfig?: KeywordDetectorConfig,
+): string | undefined {
+  if (!config.enabled || !isRealUserMessage({ info: { role: "user" }, parts })) return undefined
+  return teamModeRequested(parts, keywordDetectorConfig) ? buildTeamModeStatusContent() : undefined
+}
+
+export function buildTeamModeStatusContent(): string {
   return `${TEAM_MODE_STATUS_MARKER}
 Team mode is ENABLED for this session. Presence of the team_* tools is authoritative proof; do not inspect config files to verify.
 Closure invariant: every team you open is yours to close. After each team_task_update that completes or fails a task, call team_task_list({ teamRunId }); if every task is terminal, run team_shutdown_request + team_approve_shutdown per active member, then team_delete in the same turn, without waiting for the user to ask. Lingering teams are a defect.
@@ -121,6 +134,15 @@ export function createTeamModeStatusInjector(
   keywordDetectorConfig?: KeywordDetectorConfig,
 ): TeamModeStatusInjectorHook {
   return {
+    nativeStatusForPrompt: (parts) => teamModeStatusForPrompt(parts, config, keywordDetectorConfig),
+    nativeHasActiveTeam: async (sessionID) => {
+      const teams = await listActiveTeams(config)
+      for (const team of teams) {
+        const state = await loadRuntimeState(team.teamRunId, config)
+        if (state.leadSessionId === sessionID || state.members.some((member) => member.sessionId === sessionID)) return true
+      }
+      return false
+    },
     "experimental.chat.messages.transform": async (
       input,
       output,
@@ -139,7 +161,7 @@ export function createTeamModeStatusInjector(
       }
 
       const lastUserMessageIndex = findLastUserMessageIndex(output.messages)
-      if (!latestUserMessageRequestsTeamMode(output.messages, lastUserMessageIndex, keywordDetectorConfig)) {
+      if (!latestUserMessageRequestsTeamMode(output.messages, lastUserMessageIndex, config, keywordDetectorConfig)) {
         return
       }
 
