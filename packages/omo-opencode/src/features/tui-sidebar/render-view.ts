@@ -133,12 +133,21 @@ function jobNodes(jobs: JobBoardState, theme: ThemeLike): ViewNode[] {
         section(
           "Jobs",
           theme,
-          jobs.jobs.map((job) =>
+          // Model and effort get their own line: inside the row they sit where sidebar truncation cuts.
+          jobs.jobs.flatMap((job) => [
             text(
               { fg: theme.text, truncate: true, wrapMode: "none" },
-              `${truncate(job.title)}${jobModelLabel(job)} ${job.status} ${job.toolCalls ?? 0} ${job.lastTool ?? "none"}`,
+              `${truncate(job.title)} ${job.status} ${job.toolCalls ?? 0} ${job.lastTool ?? "none"}`,
             ),
-          ),
+            ...(job.model === undefined
+              ? []
+              : [
+                  text(
+                    { fg: theme.textMuted, truncate: true, wrapMode: "none" },
+                    truncate(`${job.model}${job.reasoningEffort === undefined ? "" : ` ${job.reasoningEffort}`}`),
+                  ),
+                ]),
+          ]),
         ),
       ]
     default:

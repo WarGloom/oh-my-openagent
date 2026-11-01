@@ -102,7 +102,11 @@ function jobsKeyParts(jobs: JobBoardState): readonly unknown[] {
     case "none":
       return ["jobs", "none"]
     case "list":
-      return ["jobs", "list", jobs.jobs.map((job) => [job.title, job.status, job.toolCalls, job.lastTool])]
+      return [
+        "jobs",
+        "list",
+        jobs.jobs.map((job) => [job.title, job.model, job.reasoningEffort, job.status, job.toolCalls, job.lastTool]),
+      ]
     default:
       return assertNever(jobs)
   }
