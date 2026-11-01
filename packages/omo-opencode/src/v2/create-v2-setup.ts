@@ -35,6 +35,15 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
     let uninstall: () => Promise<void>
     let fallback: Awaited<ReturnType<typeof installNativeRuntimeFallback>>
     try {
+      let cursor: string | null | undefined
+      do {
+        const page = await context.session.list({
+          directory: context.location.directory,
+          ...(cursor == null ? {} : { cursor }),
+        })
+        tracker.seed(page.data)
+        cursor = page.cursor.next
+      } while (cursor)
       const input = createPluginInput(context, { tracker, warn })
       hooks = await deps.serverPlugin(input, { ...context.options })
       fallback = await installNativeRuntimeFallback(context, hooks)
