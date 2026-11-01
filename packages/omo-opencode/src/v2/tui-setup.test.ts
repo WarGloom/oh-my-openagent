@@ -1,4 +1,11 @@
-import { describe, expect, it } from "bun:test"
+import { describe, expect, it, spyOn } from "bun:test"
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import type { Plugin } from "@opencode/plugin/tui"
+import { testRender } from "@opentui/solid"
+import { MIRROR_SCHEMA_VERSION } from "../features/tui-sidebar/constants"
+import { writeMirror } from "../features/tui-sidebar/mirror-io"
 import tuiModule from "../tui"
 import { setupV2Tui } from "./tui-setup"
 
@@ -20,22 +27,111 @@ describe("OpenCode 2.x TUI entry", () => {
   })
 
   describe("#given a 2.x TUI context", () => {
-    it("#when setup runs #then it completes without throwing and without touching the context", async () => {
+    it("#when setup runs and is disposed #then it registers and unregisters the sidebar and event handlers", async () => {
       // given
-      const context = new Proxy(
-        {},
-        {
-          get() {
-            throw new Error("setup must not read the 2.x TUI context yet")
-          },
-        },
-      )
+      const claims: Parameters<Plugin.Context["ui"]["slot"]>[0][] = []
+      const startTimer = spyOn(globalThis, "setInterval")
+      const stopTimer = spyOn(globalThis, "clearInterval")
+      let registered = true
+      let subscriptions = 0
+      const context = {
+        location: { directory: process.cwd() },
+        ui: { slot: (claim: Parameters<Plugin.Context["ui"]["slot"]>[0]) => {
+          claims.push(claim)
+          return () => { registered = false }
+        } },
+        data: { on: () => {
+          subscriptions++
+          return () => { subscriptions-- }
+        } },
+      }
 
       // when
-      const result = setupV2Tui(context)
+      try {
+        const cleanup = await Reflect.apply(setupV2Tui, undefined, [context])
 
-      // then
-      await expect(result).resolves.toBeUndefined()
+        // then
+        expect(claims).toHaveLength(1)
+        expect(claims[0]?.append).toBe("sidebar.content")
+        expect(subscriptions).toBe(2)
+        expect(typeof cleanup).toBe("function")
+        const timer = startTimer.mock.results.at(-1)?.value
+        await cleanup()
+        expect(registered).toBe(false)
+        expect(subscriptions).toBe(0)
+        expect(stopTimer).toHaveBeenCalledWith(timer)
+      } finally {
+        startTimer.mockRestore()
+        stopTimer.mockRestore()
+      }
+    })
+
+    it("#when a team member is clicked #then the router opens that member's session", async () => {
+      // given
+      const directory = mkdtempSync(join(tmpdir(), "omo-v2-sidebar-"))
+      const previousDataHome = process.env.XDG_DATA_HOME
+      process.env.XDG_DATA_HOME = join(directory, "data")
+      writeMirror(directory, {
+        version: MIRROR_SCHEMA_VERSION,
+        projectDir: directory,
+        updatedAt: Date.now(),
+        activeAgents: [],
+        loop: null,
+        teams: [{ name: "team", leadSessionId: "lead", members: [
+          { name: "member", status: "running", work: null, sessionId: "member-session" },
+        ] }],
+      })
+      const claims: Parameters<Plugin.Context["ui"]["slot"]>[0][] = []
+      const destinations: Parameters<Plugin.Context["ui"]["router"]["navigate"]>[0][] = []
+      const color = "#ffffff"
+      const context = {
+        location: { directory },
+        theme: { text: { base: color, muted: color, feedback: {
+          error: { base: color }, warning: { base: color }, success: { base: color }, info: { base: color },
+        } }, border: { base: color } },
+        ui: {
+          slot: (claim: Parameters<Plugin.Context["ui"]["slot"]>[0]) => { claims.push(claim); return () => {} },
+          router: { navigate: (destination: Parameters<Plugin.Context["ui"]["router"]["navigate"]>[0]) => destinations.push(destination) },
+        },
+        data: { on: () => () => {} },
+      }
+      let cleanup: (() => void | Promise<void>) | undefined
+      const tui = await import("../tui")
+      const readView = spyOn(tui, "readView")
+      try {
+        cleanup = await Reflect.apply(setupV2Tui, undefined, [context])
+        const claim = claims[0]
+        if (!claim || claim.append !== "sidebar.content") throw new Error("sidebar slot missing")
+        const initial = await testRender(() => claim.render({ sessionID: "lead" }), { width: 80, height: 20 })
+        try {
+          const pending = readView.mock.results[0]?.value
+          if (!pending) throw new Error("sidebar did not start reading the view")
+          await pending
+        } finally {
+          initial.renderer.destroy()
+        }
+        const app = await testRender(() => claim.render({ sessionID: "lead" }), { width: 80, height: 20 })
+        try {
+          const frame = await app.waitForFrame((text) => text.includes("member"))
+          const lines = frame.split("\n")
+          const row = lines.findIndex((line) => line.includes("member"))
+          const column = lines[row]?.indexOf("member") ?? -1
+
+          // when
+          await app.mockMouse.click(column, row)
+
+          // then
+          expect(destinations).toEqual([{ type: "session", sessionID: "member-session" }])
+        } finally {
+          app.renderer.destroy()
+        }
+      } finally {
+        readView.mockRestore()
+        await cleanup?.()
+        if (previousDataHome === undefined) delete process.env.XDG_DATA_HOME
+        else process.env.XDG_DATA_HOME = previousDataHome
+        rmSync(directory, { recursive: true, force: true })
+      }
     })
   })
 })
