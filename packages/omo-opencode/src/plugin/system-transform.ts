@@ -5,6 +5,7 @@ import type { NativePromptContext } from "../agents/native-prompt-frame"
 import { getSerenaNavigationPrompt } from "../shared/serena-navigation-prompt"
 import { resolveSessionTools } from "../shared/resolve-session-tools"
 import type { PluginContext } from "./types"
+import { reconcileSystemTextParts } from "./system-text-parts"
 
 const ULTRAWORK_MODE_TAG = "<ultrawork-mode>"
 
@@ -89,31 +90,31 @@ export function createSystemTransformHandler(
   const ultraworkRestoration = options ? options.ultraworkRestoration : maybeUltraworkRestoration
   const getToolSnippets = options ? options.getToolSnippets : maybeGetToolSnippets
   const getSessionToolPermissions = options ? options.getSessionToolPermissions : maybeGetSessionToolPermissions
-  return async (input, output): Promise<void> => {
+  return async (input, output): Promise<void> => reconcileSystemTextParts({ read: () => output.system }, async (system) => {
     // The Sisyphus prompt body is model-specific and baked at registration
     // from the *configured* model in .omo/omo.jsonc. This per-request hook
     // is the only seam that knows the model actually selected at runtime, so
     // rebuild the whole body for the runtime model here (issue #5297/#6966).
-    reconcileSisyphusRuntimePrompt(output.system, toCanonicalModel(input.model))
+    reconcileSisyphusRuntimePrompt(system, toCanonicalModel(input.model))
     const runtimePermissions = await getSessionToolPermissions?.(input.sessionID)
     const canRefreshTools = !getSessionToolPermissions || runtimePermissions !== undefined
-    reconcileNativeModelPrompts(output.system, toCanonicalModel(input.model),
+    reconcileNativeModelPrompts(system, toCanonicalModel(input.model),
       canRefreshTools ? getToolSnippets?.() : undefined, undefined, runtimePermissions)
 
     const restoredGuidance = input.sessionID
       ? ultraworkRestoration?.getSystemTransformGuidance?.(input.sessionID, input.model?.id)
       : undefined
     if (restoredGuidance) {
-      if (!output.system.some((part) => part.includes(ULTRAWORK_MODE_TAG))) {
-        output.system.push(restoredGuidance)
+      if (!system.some((part) => part.includes(ULTRAWORK_MODE_TAG))) {
+        system.push(restoredGuidance)
       }
     } else if (defaultMode?.ultrawork && getUltraworkMessage) {
       // Avoid re-injecting if the ultrawork prompt is already in the system prompt
       // (e.g. after compaction the system prompt is rebuilt and this hook fires again)
-      if (!output.system.some((part) => part.includes(ULTRAWORK_MODE_TAG))) {
+      if (!system.some((part) => part.includes(ULTRAWORK_MODE_TAG))) {
         const ultraworkMessage = getUltraworkMessage("sisyphus", input.model?.id)
         if (ultraworkMessage) {
-          output.system.push(ultraworkMessage)
+          system.push(ultraworkMessage)
         }
       }
     }
@@ -129,10 +130,10 @@ export function createSystemTransformHandler(
       return
     }
 
-    if (output.system.some((entry) => entry.includes("<serena_navigation>"))) {
+    if (system.some((entry) => entry.includes("<serena_navigation>"))) {
       return
     }
 
-    output.system.push(getSerenaNavigationPrompt())
-  }
+    system.push(getSerenaNavigationPrompt())
+  })
 }

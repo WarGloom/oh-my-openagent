@@ -1,5 +1,6 @@
 import type { Hooks } from "@opencode-ai/plugin"
 import { log } from "../shared/logger"
+import { reconcileSystemTextParts } from "../plugin/system-text-parts"
 import type { V2ModelRef, V2PluginContext, V2Registration } from "./context-types"
 import { registerMessagesTransform, type V1MessageView } from "./messages-transform-bridge"
 
@@ -105,16 +106,22 @@ async function registerChatHeaders(context: V2PluginContext, handler: NonNullabl
 
 async function registerSystemTransform(context: V2PluginContext, handler: NonNullable<V1SessionHooks["experimental.chat.system.transform"]>): Promise<V2Registration> {
   return context.session.hook("context", async (event) => {
-    const seed = event.system.map((part) => (typeof part.text === "string" ? part.text : "")).filter((text) => text.length > 0)
-    const seen = new Set(seed)
-    const output: V1SystemOutput = { system: [...seed] }
-    await handler({ sessionID: event.sessionID, model: { id: event.model.id, providerID: event.model.providerID } }, output)
-    for (const entry of output.system) {
-      if (typeof entry === "string" && entry.length > 0 && !seen.has(entry)) {
-        seen.add(entry)
-        event.system.push({ type: "text", text: entry })
-      }
-    }
+    const textParts = event.system.filter((part) => typeof part.text === "string")
+    await reconcileSystemTextParts({
+      read: () => textParts.map((part) => part.text ?? ""),
+      write: (texts) => {
+        for (let index = 0; index < textParts.length; index++) {
+          const text = texts[index]
+          if (text !== undefined) textParts[index].text = text
+        }
+        const seen = new Set(textParts.map((part) => part.text))
+        for (const text of texts.slice(textParts.length)) {
+          if (text.length === 0 || seen.has(text)) continue
+          seen.add(text)
+          event.system.push({ type: "text", text })
+        }
+      },
+    }, async (system) => handler({ sessionID: event.sessionID, model: { id: event.model.id, providerID: event.model.providerID } }, { system }))
   })
 }
 
