@@ -33,6 +33,15 @@ interface SessionState {
   toolCallCount: number
 }
 
+function reminderPending(state: SessionState | undefined): state is SessionState {
+  return state !== undefined && state.reminderPending && !state.reminderShown && !state.delegationUsed
+}
+
+function markReminderShown(state: SessionState): void {
+  state.reminderPending = false
+  state.reminderShown = true
+}
+
 type MessageWithParts = { info: Message; parts: Part[] }
 
 interface ReminderInjectionTarget {
@@ -55,7 +64,7 @@ function findLatestReminderTarget(
     if (typeof sessionID !== "string" || typeof messageID !== "string") continue
 
     const state = sessionStates.get(sessionID)
-    if (!state?.reminderPending || state.reminderShown || state.delegationUsed) continue
+    if (!reminderPending(state)) continue
 
     for (let partIndex = message.parts.length - 1; partIndex >= 0; partIndex -= 1) {
       const part = message.parts[partIndex]
@@ -138,8 +147,7 @@ export function createCategorySkillReminderHook(_ctx: PluginInput, availableSkil
       text: reminderMessage,
       synthetic: true,
     })
-    target.state.reminderPending = false
-    target.state.reminderShown = true
+    markReminderShown(target.state)
     log("[category-skill-reminder] Reminder injected", {
       sessionID: target.sessionID,
     })
@@ -157,6 +165,13 @@ export function createCategorySkillReminderHook(_ctx: PluginInput, availableSkil
   }
 
   return {
+    nativeReminder: (sessionID: string): string | undefined =>
+      reminderPending(sessionStates.get(sessionID)) ? reminderMessage : undefined,
+    nativeMarkReminder: (sessionID: string): void => {
+      const state = sessionStates.get(sessionID)
+      if (!reminderPending(state)) return
+      markReminderShown(state)
+    },
     "tool.execute.after": toolExecuteAfter,
     "experimental.chat.messages.transform": messagesTransform,
     event: eventHandler,

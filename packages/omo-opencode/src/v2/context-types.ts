@@ -221,6 +221,7 @@ export type V2PromptInput = {
 
 export type V2SyntheticInput = {
   readonly sessionID: string
+  readonly id?: string
   readonly text: string
   readonly description?: string | null
   readonly delivery?: "steer" | "queue" | null
