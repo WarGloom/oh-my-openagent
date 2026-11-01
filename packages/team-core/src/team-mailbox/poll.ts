@@ -2,6 +2,7 @@ import type { TeamModeConfig } from "../config"
 import { transitionRuntimeState } from "../team-state-store/store"
 import type { Message } from "../types"
 import { listUnreadMessages } from "./inbox"
+import { selectMailboxMember, selectUnreadMailboxMessages } from "./eligibility"
 
 export interface InjectionResult {
   injected: boolean
@@ -60,25 +61,25 @@ export async function pollAndBuildInjection(
   await transitionRuntimeState(
     teamRunId,
     (currentRuntimeState) => {
-      const runtimeMember = currentRuntimeState.members.find((member) => member.name === memberName)
-      if (runtimeMember === undefined) {
+      const selection = selectMailboxMember(currentRuntimeState, memberName, claim.resolvedSessionID)
+      if (selection.kind === "missing") {
         throw new Error(`runtime member not found for session ${sessionID}: ${memberName}`)
       }
-      if (runtimeMember.sessionId !== claim.resolvedSessionID) {
+      if (selection.kind === "stale") {
         result = { injected: false, messageIds: [], reason: "stale session" }
         return currentRuntimeState
       }
+      const runtimeMember = selection.member
 
       if (runtimeMember.lastInjectedTurnMarker === turnMarker) {
         result = { injected: false, messageIds: [], reason: "already injected this turn" }
         return currentRuntimeState
       }
 
-      const pendingMessageIds = new Set(runtimeMember.pendingInjectedMessageIds)
-      const injectableMessages = unreadMessages.filter((message) => !pendingMessageIds.has(message.messageId))
+      const injectableMessages = selectUnreadMailboxMessages(runtimeMember, unreadMessages)
       if (injectableMessages.length === 0) {
         result =
-          pendingMessageIds.size > 0
+          runtimeMember.pendingInjectedMessageIds.length > 0
             ? { injected: false, messageIds: [], reason: "pending ack" }
             : { injected: false, messageIds: [], reason: "no unread" }
         return currentRuntimeState
