@@ -3,7 +3,7 @@ import { findResolvedMemberSession } from "../../features/team-mode/member-sessi
 import type { PluginContext } from "../../plugin/types"
 import type { ExecutorContext } from "../../tools/delegate-task/executor-types"
 
-import { withInboxConsumerLease } from "../../features/team-mode/team-mailbox"
+import { deliverMailboxV2, withInboxConsumerLease } from "../../features/team-mode/team-mailbox"
 import { pollAndBuildInjection } from "../../features/team-mode/team-mailbox/poll"
 import { log } from "../../shared/logger"
 
@@ -37,6 +37,10 @@ type TeamMailboxInjectorOutput = {
 }
 
 export type TeamMailboxInjectorHook = {
+  readonly nativeDeliver: (
+    sessionID: string,
+    admit: (input: { readonly sessionID: string; readonly id: string; readonly text: string }) => Promise<void>,
+  ) => Promise<readonly string[]>
   "experimental.chat.messages.transform"?: (
     input: TeamMailboxInjectorInput,
     output: TeamMailboxInjectorOutput,
@@ -93,6 +97,18 @@ export function createTeamMailboxInjector(
 ): TeamMailboxInjectorHook {
   const consumeInbox = deps.withInboxConsumerLease ?? withInboxConsumerLease
   return {
+    nativeDeliver: async (sessionID, admit) => {
+      if (!config.enabled) return []
+      const runtimeMember = await findResolvedMemberSession(sessionID, config, "team mailbox injector")
+      if (runtimeMember === null) return []
+      return deliverMailboxV2({
+        teamRunId: runtimeMember.teamRunId,
+        memberName: runtimeMember.memberName,
+        sessionID,
+        config,
+        admit,
+      })
+    },
     "experimental.chat.messages.transform": async (input, output): Promise<void> => {
       if (!config.enabled || output.messages.length === 0) {
         return
