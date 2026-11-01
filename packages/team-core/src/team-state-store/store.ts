@@ -202,6 +202,23 @@ export async function transitionRuntimeState(
   }, { ownerTag: "team-state-store" })
 }
 
+export async function transitionRuntimeStateAsync(
+  teamRunId: string,
+  transition: (runtimeState: RuntimeState) => Promise<RuntimeState>,
+  config: TeamModeConfig,
+): Promise<RuntimeState> {
+  const runtimeDirectoryPath = getRuntimeStateDir(resolveBaseDir(config), teamRunId)
+  return withLock(path.join(runtimeDirectoryPath, "state.lock"), async () => {
+    const current = await loadRuntimeState(teamRunId, config)
+    const next = validateRuntimeState(await transition(current), teamRunId)
+    if (!isValidTransition(current.status, next.status)) {
+      throw new InvalidTransitionError(current.status, next.status)
+    }
+    await saveRuntimeState(next, config)
+    return next
+  }, { ownerTag: "team-state-store-v2-delivery" })
+}
+
 export async function listActiveTeams(
   config: TeamModeConfig,
 ): Promise<ActiveTeamSummary[]> {

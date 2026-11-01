@@ -113,6 +113,27 @@ afterEach(async () => {
 })
 
 describe("createTeamIdleWakeHint leader delivery", () => {
+  test("#given an unread message for a V2 leader #when the leader idles #then the native path admits and wakes it", async () => {
+    // given
+    const config = createConfig(await createTemporaryBaseDir())
+    const teamRunId = randomUUID()
+    await seedRuntimeState(createLeaderRuntimeState(teamRunId), config)
+    const messageId = await sendCompletionToLead(teamRunId, config, "completion", 100)
+    const { createFakePluginContext } = await import("../../v2/fake-plugin-context")
+    const { createSessionNamespace } = await import("../../v2/client-facade/session-namespace")
+    const { createSessionTracker } = await import("../../v2/session-tracker")
+    const fake = createFakePluginContext()
+    const admitted: Array<{ sessionID: string; text: string; resume?: boolean | null }> = []
+    const context = { ...fake.context, session: { ...fake.context.session, synthetic: async (input: { sessionID: string; text: string; resume?: boolean | null }) => { admitted.push(input) } } }
+    const handler = createTeamIdleWakeHint({ directory: "/tmp/project", client: { session: createSessionNamespace(context, { tracker: createSessionTracker(), warn: () => {} }) } }, config)
+    // when
+    await handler({ event: { type: "session.idle", properties: { sessionID: "lead-session" } } })
+    // then
+    expect(admitted).toHaveLength(1)
+    expect(admitted[0]?.sessionID).toBe("lead-session")
+    expect(admitted[0]?.text).toContain(messageId)
+    expect(admitted[0]?.resume).toBe(true)
+  })
   test.each([
     { variant: "xhigh", memberModel: undefined },
     { variant: "high", memberModel: undefined },

@@ -102,7 +102,7 @@ export function createTeamSendMessageTool(
       }
 
       const reservedRecipients = new Set<string>(
-        runtimeState.members
+        (client.session.nativeTeamMailbox ? [] : runtimeState.members)
           .filter((member) => shouldReserveRecipientMailbox(member, message, teamRuntime.senderName))
           .map((member) => member.name),
       )
