@@ -4,6 +4,11 @@ import { createClientFacade, type SessionNamespaceDeps } from "./client-facade"
 import { V2UnsupportedOperationError } from "./unsupported-operation-error"
 
 type V1Shell = PluginInput["$"]
+const v2Inputs = new WeakSet<PluginInput>()
+
+export function isV2PluginInput(input: PluginInput): boolean {
+  return v2Inputs.has(input)
+}
 
 function resolveShell(): V1Shell {
   if (typeof Bun !== "undefined") return Bun.$ as unknown as V1Shell
@@ -21,7 +26,7 @@ function resolveShell(): V1Shell {
  */
 export function createPluginInput(context: V2PluginContext, deps: SessionNamespaceDeps): PluginInput {
   const { directory, project } = context.location
-  return {
+  const input: PluginInput = {
     client: createClientFacade(context, deps),
     project: {
       id: project.id,
@@ -34,4 +39,6 @@ export function createPluginInput(context: V2PluginContext, deps: SessionNamespa
     serverUrl: undefined as unknown as URL,
     $: resolveShell(),
   }
+  v2Inputs.add(input)
+  return input
 }
