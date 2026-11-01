@@ -37,6 +37,12 @@ type TeamIdleWakeHintContext = {
       promptAsync?: (input: PromptAsyncInput) => Promise<unknown>
       status?: () => Promise<unknown>
       messages?: (input: { path: { id: string } }) => Promise<unknown>
+      nativeTeamMailbox?: (input: {
+        readonly teamRunId: string
+        readonly memberName: string
+        readonly sessionID: string
+        readonly config: TeamModeConfig
+      }) => Promise<readonly string[]>
     }
   }
 }
@@ -144,6 +150,15 @@ export function createTeamIdleWakeHint(
         return
       }
 
+      if (ctx.client.session.nativeTeamMailbox) {
+        await ctx.client.session.nativeTeamMailbox({
+          teamRunId: runtimeMember.teamRunId,
+          memberName: runtimeMember.memberName,
+          sessionID,
+          config,
+        })
+        return
+      }
       if (typeof ctx.client.session.promptAsync !== "function") {
         log("team idle wake hint skipped without promptAsync", {
           event: "team-mode-idle-wake-hint-skipped",

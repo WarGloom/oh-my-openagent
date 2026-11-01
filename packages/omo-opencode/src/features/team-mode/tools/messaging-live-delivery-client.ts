@@ -1,3 +1,5 @@
+import type { TeamModeConfig } from "../../../config/schema/team-mode"
+
 export type LiveDeliveryClient = {
   session: {
     promptAsync(input: {
@@ -11,5 +13,11 @@ export type LiveDeliveryClient = {
       query?: { directory: string }
     }): Promise<unknown>
     status?: () => Promise<unknown>
+    nativeTeamMailbox?: (input: {
+      readonly teamRunId: string
+      readonly memberName: string
+      readonly sessionID: string
+      readonly config: TeamModeConfig
+    }) => Promise<readonly string[]>
   }
 }
