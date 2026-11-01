@@ -44,6 +44,34 @@ const activeSections: ComputeViewSections = {
 }
 
 describe("tui sidebar renderView", () => {
+  it("#given a job model and effort #when rendering #then the row includes both and truncates within the sidebar", () => {
+    // given
+    const view = computeView({
+      ...activeSections,
+      jobs: {
+        kind: "list",
+        jobs: [
+          {
+            title: "RND-1031 dev",
+            model: "gpt-6.1-sol",
+            reasoningEffort: "high",
+            status: "running",
+            toolCalls: 2,
+            lastTool: "read",
+          },
+        ],
+      },
+    })
+    // when
+    const nodes = buildViewNodes(view, theme)
+    // then
+    expect(describeView(view)).toContain("RND-1031 dev · gpt-6.1-sol high · running")
+    expect(nodes[0]?.children?.[2]?.children?.[1]).toMatchObject({
+      text: "RND-1031 dev · gpt-6.1-sol high · running 2 read",
+      props: { truncate: true, wrapMode: "none" },
+    })
+  })
+
   it("#given active view #when building nodes #then it renders ULW Jobs and Team without the duplicate Agents section", () => {
     // given
     const view = computeView(activeSections)
