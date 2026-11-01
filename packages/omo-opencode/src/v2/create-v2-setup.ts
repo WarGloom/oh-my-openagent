@@ -6,6 +6,7 @@ import { installHooks } from "./install-hooks"
 import { createSessionTracker } from "./session-tracker"
 import { log } from "../shared/logger"
 import { installNativeRuntimeFallback } from "./native-runtime-fallback"
+import { V2BackgroundLifecycle } from "./background-lifecycle"
 
 export type V2SetupDeps = {
   readonly serverPlugin: Plugin
@@ -31,17 +32,19 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
   return async (context) => {
     const tracker = createSessionTracker()
     const bridge = startEventBridge(context, { tracker, warn })
-    let hooks: Hooks
-    let uninstall: () => Promise<void>
+    let hooks: Hooks | undefined
+    let uninstall: (() => Promise<void>) | undefined
     let fallback: Awaited<ReturnType<typeof installNativeRuntimeFallback>>
+    const background = context.storage ? new V2BackgroundLifecycle(context, context.storage) : undefined
     try {
+      await background?.load()
       let cursor: string | null | undefined
       do {
         const page = await context.session.list({ directory: context.location.directory, ...(cursor == null ? {} : { cursor }) })
         tracker.seed(page.data)
         cursor = page.cursor.next
       } while (cursor)
-      const input = createPluginInput(context, { tracker, warn })
+      const input = createPluginInput(context, { tracker, warn }, background)
       hooks = await deps.serverPlugin(input, { ...context.options })
       fallback = await installNativeRuntimeFallback(context, hooks)
       bridge.setInterceptor(fallback?.beforeEvent)
@@ -54,19 +57,24 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
           await uninstallHooks()
         }
       }
+      bridge.setHandler(hooks.event)
+      await background?.start()
     } catch (error) {
       bridge.stop()
+      await background?.dispose()
       await fallback?.dispose()
+      await uninstall?.()
+      await hooks?.dispose?.()
       throw error
     }
-    bridge.setHandler(hooks.event)
     let disposed = false
     return async () => {
       if (disposed) return
       disposed = true
       bridge.stop()
-      await uninstall()
-      await hooks.dispose?.()
+      await background?.dispose()
+      await uninstall?.()
+      await hooks?.dispose?.()
     }
   }
 }

@@ -2,9 +2,15 @@ import type { PluginInput } from "@opencode-ai/plugin"
 import type { V2PluginContext } from "./context-types"
 import { createClientFacade, type SessionNamespaceDeps } from "./client-facade"
 import { V2UnsupportedOperationError } from "./unsupported-operation-error"
+import type { V2BackgroundLifecycle } from "./background-lifecycle"
 
 type V1Shell = PluginInput["$"]
 const v2Inputs = new WeakSet<PluginInput>()
+const backgroundLifecycles = new WeakMap<PluginInput, V2BackgroundLifecycle>()
+
+export function getV2BackgroundLifecycle(input: PluginInput): V2BackgroundLifecycle | undefined {
+  return backgroundLifecycles.get(input)
+}
 
 export function isV2PluginInput(input: PluginInput): boolean {
   return v2Inputs.has(input)
@@ -24,7 +30,7 @@ function resolveShell(): V1Shell {
  * not to plugins, and a `--standalone` server has no HTTP port at all. The V1 code already treats
  * an undefined `serverUrl` as "no live server" (see create-managers.ts).
  */
-export function createPluginInput(context: V2PluginContext, deps: SessionNamespaceDeps): PluginInput {
+export function createPluginInput(context: V2PluginContext, deps: SessionNamespaceDeps, backgroundLifecycle?: V2BackgroundLifecycle): PluginInput {
   const { directory, project } = context.location
   const input: PluginInput = {
     client: createClientFacade(context, deps),
@@ -40,5 +46,6 @@ export function createPluginInput(context: V2PluginContext, deps: SessionNamespa
     $: resolveShell(),
   }
   v2Inputs.add(input)
+  if (backgroundLifecycle) backgroundLifecycles.set(input, backgroundLifecycle)
   return input
 }
