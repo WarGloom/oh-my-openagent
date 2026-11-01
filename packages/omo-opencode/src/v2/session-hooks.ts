@@ -1,8 +1,10 @@
 import type { Hooks } from "@opencode-ai/plugin"
 import { log } from "../shared/logger"
 import { reconcileSystemTextParts } from "../plugin/system-text-parts"
+import { createMessagesTransformHandler, getMessagesTransformHooks } from "../plugin/messages-transform"
 import type { V2ModelRef, V2PluginContext, V2Registration } from "./context-types"
 import { registerMessagesTransform, type V1MessageView } from "./messages-transform-bridge"
+import { registerNativeTeamStatus } from "./native-team-status"
 
 type V1ChatRequestInput = {
   readonly sessionID: string
@@ -152,14 +154,22 @@ export async function installSessionHooks(
   const v1: V1SessionHooks = hooks
   const registrations: V2Registration[] = []
 
+  const messages = v1["experimental.chat.messages.transform"]
+  const transformHooks = messages === undefined ? undefined : getMessagesTransformHooks(messages)
+  const teamStatus = transformHooks?.teamModeStatusInjector
+  if (teamStatus) registrations.push(await registerNativeTeamStatus(context, teamStatus))
+
   if (v1["chat.message"] !== undefined) registrations.push(await registerPrompt(context, v1["chat.message"], deps.warn))
   if (v1["chat.params"] !== undefined) registrations.push(await registerChatParams(context, v1["chat.params"]))
   if (v1["chat.headers"] !== undefined) registrations.push(await registerChatHeaders(context, v1["chat.headers"]))
   if (v1["experimental.chat.system.transform"] !== undefined) {
     registrations.push(await registerSystemTransform(context, v1["experimental.chat.system.transform"]))
   }
-  if (v1["experimental.chat.messages.transform"] !== undefined) {
-    registrations.push(await registerMessagesTransform(context, v1["experimental.chat.messages.transform"]))
+  if (messages !== undefined) {
+    const transform = teamStatus && transformHooks
+      ? createMessagesTransformHandler({ hooks: { ...transformHooks, teamModeStatusInjector: null } })
+      : messages
+    registrations.push(await registerMessagesTransform(context, (input, output) => Reflect.apply(transform, undefined, [input, output])))
   }
   if (v1["experimental.session.compacting"] !== undefined) {
     registrations.push(await registerCompaction(context, v1["experimental.session.compacting"]))

@@ -348,6 +348,10 @@ export type V2CompactionResult = { summary: string } & Record<string, unknown>
 export type V2CompactionHookEvent = V2ContextHookEvent & { result?: V2CompactionResult }
 
 export type V2SessionDomain = {
+  readonly instructions: { readonly entry: {
+    readonly put: (input: { readonly sessionID: string; readonly key: string; readonly value: string }) => Promise<void>
+    readonly remove: (input: { readonly sessionID: string; readonly key: string }) => Promise<void>
+  } }
   readonly list: (input?: { readonly directory?: string; readonly parentID?: string | null; readonly limit?: number; readonly cursor?: string }) => Promise<{ readonly data: ReadonlyArray<V2SessionInfo>; readonly cursor: { readonly next?: string | null } }>
   readonly get: (input: { readonly sessionID: string }) => Promise<V2SessionInfo>
   readonly create: (input: {
