@@ -9,6 +9,8 @@ import {
 } from "../../shared/delegated-child-session-bootstrap"
 import { createRuntimeFallbackHook } from "../../hooks/runtime-fallback/hook"
 import { NATIVE_RECOVERY_POLL_LIMIT } from "./sync-task-runner"
+import { OhMyOpenCodeConfigSchema } from "../../config"
+import { SessionCategoryRegistry } from "../../shared/session-category-registry"
 
 describe("sync task poll fallback ownership", () => {
   afterEach(() => {
@@ -119,12 +121,41 @@ describe("sync task poll fallback ownership", () => {
       },
       tui: { showToast: async () => ({}) },
     }
-    const runtime = createRuntimeFallbackHook({ client, directory: "/tmp" }, { config: { enabled: true } })
+    const pluginConfig = OhMyOpenCodeConfigSchema.parse({
+      categories: { quick: { models: ["anthropic/claude-qa-missing", "anthropic/claude-haiku-4-5"] } },
+    })
+    const runtime = createRuntimeFallbackHook(
+      { client, directory: "/tmp" },
+      { config: { enabled: true }, pluginConfig },
+    )
     runtime.native?.activate()
-    return { client, dispose: () => runtime.dispose?.() }
+    SessionCategoryRegistry.register("ses_native_child", "quick")
+    const recover = () =>
+      runtime.native?.recover(
+        {
+          sessionID: "ses_native_child",
+          agent: undefined,
+          model: "anthropic/claude-qa-missing",
+          error: { name: "ProviderModelNotFoundError", data: { message: "Model not found" } },
+        },
+        async () => {},
+      )
+    return {
+      client,
+      recover,
+      dispose: () => {
+        runtime.native?.forget("ses_native_child")
+        SessionCategoryRegistry.remove("ses_native_child")
+        runtime.dispose?.()
+      },
+    }
   }
 
-  function runNativeOwned(pollResults: ReadonlyArray<string | null>, client: unknown) {
+  function runNativeOwned(
+    pollResults: ReadonlyArray<string | null>,
+    client: unknown,
+    onPoll: () => unknown = () => {},
+  ) {
     const { executeSyncTask } = require("./sync-task")
     const prompts: string[] = []
     let pollCount = 0
@@ -134,7 +165,10 @@ describe("sync task poll fallback ownership", () => {
         prompts.push(input.categoryModel?.modelID ?? "none")
         return null
       },
-      pollSyncSession: async () => pollResults[Math.min(pollCount++, pollResults.length - 1)] ?? null,
+      pollSyncSession: async () => {
+        await onPoll()
+        return pollResults[Math.min(pollCount++, pollResults.length - 1)] ?? null
+      },
       fetchSyncResult: async () => ({ ok: true as const, textContent: "native fallback completed" }),
       getSyncMessageCount: async () => ({ ok: true as const, count: 2 }),
       isProviderExhaustionFallbackEligible: () => true,
@@ -167,7 +201,11 @@ describe("sync task poll fallback ownership", () => {
   test("#given native fallback owns the client #when the poll reports a fallback-worthy error #then the same session is polled again without another prompt", async () => {
     //#given
     const native = nativeClient()
-    const run = runNativeOwned(["Too Many Requests: rate limit", "Too Many Requests: rate limit", null], native.client)
+    const run = runNativeOwned(
+      ["Too Many Requests: rate limit", "Too Many Requests: rate limit", null],
+      native.client,
+      native.recover,
+    )
 
     //#when
     const result = await run.result
@@ -175,6 +213,8 @@ describe("sync task poll fallback ownership", () => {
 
     //#then
     expect(result).toContain("native fallback completed")
+    expect(result).toContain("anthropic/claude-haiku-4-5")
+    expect(result).not.toContain("claude-qa-missing")
     expect(run.prompts).toEqual(["claude-qa-missing"])
     expect(run.polls()).toBe(3)
   })

@@ -84,10 +84,9 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
         isAvailable: host.isAvailable,
       },
       async (payload) => {
-        await context.session.switchModel({
-          sessionID: event.sessionID,
-          model: host.modelRef(event.sessionID, payload),
-        })
+        const model = host.modelRef(event.sessionID, payload)
+        await context.session.switchModel({ sessionID: event.sessionID, model })
+        return { ...payload, variant: model.variant }
       },
     )
     if (recovered) event.decision = { retry: true, delay: 0 }
@@ -138,7 +137,8 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
           isAvailable: host.isAvailable,
         },
         async (payload) => {
-          await context.session.switchModel({ sessionID, model: host.modelRef(sessionID, payload) })
+          const model = host.modelRef(sessionID, payload)
+          await context.session.switchModel({ sessionID, model })
           // No explicit id: the host assigns an ascending id, so turn-order readers see the continuation after the failure.
           await context.session.synthetic({
             sessionID,
@@ -147,6 +147,7 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
             resume: true,
           })
           recoveredFailures.set(sessionID, failureID)
+          return { ...payload, variant: model.variant }
         },
       )
     },
