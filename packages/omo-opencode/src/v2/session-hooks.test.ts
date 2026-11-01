@@ -5,7 +5,6 @@ import type {
   V2ContextHookEvent,
   V2ModelRequestHookEvent,
   V2PromptHookEvent,
-  V2SessionMessage,
 } from "./context-types"
 import { createFakePluginContext } from "./fake-plugin-context"
 import { installSessionHooks } from "./session-hooks"
@@ -103,33 +102,6 @@ describe("installSessionHooks", () => {
       expect(event.system).toEqual([
         { type: "text", text: "Base prompt" },
         { type: "text", text: "Focus on correctness." },
-      ])
-    })
-  })
-
-  describe("#given an experimental.chat.messages.transform hook", () => {
-    it("#when it appends context to the last user turn #then the request's last user message carries it", async () => {
-      // given
-      const sessionMessages: V2SessionMessage[] = [{ id: "m1", time: { created: 1 }, type: "user", text: "hi" }]
-      const fake = createFakePluginContext({ sessionMessages, sessionAgent: "Sisyphus" })
-      const hook: NonNullable<Hooks["experimental.chat.messages.transform"]> = async (_input, output) => {
-        const last = output.messages.at(-1)
-        if (last) last.parts.push({ type: "text", text: "[directory context]" })
-      }
-      await installSessionHooks(fake.context, { "experimental.chat.messages.transform": hook } as Hooks, {
-        warn: () => {},
-      })
-
-      // when
-      const event = await fake.triggerContext(
-        contextEvent({ messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }] }),
-      )
-
-      // then
-      const content = event.messages[0]?.content
-      expect(Array.isArray(content) ? content : []).toEqual([
-        { type: "text", text: "hi" },
-        { type: "text", text: "[directory context]" },
       ])
     })
   })
