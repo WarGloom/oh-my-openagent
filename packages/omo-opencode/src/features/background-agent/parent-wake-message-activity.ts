@@ -60,6 +60,10 @@ export function getParentWakeMessageCreatedAt(message: ParentWakeMessageActivity
   return timestampFromUnknown(message.info?.time?.created ?? message.time?.created)
 }
 
+export function getParentWakeMessageCompletedAt(message: ParentWakeMessageActivity): number | undefined {
+  return timestampFromUnknown(message.info?.time?.completed ?? message.time?.completed)
+}
+
 export function getParentWakeMessageActivityAt(message: ParentWakeMessageActivity): number | undefined {
   let latest = latestTimestamp(
     latestTimeActivity(message.info?.time),
