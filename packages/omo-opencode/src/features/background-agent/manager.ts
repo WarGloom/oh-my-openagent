@@ -135,6 +135,8 @@ import {
   rememberBackgroundTask,
   retainBackgroundTaskForReload,
   takeBackgroundTasksAfterReload,
+  retainParentWakesForReload,
+  takeParentWakesAfterReload,
 } from "./task-registry"
 import type { BackgroundTask, BackgroundTaskAttempt, BackgroundTaskSnapshot, LaunchInput, ResumeInput } from "./types"
 
@@ -495,6 +497,18 @@ export class BackgroundManager {
     this.registerProcessCleanup()
     if (this.preserveSessionsOnShutdown) {
       for (const task of takeBackgroundTasksAfterReload(this.directory)) this.adoptRetainedTask(task)
+      // Completion notices queued for a busy parent before the reload are delivered by this manager.
+      for (const [sessionID, wake] of takeParentWakesAfterReload(this.directory)) {
+        for (const notification of wake.notifications) {
+          this.queuePendingParentWake(
+            sessionID,
+            notification,
+            wake.promptContext,
+            wake.shouldReply,
+            PENDING_PARENT_WAKE_DEBOUNCE_MS,
+          )
+        }
+      }
     }
   }
 
@@ -4189,6 +4203,8 @@ export class BackgroundManager {
     }
     this.idleDeferralTimers.clear()
 
+    if (this.preserveSessionsOnShutdown)
+      retainParentWakesForReload(this.directory, this.parentWakeNotifier.getPendingParentWakes())
     this.parentWakeNotifier.shutdown()
 
     for (const sessionID of trackedSessionIDs) {
