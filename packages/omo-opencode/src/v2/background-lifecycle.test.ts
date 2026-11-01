@@ -98,18 +98,24 @@ async function fixture() {
       }
       dispose = await setup(context)
     },
+    reloadOverlapping: async () => {
+      const oldDispose = dispose
+      dispose = await setup(context)
+      await oldDispose()
+    },
     parentNotices: () => [...notices.values()].filter((notice) => notice.sessionID === "parent"),
   }
 }
 
 describe("V2 durable background lifecycle", () => {
-  it("#given a running task #when the plugin reloads #then it stays running without an interrupt and completes once", async () => {
+  it.each([false, true])("#given a running task #when the plugin reloads with overlapping generations=%s #then it stays running and completes once", async (overlapping) => {
     // given
     const f = await fixture()
     await f.track()
     // when
-    await f.reload()
-    expect(f.manager().getTask("bg_native")?.status).toBe("running")
+    if (overlapping) await f.reloadOverlapping()
+    else await f.reload()
+    expect(f.manager().findBySession("child")?.status).toBe("running")
     await f.fake.triggerIdle({ sessionID: "child", background: [] })
     await f.fake.triggerIdle({ sessionID: "child", background: [] })
     // then
