@@ -12,6 +12,7 @@ import {
   registerRuntimeFallbackRecoveryOwner,
   settleRuntimeFallbackRecoveryClaim,
 } from "../../shared/runtime-fallback-recovery"
+import { createNativeFallbackController } from "./native-controller"
 import type {
   HookDeps,
   RuntimeFallbackHook,
@@ -98,6 +99,7 @@ export function createRuntimeFallbackHook(
   }
 
   const helpers = factories.createAutoRetryHelpers(deps)
+  const native = createNativeFallbackController(deps)
   const baseEventHandler = factories.createEventHandler(deps, helpers)
   const messageUpdateHandler = factories.createMessageUpdateHandler(deps, helpers)
   const chatMessageHandler = factories.createChatMessageHandler(deps)
@@ -149,6 +151,7 @@ export function createRuntimeFallbackHook(
   }
 
   const handleEvent = async ({ event }: { event: { type: string; properties?: unknown } }) => {
+    if (native.active) return
     const properties = event.properties as Record<string, unknown> | undefined
     const eventSessionID = resolveSessionEventID(properties) ?? resolveMessageEventSessionID(properties)
     if (event.type !== "session.deleted" && eventSessionID && isInternalPromptFenced(eventSessionID)) return
@@ -256,6 +259,7 @@ export function createRuntimeFallbackHook(
     input: { tool: string; sessionID: string; callID?: string },
     source: "tool.execute.before" | "tool.execute.after",
   ): Promise<void> => {
+    if (native.active) return
     if (!config.enabled || !input.sessionID || isInternalPromptFenced(input.sessionID)) return
 
     helpers.refreshSessionFallbackTimeout(input.sessionID, `${source}:${input.tool}`)
@@ -268,6 +272,7 @@ export function createRuntimeFallbackHook(
     }
     deferredSessionErrors.clear()
     releaseRecoveryOwner()
+    native.dispose()
     if (cleanupInterval) {
       clearInterval(cleanupInterval)
     }
@@ -302,8 +307,11 @@ export function createRuntimeFallbackHook(
   }
 
   return {
+    native,
     event: eventHandler,
-    "chat.message": chatMessageHandler,
+    "chat.message": async (input, output) => {
+      if (!native.active) await chatMessageHandler(input, output)
+    },
     "tool.execute.before": async (input, _output) => {
       await refreshAfterToolProgress(input, "tool.execute.before")
     },
