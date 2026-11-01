@@ -54,6 +54,7 @@ export class ParentWakeNotifier {
       toolCallDeferMaxMs: options.toolCallDeferMaxMs,
       userMessageInProgressWindowMs: options.userMessageInProgressWindowMs,
       parentSessionActivityInProgressWindowMs: options.parentSessionActivityInProgressWindowMs,
+      awaitOpenAssistantOutput: options.awaitOpenAssistantOutput,
     })
     this.flushRunner = new ParentWakeFlushRunner({
       notifierDeps: deps,

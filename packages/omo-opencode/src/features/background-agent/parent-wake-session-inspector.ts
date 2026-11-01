@@ -8,6 +8,7 @@ import {
   admittedParentWakeIsInsideOpenAssistantTurn,
   getParentWakeSessionHistoryDeferralDecision,
   hasAssistantOrToolOutputAfterParentWake,
+  hasOpenAssistantTurnAfterParentWake,
   hasAssistantOutputAfterParentWakeAdmission,
   hasRecordedParentWakePromptMessage,
   parentWakeUserMessageIsInProgress,
@@ -29,6 +30,7 @@ type ParentWakeSessionInspectorOptions = {
   readonly toolCallDeferMaxMs: number
   readonly userMessageInProgressWindowMs: number
   readonly parentSessionActivityInProgressWindowMs?: number
+  readonly awaitOpenAssistantOutput?: boolean
 }
 
 export type ParentWakeOutputInspectionResult = "output" | "no-output" | "unknown"
@@ -116,12 +118,11 @@ export class ParentWakeSessionInspector {
     if (!messages) {
       return "unknown"
     }
-    return hasAssistantOrToolOutputAfterParentWake({
-      messages,
-      wake,
-    })
-      ? "output"
-      : "no-output"
+    if (hasAssistantOrToolOutputAfterParentWake({ messages, wake })) return "output"
+    // A reply that is still running may not show its content yet; wait for it instead of resending the wake.
+    if (this.options.awaitOpenAssistantOutput && hasOpenAssistantTurnAfterParentWake({ messages, wake }))
+      return "unknown"
+    return "no-output"
   }
 
   shutdown(): void {

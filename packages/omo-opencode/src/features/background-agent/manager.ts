@@ -404,6 +404,8 @@ export interface BackgroundManagerConfig {
   onShutdown?: () => void | Promise<void>
   enableParentSessionNotifications?: boolean
   preserveSessionsOnShutdown?: boolean
+  /** The host publishes assistant content only when a step streams (V2), so a running reply has no visible output yet. */
+  awaitOpenAssistantOutput?: boolean
   modelFallbackControllerAccessor?: ModelFallbackControllerAccessor
   log?: typeof log
 }
@@ -492,6 +494,7 @@ export class BackgroundManager {
         failureRequeueWindowMs: PARENT_WAKE_FAILURE_REQUEUE_WINDOW_MS,
         userMessageInProgressWindowMs: PARENT_WAKE_USER_MESSAGE_IN_PROGRESS_WINDOW_MS,
         parentSessionActivityInProgressWindowMs: PARENT_WAKE_SESSION_ACTIVITY_IN_PROGRESS_WINDOW_MS,
+        awaitOpenAssistantOutput: options?.awaitOpenAssistantOutput ?? false,
       },
     )
     this.registerProcessCleanup()
