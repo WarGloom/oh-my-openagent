@@ -139,16 +139,23 @@ describe("V2 durable background lifecycle", () => {
   it("#given a child with a background shell #when it goes idle #then only the final native idle completes it", async () => {
     // given
     const f = await fixture()
-    await f.track()
-    // when
-    await f.fake.triggerIdle({ sessionID: "child", background: [{ kind: "shell", sessionID: "child", shellID: "shell_1", command: "build" }] })
-    f.manager().handleEvent({ type: "session.idle", properties: { sessionID: "child" } })
-    // then
-    expect(f.manager().getTask("bg_native")?.status).toBe("running")
-    expect(f.parentNotices()).toEqual([])
-    await f.fake.triggerIdle({ sessionID: "child", background: [] })
-    expect(f.manager().getTask("bg_native")?.status).toBe("completed")
-    expect(f.parentNotices()).toHaveLength(1)
+    const task = await f.track()
+    task.startedAt = new Date(Date.now() - 10_000)
+    const contextRead = spyOn(f.fake.context.session, "context")
+    try {
+      // when
+      f.manager().handleEvent({ type: "session.idle", properties: { sessionID: "child" } })
+      // then
+      expect(contextRead).not.toHaveBeenCalled()
+      await f.fake.triggerIdle({ sessionID: "child", background: [{ kind: "shell", sessionID: "child", shellID: "shell_1", command: "build" }] })
+      expect(f.manager().getTask("bg_native")?.status).toBe("running")
+      expect(f.parentNotices()).toEqual([])
+      await f.fake.triggerIdle({ sessionID: "child", background: [] })
+      expect(f.manager().getTask("bg_native")?.status).toBe("completed")
+      expect(f.parentNotices()).toHaveLength(1)
+    } finally {
+      contextRead.mockRestore()
+    }
   })
 
   it("#given parent admission succeeds before a crash #when setup retries the durable completion #then the same native ID admits one notice", async () => {
