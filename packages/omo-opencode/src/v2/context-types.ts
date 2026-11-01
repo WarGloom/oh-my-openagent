@@ -244,7 +244,7 @@ export type V2SessionInfo = {
   readonly location: { readonly directory: string }
 }
 
-export type V2StructuredError = { readonly type: string; readonly message: string; readonly status?: number }
+export type V2StructuredError = { readonly type: string; readonly message: string; readonly status?: number; readonly response?: { readonly body: string } }
 
 export type V2ToolContentItem =
   | { readonly type: "text"; readonly text: string }
@@ -348,6 +348,15 @@ export type V2CompactionResult = { summary: string } & Record<string, unknown>
 
 export type V2CompactionHookEvent = V2ContextHookEvent & { result?: V2CompactionResult }
 
+export type V2RetryHookEvent = {
+  readonly sessionID: string
+  readonly agent: string
+  readonly model: V2ModelRef
+  readonly error: V2StructuredError
+  readonly attempt: number
+  decision: { retry: false } | { retry: true; delay: number }
+}
+
 export type V2SessionDomain = {
   readonly instructions: { readonly entry: {
     readonly put: (input: { readonly sessionID: string; readonly key: string; readonly value: string }) => Promise<void>
@@ -377,6 +386,7 @@ export type V2SessionDomain = {
     (name: "context", callback: (event: V2ContextHookEvent) => Promise<void> | void): Promise<V2Registration>
     (name: "model.request", callback: (event: V2ModelRequestHookEvent) => Promise<void> | void): Promise<V2Registration>
     (name: "compaction", callback: (event: V2CompactionHookEvent) => Promise<void> | void): Promise<V2Registration>
+    (name: "retry", callback: (event: V2RetryHookEvent) => Promise<void> | void): Promise<V2Registration>
   }
 }
 

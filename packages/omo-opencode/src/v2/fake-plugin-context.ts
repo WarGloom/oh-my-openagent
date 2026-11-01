@@ -14,6 +14,7 @@ import type {
   V2ContextHookEvent,
   V2ModelRequestHookEvent,
   V2CompactionHookEvent,
+  V2RetryHookEvent,
   V2Event,
   V2ModelRef,
   V2McpEditor,
@@ -81,6 +82,7 @@ export type FakePluginContext = {
   readonly triggerContext: (event: V2ContextHookEvent) => Promise<V2ContextHookEvent>
   readonly triggerModelRequest: (event: V2ModelRequestHookEvent) => Promise<V2ModelRequestHookEvent>
   readonly triggerCompaction: (event: V2CompactionHookEvent) => Promise<V2CompactionHookEvent>
+  readonly triggerRetry: (event: V2RetryHookEvent) => Promise<V2RetryHookEvent>
   readonly sessionHookCount: () => number
 }
 
@@ -155,6 +157,8 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
   const contextHooks: Array<(event: V2ContextHookEvent) => Promise<void> | void> = []
   const modelRequestHooks: Array<(event: V2ModelRequestHookEvent) => Promise<void> | void> = []
   const compactionHooks: Array<(event: V2CompactionHookEvent) => Promise<void> | void> = []
+  const retryHooks: Array<(event: V2RetryHookEvent) => Promise<void> | void> = []
+  const sessionModels = new Map<string, V2ModelRef>()
 
   const rebuildAgents = (): void => {
     built = new Map((options.agents ?? []).map((agent) => [agent.id, toRecord(agent)]))
@@ -316,7 +320,7 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
     session: {
       instructions: { entry: { put: async () => {}, remove: async () => {} } },
       list: async () => ({ data: [], cursor: {} }),
-      get: async ({ sessionID }) => fakeSessionInfo(sessionID, options),
+      get: async ({ sessionID }) => ({ ...fakeSessionInfo(sessionID, options), ...(sessionModels.has(sessionID) ? { model: sessionModels.get(sessionID) } : {}) }),
       create: async (input) => {
         sessionCalls.push({ kind: "create", input })
         createdSessions += 1
@@ -330,8 +334,11 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
       prompt: async (input) => void sessionCalls.push({ kind: "prompt", input }),
       synthetic: async (input) => void sessionCalls.push({ kind: "synthetic", input }),
       switchAgent: async (input) => void sessionCalls.push({ kind: "switchAgent", ...input }),
-      switchModel: async (input) => void sessionCalls.push({ kind: "switchModel", ...input }),
-      hook: ((name: "prompt" | "context" | "model.request" | "compaction", callback: (event: never) => Promise<void> | void) => {
+      switchModel: async (input) => {
+        sessionModels.set(input.sessionID, input.model)
+        sessionCalls.push({ kind: "switchModel", ...input })
+      },
+      hook: ((name: "prompt" | "context" | "model.request" | "compaction" | "retry", callback: (event: never) => Promise<void> | void) => {
         const list = (
           name === "prompt"
             ? promptHooks
@@ -339,7 +346,7 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
               ? contextHooks
               : name === "model.request"
                 ? modelRequestHooks
-                : compactionHooks
+                : name === "compaction" ? compactionHooks : retryHooks
         ) as Array<typeof callback>
         list.push(callback)
         return Promise.resolve({
@@ -399,6 +406,10 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
       for (const hook of compactionHooks) await hook(event)
       return event
     },
-    sessionHookCount: () => promptHooks.length + contextHooks.length + modelRequestHooks.length + compactionHooks.length,
+    triggerRetry: async (event) => {
+      for (const hook of retryHooks) await hook(event)
+      return event
+    },
+    sessionHookCount: () => promptHooks.length + contextHooks.length + modelRequestHooks.length + compactionHooks.length + retryHooks.length,
   }
 }
