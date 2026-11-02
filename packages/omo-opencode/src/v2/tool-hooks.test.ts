@@ -148,6 +148,21 @@ describe("installToolHooks", () => {
       expect(event.result?.metadata).toEqual({ lines: 1, truncated: true })
     })
 
+    it("#when a hook leaves non-JSON metadata #then only the JSON part reaches the 2.x result", async () => {
+      // given
+      const fake = createFakePluginContext()
+      const hook: AfterHook = async (_input, output) => {
+        output.metadata = { ...output.metadata, backgroundTaskId: "bg_1", category: undefined }
+      }
+      await installToolHooks(fake.context, { "tool.execute.after": hook } as Hooks)
+
+      // when
+      const event = await fake.triggerToolAfter(afterEvent())
+
+      // then
+      expect(event.result?.metadata).toStrictEqual({ lines: 1, backgroundTaskId: "bg_1" })
+    })
+
     it("#when a file tool's path is outside the worktree or the tool is not a file tool #then the title is the path as given or empty", async () => {
       // given
       const fake = createFakePluginContext()
