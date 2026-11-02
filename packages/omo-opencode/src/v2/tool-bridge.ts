@@ -26,10 +26,11 @@ function toV2Result(result: ToolResult, warn: (message: string) => void): V2Tool
   return { content, ...(metadata === undefined ? {} : { metadata }) }
 }
 
-function toV1Context(name: string, context: V2ToolExecuteContext, deps: ToolBridgeDeps): ToolContext {
+function toV1Context(name: string, context: V2ToolExecuteContext, deps: ToolBridgeDeps): ToolContext & { readonly callID: string } {
   return {
     sessionID: context.sessionID,
     messageID: context.messageID,
+    callID: context.id,
     agent: context.agent,
     directory: deps.directory,
     worktree: deps.worktree,

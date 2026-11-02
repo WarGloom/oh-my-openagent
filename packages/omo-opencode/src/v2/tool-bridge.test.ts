@@ -3,6 +3,7 @@ import { tool, type ToolContext } from "@opencode-ai/plugin/tool"
 import { normalizeToolArgSchemas } from "../plugin/normalize-tool-arg-schemas"
 import type { V2ToolExecuteContext, V2ToolInfo } from "./context-types"
 import { toPlainJsonSchema, toV2Tool, type ToolBridgeDeps } from "./tool-bridge"
+import { publishToolMetadata, recoverToolMetadata } from "../features/tool-metadata-store"
 
 const deps: ToolBridgeDeps = {
   directory: "/work/app/packages/web",
@@ -265,6 +266,24 @@ describe("toV2Tool", () => {
   })
 
   describe("#given the V1 tool context", () => {
+    it("#when a bridged tool publishes diff metadata #then the after hook can recover it by the host call ID", async () => {
+      // given
+      const metadata = { diff: "-before\n+after", filediff: { file: "/work/app/a.ts", additions: 1, deletions: 1 } }
+      const sessionID = "ses_bridge_metadata"
+      const id = "call_bridge_edit"
+      const info = toV2Tool("edit", greetTool(async (_args, context) => {
+        await publishToolMetadata(context, { title: "a.ts", metadata })
+        return "Updated a.ts"
+      }), deps)
+
+      // when
+      await info.execute({ name: "Ada" }, createExecuteContext({ sessionID, id }))
+      const recovered = recoverToolMetadata(sessionID, { callID: id })
+
+      // then
+      expect(recovered).toEqual({ title: "a.ts", metadata })
+    })
+
     it("#when execute runs #then identity, directory, worktree and abort come from the V2 context", async () => {
       // given
       let seen: ToolContext | undefined
