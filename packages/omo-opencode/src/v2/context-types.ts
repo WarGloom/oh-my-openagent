@@ -83,7 +83,7 @@ export type V2ToolAfterEvent = {
   readonly input: unknown
   readonly status: "completed" | "error"
   /** Present when status is "completed"; the hook may rewrite it. */
-  result?: { output?: unknown; content?: V2ToolContentPart[]; metadata?: Record<string, unknown> }
+  result?: { output?: unknown; content?: string | V2ToolContentPart[]; metadata?: Record<string, unknown> }
 }
 
 export type V2ToolDomain = {

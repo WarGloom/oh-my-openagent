@@ -81,7 +81,10 @@ export async function installToolHooks(context: V2PluginContext, hooks: Hooks): 
     registrations.push(
       await context.tool.hook("execute.after", async (event) => {
         if (event.status !== "completed" || event.result === undefined) return
-        const content = event.result.content ?? []
+        const content =
+          typeof event.result.content === "string"
+            ? [{ type: "text", text: event.result.content }]
+            : (event.result.content ?? [])
         const text = joinText(content)
         const metadata = { ...(event.result.metadata ?? {}) }
         const args = toV1Args(event.tool, event.input)
