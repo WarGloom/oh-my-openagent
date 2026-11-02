@@ -1,6 +1,7 @@
 import path from "node:path"
 import type { Hooks } from "@opencode-ai/plugin"
 import type { V2PluginContext, V2Registration, V2ToolContentPart } from "./context-types"
+import { toJsonRecord } from "./json-record"
 import { toV1ToolName } from "./tool-names"
 
 /** 2.x file tools take `path`; the 1.x hooks read `filePath` (and most also accept `path`). */
@@ -92,7 +93,10 @@ export async function installToolHooks(context: V2PluginContext, hooks: Hooks): 
         if (output.output !== text) {
           event.result.content = [{ type: "text", text: output.output }, ...content.filter((part) => part.type !== "text")]
         }
-        event.result.metadata = output.metadata as Record<string, unknown>
+        // Hooks merge in metadata stored by the tool (for example `category: undefined` on a task without a
+        // category); the host only accepts JSON values there, so keep the JSON part as the tool bridge does.
+        const jsonMetadata = toJsonRecord(output.metadata)
+        if (jsonMetadata !== undefined) event.result.metadata = jsonMetadata
       }),
     )
   }
