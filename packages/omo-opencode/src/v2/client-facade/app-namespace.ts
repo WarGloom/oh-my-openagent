@@ -26,6 +26,7 @@ function toV1Agent(agent: V2AgentInfo): Record<string, unknown> {
     color: agent.color,
     steps: agent.steps,
     model: agent.model === undefined ? undefined : { providerID: agent.model.providerID, modelID: agent.model.id },
+    variant: agent.model?.variant,
     permission: toV1PermissionRules(agent.permissions),
     options: {},
   }
