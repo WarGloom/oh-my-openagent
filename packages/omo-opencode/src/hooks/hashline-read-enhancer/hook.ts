@@ -105,12 +105,13 @@ function transformOutput(output: string): string {
     return [...prefixLines, ...result, ...lines.slice(blockEnd)].join("\n")
   }
 
-  if (!isTextFile(lines[0] ?? "")) {
+  const firstContentLine = /^Read file .+, lines \d+-\d+$/.test(lines[0] ?? "") ? 1 : 0
+  if (!isTextFile(lines[firstContentLine] ?? "")) {
     return output
   }
 
-  const result: string[] = []
-  for (const line of lines) {
+  const result: string[] = lines.slice(0, firstContentLine)
+  for (const line of lines.slice(firstContentLine)) {
     if (!parseReadLine(line)) {
       result.push(...lines.slice(result.length))
       break
