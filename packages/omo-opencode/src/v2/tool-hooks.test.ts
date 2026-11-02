@@ -3,6 +3,9 @@ import type { Hooks } from "@opencode-ai/plugin"
 import type { V2ToolAfterEvent, V2ToolBeforeEvent } from "./context-types"
 import { createFakePluginContext } from "./fake-plugin-context"
 import { installToolHooks } from "./tool-hooks"
+import { createHashlineReadEnhancerHook } from "../hooks/hashline-read-enhancer"
+import { createPluginInput } from "./create-plugin-input"
+import { createSessionTracker } from "./session-tracker"
 
 type BeforeHook = NonNullable<Hooks["tool.execute.before"]>
 type AfterHook = NonNullable<Hooks["tool.execute.after"]>
@@ -94,6 +97,27 @@ describe("installToolHooks", () => {
   })
 
   describe("#given a tool.execute.after hook", () => {
+    it("#when native read content is a string #then hashline anchors reach the host and machine output stays intact", async () => {
+      // given
+      const fake = createFakePluginContext()
+      const input = createPluginInput(fake.context, { tracker: createSessionTracker(), warn: () => {} })
+      await installToolHooks(fake.context, createHashlineReadEnhancerHook(input, { hashline_edit: { enabled: true } }))
+      const machineOutput = { type: "text-page", content: "const a = 1", offset: 140, truncated: false }
+
+      // when
+      const event = await fake.triggerToolAfter(afterEvent({
+        input: { path: "/work/app/src/a.ts", offset: 140, limit: 1 },
+        result: { output: machineOutput, content: "Read file /work/app/src/a.ts, lines 140-140\n140: const a = 1" },
+      }))
+
+      // then
+      expect(event.result?.content).toEqual([{
+        type: "text",
+        text: expect.stringMatching(/^Read file \/work\/app\/src\/a.ts, lines 140-140\n140#[ZPMQVRWSNKTXJBYH]{2}\|const a = 1$/),
+      }])
+      expect(event.result?.output).toEqual(machineOutput)
+    })
+
     it("#when a call completed #then the hook sees title, joined text output and metadata, and rewrites flow back", async () => {
       // given
       const fake = createFakePluginContext()
