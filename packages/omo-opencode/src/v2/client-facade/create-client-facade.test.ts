@@ -165,6 +165,29 @@ describe("createClientFacade", () => {
         { name: "explore", mode: "subagent", hidden: true, model: { providerID: "openai", modelID: "gpt-x" } },
       ])
     })
+
+    it("#when an agent has 2.x permission rules #then they come back as 1.x rules in order with 1.x permission keys", async () => {
+      // given
+      const { context } = createFakePluginContext({
+        agents: [agent({ id: "pinion-rust-dev", mode: "subagent", permissions: [
+          { action: "*", resource: "*", effect: "deny" },
+          { action: "team_send_message", resource: "*", effect: "allow" },
+          { action: "subagent", resource: "*", effect: "deny" },
+          { action: "shell", resource: "git *", effect: "ask" },
+        ] })],
+      })
+
+      // when
+      const result = await createClientFacade(context, facadeDeps()).app.agents()
+
+      // then
+      expect(result.data[0]?.permission).toEqual([
+        { permission: "*", pattern: "*", action: "deny" },
+        { permission: "team_send_message", pattern: "*", action: "allow" },
+        { permission: "task", pattern: "*", action: "deny" },
+        { permission: "bash", pattern: "git *", action: "ask" },
+      ])
+    })
   })
 
   describe("#given a V1 client method with no 2.x mapping", () => {
