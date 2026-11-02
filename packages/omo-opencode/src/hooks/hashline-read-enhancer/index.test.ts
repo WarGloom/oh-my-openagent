@@ -3,6 +3,7 @@
 import { describe, it, expect } from "bun:test"
 import type { PluginInput } from "@opencode-ai/plugin"
 import { createHashlineReadEnhancerHook } from "./hook"
+import { validateLineRef } from "@oh-my-opencode/hashline-core"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
@@ -19,6 +20,34 @@ function mockCtx(): PluginInput {
 }
 
 describe("hashline-read-enhancer", () => {
+  it("hashifies native V2 read pages with edit-compatible anchors and preserves the surrounding output", async () => {
+    // given
+    const hook = createHashlineReadEnhancerHook(mockCtx(), { hashline_edit: { enabled: true } })
+    const content = ["        ),", "", "    true,"]
+    const header = "Read file /tmp/rules.rs, lines 140-142"
+    const suffix = "[Output truncated. Continue reading with offset: 143]\n143: leave this suffix unchanged"
+    const output = {
+      title: "rules.rs",
+      output: [header, ...content.map((line, index) => `${140 + index}: ${line}`), suffix].join("\n"),
+      metadata: {},
+    }
+
+    // when
+    await hook["tool.execute.after"]({ tool: "read", sessionID: "s", callID: "c" }, output)
+
+    // then
+    const lines = output.output.split("\n")
+    expect(lines[0]).toBe(header)
+    const fileLines = [...Array<string>(139).fill("prefix"), ...content]
+    for (const [index, text] of content.entries()) {
+      const row = lines[index + 1] ?? ""
+      expect(row).toMatch(new RegExp(`^${140 + index}#[ZPMQVRWSNKTXJBYH]{2}\\|`))
+      expect(row.slice(row.indexOf("|") + 1)).toBe(text)
+      expect(() => validateLineRef(fileLines, row)).not.toThrow()
+    }
+    expect(lines.slice(4).join("\n")).toBe(suffix)
+  })
+
   it("hashifies only file content lines in read output", async () => {
     //#given
     const hook = createHashlineReadEnhancerHook(mockCtx(), { hashline_edit: { enabled: true } })
