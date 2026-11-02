@@ -160,7 +160,12 @@ describe("createClientFacade", () => {
       const { context } = createFakePluginContext({
         agents: [
           agent({ id: "build", description: "Builds", mode: "primary", color: "#112233" }),
-          agent({ id: "explore", mode: "subagent", hidden: true, model: { providerID: "openai", id: "gpt-x" } }),
+          agent({
+            id: "explore",
+            mode: "subagent",
+            hidden: true,
+            model: { providerID: "openai", id: "gpt-x", variant: "high" },
+          }),
         ],
       })
 
@@ -170,7 +175,13 @@ describe("createClientFacade", () => {
       // then
       expect(result.data).toMatchObject([
         { name: "build", description: "Builds", mode: "primary", color: "#112233", hidden: false },
-        { name: "explore", mode: "subagent", hidden: true, model: { providerID: "openai", modelID: "gpt-x" } },
+        {
+          name: "explore",
+          mode: "subagent",
+          hidden: true,
+          model: { providerID: "openai", modelID: "gpt-x" },
+          variant: "high",
+        },
       ])
     })
 
