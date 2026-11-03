@@ -46,6 +46,7 @@ export type FakeSessionCall =
   | { readonly kind: "prompt"; readonly input: V2PromptInput }
   | { readonly kind: "synthetic"; readonly input: V2SyntheticInput }
   | { readonly kind: "create"; readonly input: Parameters<V2SessionDomain["create"]>[0] }
+  | { readonly kind: "update"; readonly input: Parameters<V2SessionDomain["update"]>[0] }
   | { readonly kind: "remove"; readonly sessionID: string }
   | { readonly kind: "interrupt"; readonly sessionID: string }
   | { readonly kind: "compact"; readonly sessionID: string }
@@ -369,6 +370,7 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
         ...fakeSessionInfo(sessionID, options),
         ...(sessionModels.has(sessionID) ? { model: sessionModels.get(sessionID) } : {}),
       }),
+      update: async (input) => void sessionCalls.push({ kind: "update", input }),
       create: async (input) => {
         sessionCalls.push({ kind: "create", input })
         createdSessions += 1

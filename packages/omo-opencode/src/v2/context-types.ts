@@ -251,6 +251,7 @@ export type V2TokenUsage = {
 
 export type V2SessionInfo = {
   readonly id: string
+  readonly permissions?: ReadonlyArray<V2PermissionRule>
   readonly parentID?: string
   readonly projectID: string
   readonly agent?: string
@@ -443,6 +444,11 @@ export type V2SessionDomain = {
     readonly cursor?: string
   }) => Promise<{ readonly data: ReadonlyArray<V2SessionInfo>; readonly cursor: { readonly next?: string | null } }>
   readonly get: (input: { readonly sessionID: string }) => Promise<V2SessionInfo>
+  readonly update: (input: {
+    readonly sessionID: string
+    readonly title?: string
+    readonly permissions?: ReadonlyArray<V2PermissionRule>
+  }) => Promise<void>
   readonly create: (input: {
     readonly parentID?: string | null
     readonly title?: string | null
