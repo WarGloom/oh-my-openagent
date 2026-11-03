@@ -29,6 +29,28 @@ const started = { type: "session.execution.started", data: { sessionID: "ses_1" 
 const succeeded = { type: "session.execution.succeeded", data: { sessionID: "ses_1" } }
 
 describe("startEventBridge", () => {
+  it("delivers the admitted user's model, agent and parts before assistant events", async () => {
+    const ready = Promise.withResolvers<void>()
+    const delivered = Promise.withResolvers<void>()
+    const fake = createFakePluginContext({ sessionAgent: "atlas", sessionInfo: { model: { providerID: "p", id: "model", variant: "high" } }, sessionMessages: [{ type: "user", id: "user", text: "request", time: { created: 1 } }] })
+    const context = { ...fake.context, event: { subscribe: async function* (options?: { signal?: AbortSignal }) {
+      const stream = fake.context.event.subscribe(options)[Symbol.asyncIterator]()
+      const next = stream.next()
+      ready.resolve()
+      let result = await next
+      while (!result.done) { yield result.value; result = await stream.next() }
+    } } }
+    const bridge = startEventBridge(context, { tracker: createSessionTracker(), warn: () => {} })
+    const seen: unknown[] = []
+    bridge.setHandler(async ({ event }) => { seen.push(event); if (seen.length === 2) delivered.resolve() })
+    await ready.promise
+    fake.emit({ type: "session.inbox.delivered", data: { sessionID: "s", inboxID: "user" } })
+    fake.emit({ type: "session.step.started", data: { sessionID: "s", assistantMessageID: "a", started: 2, agent: "atlas", model: { providerID: "p", id: "model" } } })
+    await delivered.promise
+    expect(seen[0]).toMatchObject({ type: "message.updated", properties: { info: { id: "user", role: "user", agent: "atlas", model: { providerID: "p", modelID: "model", variant: "high" } }, parts: [{ type: "text", text: "request" }] } })
+    expect(seen[1]).toMatchObject({ type: "message.updated", properties: { info: { id: "a", role: "assistant" } } })
+    bridge.stop()
+  })
   describe("#given a handler", () => {
     it("#when host events arrive #then the handler gets the 1.x events in order and the tracker follows", async () => {
       // given

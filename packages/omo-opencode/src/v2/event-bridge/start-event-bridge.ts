@@ -2,6 +2,9 @@ import type { Hooks } from "@opencode-ai/plugin"
 import type { V2Event, V2PluginContext } from "../context-types"
 import type { SessionTracker } from "../session-tracker"
 import { toV1Events } from "./translate-events"
+import { createMessageEvents } from "./message-events"
+import { translateMessages } from "../client-facade/translate-messages"
+import { isRecord } from "../../shared/record-type-guard"
 
 type EventHook = NonNullable<Hooks["event"]>
 type HookEvent = Parameters<EventHook>[0]["event"]
@@ -51,6 +54,7 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
  */
 export function startEventBridge(context: V2PluginContext, deps: EventBridgeDeps): EventBridge {
   const abort = new AbortController()
+  const messages = createMessageEvents()
   let handler: EventHook | undefined
   let interceptor: ((event: V2Event) => Promise<boolean>) | undefined
   let queue: Promise<void> = Promise.resolve()
@@ -68,7 +72,18 @@ export function startEventBridge(context: V2PluginContext, deps: EventBridgeDeps
   }
 
   const handle = (event: V2Event): void => {
+    if (event.type === "session.inbox.delivered" && isRecord(event.data) && typeof event.data.sessionID === "string") {
+      const { sessionID, inboxID } = event.data
+      queue = queue.then(async () => {
+        const [history, session] = await Promise.all([context.session.context({ sessionID }), context.session.get({ sessionID })])
+        const translated = translateMessages({ messages: history, sessionID, directory: session.location.directory, worktree: context.location.project.directory, initial: { agent: session.agent ?? "", model: session.model } })
+        const message = translated.find((entry) => entry.info.id === inboxID)
+        if (message && !abort.signal.aborted) await handler?.({ event: { type: "message.updated", properties: { sessionID, info: message.info, parts: message.parts } } as HookEvent })
+      }).catch((error: unknown) => deps.warn(`delivered message translation failed: ${messageOf(error)}`))
+      return
+    }
     if (interceptor && event.type === "session.execution.failed") {
+      messages.translate(event)
       queue = queue.then(async () => {
         try {
           if (await interceptor?.(event)) return
@@ -81,10 +96,8 @@ export function startEventBridge(context: V2PluginContext, deps: EventBridgeDeps
       }).catch((error: unknown) => deps.warn(`event hook failed: ${messageOf(error)}`))
       return
     }
-    if (interceptor && event.type === "session.deleted") {
-      queue = queue.then(async () => { await interceptor?.(event) })
-    }
-    const translated = toV1Events(event, deps.tracker)
+    if (interceptor) void interceptor(event).catch((error: unknown) => deps.warn(`native event observer failed: ${messageOf(error)}`))
+    const translated = [...messages.translate(event), ...toV1Events(event, deps.tracker)]
     deps.tracker.observe(event)
     for (const v1 of translated) dispatch(v1 as HookEvent)
   }
@@ -134,6 +147,7 @@ export function startEventBridge(context: V2PluginContext, deps: EventBridgeDeps
     },
     stop: () => {
       abort.abort()
+      messages.clear()
       handler = undefined
       interceptor = undefined
     },

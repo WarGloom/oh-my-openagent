@@ -42,6 +42,12 @@ export function toV1Events(
   const { sessionID } = fields
 
   switch (event.type) {
+    case "permission.asked":
+      return [{ type: "permission.asked", properties: { ...fields, permission: fields.action, patterns: fields.resources, always: fields.save ?? [], metadata: fields.metadata ?? {} } }]
+    case "permission.replied":
+      return [{ type: "permission.replied", properties: { ...fields } }]
+    case "session.retry.scheduled":
+      return [{ type: "session.status", properties: { sessionID, status: { type: "retry", attempt: fields.attempt, next: fields.at, message: v1Error(fields.error).data.message } } }]
     case "session.execution.started":
       return [{ type: "session.status", properties: { sessionID, status: { type: "busy" } } }]
     case "session.execution.succeeded":
@@ -67,6 +73,9 @@ export function toV1Events(
               directory: str(location.directory) ?? "",
               ...(parentID === undefined ? {} : { parentID }),
               title: str(fields.title) ?? "",
+              ...(fields.agent === undefined ? {} : { agent: fields.agent }),
+              ...(fields.model === undefined ? {} : { model: fields.model }),
+              ...(fields.metadata === undefined ? {} : { metadata: fields.metadata }),
               version: str(fields.version) ?? "2",
               time: { created, updated: created },
             },
