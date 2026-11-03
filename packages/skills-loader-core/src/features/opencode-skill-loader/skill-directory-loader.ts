@@ -37,6 +37,12 @@ export async function loadSkillsFromDir(options: {
   const maxDepth = options.maxDepth ?? 2
   const skillMap = new Map<string, LoadedSkill>()
   try {
+    try {
+      await fs.lstat(discovered)
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return []
+      throw error
+    }
     const canonical = checkSkillPath(discovered, provenance, true)
     if (options.ancestry?.has(canonical)) return []
     const ancestry = new Set([...(options.ancestry ?? []), canonical])
