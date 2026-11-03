@@ -19,6 +19,7 @@ export function createNativeProgressWatchdog(deps: {
 }) {
   const requests = new Map<string, Request>()
   const recovering = new Map<string, { readonly request: Request; readonly settled: ReturnType<typeof Promise.withResolvers<boolean>> }>()
+  const interruptions = new Map<string, Promise<boolean>>()
   let disposed = false
   const clear = (sessionID: string) => {
     const request = requests.get(sessionID)
@@ -31,6 +32,7 @@ export function createNativeProgressWatchdog(deps: {
     clear(sessionID)
     const recovery = { request, settled: Promise.withResolvers<boolean>() }
     recovering.set(sessionID, recovery)
+    if (!request.unsafe) interruptions.set(sessionID, recovery.settled.promise)
     let recovered = false
     try {
       await deps.context.session.interrupt({ sessionID, resume: false })
@@ -39,6 +41,7 @@ export function createNativeProgressWatchdog(deps: {
       }
     } finally {
       recovery.settled.resolve(recovered)
+      if (!recovered && interruptions.get(sessionID) === recovery.settled.promise) interruptions.delete(sessionID)
       if (recovering.get(sessionID) === recovery) recovering.delete(sessionID)
     }
   }
@@ -64,8 +67,12 @@ export function createNativeProgressWatchdog(deps: {
       const data = event.data
       if (!isRecord(data) || typeof data.sessionID !== "string") return
       const sessionID = data.sessionID
-      const recovery = recovering.get(sessionID)
-      if (event.type === "session.execution.interrupted" && recovery && !recovery.request.unsafe) return recovery.settled.promise
+      const interruption = interruptions.get(sessionID)
+      if (event.type === "session.execution.interrupted" && interruption) {
+        interruptions.delete(sessionID)
+        return interruption
+      }
+      if (event.type === "session.execution.started" || event.type === "session.deleted") interruptions.delete(sessionID)
       if (event.type === "session.deleted") recovering.delete(sessionID)
       if (event.type.startsWith("session.execution.") || event.type === "session.deleted" || event.type === "session.step.ended" || event.type === "session.step.failed" || event.type === "session.compaction.started") {
         clear(sessionID)
@@ -95,6 +102,7 @@ export function createNativeProgressWatchdog(deps: {
       disposed = true
       for (const sessionID of requests.keys()) clear(sessionID)
       recovering.clear()
+      interruptions.clear()
     },
   }
 }
