@@ -47,6 +47,7 @@ export async function installHooks(
   if (hooks.config !== undefined) {
     const dispose = await installConfigBridge(context, hooks.config as unknown as ConfigHook, {
       warn: deps.warn,
+      hooks,
       ...(hooks["command.execute.before"] === undefined
         ? {}
         : { beforeCommand: hooks["command.execute.before"] as unknown as BeforeCommandHook }),
