@@ -1,5 +1,5 @@
 import type { Hooks } from "@opencode-ai/plugin"
-import { log } from "../shared/logger"
+import { registerPromptHook } from "./prompt-hook"
 import { reconcileSystemTextParts } from "../plugin/system-text-parts"
 import { createMessagesTransformHandler, getMessagesTransformHooks } from "../plugin/messages-transform"
 import type { V2ModelRef, V2PluginContext, V2Registration } from "./context-types"
@@ -58,32 +58,6 @@ function requestInput(sessionID: string, agent: string, model: V2ModelRef): V1Ch
     provider: { source: "api", info: {}, options: {} },
     message: { id: "", sessionID, role: "user", time: { created: Date.now() }, agent, model: { providerID: model.providerID, modelID: model.id } },
   }
-}
-
-async function registerPrompt(context: V2PluginContext, handler: NonNullable<V1SessionHooks["chat.message"]>, warn: (message: string) => void): Promise<V2Registration> {
-  return context.session.hook("prompt", async (event) => {
-    // The 2.x prompt event has no agent (it runs before agent selection), so read the session's
-    // agent once. A failed read never throws; the handler then runs with agent undefined.
-    let agent: string | undefined
-    try {
-      agent = (await context.session.get({ sessionID: event.sessionID })).agent
-      log("[prompt-bridge] session agent lookup succeeded", { sessionID: event.sessionID, agent })
-    } catch (error) {
-      warn(`prompt bridge agent lookup failed: ${error instanceof Error ? error.message : String(error)}`)
-    }
-    const original = event.prompt.text
-    const parts = [{ type: "text", text: original, id: event.messageID, sessionID: event.sessionID, messageID: event.messageID }]
-    const output: V1ChatMessageOutput = { message: { id: event.messageID, sessionID: event.sessionID, role: "user", time: { created: Date.now() } }, parts }
-    await handler({ sessionID: event.sessionID, messageID: event.messageID, ...(agent === undefined ? {} : { agent }) }, output)
-    // The 2.x prompt event carries only `prompt.text`, so every text part the handlers leave (the
-    // original, edits, and appended mode prompts) is written back in order. The event has no model
-    // or variant, so model-dependent chat.message effects cannot run here.
-    const text = output.parts
-      .filter((part) => part.type === "text" && typeof part.text === "string")
-      .map((part) => part.text as string)
-      .join("\n")
-    if (text !== original) event.prompt.text = text
-  })
 }
 
 async function registerChatParams(context: V2PluginContext, handler: NonNullable<V1SessionHooks["chat.params"]>): Promise<V2Registration> {
@@ -168,7 +142,7 @@ export async function installSessionHooks(
   if (categoryReminder) registrations.push(await registerNativeCategoryReminder(context, categoryReminder))
   if (teamMailbox) registrations.push(await registerNativeTeamMailbox(context, teamMailbox))
 
-  if (v1["chat.message"] !== undefined) registrations.push(await registerPrompt(context, v1["chat.message"], deps.warn))
+  if (v1["chat.message"] !== undefined) registrations.push(await registerPromptHook(context, hooks, deps.warn))
   if (v1["chat.params"] !== undefined) registrations.push(await registerChatParams(context, v1["chat.params"]))
   if (v1["chat.headers"] !== undefined) registrations.push(await registerChatHeaders(context, v1["chat.headers"]))
   if (v1["experimental.chat.system.transform"] !== undefined) {
