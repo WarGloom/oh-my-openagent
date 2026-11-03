@@ -35,13 +35,34 @@ function sameModel(left: V2ModelRef, right: V2ModelRef | undefined): boolean {
   )
 }
 
-function targetModel(body: PromptBody, current: V2ModelRef | undefined): V2ModelRef | undefined {
+async function targetModel(
+  context: V2PluginContext,
+  body: PromptBody,
+  current: V2ModelRef | undefined,
+  agent: string | undefined,
+): Promise<V2ModelRef | undefined> {
   if (body.model !== undefined) {
-    return {
-      providerID: body.model.providerID,
-      id: body.model.modelID,
-      ...(body.variant === undefined ? {} : { variant: body.variant }),
+    let variant = body.variant
+    if (variant === undefined && agent !== undefined) {
+      const configured = (await context.agent.list()).data.find((entry) => entry.id === agent)?.model
+      if (
+        configured?.providerID === body.model.providerID &&
+        configured.id === body.model.modelID &&
+        configured.variant !== undefined
+      ) {
+        const models = (await context.model.list()).data
+        if (
+          models.some(
+            (model) =>
+              model.providerID === configured.providerID &&
+              model.modelID === configured.id &&
+              model.variants.some((entry) => entry.id === configured.variant),
+          )
+        )
+          variant = configured.variant
+      }
     }
+    return { providerID: body.model.providerID, id: body.model.modelID, ...(variant === undefined ? {} : { variant }) }
   }
   if (body.variant !== undefined && current !== undefined) return { ...current, variant: body.variant }
   return undefined
@@ -53,7 +74,7 @@ async function switchIfNeeded(context: V2PluginContext, sessionID: string, body:
   const current = await context.session.get({ sessionID })
   if (body.agent !== undefined && body.agent !== current.agent)
     await context.session.switchAgent({ sessionID, agent: body.agent })
-  const target = targetModel(body, current.model)
+  const target = await targetModel(context, body, current.model, body.agent ?? current.agent)
   if (target !== undefined && !sameModel(target, current.model))
     await context.session.switchModel({ sessionID, model: target })
 }
