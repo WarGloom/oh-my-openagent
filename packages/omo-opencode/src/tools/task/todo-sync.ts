@@ -1,6 +1,7 @@
 import type { PluginInput } from "@opencode-ai/plugin";
 import { log } from "../../shared/logger";
 import type { Task } from "../../features/claude-tasks/types.ts";
+import { getV2TodoWriter } from "../../v2/session-todos";
 
 export interface TodoInfo {
   id?: string;
@@ -124,7 +125,7 @@ export async function syncTaskTodoUpdate(
       nextTodos.push(todo);
     }
 
-    const resolvedWriter = writer ?? (await resolveTodoWriter());
+    const resolvedWriter = writer ?? getV2TodoWriter(ctx.client) ?? (await resolveTodoWriter());
     if (!resolvedWriter) return;
     await resolvedWriter({ sessionID, todos: nextTodos });
   } catch (err) {
@@ -187,7 +188,7 @@ export async function syncAllTasksToTodos(
 
     finalTodos.push(...newTodos);
 
-    const resolvedWriter = writer ?? (await resolveTodoWriter());
+    const resolvedWriter = writer ?? getV2TodoWriter(ctx.client) ?? (await resolveTodoWriter());
     if (resolvedWriter && sessionID) {
       await resolvedWriter({ sessionID, todos: finalTodos });
     }
