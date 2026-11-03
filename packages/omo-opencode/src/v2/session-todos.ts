@@ -32,18 +32,24 @@ export async function writeSessionTodos(context: V2PluginContext, input: { reado
 export async function readSessionTodos(context: V2PluginContext, sessionID: string): Promise<Todo[]> {
   const stored = snapshotSchema.nullish().parse(await context.storage?.get(storageKey(sessionID)))
   const messages = await context.session.context({ sessionID })
-  for (const message of messages.toReversed()) {
+  let latest: { readonly todos: Todo[]; readonly callID: string } | undefined
+  let baselineFound = stored?.callID === undefined
+  history: for (const message of messages.toReversed()) {
     if (message.type !== "assistant") continue
     for (const part of message.content.toReversed()) {
       if (part.type !== "tool" || part.name !== "todowrite") continue
-      if (stored?.callID === part.id) return parseTodos(stored.todos)
+      if (stored?.callID === part.id) {
+        baselineFound = true
+        break history
+      }
       if (part.state.status !== "completed") continue
-      const todos = parseTodos(part.state.input.todos)
-      await context.storage?.set(storageKey(sessionID), { todos, callID: part.id })
-      return todos
+      latest ??= { todos: parseTodos(part.state.input.todos), callID: part.id }
     }
   }
-  return stored ? parseTodos(stored.todos) : []
+  // execute.after runs before the host records completion. An absent baseline is not evidence of a newer call.
+  if (!baselineFound || latest === undefined) return stored ? parseTodos(stored.todos) : []
+  await context.storage?.set(storageKey(sessionID), latest)
+  return latest.todos
 }
 
 export function bindTodoWriter(client: PluginInput["client"], context: V2PluginContext): void {

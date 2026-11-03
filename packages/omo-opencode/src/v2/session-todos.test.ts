@@ -55,7 +55,7 @@ describe("V2 session todos", () => {
 
   it("captures native writes before V1 after-hooks read them, isolates sessions, and survives reload", async () => {
     // given
-    const fake = createFakePluginContext()
+    const fake = createFakePluginContext({ sessionMessages: [history("completed", "Old")] })
     const store = storage()
     const context = { ...fake.context, storage: store }
     const ctx = input(context)
@@ -66,12 +66,12 @@ describe("V2 session todos", () => {
     // when
     await fake.triggerToolAfter(writeEvent([{ content: "Native", status: "in_progress" }]))
     await dispose()
-    const reloaded = input({ ...createFakePluginContext().context, storage: store })
+    const reloaded = input({ ...createFakePluginContext({ sessionMessages: [history("completed", "Old")] }).context, storage: store })
     // then
     const expected = [{ content: "Native", status: "in_progress", priority: "medium", id: "v2-todo-1" }]
     expect(observed).toEqual(expected)
     expect((await reloaded.client.session.todo({ path: { id: "ses_1" } })).data).toEqual(expected)
-    expect((await reloaded.client.session.todo({ path: { id: "ses_2" } })).data).toEqual([])
+    expect((await input({ ...createFakePluginContext().context, storage: store }).client.session.todo({ path: { id: "ses_2" } })).data).toEqual([])
     expect(fake.toolHookCount()).toBe(0)
   })
 
