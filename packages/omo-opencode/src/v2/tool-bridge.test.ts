@@ -3,7 +3,8 @@ import { tool, type ToolContext } from "@opencode-ai/plugin/tool"
 import { normalizeToolArgSchemas } from "../plugin/normalize-tool-arg-schemas"
 import type { V2PermissionAssertInput, V2PermissionDomain, V2ToolExecuteContext, V2ToolInfo } from "./context-types"
 import { toPlainJsonSchema, toV2Tool, type ToolBridgeDeps } from "./tool-bridge"
-import { StepEndingPermissionError } from "../shared/step-ending-permission-error"
+import { createMonitorStart } from "../tools/monitor/monitor-start"
+import { unsafeTestValue } from "../../../../test-support/unsafe-test-value"
 import { publishToolMetadata, recoverToolMetadata } from "../features/tool-metadata-store"
 
 const deps: ToolBridgeDeps = {
@@ -462,11 +463,10 @@ describe("toV2Tool", () => {
       await expect(result).rejects.toBe(denial)
     })
 
-    it("#when the host plainly declines (Permission.DeclinedError) #then ask throws a step-ending error carrying the cause", async () => {
+    it("#when the host plainly declines (Permission.DeclinedError) #then execute rejects with the original host error, not a wrapper", async () => {
       // given
       const declined = Object.assign(new Error("declined"), { _tag: "Permission.DeclinedError" })
       const permission: V2PermissionDomain = { assert: async () => { throw declined } }
-      let thrown: unknown
       const info = toV2Tool(
         "monitor_start",
         greetTool(async (_args, context) => {
@@ -477,11 +477,26 @@ describe("toV2Tool", () => {
       )
 
       // when
-      await info.execute({ name: "Ada" }, createExecuteContext()).catch((error: unknown) => { thrown = error })
+      const result = info.execute({ name: "Ada" }, createExecuteContext())
 
       // then
-      expect(thrown).toBeInstanceOf(StepEndingPermissionError)
-      expect((thrown as StepEndingPermissionError).cause).toBe(declined)
+      await expect(result).rejects.toBe(declined)
+    })
+
+    it("#when a real monitor_start runs on v2 and the host declines #then execute rejects with the original host error and no monitor starts", async () => {
+      // given
+      const declined = Object.assign(new Error("declined"), { _tag: "Permission.DeclinedError" })
+      const permission: V2PermissionDomain = { assert: async () => { throw declined } }
+      const start = mock(async () => ({ id: "m1", label: "l1" }))
+      const monitorTool = createMonitorStart(unsafeTestValue({ start }), { monitor: { enabled: true, allowed_commands: [] } })
+      const info = toV2Tool("monitor_start", monitorTool, { ...deps, permission })
+
+      // when
+      const result = info.execute({ command: "rm -rf /" }, createExecuteContext())
+
+      // then
+      await expect(result).rejects.toBe(declined)
+      expect(start).not.toHaveBeenCalled()
     })
   })
 })
