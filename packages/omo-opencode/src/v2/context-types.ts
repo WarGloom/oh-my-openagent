@@ -139,6 +139,24 @@ export type V2PermissionRule = {
   readonly effect: "allow" | "deny" | "ask"
 }
 
+/** Input for the host `permission.assert` call; the encoded shape the 2.x plugin API accepts. */
+export type V2PermissionAssertInput = {
+  readonly sessionID: string
+  readonly agent?: string
+  readonly action: string
+  readonly resources: ReadonlyArray<string>
+  readonly save?: ReadonlyArray<string>
+  readonly metadata?: Readonly<Record<string, unknown>>
+}
+
+export type V2PermissionDomain = {
+  /**
+   * Evaluates the session's permission rules and, when approval is required, prompts and waits.
+   * Resolves when allowed; a deny or a rejection rejects with an error that ends the current step.
+   */
+  readonly assert: (input: V2PermissionAssertInput) => Promise<void>
+}
+
 export type V2AgentInfo = {
   readonly id: string
   readonly name: string
@@ -515,6 +533,7 @@ export type V2PluginContext = {
   readonly command: V2CommandDomain
   readonly session: V2SessionDomain
   readonly event: V2EventDomain
+  readonly permission: V2PermissionDomain
   readonly storage?: V2StorageDomain
 }
 
