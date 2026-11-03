@@ -227,6 +227,7 @@ export type V2McpDomain = {
 export type V2PromptInput = {
   readonly sessionID: string
   readonly text: string
+  readonly files?: ReadonlyArray<{ readonly uri: string; readonly name?: string }>
   readonly delivery?: "steer" | "queue" | null
   /** false enqueues the message without starting a turn. */
   readonly resume?: boolean | null
