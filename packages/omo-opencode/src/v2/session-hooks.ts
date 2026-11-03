@@ -133,7 +133,15 @@ async function registerChatHeaders(
   // covers the primary, title, compaction and generate request kinds.
   return context.session.hook("model.request", async (event) => {
     const output: V1ChatHeadersOutput = { headers: {} }
-    await handler(await requestInput(context, event), output)
+    const [input, messages] = await Promise.all([
+      requestInput(context, event),
+      context.session.context({ sessionID: event.sessionID }),
+    ])
+    const message = messages.findLast((entry) => entry.type === "user" || entry.type === "synthetic")
+    await handler(
+      { ...input, message: { ...input.message, ...(message ? { id: message.id, time: message.time } : {}) } },
+      output,
+    )
     for (const [key, value] of Object.entries(output.headers)) if (typeof value === "string") event.headers[key] = value
   })
 }
