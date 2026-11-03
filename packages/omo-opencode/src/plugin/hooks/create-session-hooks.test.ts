@@ -5,6 +5,9 @@ import type { ModelCacheState } from "../../plugin-state"
 import type { PluginContext } from "../types"
 import { createSessionHooks } from "./create-session-hooks"
 import { unsafeTestValue } from "../../../../../test-support/unsafe-test-value"
+import { createPluginInput } from "../../v2/create-plugin-input"
+import { createFakePluginContext } from "../../v2/fake-plugin-context"
+import { createSessionTracker } from "../../v2/session-tracker"
 
 const mockContext = unsafeTestValue<PluginContext>({
   directory: "/tmp",
@@ -23,6 +26,19 @@ const mockModelCacheState = {} as ModelCacheState
 const mockBackgroundManager = unsafeTestValue<BackgroundManager>({})
 
 describe("createSessionHooks", () => {
+  it("leaves compaction and overflow recovery to V2 while preserving V1 hooks", () => {
+    const fake = createFakePluginContext()
+    const native = createPluginInput(fake.context, { tracker: createSessionTracker(), warn: () => {} })
+    const results = [mockContext, native].map((ctx) => createSessionHooks({
+      ctx, pluginConfig: unsafeTestValue<OhMyOpenCodeConfig>({ experimental: { preemptive_compaction: true } }),
+      modelCacheState: mockModelCacheState, backgroundManager: mockBackgroundManager,
+      isHookEnabled: (name) => name === "preemptive-compaction" || name === "anthropic-context-window-limit-recovery", safeHookEnabled: false,
+    }))
+    expect(results[0]?.preemptiveCompaction).not.toBeNull()
+    expect(results[0]?.anthropicContextWindowLimitRecovery).not.toBeNull()
+    expect(results[1]?.preemptiveCompaction).toBeNull()
+    expect(results[1]?.anthropicContextWindowLimitRecovery).toBeNull()
+  })
   it("keeps model fallback disabled when config is unset", () => {
     // given
     const pluginConfig = {} as OhMyOpenCodeConfig
