@@ -6,6 +6,15 @@ import { isOpenCodeVersionAtLeast, OPENCODE_SQLITE_VERSION } from "./opencode-ve
 const NOT_CACHED = Symbol("NOT_CACHED")
 const FALSE_PENDING_RETRY = Symbol("FALSE_PENDING_RETRY")
 let cachedResult: true | false | typeof NOT_CACHED | typeof FALSE_PENDING_RETRY = NOT_CACHED
+const nativeSdkClients = new WeakSet<object>()
+
+export function bindNativeSdkStorage(client: object): void {
+  nativeSdkClients.add(client)
+}
+
+export function hasNativeSdkStorage(client: object | null): boolean {
+  return client !== null && nativeSdkClients.has(client)
+}
 
 export function isSqliteBackend(): boolean {
   if (cachedResult === true) return true
