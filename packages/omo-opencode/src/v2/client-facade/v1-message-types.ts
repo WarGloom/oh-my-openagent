@@ -14,7 +14,7 @@ export type V1MessageInfo = {
   readonly role: "user" | "assistant"
   readonly time: { readonly created: number; readonly completed?: number }
   readonly agent: string
-  readonly model?: { readonly providerID: string; readonly modelID: string }
+  readonly model?: { readonly providerID: string; readonly modelID: string; readonly variant?: string }
   readonly variant?: string
   readonly parentID?: string
   readonly mode?: string

@@ -3,6 +3,8 @@ import type { V2SessionMessage } from "../context-types"
 import { createFakePluginContext, type FakeContextOptions } from "../fake-plugin-context"
 import { createSessionTracker } from "../session-tracker"
 import { createSessionNamespace } from "./session-namespace"
+import { createClientFacade } from "./create-client-facade"
+import { recoverUnarchivedTask } from "../../tools/delegate-task/unarchived-session-recovery"
 
 const opus = { providerID: "anthropic", id: "claude-opus" }
 
@@ -55,6 +57,21 @@ describe("createSessionNamespace", () => {
   })
 
   describe("#given messages and message", () => {
+    it("recovers the model variant from a translated V2 session", async () => {
+      const fake = createFakePluginContext({
+        sessionAgent: "worker",
+        sessionInfo: { model: { providerID: "openai", id: "sol", variant: "xhigh" } },
+        sessionMessages: [{ type: "user", id: "msg_1", text: "work", time: { created: 1 } }],
+      })
+      const client = createClientFacade(fake.context, { tracker: createSessionTracker(), warn: () => {} })
+      const task = await recoverUnarchivedTask(
+        client,
+        "ses_1",
+        { sessionID: "parent", messageID: "msg_parent" },
+        undefined,
+      )
+      expect(task.model).toEqual({ providerID: "openai", modelID: "sol", variant: "xhigh" })
+    })
     it("#when messages is called #then the 2.x log arrives as 1.x messages in a data envelope", async () => {
       // given
       const { session } = setup({ sessionMessages: log })
@@ -229,6 +246,69 @@ describe("createSessionNamespace", () => {
   })
 
   describe("#given promptAsync", () => {
+    it("preserves the current agent's supported configured variant without switching", async () => {
+      const configured = { providerID: "openai", id: "sol", variant: "xhigh" }
+      const { fake, session } = setup({
+        sessionAgent: "worker",
+        sessionInfo: { model: configured },
+        agents: [{ id: "worker", name: "worker", model: configured, mode: "subagent", hidden: false, permissions: [] }],
+        models: [
+          {
+            id: "sol",
+            modelID: "sol",
+            providerID: "openai",
+            name: "sol",
+            status: "active",
+            enabled: true,
+            capabilities: { tools: true, input: ["text"], output: ["text"] },
+            variants: [{ id: "xhigh" }],
+            limit: { context: 100, output: 10 },
+          },
+        ],
+      })
+      await session.promptAsync({
+        path: { id: "ses_1" },
+        body: { model: { providerID: "openai", modelID: "sol" }, parts: [{ type: "text", text: "go" }] },
+      })
+      expect(fake.sessionCalls.map((call) => call.kind)).toEqual(["prompt"])
+    })
+
+    it("uses the requested agent's variant only when its model matches and the host offers it", async () => {
+      const configured = { providerID: "openai", id: "sol", variant: "xhigh" }
+      for (const [target, variants, expected] of [
+        ["sol", [{ id: "xhigh" }], { providerID: "openai", id: "sol", variant: "xhigh" }],
+        ["other", [{ id: "xhigh" }], { providerID: "openai", id: "other" }],
+        ["sol", [], { providerID: "openai", id: "sol" }],
+      ] as const) {
+        const { fake, session } = setup({
+          agents: [
+            { id: "worker", name: "worker", model: configured, mode: "subagent", hidden: false, permissions: [] },
+          ],
+          models: [
+            {
+              id: "sol",
+              modelID: "sol",
+              providerID: "openai",
+              name: "sol",
+              status: "active",
+              enabled: true,
+              capabilities: { tools: true, input: ["text"], output: ["text"] },
+              variants,
+              limit: { context: 100, output: 10 },
+            },
+          ],
+        })
+        await session.promptAsync({
+          path: { id: "ses_1" },
+          body: {
+            agent: "worker",
+            model: { providerID: "openai", modelID: target },
+            parts: [{ type: "text", text: "go" }],
+          },
+        })
+        expect(fake.sessionCalls).toContainEqual({ kind: "switchModel", sessionID: "ses_1", model: expected })
+      }
+    })
     it("#when called with text #then it queues a prompt and starts a turn", async () => {
       // given
       const { fake, session } = setup()
