@@ -5,6 +5,7 @@ import { toV2Tool } from "./tool-bridge"
 import { installToolHooks } from "./tool-hooks"
 import { installSessionHooks } from "./session-hooks"
 import { installNativeSubagentModel } from "./native-subagent-model"
+import { installToolDefinitions } from "./tool-definition-bridge"
 
 export type InstallHooksDeps = {
   readonly warn: (message: string) => void
@@ -44,6 +45,9 @@ export async function installHooks(
       }),
     )
   }
+
+  const definitions = await installToolDefinitions(context, hooks)
+  if (definitions) registrations.push(definitions)
 
   if (hooks.config !== undefined) {
     const dispose = await installConfigBridge(context, hooks.config as unknown as ConfigHook, {

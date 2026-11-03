@@ -9,10 +9,11 @@ function createFakeContext() {
   const added: V2ToolInfo[] = []
   const dispose = mock(async () => {})
   const transform = mock(async (callback: (editor: V2ToolEditor) => void): Promise<V2Registration> => {
-    callback({ add: (info) => void added.push(info) })
+    callback({ add: (info) => void added.push(info), list: () => [], update: () => {} })
     return { dispose }
   })
-  const context: V2PluginContext = { ...createFakePluginContext().context, tool: { transform } }
+  const fake = createFakePluginContext()
+  const context: V2PluginContext = { ...fake.context, tool: { ...fake.context.tool, transform } }
   return { context, added, transform, dispose }
 }
 
