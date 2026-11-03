@@ -1,11 +1,13 @@
 import { tool, type ToolContext, type ToolDefinition, type ToolResult } from "@opencode-ai/plugin/tool"
-import type { V2ToolContent, V2ToolExecuteContext, V2ToolInfo, V2ToolResult } from "./context-types"
+import type { V2PermissionDomain, V2ToolContent, V2ToolExecuteContext, V2ToolInfo, V2ToolResult } from "./context-types"
+import { normalizeAction } from "./config-bridge/migrate-agent"
 import { toJsonRecord } from "./json-record"
 
 export type ToolBridgeDeps = {
   readonly directory: string
   readonly worktree: string
   readonly warn: (message: string) => void
+  readonly permission?: V2PermissionDomain
 }
 
 function toV2Result(result: ToolResult, warn: (message: string) => void): V2ToolResult {
@@ -45,8 +47,21 @@ function toV1Context(name: string, context: V2ToolExecuteContext, deps: ToolBrid
         deps.warn(`tool "${name}" progress update was rejected: ${error instanceof Error ? error.message : String(error)}`)
       })
     },
-    ask: async () => {
-      deps.warn("ToolContext.ask is not enforced on OpenCode 2.x: the plugin has no permission prompt API there")
+    ask: async (input) => {
+      if (deps.permission === undefined) {
+        deps.warn(`tool "${name}": ToolContext.ask has no host permission domain; the request was not enforced`)
+        return
+      }
+      // Host `assert` prompts and rejects on denial with an error that ends the step; callers that do
+      // not catch it (skill) propagate the denial, and monitor's catch keeps it fail-closed.
+      await deps.permission.assert({
+        sessionID: context.sessionID,
+        agent: context.agent,
+        action: normalizeAction(input.permission),
+        resources: input.patterns,
+        save: input.always,
+        metadata: input.metadata,
+      })
     },
   }
 }
@@ -87,6 +102,14 @@ function describeIssues(error: { readonly issues: ReadonlyArray<{ readonly path:
   return error.issues.map((issue) => `${issue.path.map(String).join(".") || "root"}: ${issue.message}`).join("; ")
 }
 
+// Only OMO's `task` tool takes the host `subagent` permission action, so an agent rule migrated from
+// `task` to `subagent` governs OMO `task` and the host subagent tool alike (the host matches
+// `tool.options.permission ?? name`, core/tool.ts:257). `call_omo_agent` keeps its own action name:
+// OMO's per-prompt deny map `{ task: false, call_omo_agent: true }` becomes separate session rules,
+// and merging both onto `subagent` would collapse that recursion-protection split (and V1 never let
+// an agent `task: deny` block call_omo_agent).
+const SUBAGENT_PERMISSION_TOOL = "task"
+
 /**
  * Converts one V1 tool into a 2.x tool.
  *
@@ -109,7 +132,7 @@ export function toV2Tool(name: string, definition: ToolDefinition, deps: ToolBri
         tool.schema.toJSONSchema(schema, { io: "input", unrepresentable: "any" }),
       ),
     ),
-    options: { codemode: false },
+    options: { codemode: false, ...(name === SUBAGENT_PERMISSION_TOOL ? { permission: "subagent" } : {}) },
     execute: async (rawInput, context) => {
       const parsed = schema.safeParse(rawInput)
       if (!parsed.success) throw new Error(`Invalid arguments for tool "${name}": ${describeIssues(parsed.error)}`)
