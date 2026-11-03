@@ -293,7 +293,11 @@ export function createPluginModule(overrides: Partial<PluginModuleDeps> = {}): D
       deps.startTmuxCheck()
     }
     const disabledHooks = new Set(pluginConfig.disabled_hooks ?? [])
-    if (isV2PluginInput(input)) disabledHooks.add("directory-agents-injector")
+    if (isV2PluginInput(input)) {
+      // On 2.x the host owns AGENTS.md read-time injection and the goal loop; do not run OMO's.
+      disabledHooks.add("directory-agents-injector")
+      disabledHooks.add("goal")
+    }
 
     const isHookEnabled = (hookName: HookName): boolean => !disabledHooks.has(hookName)
     const safeHookEnabled = pluginConfig.experimental?.safe_hook_creation ?? true
