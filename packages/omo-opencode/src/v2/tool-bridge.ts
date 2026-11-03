@@ -152,9 +152,17 @@ export function toV2Tool(name: string, definition: ToolDefinition, deps: ToolBri
     execute: async (rawInput, context) => {
       const parsed = schema.safeParse(rawInput)
       if (!parsed.success) throw new Error(`Invalid arguments for tool "${name}": ${describeIssues(parsed.error)}`)
-      return toV2Result(await definition.execute(parsed.data, toV1Context(name, context, deps)), (message) =>
-        deps.warn(`tool "${name}": ${message}`),
-      )
+      try {
+        return toV2Result(await definition.execute(parsed.data, toV1Context(name, context, deps)), (message) =>
+          deps.warn(`tool "${name}": ${message}`),
+        )
+      } catch (error) {
+        // A plain host permission decline must reach the host as its original Permission.DeclinedError:
+        // the host recovers it by `instanceof` on the Cause reasons and never reads Error.cause, so the
+        // marker that survived a tool catch is unwrapped back to that original error here.
+        if (error instanceof StepEndingPermissionError) throw error.cause
+        throw error
+      }
     },
   }
 }
