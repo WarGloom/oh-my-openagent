@@ -15,6 +15,8 @@ export function applyDesiredCommands(
   deps: ApplyCommandsDeps,
 ): void {
   for (const [name, spec] of desired.commands) {
+    // The host owns /goal on 2.x; skip OMO's so the native goal command stays reachable.
+    if (name === "goal") continue
     editor.add({
       name,
       ...(spec.description === undefined ? {} : { description: spec.description }),
