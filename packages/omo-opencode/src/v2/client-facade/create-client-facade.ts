@@ -8,6 +8,7 @@ import { createSessionNamespace, type SessionNamespaceDeps } from "./session-nam
 import { bindTodoWriter } from "../session-todos"
 import type { V2ToastEmitter } from "../toast-channel"
 import { settle, type V1Result } from "./v1-result"
+import { bindNativeSdkStorage } from "../../shared/opencode-storage-detection"
 
 type V1Client = PluginInput["client"]
 type FacadeClient = V1Client & {
@@ -49,5 +50,6 @@ export function createClientFacade(context: V2PluginContext, deps: ClientFacadeD
     }),
   }) as unknown as FacadeClient
   bindTodoWriter(client, context)
+  bindNativeSdkStorage(client)
   return client
 }
