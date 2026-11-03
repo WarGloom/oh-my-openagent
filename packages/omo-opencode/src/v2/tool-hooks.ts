@@ -3,6 +3,7 @@ import type { Hooks } from "@opencode-ai/plugin"
 import type { V2PluginContext, V2Registration, V2ToolContentPart } from "./context-types"
 import { toJsonRecord } from "./json-record"
 import { toV1ToolName } from "./tool-names"
+import { writeSessionTodos } from "./session-todos"
 
 /** 2.x file tools take `path`; the 1.x hooks read `filePath` (and most also accept `path`). */
 const FILE_TOOLS: ReadonlySet<string> = new Set(["read", "write", "edit"])
@@ -78,36 +79,38 @@ export async function installToolHooks(context: V2PluginContext, hooks: Hooks): 
     )
   }
 
-  if (after !== undefined) {
-    registrations.push(
-      await context.tool.hook("execute.after", async (event) => {
-        if (event.status !== "completed" || event.result === undefined) return
-        const content =
-          typeof event.result.content === "string"
-            ? [{ type: "text", text: event.result.content }]
-            : (event.result.content ?? [])
-        const text = joinText(content)
-        const metadata = { ...(event.result.metadata ?? {}) }
-        const args = toV1Args(event.tool, event.input)
-        const output = {
-          title: resultTitle(event.tool, args, context.location.project.canonical),
-          output: text,
-          metadata,
-        }
-        await after({ tool: toV1ToolName(event.tool), sessionID: event.sessionID, callID: event.id, args }, output)
-        if (output.output !== text) {
-          event.result.content = [
-            { type: "text", text: output.output },
-            ...content.filter((part) => part.type !== "text"),
-          ]
-        }
-        // Hooks merge in metadata stored by the tool (for example `category: undefined` on a task without a
-        // category); the host only accepts JSON values there, so keep the JSON part as the tool bridge does.
-        const jsonMetadata = toJsonRecord(output.metadata)
-        if (jsonMetadata !== undefined) event.result.metadata = jsonMetadata
-      }),
-    )
-  }
+  registrations.push(
+    await context.tool.hook("execute.after", async (event) => {
+      if (event.status !== "completed" || event.result === undefined) return
+      if (event.tool === "todowrite" && isRecord(event.input)) {
+        await writeSessionTodos(context, { sessionID: event.sessionID, todos: event.input.todos, callID: event.id })
+      }
+      if (after === undefined) return
+      const content =
+        typeof event.result.content === "string"
+          ? [{ type: "text", text: event.result.content }]
+          : (event.result.content ?? [])
+      const text = joinText(content)
+      const metadata = { ...(event.result.metadata ?? {}) }
+      const args = toV1Args(event.tool, event.input)
+      const output = {
+        title: resultTitle(event.tool, args, context.location.project.canonical),
+        output: text,
+        metadata,
+      }
+      await after({ tool: toV1ToolName(event.tool), sessionID: event.sessionID, callID: event.id, args }, output)
+      if (output.output !== text) {
+        event.result.content = [
+          { type: "text", text: output.output },
+          ...content.filter((part) => part.type !== "text"),
+        ]
+      }
+      // Hooks merge in metadata stored by the tool (for example `category: undefined` on a task without a
+      // category); the host only accepts JSON values there, so keep the JSON part as the tool bridge does.
+      const jsonMetadata = toJsonRecord(output.metadata)
+      if (jsonMetadata !== undefined) event.result.metadata = jsonMetadata
+    }),
+  )
 
   let disposed = false
   return async () => {

@@ -5,6 +5,7 @@ import { createConfigNamespace } from "./config-namespace"
 import { withFallback } from "./fallback"
 import { createProviderNamespace } from "./provider-namespace"
 import { createSessionNamespace, type SessionNamespaceDeps } from "./session-namespace"
+import { bindTodoWriter } from "../session-todos"
 import type { V2ToastEmitter } from "../toast-channel"
 
 type V1Client = PluginInput["client"]
@@ -17,7 +18,7 @@ export type ClientFacadeDeps = SessionNamespaceDeps & { readonly emitToast?: V2T
  * operation name (see fallback.ts).
  */
 export function createClientFacade(context: V2PluginContext, deps: ClientFacadeDeps): V1Client {
-  return withFallback(["client"], {
+  const client = withFallback(["client"], {
     provider: withFallback(["client", "provider"], createProviderNamespace(context)),
     config: withFallback(["client", "config"], createConfigNamespace(context)),
     app: withFallback(["client", "app"], createAppNamespace(context)),
@@ -37,4 +38,6 @@ export function createClientFacade(context: V2PluginContext, deps: ClientFacadeD
       },
     }),
   }) as unknown as V1Client
+  bindTodoWriter(client, context)
+  return client
 }

@@ -8,6 +8,7 @@ import type { V1Message } from "./v1-message-types"
 import { settle, v1Error, type V1Result } from "./v1-result"
 import { deliverMailboxV2 } from "@oh-my-opencode/team-core/team-mailbox"
 import type { TeamModeConfig } from "../../config/schema/team-mode"
+import { readSessionTodos } from "../session-todos"
 
 type SessionRef = { readonly path: { readonly id: string } }
 
@@ -157,9 +158,6 @@ export function createSessionNamespace(context: V2PluginContext, deps: SessionNa
 
     status: async () => ({ data: deps.tracker.statuses() }),
 
-    todo: async (_args: SessionRef) => {
-      report("todo", "session.todo: OpenCode 2.x has no todo store yet; returning an empty list")
-      return { data: [] as Array<Record<string, unknown>> }
-    },
+    todo: (args: SessionRef) => settle(() => readSessionTodos(context, args.path.id)),
   }
 }
