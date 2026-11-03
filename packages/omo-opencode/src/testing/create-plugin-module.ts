@@ -40,6 +40,7 @@ import { runOpenCodeStartupMigration } from "../startup-migration"
 import { createV2Setup, type DualPluginModule } from "../v2"
 import { isV2PluginInput } from "../v2/create-plugin-input"
 import { bindNativeRuntimeFallback } from "../v2/native-runtime-fallback"
+import { bindAgentModelOverrides } from "../v2/config-bridge/desired-config"
 
 type StartupToastClient = {
   readonly tui?: {
@@ -361,6 +362,7 @@ export function createPluginModule(overrides: Partial<PluginModuleDeps> = {}): D
     }
 
     bindNativeRuntimeFallback(pluginHooks, hooks.runtimeFallback)
+    bindAgentModelOverrides(pluginHooks, pluginConfig.agents)
     return pluginHooks
   }
 
