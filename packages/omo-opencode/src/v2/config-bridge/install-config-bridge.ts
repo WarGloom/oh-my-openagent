@@ -1,4 +1,5 @@
 import type { V2PluginContext } from "../context-types"
+import { setTimeout as delay } from "node:timers/promises"
 import { applyDesiredAgents } from "./apply-agents"
 import { applyDesiredCommands } from "./apply-commands"
 import { applyDesiredMcp } from "./apply-mcp"
@@ -86,13 +87,26 @@ export async function installConfigBridge(
     timer = setTimeout(() => void refresh(), deps.debounceMs ?? 250)
   }
   void (async () => {
-    try {
-      for await (const event of context.event.subscribe({ signal: abort.signal })) {
-        if (REFRESH_EVENTS.has(event.type)) schedule()
+    let failures = 0
+    while (!abort.signal.aborted) {
+      try {
+        for await (const event of context.event.subscribe({ signal: abort.signal })) {
+          failures = 0
+          if (REFRESH_EVENTS.has(event.type)) schedule()
+        }
+      } catch (error) {
+        if (!abort.signal.aborted)
+          deps.warn(`event subscription failed: ${error instanceof Error ? error.message : String(error)}`)
       }
-    } catch (error) {
-      if (!abort.signal.aborted)
-        deps.warn(`event subscription failed: ${error instanceof Error ? error.message : String(error)}`)
+      if (abort.signal.aborted) break
+      failures += 1
+      try {
+        await delay(Math.min(100 * 2 ** (failures - 1), 2_000), undefined, { signal: abort.signal })
+      } catch (error) {
+        if (abort.signal.aborted) break
+        throw error
+      }
+      if (!abort.signal.aborted) await refresh()
     }
   })()
 
