@@ -1,7 +1,7 @@
 import type { V2ModelInfo, V2PluginContext } from "../context-types"
 
 /** The 1.x model metadata fields the plugin reads, derived from a 2.x model. */
-function toV1Model(model: V2ModelInfo): Record<string, unknown> {
+export function toV1Model(model: V2ModelInfo) {
   return {
     id: model.modelID,
     providerID: model.providerID,
