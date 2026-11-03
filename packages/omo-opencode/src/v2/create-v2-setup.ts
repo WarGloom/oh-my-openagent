@@ -7,6 +7,7 @@ import { createSessionTracker } from "./session-tracker"
 import { log } from "../shared/logger"
 import { installNativeRuntimeFallback } from "./native-runtime-fallback"
 import { V2BackgroundLifecycle } from "./background-lifecycle"
+import { toastChannel, type V2ToastRegistration } from "./toast-channel"
 
 export type V2SetupDeps = {
   readonly serverPlugin: Plugin
@@ -35,8 +36,11 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
     let hooks: Hooks | undefined
     let uninstall: (() => Promise<void>) | undefined
     let fallback: Awaited<ReturnType<typeof installNativeRuntimeFallback>>
+    let toast: V2ToastRegistration | undefined
     const background = context.storage ? new V2BackgroundLifecycle(context, context.storage) : undefined
     try {
+      toast = await context.rpc.register(toastChannel, {})
+      const toastEvents = toast.events
       await background?.load()
       let cursor: string | null | undefined
       do {
@@ -44,7 +48,7 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
         tracker.seed(page.data)
         cursor = page.cursor.next
       } while (cursor)
-      const input = createPluginInput(context, { tracker, warn }, background)
+      const input = createPluginInput(context, { tracker, warn, emitToast: (body) => toastEvents.emit("toast", body) }, background)
       hooks = await deps.serverPlugin(input, { ...context.options })
       fallback = await installNativeRuntimeFallback(context, hooks)
       bridge.setInterceptor(fallback?.beforeEvent)
@@ -65,6 +69,7 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
       await fallback?.dispose()
       await uninstall?.()
       await hooks?.dispose?.()
+      await toast?.dispose()
       throw error
     }
     let disposed = false
@@ -75,6 +80,7 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
       await background?.dispose()
       await uninstall?.()
       await hooks?.dispose?.()
+      await toast?.dispose()
     }
   }
 }
