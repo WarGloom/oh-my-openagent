@@ -94,12 +94,21 @@ export function createSessionNamespace(context: V2PluginContext, deps: SessionNa
         return sessions
       }),
 
-    messages: (args: SessionRef & { readonly query?: { readonly limit?: number } }) =>
-      settle(async () => {
+    messages: async (args: SessionRef & { readonly query?: { readonly limit?: number; readonly before?: string } }) => {
+      const result = await settle(async () => {
         const all = await loadMessages(args.path.id)
+        const before = args.query?.before
+        const end = before === undefined ? all.length : all.findIndex((message) => message.info.id === before)
+        if (end < 0) throw new Error(`Message cursor not found: ${before}`)
         const limit = args.query?.limit
-        return typeof limit === "number" && limit > 0 ? all.slice(-limit) : all
-      }),
+        const start = typeof limit === "number" && limit > 0 ? Math.max(0, end - limit) : 0
+        const data = all.slice(start, end)
+        const headers = new Headers()
+        if (start > 0 && data[0] !== undefined) headers.set("x-next-cursor", data[0].info.id)
+        return { data, response: new Response(null, { headers }) }
+      })
+      return result.error === undefined ? result.data : result
+    },
 
     message: async (args: {
       readonly path: { readonly id: string; readonly messageID: string }
