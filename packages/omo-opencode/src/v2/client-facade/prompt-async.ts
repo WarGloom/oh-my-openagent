@@ -1,6 +1,7 @@
 import type { V2ModelRef, V2PluginContext } from "../context-types"
 import { settle } from "./v1-result"
 import { setSessionSystem } from "../session-system"
+import { normalizeAction } from "../config-bridge"
 
 type PromptPart = {
   readonly type: string
@@ -16,7 +17,7 @@ export type PromptAsyncArgs = {
     readonly model?: { readonly providerID: string; readonly modelID: string }
     readonly variant?: string
     readonly noReply?: boolean
-    readonly tools?: unknown
+    readonly tools?: Readonly<Record<string, boolean>>
     readonly system?: string
     readonly parts?: ReadonlyArray<PromptPart>
   }
@@ -65,7 +66,6 @@ export function createPromptAsync(context: V2PluginContext, report: Report) {
     settle(async () => {
       const sessionID = args.path.id
       const body = args.body ?? {}
-      if (body.tools !== undefined) report("prompt.tools", 'promptAsync: per-prompt "tools" restrictions are not supported on OpenCode 2.x and were ignored')
       const parts = body.parts ?? []
       const files = parts.flatMap((part) => {
         if (part.type !== "file") return []
@@ -79,6 +79,17 @@ export function createPromptAsync(context: V2PluginContext, report: Report) {
       if (textParts.length === 0 && files.length === 0) throw new Error("promptAsync needs at least one text or file part on OpenCode 2.x")
 
       await switchIfNeeded(context, sessionID, body)
+      if (body.tools !== undefined) {
+        const current = await context.session.get({ sessionID })
+        const rules = new Map(Object.entries(body.tools).map(([name, enabled]) => [
+          name === "call_omo_agent" ? "subagent" : normalizeAction(name), enabled,
+        ]))
+        const permissions = (current.permissions ?? []).filter((rule) => rule.resource !== "*" || !rules.has(rule.action))
+        await context.session.update({ sessionID, permissions: [
+          ...permissions,
+          ...Array.from(rules, ([action, enabled]) => ({ action, resource: "*", effect: enabled ? "allow" as const : "deny" as const })),
+        ] })
+      }
       if (body.system !== undefined) await setSessionSystem(context, sessionID, body.system)
       const input = { sessionID, text: textParts.map((part) => part.text).join("\n\n"), ...(files.length === 0 ? {} : { files }), delivery: "queue" as const, resume: body.noReply !== true }
       if (files.length === 0 && textParts.every((part) => part.synthetic === true)) await context.session.synthetic(input)
