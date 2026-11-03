@@ -1,0 +1,95 @@
+import type { V2Event, V2ModelRef, V2PluginContext } from "./context-types"
+import { isRecord } from "../shared/record-type-guard"
+
+type Request = {
+  readonly agent: string
+  readonly model: V2ModelRef
+  progressed: boolean
+  unsafe: boolean
+  waiting: boolean
+  timer?: ReturnType<typeof setTimeout>
+  hard?: ReturnType<typeof setTimeout>
+}
+
+export function createNativeProgressWatchdog(deps: {
+  readonly context: V2PluginContext
+  readonly timeouts: { readonly firstProgressMs: number; readonly stallMs: number; readonly hardMs: number }
+  readonly recover: (sessionID: string, request: { readonly agent: string; readonly model: V2ModelRef }, current: () => boolean) => Promise<void>
+  readonly warn: (error: unknown) => void
+}) {
+  const requests = new Map<string, Request>()
+  const recovering = new Map<string, Request>()
+  let disposed = false
+  const clear = (sessionID: string) => {
+    const request = requests.get(sessionID)
+    clearTimeout(request?.timer)
+    clearTimeout(request?.hard)
+    requests.delete(sessionID)
+  }
+  const expire = async (sessionID: string, request: Request) => {
+    if (requests.get(sessionID) !== request || disposed) return
+    clear(sessionID)
+    recovering.set(sessionID, request)
+    try {
+      await deps.context.session.interrupt({ sessionID, resume: false })
+      if (!request.unsafe && !disposed && recovering.get(sessionID) === request) {
+        await deps.recover(sessionID, request, () => !disposed && recovering.get(sessionID) === request)
+      }
+    } finally {
+      if (recovering.get(sessionID) === request) recovering.delete(sessionID)
+    }
+  }
+  const arm = (sessionID: string, request: Request) => {
+    clearTimeout(request.timer)
+    if (request.waiting) return
+    const ms = request.progressed ? deps.timeouts.stallMs : deps.timeouts.firstProgressMs
+    if (ms > 0) request.timer = setTimeout(() => expire(sessionID, request).catch(deps.warn), ms)
+    if (deps.timeouts.hardMs > 0 && !request.hard) {
+      request.hard = setTimeout(() => expire(sessionID, request).catch(deps.warn), deps.timeouts.hardMs)
+    }
+  }
+  return {
+    start(sessionID: string, agent: string, model: V2ModelRef) {
+      clear(sessionID)
+      recovering.delete(sessionID)
+      if (disposed || !Object.values(deps.timeouts).some((value) => value > 0)) return
+      const request: Request = { agent, model, progressed: false, unsafe: false, waiting: false }
+      requests.set(sessionID, request)
+      arm(sessionID, request)
+    },
+    observe(event: V2Event) {
+      const data = event.data
+      if (!isRecord(data) || typeof data.sessionID !== "string") return
+      const sessionID = data.sessionID
+      if (event.type === "session.deleted") recovering.delete(sessionID)
+      if (event.type.startsWith("session.execution.") || event.type === "session.deleted" || event.type === "session.step.ended" || event.type === "session.step.failed" || event.type === "session.compaction.started") {
+        clear(sessionID)
+        return
+      }
+      const request = requests.get(sessionID)
+      if (!request) return
+      if (event.type === "permission.asked") {
+        request.waiting = true
+        clearTimeout(request.timer)
+        clearTimeout(request.hard)
+        request.hard = undefined
+        return
+      }
+      if (event.type === "permission.replied") {
+        request.waiting = false
+        arm(sessionID, request)
+        return
+      }
+      if (event.type.startsWith("session.tool.")) request.unsafe = true
+      if (event.type.startsWith("session.text.") || event.type.startsWith("session.reasoning.") || event.type.startsWith("session.tool.") || event.type === "session.step.streamed") {
+        request.progressed = true
+        arm(sessionID, request)
+      }
+    },
+    dispose() {
+      disposed = true
+      for (const sessionID of requests.keys()) clear(sessionID)
+      recovering.clear()
+    },
+  }
+}
