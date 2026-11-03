@@ -21,6 +21,7 @@ import type {
   V2McpEditor,
   V2McpServerConfig,
   V2ModelInfo,
+  V2PermissionAssertInput,
   V2PluginContext,
   V2ProviderInfo,
   V2Registration,
@@ -40,6 +41,8 @@ export type FakeContextOptions = {
   readonly sessionMessages?: ReadonlyArray<V2SessionMessage>
   /** Fields merged over the fake session info returned by `session.get`. */
   readonly sessionInfo?: Partial<V2SessionInfo>
+  /** When set, the fake `permission.assert` calls this; throw to simulate a denial. */
+  readonly permissionAssert?: (input: V2PermissionAssertInput) => Promise<void>
 }
 
 export type FakeSessionCall =
@@ -68,6 +71,8 @@ export type FakePluginContext = {
   readonly commandReloadCount: () => number
   /** Everything the plugin asked the session API to do, in order. */
   readonly sessionCalls: ReadonlyArray<FakeSessionCall>
+  /** Every `permission.assert` input the plugin passed, in order. */
+  readonly permissionCalls: ReadonlyArray<V2PermissionAssertInput>
   readonly reloadCount: () => number
   /** Delivers an event to every active `event.subscribe()` loop. */
   readonly emit: (event: V2Event) => void
@@ -266,6 +271,7 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
     },
   })
 
+  const permissionCalls: V2PermissionAssertInput[] = []
   const context: V2PluginContext = {
     app: { name: "cli", version: "2.0.28", channel: "latest" },
     location: {
@@ -419,6 +425,12 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
       }) as V2PluginContext["session"]["hook"],
     },
     event: { subscribe },
+    permission: {
+      assert: async (input) => {
+        permissionCalls.push(input)
+        if (options.permissionAssert) await options.permissionAssert(input)
+      },
+    },
   }
 
   return {
@@ -432,6 +444,7 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
     builtCommands: () => commandsBuilt,
     commandReloadCount: () => commandReloads,
     sessionCalls,
+    permissionCalls,
     reloadCount: () => reloads,
     emit: (event) => {
       for (const push of subscribers) push(event)

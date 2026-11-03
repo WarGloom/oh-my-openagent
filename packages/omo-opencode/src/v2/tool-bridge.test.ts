@@ -1,7 +1,7 @@
 import { describe, expect, it, mock } from "bun:test"
 import { tool, type ToolContext } from "@opencode-ai/plugin/tool"
 import { normalizeToolArgSchemas } from "../plugin/normalize-tool-arg-schemas"
-import type { V2ToolExecuteContext, V2ToolInfo } from "./context-types"
+import type { V2PermissionAssertInput, V2PermissionDomain, V2ToolExecuteContext, V2ToolInfo } from "./context-types"
 import { toPlainJsonSchema, toV2Tool, type ToolBridgeDeps } from "./tool-bridge"
 import { publishToolMetadata, recoverToolMetadata } from "../features/tool-metadata-store"
 
@@ -75,6 +75,31 @@ describe("toV2Tool", () => {
       expect(info.name).toBe("greet")
       expect(info.description).toBe("Greets someone")
       expect(info.options).toEqual({ codemode: false })
+    })
+
+    it("#when the tool is task #then only it declares the subagent permission action and call_omo_agent keeps its own", () => {
+      // given / when / then
+      expect(
+        toV2Tool(
+          "task",
+          greetTool(async () => "hi"),
+          deps,
+        ).options,
+      ).toEqual({ codemode: false, permission: "subagent" })
+      expect(
+        toV2Tool(
+          "call_omo_agent",
+          greetTool(async () => "hi"),
+          deps,
+        ).options,
+      ).toEqual({ codemode: false })
+      expect(
+        toV2Tool(
+          "grep",
+          greetTool(async () => "hi"),
+          deps,
+        ).options,
+      ).toEqual({ codemode: false })
     })
 
     it("#when converted #then the input is plain JSON Schema built with this package's zod", () => {
@@ -435,7 +460,7 @@ describe("toV2Tool", () => {
       expect(warn.mock.calls.some((call) => call[0].includes("stream closed"))).toBe(true)
     })
 
-    it("#when the tool asks for permission #then it resolves and warns that 2.x does not enforce it", async () => {
+    it("#when the tool asks for permission but no host permission domain exists #then it resolves and warns it was not enforced", async () => {
       // given
       const warn = mock((_message: string) => {})
       const info = toV2Tool(
@@ -453,6 +478,59 @@ describe("toV2Tool", () => {
       // then
       expect(result).toEqual({ content: "ok" })
       expect(warn).toHaveBeenCalledTimes(1)
+    })
+
+    it("#when the tool asks for permission and a host permission domain exists #then it asserts with the normalized action, resources and save list", async () => {
+      // given
+      const calls: V2PermissionAssertInput[] = []
+      const permission: V2PermissionDomain = { assert: async (input) => void calls.push(input) }
+      const info = toV2Tool(
+        "monitor_start",
+        greetTool(async (_args, context) => {
+          await context.ask({ permission: "bash", patterns: ["ls"], always: ["ls"], metadata: { command: "ls" } })
+          return "ok"
+        }),
+        { ...deps, permission },
+      )
+
+      // when
+      await info.execute({ name: "Ada" }, createExecuteContext({ sessionID: "ses_9", agent: "atlas" }))
+
+      // then
+      expect(calls).toEqual([
+        {
+          sessionID: "ses_9",
+          agent: "atlas",
+          action: "shell",
+          resources: ["ls"],
+          save: ["ls"],
+          metadata: { command: "ls" },
+        },
+      ])
+    })
+
+    it("#when the host denies the permission #then ask rejects so the caller propagates the denial", async () => {
+      // given
+      const denial = new Error("denied")
+      const permission: V2PermissionDomain = {
+        assert: async () => {
+          throw denial
+        },
+      }
+      const info = toV2Tool(
+        "skill",
+        greetTool(async (_args, context) => {
+          await context.ask({ permission: "skill", patterns: ["git-master"], always: ["git-master"], metadata: {} })
+          return "ok"
+        }),
+        { ...deps, permission },
+      )
+
+      // when
+      const result = info.execute({ name: "Ada" }, createExecuteContext())
+
+      // then
+      await expect(result).rejects.toBe(denial)
     })
   })
 })
