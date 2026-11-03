@@ -3,12 +3,14 @@ import type { V2PluginContext } from "../context-types"
 import { createAppNamespace } from "./app-namespace"
 import { createConfigNamespace } from "./config-namespace"
 import { withFallback } from "./fallback"
-import { createProviderNamespace } from "./provider-namespace"
+import { createProviderNamespace, toV1Model } from "./provider-namespace"
 import { createSessionNamespace, type SessionNamespaceDeps } from "./session-namespace"
 import { bindTodoWriter } from "../session-todos"
 import type { V2ToastEmitter } from "../toast-channel"
+import { settle, type V1Result } from "./v1-result"
 
 type V1Client = PluginInput["client"]
+type FacadeClient = V1Client & { readonly model: { readonly list: () => Promise<V1Result<Array<ReturnType<typeof toV1Model> & { provider: string }>>> } }
 
 export type ClientFacadeDeps = SessionNamespaceDeps & { readonly emitToast?: V2ToastEmitter }
 
@@ -17,9 +19,12 @@ export type ClientFacadeDeps = SessionNamespaceDeps & { readonly emitToast?: V2T
  * methods return the 1.x response shape; every method not mapped yet rejects with the exact
  * operation name (see fallback.ts).
  */
-export function createClientFacade(context: V2PluginContext, deps: ClientFacadeDeps): V1Client {
+export function createClientFacade(context: V2PluginContext, deps: ClientFacadeDeps): FacadeClient {
   const client = withFallback(["client"], {
     provider: withFallback(["client", "provider"], createProviderNamespace(context)),
+    model: withFallback(["client", "model"], {
+      list: () => settle(async () => (await context.model.list()).data.map((model) => ({ ...toV1Model(model), provider: model.providerID }))),
+    }),
     config: withFallback(["client", "config"], createConfigNamespace(context)),
     app: withFallback(["client", "app"], createAppNamespace(context)),
     session: withFallback(["client", "session"], createSessionNamespace(context, deps)),
@@ -32,7 +37,7 @@ export function createClientFacade(context: V2PluginContext, deps: ClientFacadeD
         return { data: true }
       },
     }),
-  }) as unknown as V1Client
+  }) as unknown as FacadeClient
   bindTodoWriter(client, context)
   return client
 }
