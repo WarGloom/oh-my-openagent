@@ -346,7 +346,7 @@ describe("createSessionNamespace", () => {
       expect(fake.sessionCalls.filter((call) => call.kind === "prompt")).toHaveLength(2)
       const warnings = warn.mock.calls.map((call) => call[0])
       expect(warnings.filter((message) => message.includes("tools"))).toHaveLength(1)
-      expect(warnings.filter((message) => message.includes("system"))).toHaveLength(1)
+      expect(warnings.filter((message) => message.includes("system"))).toHaveLength(0)
       expect(warnings.filter((message) => message.includes("file"))).toHaveLength(1)
     })
 
