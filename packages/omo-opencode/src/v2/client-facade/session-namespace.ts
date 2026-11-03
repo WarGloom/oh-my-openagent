@@ -113,6 +113,27 @@ export function createSessionNamespace(context: V2PluginContext, deps: SessionNa
     },
 
     get: (args: SessionRef) => settle(async () => toV1Session(await context.session.get({ sessionID: args.path.id }))),
+    update: (
+      args: SessionRef & {
+        readonly body?: { readonly title?: string; readonly permission?: CreateBody["permission"] }
+      },
+    ) =>
+      settle(async () => {
+        await context.session.update({
+          sessionID: args.path.id,
+          ...(args.body?.title === undefined ? {} : { title: args.body.title }),
+          ...(args.body?.permission === undefined
+            ? {}
+            : {
+                permissions: args.body.permission.map((rule) => ({
+                  action: normalizeAction(rule.permission),
+                  resource: rule.pattern,
+                  effect: rule.action,
+                })),
+              }),
+        })
+        return toV1Session(await context.session.get({ sessionID: args.path.id }))
+      }),
 
     create: (args: { readonly body?: CreateBody; readonly query?: { readonly directory?: string } } = {}) =>
       settle(async () => {
