@@ -8,6 +8,8 @@ import type {
 } from "./context-types"
 import { createFakePluginContext } from "./fake-plugin-context"
 import { installSessionHooks } from "./session-hooks"
+import { createChatParamsHandler } from "../plugin/chat-params"
+import { setSessionPromptParams, clearSessionPromptParams } from "../shared/session-prompt-params-state"
 import { createSystemTransformHandler } from "../plugin/system-transform"
 import { clearSisyphusRuntimePromptContext, setSisyphusRuntimePromptContext } from "../agents/sisyphus-runtime-prompt-reconciler"
 
@@ -97,6 +99,27 @@ describe("installSessionHooks", () => {
   })
 
   describe("#given a chat.params hook", () => {
+    it("#when native model limits and stored request settings apply #then the real handler normalizes the host request", async () => {
+      // given
+      const fake = createFakePluginContext({
+        models: [{ ...MODEL, modelID: MODEL.id, name: MODEL.id, status: "active", enabled: true,
+          capabilities: { tools: true, input: ["text"], output: ["text"] }, variants: [{ id: "high" }],
+          limit: { context: 64_000, output: 2_048 } }],
+        providers: [{ id: MODEL.providerID, name: "Anthropic", activation: "auto" }],
+      })
+      setSessionPromptParams("ses_1", { maxOutputTokens: 9_000, options: { customSetting: "selected" } })
+      const dispose = await installSessionHooks(fake.context, { "chat.params": createChatParamsHandler() }, { warn: () => {} })
+      try {
+        // when
+        const event = await fake.triggerContext(contextEvent({ options: { maxTokens: 12_000, hostSetting: "retained" } }))
+        // then
+        expect(event.options).toMatchObject({ maxTokens: 2_048, customSetting: "selected", hostSetting: "retained" })
+      } finally {
+        clearSessionPromptParams("ses_1")
+        await dispose()
+      }
+    })
+
     it("#when the context is built #then temperature, maxTokens and extra options flow into the request options", async () => {
       // given
       const fake = createFakePluginContext()

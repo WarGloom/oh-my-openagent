@@ -107,8 +107,10 @@ export type V2ModelInfo = {
   readonly name: string
   readonly status: "alpha" | "beta" | "deprecated" | "active"
   readonly enabled: boolean
-  readonly capabilities: { readonly tools: boolean; readonly input: ReadonlyArray<string>; readonly output: ReadonlyArray<string> }
-  readonly variants: ReadonlyArray<{ readonly id: string }>
+  readonly package?: string
+  readonly settings?: Readonly<Record<string, unknown>>
+  readonly capabilities: { readonly tools: boolean; readonly input: ReadonlyArray<string>; readonly output: ReadonlyArray<string>; readonly temperature?: boolean }
+  readonly variants: ReadonlyArray<{ readonly id: string; readonly settings?: Readonly<Record<string, unknown>> }>
   readonly limit: { readonly context: number; readonly input?: number; readonly output: number }
 }
 
@@ -116,6 +118,8 @@ export type V2ProviderInfo = {
   readonly id: string
   readonly name: string
   readonly activation: "auto" | "enabled" | "disabled"
+  readonly package?: string
+  readonly settings?: Readonly<Record<string, unknown>>
 }
 
 export type V2PermissionRule = {
