@@ -1,6 +1,7 @@
 import { getAgentConfigKey } from "../../shared/agent-display-names"
 import { isRetryableError } from "./error-classifier"
-import { flattenToFallbackModelStrings } from "../../shared/model-resolver"
+import { flattenToFallbackModelStrings, normalizeFallbackModels } from "../../shared/model-resolver"
+import type { FallbackModelObject, FallbackModels } from "../../config/schema/fallback-models"
 import { parseModelString } from "../../shared/model-string-parser"
 import { transformModelForProvider } from "../../shared/provider-model-id-transform"
 import { log } from "../../shared/logger"
@@ -39,18 +40,49 @@ export type NativeFallbackInput = {
   readonly isAvailable?: (model: { providerID: string; modelID: string }) => boolean
 }
 
+function nativeModelChain(
+  config: Partial<FallbackModelObject> & { fallback_models?: FallbackModels; models?: FallbackModels },
+) {
+  const fallbacks = normalizeFallbackModels(config.fallback_models ?? config.models)
+  if (!config.model) return fallbacks
+  const entries = [
+    { model: config.model, reasoning: config.reasoning ?? config.variant, reasoningEffort: config.reasoningEffort },
+    ...(fallbacks ?? []),
+  ]
+  const models = flattenToFallbackModelStrings(entries) ?? []
+  return entries.filter(
+    (_entry, index) => models.findIndex((model) => areRuntimeModelsEquivalent(model, models[index])) === index,
+  )
+}
+
 export function createNativeFallbackController(deps: HookDeps) {
   let active = false
   const promptParamSessions = new Set<string>()
-  // The native adapter accepts unified category `models` without changing V1's legacy resolution.
+  // Native sessions can start outside OMO's model resolver; retain their untried configured primary.
+  const categories = Object.fromEntries(
+    Object.entries(deps.pluginConfig?.categories ?? {}).map(([key, value]) => [
+      key,
+      { ...value, fallback_models: nativeModelChain(value) },
+    ]),
+  )
   const pluginConfig = deps.pluginConfig && {
     ...deps.pluginConfig,
-    categories: Object.fromEntries(
-      Object.entries(deps.pluginConfig.categories ?? {}).map(([key, value]) => [
+    agents: Object.fromEntries(
+      Object.entries(deps.pluginConfig.agents ?? {}).map(([key, value]) => [
         key,
-        { ...value, fallback_models: value.fallback_models ?? value.models },
+        value && {
+          ...value,
+          fallback_models: nativeModelChain({
+            ...value,
+            fallback_models:
+              value.fallback_models ??
+              value.models ??
+              (value.category ? categories[value.category]?.fallback_models : undefined),
+          }),
+        },
       ]),
     ),
+    categories,
   }
 
   return {
