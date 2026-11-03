@@ -30,6 +30,7 @@ export async function installHooks(
       directory: context.location.directory,
       worktree: context.location.project.canonical,
       warn: deps.warn,
+      permission: context.permission,
     }
     registrations.push(
       await context.tool.transform((editor) => {
