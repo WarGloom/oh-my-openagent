@@ -225,12 +225,13 @@ describe("installToolHooks", () => {
   })
 
   describe("#given the registrations", () => {
-    it("#when no tool hooks are defined #then nothing is registered", async () => {
+    it("#when disposed without V1 tool hooks #then the native registrations are removed", async () => {
       // given
       const fake = createFakePluginContext()
 
       // when
-      await installToolHooks(fake.context, {} as Hooks)
+      const dispose = await installToolHooks(fake.context, {} as Hooks)
+      await dispose()
 
       // then
       expect(fake.toolHookCount()).toBe(0)
