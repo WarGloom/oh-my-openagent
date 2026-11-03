@@ -110,26 +110,25 @@ export function createPromptAsync(context: V2PluginContext, report: Report) {
       await switchIfNeeded(context, sessionID, body)
       if (body.tools !== undefined) {
         const current = await context.session.get({ sessionID })
-        const rules = new Map(
-          Object.entries(body.tools).map(([name, enabled]) => [
-            name === "call_omo_agent" ? "subagent" : normalizeAction(name),
-            enabled,
-          ]),
+        const denied = new Set(
+          Object.entries(body.tools)
+            .filter(([, enabled]) => !enabled)
+            .map(([name]) => (name === "call_omo_agent" ? "subagent" : normalizeAction(name))),
         )
-        const permissions = (current.permissions ?? []).filter(
-          (rule) => rule.resource !== "*" || !rules.has(rule.action),
-        )
-        await context.session.update({
-          sessionID,
-          permissions: [
-            ...permissions,
-            ...Array.from(rules, ([action, enabled]) => ({
-              action,
-              resource: "*",
-              effect: enabled ? ("allow" as const) : ("deny" as const),
-            })),
-          ],
-        })
+        if (denied.size > 0) {
+          const permissions = current.permissions ?? []
+          const additional = Array.from(denied).filter((action) => {
+            const last = permissions.findLast((rule) => rule.action === action || /[*?\[]/.test(rule.action))
+            return last?.action !== action || last.resource !== "*" || last.effect !== "deny"
+          })
+          await context.session.update({
+            sessionID,
+            permissions: [
+              ...permissions,
+              ...additional.map((action) => ({ action, resource: "*", effect: "deny" as const })),
+            ],
+          })
+        }
       }
       if (body.system !== undefined) await setSessionSystem(context, sessionID, body.system)
       const input = {
