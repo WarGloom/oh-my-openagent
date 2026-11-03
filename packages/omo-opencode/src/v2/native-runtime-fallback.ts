@@ -6,6 +6,7 @@ import { SessionCategoryRegistry } from "../shared/session-category-registry"
 import { filterProvidersServingModel } from "../features/background-agent/fallback-provider-model-filter"
 import { log } from "../shared/logger"
 import type { V2Event, V2ModelRef, V2PluginContext, V2StructuredError } from "./context-types"
+import { createNativeProgressWatchdog } from "./native-progress-watchdog"
 
 const controllers = new WeakMap<Hooks, NativeFallbackController>()
 
@@ -74,6 +75,46 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
   const controller = controllers.get(hooks)
   if (!controller) return undefined
   const recoveredFailures = new Map<string, string>()
+  const watchdog = createNativeProgressWatchdog({
+    context,
+    timeouts: controller.timeouts,
+    warn: (error) =>
+      log("[runtime-fallback] Native watchdog failed", {
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    recover: async (sessionID, request, current) => {
+      const host = await hostModels(context)
+      if (!current()) return
+      await controller.recover(
+        {
+          sessionID,
+          agent: request.agent,
+          model: `${request.model.providerID}/${request.model.id}`,
+          reason: "timeout",
+          error: {
+            name: "RequestTimeoutError",
+            data: { message: "Native request made no progress before its configured deadline" },
+          },
+          isAvailable: host.isAvailable,
+        },
+        async (payload) => {
+          const model = host.modelRef(sessionID, payload)
+          await context.session.switchModel({ sessionID, model })
+          if (current())
+            await context.session.synthetic({
+              sessionID,
+              text: "Continue the existing task after the model timeout. Preserve completed work.",
+              delivery: "steer",
+              resume: true,
+            })
+          return { ...payload, variant: model.variant }
+        },
+      )
+    },
+  })
+  const watchdogRegistration = await context.session.hook("model.request", (event) => {
+    if (event.kind === "primary") watchdog.start(event.sessionID, event.agent, event.model)
+  })
   const recover = async (
     input: {
       sessionID: string
@@ -146,6 +187,7 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
 
   return {
     async beforeEvent(event: V2Event): Promise<boolean> {
+      watchdog.observe(event)
       const data = event.data
       if (typeof data !== "object" || data === null || !("sessionID" in data) || typeof data.sessionID !== "string")
         return false
@@ -199,6 +241,8 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
       )
     },
     async dispose() {
+      watchdog.dispose()
+      await watchdogRegistration.dispose()
       controller.dispose()
       recoveredFailures.clear()
       await registration.dispose()
