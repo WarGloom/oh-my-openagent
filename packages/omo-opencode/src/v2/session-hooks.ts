@@ -56,12 +56,37 @@ interface V1SessionHooks {
   "experimental.session.compacting"?(input: { sessionID: string }, output: V1CompactingOutput): Promise<void> | void
 }
 
-function requestInput(sessionID: string, agent: string, model: V2ModelRef): V1ChatRequestInput {
+async function requestInput(
+  context: V2PluginContext,
+  event: { readonly sessionID: string; readonly agent: string; readonly model: V2ModelRef },
+): Promise<V1ChatRequestInput> {
+  const { sessionID, agent, model } = event
+  const [models, providers] = await Promise.all([context.model.list(), context.provider.list()])
+  const info = models.data.find((entry) => entry.providerID === model.providerID && entry.id === model.id)
+  const provider = providers.data.find((entry) => entry.id === model.providerID)
   return {
     sessionID,
     agent,
-    model: { providerID: model.providerID, modelID: model.id, id: model.id },
-    provider: { source: "api", info: {}, options: {} },
+    model: {
+      ...info,
+      providerID: model.providerID,
+      modelID: model.id,
+      id: model.id,
+      ...(info
+        ? {
+            variants: Object.fromEntries(info.variants.map((variant) => [variant.id, variant.settings ?? {}])),
+            capabilities: { ...info.capabilities, toolcall: info.capabilities.tools },
+            api: { npm: info.package ?? provider?.package },
+          }
+        : {}),
+    },
+    provider: {
+      ...provider,
+      id: model.providerID,
+      source: "api",
+      info: provider ?? { id: model.providerID },
+      options: provider?.settings ?? {},
+    },
     message: {
       id: "",
       sessionID,
@@ -69,6 +94,7 @@ function requestInput(sessionID: string, agent: string, model: V2ModelRef): V1Ch
       time: { created: Date.now() },
       agent,
       model: { providerID: model.providerID, modelID: model.id },
+      ...(model.variant === undefined ? {} : { variant: model.variant }),
     },
   }
 }
@@ -78,9 +104,17 @@ async function registerChatParams(
   handler: NonNullable<V1SessionHooks["chat.params"]>,
 ): Promise<V2Registration> {
   return context.session.hook("context", async (event) => {
-    const output: V1ChatParamsOutput = { options: {} }
-    await handler(requestInput(event.sessionID, event.agent, event.model), output)
     const options = event.options
+    const { temperature, topP, topK, maxTokens, ...providerOptions } = options
+    const output: V1ChatParamsOutput = {
+      options: { ...providerOptions },
+      ...(typeof temperature === "number" ? { temperature } : {}),
+      ...(typeof topP === "number" ? { topP } : {}),
+      ...(typeof topK === "number" ? { topK } : {}),
+      ...(typeof maxTokens === "number" ? { maxOutputTokens: maxTokens } : {}),
+    }
+    await handler(await requestInput(context, event), output)
+    for (const key of Object.keys(options)) delete options[key]
     if (typeof output.temperature === "number" && Number.isFinite(output.temperature))
       options.temperature = output.temperature
     if (typeof output.topP === "number" && Number.isFinite(output.topP)) options.topP = output.topP
@@ -99,7 +133,7 @@ async function registerChatHeaders(
   // covers the primary, title, compaction and generate request kinds.
   return context.session.hook("model.request", async (event) => {
     const output: V1ChatHeadersOutput = { headers: {} }
-    await handler(requestInput(event.sessionID, event.agent, event.model), output)
+    await handler(await requestInput(context, event), output)
     for (const [key, value] of Object.entries(output.headers)) if (typeof value === "string") event.headers[key] = value
   })
 }
