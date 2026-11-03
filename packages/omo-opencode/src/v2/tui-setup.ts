@@ -7,18 +7,24 @@ import { TeamSessionCache } from "../features/tui-sidebar/team-session-cache"
 import type { SidebarView } from "../features/tui-sidebar/state-types"
 import { log } from "../shared/logger"
 import { handleTuiPollError, materializeReactive, readView } from "../tui"
+import { toastSchema } from "./toast-channel"
 
 export type V2TuiSetup = Plugin.Definition["setup"]
 
 export const setupV2Tui: V2TuiSetup = async (ctx) => {
   log("[tui] OpenCode 2.x TUI detected; BTW is not ported to the 2.x TUI API yet")
   const directory = ctx.location?.directory ?? ctx.data.location.default().directory
-  if ((await validatePluginConfig(directory)).config.tui?.sidebar?.enabled === false) return
-
-  const [solid, { createComputed, createSignal }] = await Promise.all([
+  const sidebarEnabled = (await validatePluginConfig(directory)).config.tui?.sidebar?.enabled !== false
+  const runtime = sidebarEnabled ? await Promise.all([
     import("@opentui/solid"),
     import("solid-js"),
-  ])
+  ]) : undefined
+  const offToast = ctx.data.on("rpc.omo.toast", (event) => {
+    const toast = toastSchema.safeParse(event.data)
+    if (toast.success) ctx.ui.toast.show(toast.data)
+  })
+  if (!runtime) return offToast
+  const [solid, { createComputed, createSignal }] = runtime
   const cache = new TeamSessionCache()
   const [view, setView] = createSignal<SidebarView>({ kind: "idle", roster: { kind: "empty" } })
   const [collapsed, setCollapsed] = createSignal(false)
@@ -78,6 +84,7 @@ export const setupV2Tui: V2TuiSetup = async (ctx) => {
     clearInterval(timer)
     offIdle()
     offError()
+    offToast()
     unregister()
   }
 }
