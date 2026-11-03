@@ -7,7 +7,7 @@ import { isPrometheusAgent } from "./agent-matcher"
 import { resolveAllowedFile } from "./path-policy"
 import { parsePatch } from "./vendor/opencode-patch-parser"
 
-const TASK_TOOLS = ["task", "call_omo_agent"]
+const TASK_TOOLS = ["task", "call_omo_agent", "subagent"]
 
 export interface PrometheusExecutionArguments {
   readonly original: Record<string, unknown>
