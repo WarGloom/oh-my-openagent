@@ -20,6 +20,7 @@ import { loadProjectAgents, loadUserAgents } from "../features/claude-code-agent
 import { BUILTIN_SUBAGENT_TYPES } from "../tools/delegate-task/builtin-subagent-types"
 import { isDirectSubagentTypeDisabled } from "../tools/delegate-task/builtin-subagent-types"
 import { isPlanAgent } from "../tools/delegate-task/constants"
+import { isV2PluginInput } from "../v2/create-plugin-input"
 
 export function createCoreTools(args: {
   readonly ctx: PluginContext
@@ -143,11 +144,13 @@ export function createCoreTools(args: {
   })
 
   const tools: ToolsRecord = {
-    ...factories.createGrepTools(ctx),
-    ...factories.createGlobTools(ctx),
     ...factories.createSessionManagerTools(ctx),
     ...backgroundTools,
     call_omo_agent: callOmoAgent,
+  }
+  // On OpenCode 2.x the host owns grep/glob (permission + external-directory checks); do not shadow them.
+  if (!isV2PluginInput(ctx)) {
+    Object.assign(tools, factories.createGrepTools(ctx), factories.createGlobTools(ctx))
   }
   if (isMultimodalLookerEnabled) {
     tools.look_at = factories.createLookAt(ctx)
@@ -156,7 +159,8 @@ export function createCoreTools(args: {
   tools.skill_mcp = skillMcpTool
   tools.skill = skillTool
 
-  if (pluginConfig.goal?.enabled) {
+  // On 2.x the host goal (command, tools, hook) stays reachable; OMO does not register its own.
+  if (pluginConfig.goal?.enabled && !isV2PluginInput(ctx)) {
     const goalController: GoalController = createGoalController({ projectDir: ctx.directory })
     Object.assign(tools, createGoalTools({
       controller: goalController,

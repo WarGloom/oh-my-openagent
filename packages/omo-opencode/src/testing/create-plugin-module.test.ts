@@ -121,15 +121,17 @@ function createTestPluginModule(overrides: Parameters<typeof createPluginModule>
 }
 
 describe("createPluginModule()", () => {
-  it("#given V2 and V1 plugin inputs #when hooks are created #then only V2 disables duplicate directory agents injection", async () => {
+  it("#given V2 and V1 plugin inputs #when hooks are created #then only V2 disables the host-owned directory agents injection and goal hook", async () => {
     // given
     const directory = mkdtempSync(join(tmpdir(), "omo-native-agents-config-"))
     const previousConfig = process.env.OPENCODE_CONFIG_DIR
     process.env.OPENCODE_CONFIG_DIR = directory
     const enabled: boolean[] = []
+    const goalEnabled: boolean[] = []
     const plugin = createTestPluginModule({
       createHooks: (args) => {
         enabled.push(args.isHookEnabled("directory-agents-injector"))
+        goalEnabled.push(args.isHookEnabled("goal"))
         return mockCreateHooks() as never
       },
       initLiveServerRoute: () => {},
@@ -145,6 +147,7 @@ describe("createPluginModule()", () => {
       const v1 = await plugin.server({ ...input })
       // then
       expect(enabled).toEqual([false, true])
+      expect(goalEnabled).toEqual([false, true])
       await v2.dispose?.()
       await v1.dispose?.()
     } finally {

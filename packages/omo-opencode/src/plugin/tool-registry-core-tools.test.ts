@@ -5,6 +5,9 @@ import type { ToolRegistryFactories } from "./tool-registry-factories"
 
 import { unsafeTestValue } from "../../../../test-support/unsafe-test-value"
 import { createCoreTools } from "./tool-registry-core-tools"
+import { createFakePluginContext } from "../v2/fake-plugin-context"
+import { createPluginInput } from "../v2/create-plugin-input"
+import { createSessionTracker } from "../v2/session-tracker"
 
 const fakeTool = tool({
   description: "fake tool",
@@ -162,5 +165,38 @@ describe("#given core skill tools are registered", () => {
     })
 
     expect(createDelegateTask.mock.calls[0]?.[0].taskCleanupDelayMs).toBe(120000)
+  })
+})
+
+describe("#given the plugin runs on OpenCode 2.x (a V2 plugin input)", () => {
+  function registerTools(ctx: Parameters<typeof createCoreTools>[0]["ctx"]) {
+    return createCoreTools({
+      ctx,
+      pluginConfig: unsafeTestValue({ disabled_agents: ["multimodal-looker"], goal: { enabled: true } }),
+      managers: unsafeTestValue({ backgroundManager: {}, tmuxSessionManager: {}, skillMcpManager: {}, modelFallbackControllerAccessor: {} }),
+      skillContext: { mergedSkills: [], availableSkills: [], browserProvider: "playwright", disabledSkills: new Set() },
+      availableCategories: [],
+      factories: { ...createFactories(() => fakeTool), createGrepTools: () => ({ grep: fakeTool }), createGlobTools: () => ({ glob: fakeTool }) },
+    })
+  }
+
+  test("#when registering core tools #then grep, glob and goal tools are omitted so the host versions win", () => {
+    // given / when
+    const tools = registerTools(createPluginInput(createFakePluginContext().context, { tracker: createSessionTracker(), warn: () => {} }))
+
+    // then
+    expect(tools.grep).toBeUndefined()
+    expect(tools.glob).toBeUndefined()
+    expect(tools.create_goal).toBeUndefined()
+  })
+
+  test("#when the same tools register on V1 #then grep, glob and goal tools are present", () => {
+    // given / when
+    const tools = registerTools(unsafeTestValue({ directory: "/tmp/project", client: {} }))
+
+    // then
+    expect(tools.grep).toBeDefined()
+    expect(tools.glob).toBeDefined()
+    expect(tools.create_goal).toBeDefined()
   })
 })
