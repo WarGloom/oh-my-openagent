@@ -3,6 +3,7 @@ import { tool, type ToolContext } from "@opencode-ai/plugin/tool"
 import { normalizeToolArgSchemas } from "../plugin/normalize-tool-arg-schemas"
 import type { V2PermissionAssertInput, V2PermissionDomain, V2ToolExecuteContext, V2ToolInfo } from "./context-types"
 import { toPlainJsonSchema, toV2Tool, type ToolBridgeDeps } from "./tool-bridge"
+import { StepEndingPermissionError } from "../shared/step-ending-permission-error"
 import { publishToolMetadata, recoverToolMetadata } from "../features/tool-metadata-store"
 
 const deps: ToolBridgeDeps = {
@@ -401,24 +402,22 @@ describe("toV2Tool", () => {
       expect(warn.mock.calls.some((call) => call[0].includes("stream closed"))).toBe(true)
     })
 
-    it("#when the tool asks for permission but no host permission domain exists #then it resolves and warns it was not enforced", async () => {
+    it("#when the tool asks for permission but no host permission domain exists #then ask rejects so it fails closed", async () => {
       // given
-      const warn = mock((_message: string) => {})
       const info = toV2Tool(
         "greet",
         greetTool(async (_args, context) => {
           await context.ask({ permission: "skill", patterns: ["x"], always: ["x"], metadata: {} })
           return "ok"
         }),
-        { ...deps, warn },
+        deps,
       )
 
       // when
-      const result = await info.execute({ name: "Ada" }, createExecuteContext())
+      const result = info.execute({ name: "Ada" }, createExecuteContext())
 
       // then
-      expect(result).toEqual({ content: "ok" })
-      expect(warn).toHaveBeenCalledTimes(1)
+      await expect(result).rejects.toThrow(/permission domain/)
     })
 
     it("#when the tool asks for permission and a host permission domain exists #then it asserts with the normalized action, resources and save list", async () => {
@@ -461,6 +460,28 @@ describe("toV2Tool", () => {
 
       // then
       await expect(result).rejects.toBe(denial)
+    })
+
+    it("#when the host plainly declines (Permission.DeclinedError) #then ask throws a step-ending error carrying the cause", async () => {
+      // given
+      const declined = Object.assign(new Error("declined"), { _tag: "Permission.DeclinedError" })
+      const permission: V2PermissionDomain = { assert: async () => { throw declined } }
+      let thrown: unknown
+      const info = toV2Tool(
+        "monitor_start",
+        greetTool(async (_args, context) => {
+          await context.ask({ permission: "bash", patterns: ["ls"], always: ["ls"], metadata: { command: "ls" } })
+          return "ok"
+        }),
+        { ...deps, permission },
+      )
+
+      // when
+      await info.execute({ name: "Ada" }, createExecuteContext()).catch((error: unknown) => { thrown = error })
+
+      // then
+      expect(thrown).toBeInstanceOf(StepEndingPermissionError)
+      expect((thrown as StepEndingPermissionError).cause).toBe(declined)
     })
   })
 })
