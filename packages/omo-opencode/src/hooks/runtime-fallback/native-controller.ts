@@ -36,6 +36,7 @@ export type NativeFallbackInput = {
   readonly agent: string | undefined
   readonly model: string | undefined
   readonly error: unknown
+  readonly reason?: "timeout"
   /** Host model availability; a model it rejects is skipped like an unreachable V1 fallback. */
   readonly isAvailable?: (model: { providerID: string; modelID: string }) => boolean
 }
@@ -92,6 +93,13 @@ export function createNativeFallbackController(deps: HookDeps) {
     get retryOnErrors() {
       return deps.config.retry_on_errors
     },
+    get timeouts() {
+      return {
+        firstProgressMs: deps.config.first_progress_timeout_seconds * 1000,
+        stallMs: deps.config.stall_timeout_seconds * 1000,
+        hardMs: deps.config.hard_timeout_seconds * 1000,
+      }
+    },
     get active() {
       return active
     },
@@ -113,7 +121,11 @@ export function createNativeFallbackController(deps: HookDeps) {
       input: NativeFallbackInput,
       apply: (model: RetryModel) => Promise<RetryModel | void>,
     ): Promise<boolean> {
-      if (!deps.config.enabled || !isRetryableError(input.error, deps.config.retry_on_errors)) return false
+      if (
+        !deps.config.enabled ||
+        (input.reason !== "timeout" && !isRetryableError(input.error, deps.config.retry_on_errors))
+      )
+        return false
       if (deps.sessionRetryInFlight.has(input.sessionID)) return false
       const agent = input.agent ? getAgentConfigKey(input.agent) : undefined
       const entries = (getRawFallbackModels(input.sessionID, agent, pluginConfig) ?? []).filter((entry) => {

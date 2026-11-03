@@ -15,6 +15,7 @@ import { bindNativeRuntimeFallback, installNativeRuntimeFallback } from "./nativ
 import { createSessionTracker } from "./session-tracker"
 import { clearAllSessionPromptParams, getSessionPromptParams } from "../shared/session-prompt-params-state"
 import type { V2ModelInfo, V2ModelRef, V2RetryHookEvent, V2SessionMessage, V2StructuredError } from "./context-types"
+import { installRuntimeFallbackTestClock } from "../hooks/runtime-fallback/test-timeout-clock.test-support"
 
 const first = { providerID: "anthropic", id: "first" }
 const second = { providerID: "anthropic", id: "second" }
@@ -55,7 +56,13 @@ function fixture(
   const input = createPluginInput(fake.context, { tracker: createSessionTracker(), warn: () => {} })
   const runtime = createRuntimeFallbackHook(input, {
     pluginConfig: OhMyOpenCodeConfigSchema.parse(config),
-    config: { enabled: true, max_fallback_attempts: 2, timeout_seconds: 0, notify_on_fallback: false },
+    config: {
+      enabled: true,
+      max_fallback_attempts: 2,
+      timeout_seconds: 0,
+      notify_on_fallback: false,
+      ...(typeof config.runtime_fallback === "object" ? config.runtime_fallback : {}),
+    },
   })
   cleanups.push(() => runtime.dispose?.())
   const hooks: Hooks = {}
@@ -83,6 +90,57 @@ async function install(f: ReturnType<typeof fixture>) {
 }
 
 describe("native runtime fallback", () => {
+  test("uses configured first-progress and stall limits to interrupt and resume with a native fallback", async () => {
+    const clock = installRuntimeFallbackTestClock()
+    cleanups.push(clock.restore)
+    const f = fixture({
+      agents: { sisyphus: { models: ["anthropic/first", "anthropic/second"] } },
+      runtime_fallback: { first_progress_timeout_seconds: 2, stall_timeout_seconds: 4 },
+    })
+    const installed = await install(f)
+    await f.fake.triggerModelRequest({
+      sessionID: "ses_main",
+      agent: "sisyphus",
+      model: first,
+      kind: "primary",
+      headers: {},
+    })
+    await clock.advanceBy(1_999)
+    expect(f.fake.sessionCalls).toEqual([])
+    await installed.beforeEvent({ type: "session.reasoning.delta", data: { sessionID: "ses_main", delta: "thinking" } })
+    await clock.advanceBy(3_999)
+    expect(f.fake.sessionCalls).toEqual([])
+    await clock.advanceBy(1)
+    expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["interrupt", "switchModel", "synthetic"])
+    expect(getNativeFallbackModel("ses_main")?.model).toEqual({ providerID: "anthropic", modelID: "second" })
+  })
+
+  test("times out a request with no progress but never replays stalled tools or permission waits", async () => {
+    const clock = installRuntimeFallbackTestClock()
+    cleanups.push(clock.restore)
+    const f = fixture({
+      agents: { sisyphus: { models: ["anthropic/first", "anthropic/second"] } },
+      runtime_fallback: { first_progress_timeout_seconds: 2, stall_timeout_seconds: 4 },
+    })
+    const installed = await install(f)
+    const request = { sessionID: "ses_main", agent: "sisyphus", model: first, kind: "primary" as const, headers: {} }
+    await f.fake.triggerModelRequest(request)
+    await clock.advanceBy(2_000)
+    expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["interrupt", "switchModel", "synthetic"])
+    await f.fake.triggerModelRequest({ ...request, sessionID: "tool" })
+    await installed.beforeEvent({ type: "session.tool.called", data: { sessionID: "tool", id: "call" } })
+    await clock.advanceBy(4_000)
+    expect(f.fake.sessionCalls.at(-1)).toEqual({ kind: "interrupt", sessionID: "tool" })
+    expect(f.fake.sessionCalls.filter((call) => call.kind === "synthetic")).toHaveLength(1)
+    await f.fake.triggerModelRequest({ ...request, sessionID: "permission" })
+    await installed.beforeEvent({ type: "permission.asked", data: { sessionID: "permission", id: "per" } })
+    await clock.advanceBy(10_000)
+    expect(f.fake.sessionCalls).toHaveLength(4)
+    await installed.beforeEvent({ type: "permission.replied", data: { sessionID: "permission", requestID: "per" } })
+    await installed.dispose()
+    await clock.advanceBy(10_000)
+    expect(f.fake.sessionCalls).toHaveLength(4)
+  })
   test.each([
     { type: "provider.rate-limit", message: "slow down", status: 429 },
     { type: "provider.auth", message: "no credential" },
