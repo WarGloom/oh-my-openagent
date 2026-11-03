@@ -406,7 +406,7 @@ describe("createSessionNamespace", () => {
       expect(fake.sessionCalls.map((call) => call.kind)).toEqual(["prompt"])
     })
 
-    it("#when the body has parts or options 2.x cannot carry #then it still sends the text and warns once per kind", async () => {
+    it("#when the body has files and system instructions #then it carries both without unsupported-part warnings", async () => {
       // given
       const { fake, session, warn } = setup()
       const body = {
@@ -427,7 +427,7 @@ describe("createSessionNamespace", () => {
       const warnings = warn.mock.calls.map((call) => call[0])
       expect(warnings.filter((message) => message.includes("tools"))).toHaveLength(1)
       expect(warnings.filter((message) => message.includes("system"))).toHaveLength(0)
-      expect(warnings.filter((message) => message.includes("file"))).toHaveLength(1)
+      expect(warnings.filter((message) => message.includes("file"))).toHaveLength(0)
     })
 
     it("#when the host rejects the prompt #then the result carries an error", async () => {
