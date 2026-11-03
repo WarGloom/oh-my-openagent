@@ -9,6 +9,10 @@ import type {
 import { createFakePluginContext } from "./fake-plugin-context"
 import { installSessionHooks } from "./session-hooks"
 import { createChatParamsHandler } from "../plugin/chat-params"
+import { createChatHeadersHandler } from "../plugin/chat-headers"
+import { createPluginInput } from "./create-plugin-input"
+import { createSessionTracker } from "./session-tracker"
+import { OMO_INTERNAL_INITIATOR_MARKER } from "../shared/internal-initiator-marker"
 import { setSessionPromptParams, clearSessionPromptParams } from "../shared/session-prompt-params-state"
 import { createSystemTransformHandler } from "../plugin/system-transform"
 import {
@@ -166,6 +170,36 @@ describe("installSessionHooks", () => {
   })
 
   describe("#given a chat.headers hook", () => {
+    it("#when Copilot requests follow an internal native message #then the real header handler marks its initiator", async () => {
+      // given
+      const model = { providerID: "github-copilot", id: "gpt-5" }
+      const fake = createFakePluginContext({
+        sessionMessages: [
+          {
+            id: "msg_internal_copilot",
+            type: "synthetic",
+            text: `continue ${OMO_INTERNAL_INITIATOR_MARKER}`,
+            time: { created: 1 },
+          },
+          { id: "msg_assistant", type: "assistant", model, agent: "Sisyphus", content: [], time: { created: 2 } },
+        ],
+      })
+      const ctx = createPluginInput(fake.context, { tracker: createSessionTracker(), warn: () => {} })
+      const dispose = await installSessionHooks(
+        fake.context,
+        { "chat.headers": createChatHeadersHandler({ ctx }) },
+        { warn: () => {} },
+      )
+      try {
+        // when
+        const event = await fake.triggerModelRequest(modelRequestEvent({ model }))
+        // then
+        expect(event.headers["x-initiator"]).toBe("agent")
+      } finally {
+        await dispose()
+      }
+    })
+
     it("#when a non-primary model request runs #then the headers are applied to it", async () => {
       // given
       const fake = createFakePluginContext()
