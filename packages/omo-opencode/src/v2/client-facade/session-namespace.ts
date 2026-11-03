@@ -1,7 +1,7 @@
 import type { V2ModelRef, V2PermissionRule, V2PluginContext } from "../context-types"
 import { normalizeAction } from "../config-bridge"
 import type { SessionTracker } from "../session-tracker"
-import { createPromptAsync } from "./prompt-async"
+import { createPromptAsync, type PromptAsyncArgs } from "./prompt-async"
 import { toV1Session } from "./to-v1-session"
 import { translateMessages } from "./translate-messages"
 import type { V1Message } from "./v1-message-types"
@@ -43,6 +43,7 @@ export function createSessionNamespace(context: V2PluginContext, deps: SessionNa
     deps.warn(message)
   }
   const worktree = context.location.project.canonical
+  const promptAsync = createPromptAsync(context, report)
 
   const loadMessages = async (sessionID: string): Promise<V1Message[]> => {
     const [info, log] = await Promise.all([context.session.get({ sessionID }), context.session.context({ sessionID })])
@@ -112,7 +113,22 @@ export function createSessionNamespace(context: V2PluginContext, deps: SessionNa
     abort: (args: SessionRef) => settle(async () => (await context.session.interrupt({ sessionID: args.path.id }), true)),
     summarize: (args: SessionRef & { readonly body?: unknown }) => settle(async () => (await context.session.compact({ sessionID: args.path.id }), true)),
 
-    promptAsync: createPromptAsync(context, report),
+    promptAsync,
+    prompt: async (args: PromptAsyncArgs): Promise<V1Result<V1Message>> => {
+      const previous = await settle(() => loadMessages(args.path.id))
+      if (previous.error !== undefined) return previous
+      const previousIDs = new Set(previous.data.map((message) => message.info.id))
+      const admitted = await promptAsync(args)
+      if (admitted.error !== undefined) return admitted
+      return settle(async () => {
+        if (args.body?.noReply !== true) await context.session.wait({ sessionID: args.path.id })
+        const messages = await loadMessages(args.path.id)
+        const response = messages.findLast((message) => !previousIDs.has(message.info.id)
+          && message.info.role === (args.body?.noReply === true ? "user" : "assistant"))
+        if (response === undefined) throw new Error("OpenCode 2.x prompt completed without a new response")
+        return response
+      })
+    },
     nativeTeamMailbox: (input: { readonly teamRunId: string; readonly memberName: string; readonly sessionID: string; readonly config: TeamModeConfig }) =>
       deliverMailboxV2({ ...input, admit: async (message) => { await context.session.synthetic({ ...message, delivery: "steer", resume: true }) } }),
 
