@@ -63,6 +63,8 @@ export type V2ToolInfo = {
 
 export type V2ToolEditor = {
   readonly add: (tool: V2ToolInfo) => void
+  readonly list: () => ReadonlyArray<V2ToolInfo & { readonly id: string }>
+  readonly update: (id: string, update: (tool: { -readonly [Key in keyof V2ToolInfo]: V2ToolInfo[Key] }) => void) => void
 }
 
 export type V2ToolContentPart = { type: string; text?: string; [key: string]: unknown }
@@ -90,6 +92,7 @@ export type V2ToolAfterEvent = {
 
 export type V2ToolDomain = {
   readonly transform: (callback: (editor: V2ToolEditor) => void) => Promise<V2Registration>
+  readonly list: () => Promise<ReadonlyArray<V2ToolInfo & { readonly id: string }>>
   readonly hook: {
     (name: "execute.before", callback: (event: V2ToolBeforeEvent) => Promise<void> | void): Promise<V2Registration>
     (name: "execute.after", callback: (event: V2ToolAfterEvent) => Promise<void> | void): Promise<V2Registration>
@@ -339,6 +342,7 @@ export type V2ContextHookEvent = {
   readonly system: V2SystemPart[]
   readonly messages: V2RequestMessage[]
   readonly options: Record<string, unknown>
+  readonly tools?: Record<string, { description: string; input: unknown }>
 }
 
 export type V2ModelRequestHookEvent = {

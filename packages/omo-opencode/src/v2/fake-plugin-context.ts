@@ -25,6 +25,7 @@ import type {
   V2ProviderInfo,
   V2Registration,
   V2ToolInfo,
+  V2ToolEditor,
 } from "./context-types"
 
 export type FakeContextOptions = {
@@ -137,6 +138,23 @@ function defaultRecord(id: string): V2AgentRecord {
 /** A 2.x plugin context for unit tests. Not part of the shipped bundle: only tests import it. */
 export function createFakePluginContext(options: FakeContextOptions = {}): FakePluginContext {
   const addedTools: V2ToolInfo[] = []
+  const toolTransforms: Array<(editor: V2ToolEditor) => void> = []
+  const rebuildTools = (): void => {
+    addedTools.length = 0
+    const editor: V2ToolEditor = {
+      add: (info) => { addedTools.push({ ...info }) },
+      list: () => addedTools.map((info) => ({ ...info, id: info.options?.namespace ? `${info.options.namespace}_${info.name}` : info.name })),
+      update: (id, update) => {
+        const index = editor.list().findIndex((tool) => tool.id === id)
+        const info = addedTools[index]
+        if (!info) return
+        const draft = { ...info }
+        update(draft)
+        addedTools[index] = draft
+      },
+    }
+    for (const transform of toolTransforms) transform(editor)
+  }
   const registration: V2Registration = { dispose: async () => {} }
   const agentTransforms: Array<(editor: V2AgentEditor) => void> = []
   let built = new Map<string, V2AgentRecord>()
@@ -253,9 +271,14 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
     options: {},
     tool: {
       transform: async (callback) => {
-        callback({ add: (info) => void addedTools.push(info) })
-        return registration
+        toolTransforms.push(callback)
+        rebuildTools()
+        return { dispose: async () => {
+          toolTransforms.splice(toolTransforms.indexOf(callback), 1)
+          rebuildTools()
+        } }
       },
+      list: async () => addedTools.map((info) => ({ ...info, id: info.options?.namespace ? `${info.options.namespace}_${info.name}` : info.name })),
       hook: ((name: "execute.before" | "execute.after", callback: (event: never) => Promise<void> | void) => {
         const list = (name === "execute.before" ? beforeHooks : afterHooks) as Array<typeof callback>
         list.push(callback)
