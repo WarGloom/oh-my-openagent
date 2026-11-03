@@ -383,7 +383,7 @@ describe("createSessionNamespace", () => {
       expect(result.data).toEqual({ ses_1: { type: "busy" } })
     })
 
-    it("#when todo is called #then it is empty and the gap is reported once", async () => {
+    it("#when todo is called without prior writes #then it is empty without a warning", async () => {
       // given
       const { session, warn } = setup()
 
@@ -393,7 +393,7 @@ describe("createSessionNamespace", () => {
 
       // then
       expect(first.data).toEqual([])
-      expect(warn.mock.calls.filter((call) => call[0].includes("todo"))).toHaveLength(1)
+      expect(warn.mock.calls.filter((call) => call[0].includes("todo"))).toHaveLength(0)
     })
   })
 })
