@@ -51,7 +51,7 @@ describe("translateMessages", () => {
       expect(translated[0]?.info).toMatchObject({ agent: "Sisyphus" })
       expect(translated[1]?.info).toMatchObject({
         agent: "Atlas - Plan Executor",
-        model: { providerID: "openai", modelID: "gpt-x" },
+        model: { providerID: "openai", modelID: "gpt-x", variant: "high" },
         variant: "high",
       })
     })

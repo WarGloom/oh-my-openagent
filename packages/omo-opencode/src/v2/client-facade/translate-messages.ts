@@ -43,7 +43,7 @@ export function translateMessages(input: TranslateInput): V1Message[] {
     role: "user",
     time: { created },
     agent,
-    ...(model === undefined ? {} : { model: { providerID: model.providerID, modelID: model.id } }),
+    ...(model === undefined ? {} : { model: { providerID: model.providerID, modelID: model.id, ...(model.variant === undefined ? {} : { variant: model.variant }) } }),
     ...(model?.variant === undefined ? {} : { variant: model.variant }),
   })
   const pushUser = (id: string, created: number, parts: V1Part[]) => {
