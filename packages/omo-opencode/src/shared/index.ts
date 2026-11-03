@@ -23,6 +23,7 @@ export type { OpenCodeBinaryType, OpenCodeConfigDirOptions, OpenCodeConfigPaths 
 export * from "./opencode-version"
 export * from "./opencode-storage-detection"
 export * from "./permission-compat"
+export * from "./step-ending-permission-error"
 export * from "./external-plugin-detector"
 export * from "./zip-extractor"
 export * from "./binary-downloader"

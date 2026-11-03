@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
 import { checkMonitorCommandPermission, type MonitorConfig } from "./permission"
+import { StepEndingPermissionError } from "../../shared/step-ending-permission-error"
 
 function createConfig(input: Partial<MonitorConfig>): MonitorConfig {
   return {
@@ -151,6 +152,37 @@ describe("checkMonitorCommandPermission", () => {
         reason: "command allowed by allowed_commands",
         via: "allowlist",
       })
+    })
+  })
+
+  describe("#given a bash permission callback that rejects", () => {
+    test("#when it throws a step-ending permission error (a 2.x plain decline) #then it rethrows so no command runs", async () => {
+      // given
+      const config = createConfig({ allowed_commands: [] })
+      const stepEnding = new StepEndingPermissionError(new Error("declined"))
+      const bashPermissionAsk = async () => {
+        throw stepEnding
+      }
+
+      // when
+      const result = checkMonitorCommandPermission("rm -rf /", { config, bashPermissionAsk })
+
+      // then
+      await expect(result).rejects.toBe(stepEnding)
+    })
+
+    test("#when it throws any other error (a deny with reason) #then it denies via bash-equivalent with the reason", async () => {
+      // given
+      const config = createConfig({ allowed_commands: [] })
+      const bashPermissionAsk = async () => {
+        throw new Error("not allowed here")
+      }
+
+      // when
+      const result = await checkMonitorCommandPermission("rm -rf /", { config, bashPermissionAsk })
+
+      // then
+      expect(result).toEqual({ allowed: false, reason: "not allowed here", via: "bash-equivalent" })
     })
   })
 })

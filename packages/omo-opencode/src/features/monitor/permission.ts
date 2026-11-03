@@ -13,6 +13,7 @@
 
 import type { MonitorConfig as SchemaMonitorConfig } from "../../config/schema/monitor"
 import { tokenizeCommand } from "../../tools/interactive-bash/tools"
+import { StepEndingPermissionError } from "../../shared/step-ending-permission-error"
 
 export type MonitorConfig = Pick<SchemaMonitorConfig, "enabled" | "allowed_commands"> & Partial<SchemaMonitorConfig>
 
@@ -66,6 +67,9 @@ async function checkBashEquivalentPermission(
       metadata: { command },
     })
   } catch (error) {
+    // A 2.x plain permission rejection must end the step, not become a denied tool result (the V2 tool
+    // bridge marks it); every other error stays the fail-closed allowlist-equivalent denial, as on V1.
+    if (error instanceof StepEndingPermissionError) throw error
     return {
       allowed: false,
       reason: getErrorReason(error),
