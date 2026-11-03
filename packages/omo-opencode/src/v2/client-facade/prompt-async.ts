@@ -1,5 +1,6 @@
 import type { V2ModelRef, V2PluginContext } from "../context-types"
 import { settle } from "./v1-result"
+import { setSessionSystem } from "../session-system"
 
 type PromptPart = {
   readonly type: string
@@ -16,7 +17,7 @@ export type PromptAsyncArgs = {
     readonly variant?: string
     readonly noReply?: boolean
     readonly tools?: unknown
-    readonly system?: unknown
+    readonly system?: string
     readonly parts?: ReadonlyArray<PromptPart>
   }
   readonly query?: unknown
@@ -57,7 +58,6 @@ export function createPromptAsync(context: V2PluginContext, report: Report) {
       const sessionID = args.path.id
       const body = args.body ?? {}
       if (body.tools !== undefined) report("prompt.tools", 'promptAsync: per-prompt "tools" restrictions are not supported on OpenCode 2.x and were ignored')
-      if (body.system !== undefined) report("prompt.system", 'promptAsync: per-prompt "system" text is not supported on OpenCode 2.x and was ignored')
       const parts = body.parts ?? []
       for (const part of parts) {
         if (part.type !== "text") report(`prompt.part.${part.type}`, `promptAsync: "${part.type}" parts are not supported on OpenCode 2.x and were dropped`)
@@ -66,6 +66,7 @@ export function createPromptAsync(context: V2PluginContext, report: Report) {
       if (textParts.length === 0) throw new Error("promptAsync needs at least one text part on OpenCode 2.x")
 
       await switchIfNeeded(context, sessionID, body)
+      if (body.system !== undefined) await setSessionSystem(context, sessionID, body.system)
       const input = { sessionID, text: textParts.map((part) => part.text).join("\n\n"), delivery: "queue" as const, resume: body.noReply !== true }
       if (textParts.every((part) => part.synthetic === true)) await context.session.synthetic(input)
       else await context.session.prompt(input)

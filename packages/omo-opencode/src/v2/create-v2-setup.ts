@@ -1,5 +1,5 @@
 import type { Hooks, Plugin } from "@opencode-ai/plugin"
-import type { V2Cleanup, V2PluginContext } from "./context-types"
+import type { V2Cleanup, V2PluginContext, V2Registration } from "./context-types"
 import { createPluginInput } from "./create-plugin-input"
 import { startEventBridge } from "./event-bridge"
 import { installHooks } from "./install-hooks"
@@ -7,6 +7,7 @@ import { createSessionTracker } from "./session-tracker"
 import { log } from "../shared/logger"
 import { installNativeRuntimeFallback } from "./native-runtime-fallback"
 import { V2BackgroundLifecycle } from "./background-lifecycle"
+import { registerSessionSystem } from "./session-system"
 import { toastChannel, type V2ToastRegistration } from "./toast-channel"
 
 export type V2SetupDeps = {
@@ -37,10 +38,12 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
     let uninstall: (() => Promise<void>) | undefined
     let fallback: Awaited<ReturnType<typeof installNativeRuntimeFallback>>
     let toast: V2ToastRegistration | undefined
+    let sessionSystem: V2Registration | undefined
     const background = context.storage ? new V2BackgroundLifecycle(context, context.storage) : undefined
     try {
       toast = await context.rpc.register(toastChannel, {})
       const toastEvents = toast.events
+      sessionSystem = await registerSessionSystem(context)
       await background?.load()
       let cursor: string | null | undefined
       do {
@@ -68,6 +71,7 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
       await background?.dispose()
       await fallback?.dispose()
       await uninstall?.()
+      await sessionSystem?.dispose()
       await hooks?.dispose?.()
       await toast?.dispose()
       throw error
@@ -79,6 +83,7 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
       bridge.stop()
       await background?.dispose()
       await uninstall?.()
+      await sessionSystem?.dispose()
       await hooks?.dispose?.()
       await toast?.dispose()
     }
