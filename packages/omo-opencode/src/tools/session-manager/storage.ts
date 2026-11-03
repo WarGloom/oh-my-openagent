@@ -1,5 +1,5 @@
 import type { PluginInput } from "@opencode-ai/plugin"
-import { isSqliteBackend } from "../../shared/opencode-storage-detection"
+import { hasNativeSdkStorage, isSqliteBackend } from "../../shared/opencode-storage-detection"
 import { log } from "../../shared"
 import { forEachFileSessionMessagePage, getFileAllSessions, getFileMainSessions, fileSessionExists, getFileSessionInfo, getFileSessionMessages, getFileSessionTodos, getFileSessionTranscript } from "./file-storage"
 import { forEachSdkSessionMessagePage, getSdkAllSessions, getSdkMainSessions, getSdkSessionMessages, getSdkSessionMessageWindow, getSdkSessionTodos, sdkSessionExists, SDK_MESSAGE_PAGE_SIZE, shouldFallbackFromSdkError, type GlobalSessionClient } from "./sdk-storage"
@@ -67,6 +67,7 @@ export function resetStorageClient(): void {
 
 export async function getMainSessions(options: GetMainSessionsOptions): Promise<SessionMetadata[]> {
   const directory = normalizeProjectFilter(options.directory)
+  if (sdkClient && hasNativeSdkStorage(sdkClient)) return getSdkMainSessions(sdkClient, directory, undefined, options.limit)
   if (isSqliteBackend() && sdkClient) {
     try {
       const sdkSessions = await getSdkMainSessions(sdkClient, directory, globalSessionClient ?? undefined, options.limit)
@@ -82,6 +83,7 @@ export async function getMainSessions(options: GetMainSessionsOptions): Promise<
 }
 
 export async function getAllSessions(limit?: number): Promise<string[]> {
+  if (sdkClient && hasNativeSdkStorage(sdkClient)) return getSdkAllSessions(sdkClient, undefined, limit)
   if (isSqliteBackend() && sdkClient) {
     try {
       const sdkSessionIds = await getSdkAllSessions(sdkClient, globalSessionClient ?? undefined, limit)
@@ -99,6 +101,7 @@ export async function getAllSessions(limit?: number): Promise<string[]> {
 export { getMessageDir } from "../../shared/opencode-message-dir"
 
 export async function sessionExists(sessionID: string): Promise<boolean> {
+  if (sdkClient && hasNativeSdkStorage(sdkClient)) return sdkSessionExists(sdkClient, sessionID)
   if (isSqliteBackend() && sdkClient) {
     try {
       const existsInSdk = await sdkSessionExists(sdkClient, sessionID)
@@ -120,6 +123,9 @@ export type ReadSessionMessagesOptions = {
 
 export async function readSessionMessages(sessionID: string, options: ReadSessionMessagesOptions = {}): Promise<SessionMessage[]> {
   const window = options.limit && options.limit > 0 ? { limit: options.limit, fromEnd: options.fromEnd === true } : undefined
+  if (sdkClient && hasNativeSdkStorage(sdkClient)) return window
+    ? getSdkSessionMessageWindow(sdkClient, sessionID, window, options.signal)
+    : getSdkSessionMessages(sdkClient, sessionID, options.signal)
   if (isSqliteBackend() && sdkClient) {
     try {
       const sdkMessages = window
@@ -143,6 +149,7 @@ export async function forEachSessionMessagePage(
   visit: (messages: SessionMessage[]) => boolean | void,
   signal?: AbortSignal,
 ): Promise<void> {
+  if (sdkClient && hasNativeSdkStorage(sdkClient)) return forEachSdkSessionMessagePage(sdkClient, sessionID, visit, { signal })
   if (isSqliteBackend() && sdkClient) {
     let visitedPages = 0
     try {
@@ -168,6 +175,7 @@ export async function forEachSessionMessagePage(
 }
 
 export async function readSessionTodos(sessionID: string): Promise<TodoItem[]> {
+  if (sdkClient && hasNativeSdkStorage(sdkClient)) return getSdkSessionTodos(sdkClient, sessionID)
   if (isSqliteBackend() && sdkClient) {
     try {
       const sdkTodos = await getSdkSessionTodos(sdkClient, sessionID)
@@ -182,11 +190,12 @@ export async function readSessionTodos(sessionID: string): Promise<TodoItem[]> {
 }
 
 export async function readSessionTranscript(sessionID: string): Promise<number> {
+  if (hasNativeSdkStorage(sdkClient)) return 0
   return getFileSessionTranscript(sessionID)
 }
 
 export async function getSessionInfo(sessionID: string, signal?: AbortSignal): Promise<SessionInfo | null> {
-  if (isSqliteBackend() && sdkClient) {
+  if ((hasNativeSdkStorage(sdkClient) || isSqliteBackend()) && sdkClient) {
     try {
       // Counted page by page so the session is never held whole.
       let messageCount = 0
@@ -222,10 +231,10 @@ export async function getSessionInfo(sessionID: string, signal?: AbortSignal): P
       }
     } catch (error) {
       signal?.throwIfAborted()
-      if (!shouldReadFileSession(error)) throw error
+      if (hasNativeSdkStorage(sdkClient) || !shouldReadFileSession(error)) throw error
       log("[session-manager] reading file session info after SDK error", { error: describeSessionError(error), sessionID })
     }
   }
 
-  return getFileSessionInfo(sessionID, signal)
+  return hasNativeSdkStorage(sdkClient) ? null : getFileSessionInfo(sessionID, signal)
 }
