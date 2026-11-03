@@ -576,6 +576,26 @@ describe("prometheus-md-only", () => {
       expect(output.args.prompt).not.toContain("[SYSTEM DIRECTIVE:")
     })
 
+    test("should inject planning warning when Prometheus calls the host subagent tool", async () => {
+      // given
+      const hook = createPrometheusMdOnlyHook(createMockPluginInput())
+      const input = {
+        tool: "subagent",
+        sessionID: TEST_SESSION_ID,
+        callID: "call-1",
+      }
+      const output = {
+        args: { prompt: "Implement the feature" },
+      }
+
+      // when
+      await invokeBefore(hook, input, output)
+
+      // then
+      expect(output.args.prompt).toContain(PLANNING_CONTEXT_OPEN)
+      expect(output.args.prompt).not.toContain("[SYSTEM DIRECTIVE:")
+    })
+
     test("should not double-inject warning if already present", async () => {
       // given
       const hook = createPrometheusMdOnlyHook(createMockPluginInput())
