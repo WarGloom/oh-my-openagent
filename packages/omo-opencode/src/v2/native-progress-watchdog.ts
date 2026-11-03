@@ -14,11 +14,11 @@ type Request = {
 export function createNativeProgressWatchdog(deps: {
   readonly context: V2PluginContext
   readonly timeouts: { readonly firstProgressMs: number; readonly stallMs: number; readonly hardMs: number }
-  readonly recover: (sessionID: string, request: { readonly agent: string; readonly model: V2ModelRef }, current: () => boolean) => Promise<void>
+  readonly recover: (sessionID: string, request: { readonly agent: string; readonly model: V2ModelRef }, current: () => boolean) => Promise<boolean>
   readonly warn: (error: unknown) => void
 }) {
   const requests = new Map<string, Request>()
-  const recovering = new Map<string, Request>()
+  const recovering = new Map<string, { readonly request: Request; readonly settled: ReturnType<typeof Promise.withResolvers<boolean>> }>()
   let disposed = false
   const clear = (sessionID: string) => {
     const request = requests.get(sessionID)
@@ -29,14 +29,17 @@ export function createNativeProgressWatchdog(deps: {
   const expire = async (sessionID: string, request: Request) => {
     if (requests.get(sessionID) !== request || disposed) return
     clear(sessionID)
-    recovering.set(sessionID, request)
+    const recovery = { request, settled: Promise.withResolvers<boolean>() }
+    recovering.set(sessionID, recovery)
+    let recovered = false
     try {
       await deps.context.session.interrupt({ sessionID, resume: false })
-      if (!request.unsafe && !disposed && recovering.get(sessionID) === request) {
-        await deps.recover(sessionID, request, () => !disposed && recovering.get(sessionID) === request)
+      if (!request.unsafe && !disposed && recovering.get(sessionID) === recovery) {
+        recovered = await deps.recover(sessionID, request, () => !disposed && recovering.get(sessionID) === recovery)
       }
     } finally {
-      if (recovering.get(sessionID) === request) recovering.delete(sessionID)
+      recovery.settled.resolve(recovered)
+      if (recovering.get(sessionID) === recovery) recovering.delete(sessionID)
     }
   }
   const arm = (sessionID: string, request: Request) => {
@@ -61,6 +64,8 @@ export function createNativeProgressWatchdog(deps: {
       const data = event.data
       if (!isRecord(data) || typeof data.sessionID !== "string") return
       const sessionID = data.sessionID
+      const recovery = recovering.get(sessionID)
+      if (event.type === "session.execution.interrupted" && recovery && !recovery.request.unsafe) return recovery.settled.promise
       if (event.type === "session.deleted") recovering.delete(sessionID)
       if (event.type.startsWith("session.execution.") || event.type === "session.deleted" || event.type === "session.step.ended" || event.type === "session.step.failed" || event.type === "session.compaction.started") {
         clear(sessionID)

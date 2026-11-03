@@ -59,8 +59,8 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
     warn: (error) => log("[runtime-fallback] Native watchdog failed", { error: error instanceof Error ? error.message : String(error) }),
     recover: async (sessionID, request, current) => {
       const host = await hostModels(context)
-      if (!current()) return
-      await controller.recover({ sessionID, agent: request.agent, model: `${request.model.providerID}/${request.model.id}`, reason: "timeout", error: { name: "RequestTimeoutError", data: { message: "Native request made no progress before its configured deadline" } }, isAvailable: host.isAvailable }, async (payload) => {
+      if (!current()) return false
+      return controller.recover({ sessionID, agent: request.agent, model: `${request.model.providerID}/${request.model.id}`, reason: "timeout", error: { name: "RequestTimeoutError", data: { message: "Native request made no progress before its configured deadline" } }, isAvailable: host.isAvailable }, async (payload) => {
         const model = host.modelRef(sessionID, payload)
         await context.session.switchModel({ sessionID, model })
         if (current()) await context.session.synthetic({ sessionID, text: "Continue the existing task after the model timeout. Preserve completed work.", delivery: "steer", resume: true })
@@ -121,7 +121,8 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
 
   return {
     async beforeEvent(event: V2Event): Promise<boolean> {
-      watchdog.observe(event)
+      const watchdogDecision = watchdog.observe(event)
+      if (watchdogDecision !== undefined) return watchdogDecision
       const data = event.data
       if (typeof data !== "object" || data === null || !("sessionID" in data) || typeof data.sessionID !== "string") return false
       const sessionID = data.sessionID
