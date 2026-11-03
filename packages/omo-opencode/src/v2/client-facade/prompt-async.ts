@@ -83,7 +83,7 @@ export function createPromptAsync(context: V2PluginContext, report: Report) {
         const current = await context.session.get({ sessionID })
         const denied = new Set(Object.entries(body.tools)
           .filter(([, enabled]) => !enabled)
-          .map(([name]) => name === "call_omo_agent" ? "subagent" : normalizeAction(name)))
+          .map(([name]) => normalizeAction(name)))
         if (denied.size > 0) {
           const permissions = current.permissions ?? []
           const additional = Array.from(denied).filter((action) => {

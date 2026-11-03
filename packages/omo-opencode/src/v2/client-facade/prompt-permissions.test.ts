@@ -24,6 +24,7 @@ describe("V2 prompt tool restrictions", () => {
     expect(admitted).toEqual([[
       { action: "external_directory", resource: "*", effect: "deny" },
       { action: "subagent", resource: "*", effect: "deny" },
+      { action: "call_omo_agent", resource: "*", effect: "deny" },
       { action: "edit", resource: "*", effect: "deny" },
       { action: "shell", resource: "*", effect: "deny" },
     ]])
@@ -46,8 +47,8 @@ describe("V2 prompt tool restrictions", () => {
     { tools: { edit: true, write: false }, action: "edit" },
     { tools: { task: false, call_omo_agent: true }, action: "subagent" },
     { tools: { call_omo_agent: true, task: false }, action: "subagent" },
-    { tools: { call_omo_agent: false }, action: "subagent" },
-  ])("keeps aliases denied for $tools", async ({ tools, action }) => {
+    { tools: { call_omo_agent: false }, action: "call_omo_agent" },
+  ])("enforces native tool restrictions for $tools", async ({ tools, action }) => {
     // given
     const fake = createFakePluginContext()
     let permissions: readonly V2PermissionRule[] = []
