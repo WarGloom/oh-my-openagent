@@ -46,7 +46,7 @@ async function targetModel(context: V2PluginContext, body: PromptBody, current: 
   return undefined
 }
 
-/** 2.x prompts carry text only; the session's agent and model are switched beforehand when they differ. */
+/** The session's agent and model are switched beforehand when they differ. */
 async function switchIfNeeded(context: V2PluginContext, sessionID: string, body: PromptBody): Promise<void> {
   if (body.agent === undefined && body.model === undefined && body.variant === undefined) return
   const current = await context.session.get({ sessionID })
@@ -67,16 +67,21 @@ export function createPromptAsync(context: V2PluginContext, report: Report) {
       const body = args.body ?? {}
       if (body.tools !== undefined) report("prompt.tools", 'promptAsync: per-prompt "tools" restrictions are not supported on OpenCode 2.x and were ignored')
       const parts = body.parts ?? []
-      for (const part of parts) {
-        if (part.type !== "text") report(`prompt.part.${part.type}`, `promptAsync: "${part.type}" parts are not supported on OpenCode 2.x and were dropped`)
+      const files = parts.flatMap((part) => {
+        if (part.type !== "file") return []
+        if (typeof part.url !== "string") throw new Error("A file prompt part needs a URL")
+        return [{ uri: part.url, ...(typeof part.filename === "string" ? { name: part.filename } : {}) }]
+      })
+      for (const part of parts) if (part.type !== "text" && part.type !== "file") {
+        report(`prompt.part.${part.type}`, `promptAsync: "${part.type}" parts are not supported on OpenCode 2.x and were dropped`)
       }
       const textParts = parts.filter((part) => part.type === "text" && typeof part.text === "string")
-      if (textParts.length === 0) throw new Error("promptAsync needs at least one text part on OpenCode 2.x")
+      if (textParts.length === 0 && files.length === 0) throw new Error("promptAsync needs at least one text or file part on OpenCode 2.x")
 
       await switchIfNeeded(context, sessionID, body)
       if (body.system !== undefined) await setSessionSystem(context, sessionID, body.system)
-      const input = { sessionID, text: textParts.map((part) => part.text).join("\n\n"), delivery: "queue" as const, resume: body.noReply !== true }
-      if (textParts.every((part) => part.synthetic === true)) await context.session.synthetic(input)
+      const input = { sessionID, text: textParts.map((part) => part.text).join("\n\n"), ...(files.length === 0 ? {} : { files }), delivery: "queue" as const, resume: body.noReply !== true }
+      if (files.length === 0 && textParts.every((part) => part.synthetic === true)) await context.session.synthetic(input)
       else await context.session.prompt(input)
     })
 }
