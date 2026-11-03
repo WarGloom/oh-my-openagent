@@ -99,12 +99,13 @@ export function startEventBridge(context: V2PluginContext, deps: EventBridgeDeps
         .catch((error: unknown) => deps.warn(`delivered message translation failed: ${messageOf(error)}`))
       return
     }
-    if (interceptor && event.type === "session.execution.failed") {
+    if (interceptor && (event.type === "session.execution.failed" || event.type === "session.execution.interrupted")) {
       messages.translate(event)
+      const interruption = event.type === "session.execution.interrupted" ? interceptor(event) : undefined
       queue = queue
         .then(async () => {
           try {
-            if (await interceptor?.(event)) return
+            if (await (interruption ?? interceptor?.(event))) return
           } catch (error) {
             deps.warn(`native recovery failed: ${messageOf(error)}`)
           }

@@ -84,8 +84,8 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
       }),
     recover: async (sessionID, request, current) => {
       const host = await hostModels(context)
-      if (!current()) return
-      await controller.recover(
+      if (!current()) return false
+      return controller.recover(
         {
           sessionID,
           agent: request.agent,
@@ -187,7 +187,8 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
 
   return {
     async beforeEvent(event: V2Event): Promise<boolean> {
-      watchdog.observe(event)
+      const watchdogDecision = watchdog.observe(event)
+      if (watchdogDecision !== undefined) return watchdogDecision
       const data = event.data
       if (typeof data !== "object" || data === null || !("sessionID" in data) || typeof data.sessionID !== "string")
         return false
