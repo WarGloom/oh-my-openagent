@@ -1,5 +1,6 @@
 import type { V2AgentEditor } from "../context-types"
 import type { DesiredConfig } from "./desired-config"
+import { getAgentConfigKey } from "../../shared/agent-display-names"
 
 /**
  * Applies the desired agents inside a 2.x agent transform, in the order the host applies its own
@@ -28,6 +29,13 @@ export function applyDesiredAgents(editor: V2AgentEditor, desired: DesiredConfig
       Object.assign(agent.request.body, patch.requestBody)
       agent.permissions.push(...patch.permissions.map((rule) => ({ ...rule })))
     })
+  }
+  for (const current of editor.list()) {
+    const model = desired.agentModels.find(([id]) => getAgentConfigKey(id) === getAgentConfigKey(current.id))?.[1]
+    if (model)
+      editor.update(current.id, (agent) => {
+        agent.model = { ...model }
+      })
   }
   if (desired.defaultAgent !== undefined) editor.default(desired.defaultAgent)
 }
