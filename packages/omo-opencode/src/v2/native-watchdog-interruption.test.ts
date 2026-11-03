@@ -10,12 +10,13 @@ import { startEventBridge } from "./event-bridge"
 import { bindNativeRuntimeFallback, installNativeRuntimeFallback } from "./native-runtime-fallback"
 
 test.each([
-  { unsafe: false, chain: true, suppressed: true },
-  { unsafe: true, chain: true, suppressed: false },
-  { unsafe: false, chain: false, suppressed: false },
+  { unsafe: false, chain: true, suppressed: true, delayed: false },
+  { unsafe: false, chain: true, suppressed: true, delayed: true },
+  { unsafe: true, chain: true, suppressed: false, delayed: true },
+  { unsafe: false, chain: false, suppressed: false, delayed: true },
 ])(
-  "watchdog interruption suppresses idle only after accepted recovery: $unsafe / $chain",
-  async ({ unsafe, chain, suppressed }) => {
+  "watchdog interruption suppresses idle only after accepted recovery: $unsafe / $chain / delayed=$delayed",
+  async ({ unsafe, chain, suppressed, delayed }) => {
     const clock = installRuntimeFallbackTestClock()
     const fake = createFakePluginContext({ sessionAgent: "sisyphus" })
     const ready = Promise.withResolvers<void>()
@@ -26,7 +27,7 @@ test.each([
       session: {
         ...fake.context.session,
         interrupt: async ({ sessionID }: { sessionID: string; resume?: boolean }) => {
-          fake.emit({ type: "session.execution.interrupted", data: { sessionID, reason: "user" } })
+          if (!delayed) fake.emit({ type: "session.execution.interrupted", data: { sessionID, reason: "user" } })
           await fake.context.session.interrupt({ sessionID, resume: false })
         },
       },
@@ -72,6 +73,7 @@ test.each([
       await fake.triggerModelRequest({ sessionID: "timed", agent: "sisyphus", model, kind: "primary", headers: {} })
       if (unsafe) await installed.beforeEvent({ type: "session.tool.called", data: { sessionID: "timed", id: "call" } })
       await clock.advanceBy(1_000)
+      if (delayed) fake.emit({ type: "session.execution.interrupted", data: { sessionID: "timed", reason: "user" } })
       fake.emit({ type: "session.execution.interrupted", data: { sessionID: "other", reason: "user" } })
       await drained.promise
       expect(seen.filter((event) => event.sessionID === "timed").map((event) => event.type)).toEqual(
@@ -83,6 +85,12 @@ test.each([
         "session.idle",
       ])
       expect(fake.sessionCalls.filter((call) => call.kind === "synthetic")).toHaveLength(suppressed ? 1 : 0)
+      expect(
+        await installed.beforeEvent({
+          type: "session.execution.interrupted",
+          data: { sessionID: "timed", reason: "user" },
+        }),
+      ).toBe(false)
     } finally {
       bridge.stop()
       await installed.dispose()
