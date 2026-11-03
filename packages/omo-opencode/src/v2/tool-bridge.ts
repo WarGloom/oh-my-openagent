@@ -1,6 +1,7 @@
 import { tool, type ToolContext, type ToolDefinition, type ToolResult } from "@opencode-ai/plugin/tool"
 import type { V2PermissionDomain, V2ToolContent, V2ToolExecuteContext, V2ToolInfo, V2ToolResult } from "./context-types"
 import { normalizeAction } from "./config-bridge/migrate-agent"
+import { isHostDeclinedError, StepEndingPermissionError } from "../shared/step-ending-permission-error"
 import { toJsonRecord } from "./json-record"
 
 export type ToolBridgeDeps = {
@@ -56,19 +57,25 @@ function toV1Context(
     },
     ask: async (input) => {
       if (deps.permission === undefined) {
-        deps.warn(`tool "${name}": ToolContext.ask has no host permission domain; the request was not enforced`)
-        return
+        // The 2.x host always provides a permission domain; a missing one must fail closed, not pass.
+        throw new Error(`tool "${name}": ToolContext.ask has no host permission domain; refusing to proceed`)
       }
-      // Host `assert` prompts and rejects on denial with an error that ends the step; callers that do
-      // not catch it (skill) propagate the denial, and monitor's catch keeps it fail-closed.
-      await deps.permission.assert({
-        sessionID: context.sessionID,
-        agent: context.agent,
-        action: normalizeAction(input.permission),
-        resources: input.patterns,
-        save: input.always,
-        metadata: input.metadata,
-      })
+      // Host `assert` prompts and rejects on denial. A plain reject (Permission.DeclinedError) ends the
+      // step, so rewrap it and let callers that turn denials into output rethrow it; a reject with
+      // feedback (Permission.CorrectedError) stays an ordinary rejection.
+      try {
+        await deps.permission.assert({
+          sessionID: context.sessionID,
+          agent: context.agent,
+          action: normalizeAction(input.permission),
+          resources: input.patterns,
+          save: input.always,
+          metadata: input.metadata,
+        })
+      } catch (error) {
+        if (isHostDeclinedError(error)) throw new StepEndingPermissionError(error)
+        throw error
+      }
     },
   }
 }
