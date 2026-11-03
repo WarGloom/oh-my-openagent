@@ -72,6 +72,14 @@ async function loadSourcePath(options: {
 
   const absolutePath = toAbsolutePath(options.sourcePath, options.configDir)
   const provenance = skillProvenance(absolutePath, "config", { ...options.provenance, selectedRoot: absolutePath })
+  try {
+    await fs.lstat(absolutePath)
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT" && !isMarkdownPath(absolutePath))) {
+      reportSkillLoadError(error, absolutePath, options.onDiagnostic)
+    }
+    return []
+  }
   if (provenance.kind === "project-auto") {
     try { checkSkillPath(absolutePath, provenance, true) } catch (error) {
       reportSkillLoadError(error, absolutePath, options.onDiagnostic)

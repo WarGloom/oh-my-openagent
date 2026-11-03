@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import * as fs from "node:fs"
+import * as fsPromises from "node:fs/promises"
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
@@ -57,7 +58,7 @@ describe("legacy skill containment at discovery and reread", () => {
     }
   })
 
-  test("missing configured source fails closed with its real ENOENT error", async () => {
+  test("missing configured directory is skipped without a diagnostic", async () => {
     // given
     const f = fixture()
     const path = join(f.project, "missing-source")
@@ -69,11 +70,49 @@ describe("legacy skill containment at discovery and reread", () => {
     })
     // then
     expect(loaded).toEqual([])
-    expect(diagnostics).toHaveLength(1)
-    expect(diagnostics[0]?.category).toBe("skill-load-error")
-    expect(diagnostics[0]?.path).toBe(path)
-    expect(diagnostics[0]?.message).toContain("ENOENT")
-    expect(diagnostics[0]?.message).toContain(path)
+    expect(diagnostics).toEqual([])
+  })
+
+  test("missing skill root is skipped without a diagnostic while another root loads", async () => {
+    const f = fixture()
+    skill(join(f.skillsDir, "local", "SKILL.md"))
+    const diagnostics: { category: string; path: string; message: string }[] = []
+    const options = { scope: "opencode" as const, onDiagnostic: (diagnostic: { category: string; path: string; message: string }) => diagnostics.push(diagnostic) }
+    const missing = await loadSkillsFromDir({ ...options, skillsDir: join(f.project, ".opencode", "skill") })
+    const loaded = await loadSkillsFromDir({ ...options, skillsDir: f.skillsDir })
+    expect(missing).toEqual([])
+    expect(loaded.map((entry) => entry.name)).toEqual(["local"])
+    expect(diagnostics).toEqual([])
+  })
+
+  test("reports a dangling root link and a broken skill file", async () => {
+    const f = fixture()
+    const danglingRoot = join(f.project, "dangling-root")
+    const brokenSkill = join(f.skillsDir, "broken", "SKILL.md")
+    symlinkSync(join(f.project, "missing-target"), danglingRoot)
+    mkdirSync(dirname(brokenSkill), { recursive: true })
+    symlinkSync(join(f.project, "missing-skill"), brokenSkill)
+    const diagnostics: { category: string; path: string }[] = []
+    const options = { scope: "opencode" as const, onDiagnostic: (diagnostic: { category: string; path: string }) => diagnostics.push(diagnostic) }
+    await loadSkillsFromDir({ ...options, skillsDir: danglingRoot })
+    await loadSkillsFromDir({ ...options, skillsDir: f.skillsDir })
+    expect(diagnostics.map((diagnostic) => [diagnostic.category, diagnostic.path])).toEqual([
+      ["skill-load-error", danglingRoot], ["skill-load-error", brokenSkill],
+    ])
+  })
+
+  test("reports an unreadable existing skill root", async () => {
+    const f = fixture()
+    const diagnostics: { category: string; path: string; message: string }[] = []
+    const hook = spyOn(fsPromises, "readdir").mockRejectedValueOnce(Object.assign(new Error("EACCES"), { code: "EACCES" }))
+    try {
+      await loadSkillsFromDir({ skillsDir: f.skillsDir, scope: "opencode", onDiagnostic: (diagnostic) => diagnostics.push(diagnostic) })
+      expect(diagnostics).toHaveLength(1)
+      expect(diagnostics[0]?.path).toBe(f.skillsDir)
+      expect(diagnostics[0]?.message).toContain("EACCES")
+    } finally {
+      hook.mockRestore()
+    }
   })
 
   test("directory used as a skill fails closed with EISDIR rather than a security block", async () => {
