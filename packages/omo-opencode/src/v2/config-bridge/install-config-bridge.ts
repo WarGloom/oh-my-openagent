@@ -1,5 +1,4 @@
 import type { V2PluginContext } from "../context-types"
-import type { Hooks } from "@opencode-ai/plugin"
 import { applyDesiredAgents } from "./apply-agents"
 import { applyDesiredCommands } from "./apply-commands"
 import { applyDesiredMcp } from "./apply-mcp"
@@ -11,7 +10,6 @@ export type ConfigHook = (config: Record<string, unknown>) => Promise<void>
 
 export type ConfigBridgeDeps = {
   readonly warn: (message: string) => void
-  readonly hooks?: Hooks
   /** Quiet period before a host change triggers a re-run; coalesces bursts of events. */
   readonly debounceMs?: number
   /** The plugin's 1.x `command.execute.before` hook; run for every command the bridge registers. */
@@ -62,7 +60,7 @@ export async function installConfigBridge(
     try {
       const snapshot = await buildConfigSnapshot(context)
       await configHook(snapshot)
-      const next = readDesiredConfig(snapshot, { hooks: deps.hooks, models: (await context.model.list()).data })
+      const next = readDesiredConfig(snapshot)
       const key = JSON.stringify(next)
       if (key === appliedKey) return
       desired = next

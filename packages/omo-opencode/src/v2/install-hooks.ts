@@ -4,6 +4,7 @@ import { installConfigBridge, type BeforeCommandHook, type ConfigHook } from "./
 import { toV2Tool } from "./tool-bridge"
 import { installToolHooks } from "./tool-hooks"
 import { installSessionHooks } from "./session-hooks"
+import { installNativeSubagentModel } from "./native-subagent-model"
 
 export type InstallHooksDeps = {
   readonly warn: (message: string) => void
@@ -47,7 +48,6 @@ export async function installHooks(
   if (hooks.config !== undefined) {
     const dispose = await installConfigBridge(context, hooks.config as unknown as ConfigHook, {
       warn: deps.warn,
-      hooks,
       ...(hooks["command.execute.before"] === undefined
         ? {}
         : { beforeCommand: hooks["command.execute.before"] as unknown as BeforeCommandHook }),
@@ -58,6 +58,8 @@ export async function installHooks(
   if (hooks["tool.execute.before"] !== undefined || hooks["tool.execute.after"] !== undefined) {
     registrations.push({ dispose: await installToolHooks(context, hooks) })
   }
+  const subagentModel = await installNativeSubagentModel(context, hooks)
+  if (subagentModel) registrations.push(subagentModel)
 
   const bridgesSessionHook =
     hooks["chat.message"] !== undefined ||
