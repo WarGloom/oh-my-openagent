@@ -37,6 +37,7 @@ import { sessionExists } from "../../tools"
 import { isTmuxIntegrationEnabled } from "../../create-runtime-tmux-config"
 import { createModelFallbackTitleUpdater } from "./model-fallback-title-updater"
 import { hasActiveTeamMemberWork } from "../../features/team-mode/team-session-registry"
+import { isV2PluginInput } from "../../v2/create-plugin-input"
 
 export type SessionHooks = {
   preemptiveCompaction: ReturnType<typeof createPreemptiveCompactionHook> | null
@@ -89,7 +90,7 @@ export function createSessionHooks(args: {
     safeCreateHook(hookName, factory, { enabled: safeHookEnabled })
 
   const preemptiveCompaction =
-    isHookEnabled("preemptive-compaction") && pluginConfig.experimental?.preemptive_compaction
+    !isV2PluginInput(ctx) && isHookEnabled("preemptive-compaction") && pluginConfig.experimental?.preemptive_compaction
       ? safeHook("preemptive-compaction", () => createPreemptiveCompactionHook(ctx, pluginConfig, modelCacheState))
       : null
 
@@ -132,11 +133,12 @@ export function createSessionHooks(args: {
         )
       : null
 
-  const anthropicContextWindowLimitRecovery = isHookEnabled("anthropic-context-window-limit-recovery")
-    ? safeHook("anthropic-context-window-limit-recovery", () =>
-        createAnthropicContextWindowLimitRecoveryHook(ctx, { experimental: pluginConfig.experimental, pluginConfig }),
-      )
-    : null
+  const anthropicContextWindowLimitRecovery =
+    !isV2PluginInput(ctx) && isHookEnabled("anthropic-context-window-limit-recovery")
+      ? safeHook("anthropic-context-window-limit-recovery", () =>
+          createAnthropicContextWindowLimitRecoveryHook(ctx, { experimental: pluginConfig.experimental, pluginConfig }),
+        )
+      : null
 
   const autoUpdateChecker = isHookEnabled("auto-update-checker")
     ? safeHook("auto-update-checker", () =>
