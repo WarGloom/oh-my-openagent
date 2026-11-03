@@ -1,3 +1,5 @@
+import type { V2ToastRpc } from "./toast-channel"
+
 /**
  * Structural view of the OpenCode 2.x plugin context (`@opencode/plugin` `Plugin.Context`).
  *
@@ -482,6 +484,7 @@ export type V2EventDomain = {
 }
 
 export type V2PluginContext = {
+  readonly rpc: V2ToastRpc
   readonly app: V2App
   readonly location: V2Location
   readonly options: Readonly<Record<string, unknown>>

@@ -263,6 +263,16 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
         })
       }) as V2PluginContext["tool"]["hook"],
     },
+    rpc: {
+      register: async (definition) => ({
+        dispose: async () => {},
+        events: {
+          emit: async (name, data) => {
+            for (const push of subscribers) push({ type: `rpc.${definition.id}.${name}`, data })
+          },
+        },
+      }),
+    },
     model: {
       list: async () => ({ data: options.models ?? [] }),
       default: async () => ({ data: options.defaultModel ?? null }),

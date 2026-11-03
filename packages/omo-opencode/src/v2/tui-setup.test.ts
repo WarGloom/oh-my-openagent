@@ -62,7 +62,7 @@ describe("OpenCode 2.x TUI entry", () => {
         // then
         expect(claims).toHaveLength(1)
         expect(claims[0]?.append).toBe("sidebar.content")
-        expect(subscriptions).toBe(2)
+        expect(subscriptions).toBe(3)
         expect(typeof cleanup).toBe("function")
         const timer = startTimer.mock.results.at(-1)?.value
         await cleanup()

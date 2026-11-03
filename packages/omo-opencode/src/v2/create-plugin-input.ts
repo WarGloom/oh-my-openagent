@@ -1,6 +1,7 @@
 import type { PluginInput } from "@opencode-ai/plugin"
 import type { V2PluginContext } from "./context-types"
-import { createClientFacade, type SessionNamespaceDeps } from "./client-facade"
+import { createClientFacade } from "./client-facade"
+import type { ClientFacadeDeps } from "./client-facade/create-client-facade"
 import { V2UnsupportedOperationError } from "./unsupported-operation-error"
 import type { V2BackgroundLifecycle } from "./background-lifecycle"
 
@@ -32,7 +33,7 @@ function resolveShell(): V1Shell {
  */
 export function createPluginInput(
   context: V2PluginContext,
-  deps: SessionNamespaceDeps,
+  deps: ClientFacadeDeps,
   backgroundLifecycle?: V2BackgroundLifecycle,
 ): PluginInput {
   const { directory, project } = context.location
