@@ -6,28 +6,10 @@ import { log } from "../../shared/logger"
 import {
   COUNTDOWN_SECONDS,
   HOOK_NAME,
-  TOAST_DURATION_MS,
 } from "./constants"
 import type { ResolvedMessageInfo } from "./types"
 import type { SessionStateStore } from "./session-state"
 import { injectContinuation } from "./continuation-injection"
-
-async function showCountdownToast(
-  ctx: PluginInput,
-  seconds: number,
-  incompleteCount: number
-): Promise<void> {
-  await ctx.client.tui
-    .showToast({
-      body: {
-        title: "Todo Continuation",
-        message: `Resuming in ${seconds}s... (${incompleteCount} tasks remaining)`,
-        variant: "warning" as const,
-        duration: TOAST_DURATION_MS,
-      },
-    })
-    .catch(() => {})
-}
 
 export function startCountdown(args: {
   ctx: PluginInput
@@ -54,16 +36,7 @@ export function startCountdown(args: {
   const state = sessionStateStore.getState(sessionID)
   sessionStateStore.cancelCountdown(sessionID)
 
-  let secondsRemaining = COUNTDOWN_SECONDS
-  showCountdownToast(ctx, secondsRemaining, incompleteCount)
   state.countdownStartedAt = Date.now()
-
-  state.countdownInterval = setInterval(() => {
-    secondsRemaining--
-    if (secondsRemaining > 0) {
-      showCountdownToast(ctx, secondsRemaining, incompleteCount)
-    }
-  }, 1000)
 
   state.countdownTimer = setTimeout(() => {
     sessionStateStore.cancelCountdown(sessionID)
