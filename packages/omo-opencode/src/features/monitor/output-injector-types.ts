@@ -12,6 +12,11 @@ export type MonitorOutputInjectorDeps = {
   readonly postDispatchHoldMs: number
   /** Undefined keeps the unbounded legacy deferral. */
   readonly maxActiveDeferMs?: number
+  /**
+   * OpenCode 2.x: the host steers internal prompts in at the next safe step boundary, so a forced
+   * terminal batch skips the legacy assistant/tool transcript gate while the parent is active.
+   */
+  readonly nativeSteerDelivery?: boolean
   readonly dispatchInternalPrompt?: (args: InternalPromptDispatchArgs<PromptAsyncInput>) => Promise<InternalPromptDispatchResult>
   readonly now?: () => number
   readonly settleAfterSessionIdle?: () => Promise<void>

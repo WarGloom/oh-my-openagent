@@ -10,6 +10,7 @@ type DispatchCall = {
   source: string
   input: PromptAsyncInput
   checkStatus?: boolean
+  checkToolState?: boolean
 }
 
 const baseCounters = {
@@ -49,6 +50,8 @@ function createBatch(batchSeq: number, stillRunning: boolean): OutputBatch {
 function createHarness(opts: {
   active?: boolean
   maxActiveDeferMs?: number
+  assistantStepInFlight?: boolean
+  nativeSteerDelivery?: boolean
 } = {}): {
   injector: MonitorOutputInjector
   calls: DispatchCall[]
@@ -61,7 +64,8 @@ function createHarness(opts: {
   const client = {
     session: {
       status: async () => ({ data: { "parent-1": { type: active ? "busy" : "idle" } } }),
-      messages: async () => ({ data: [] }),
+      // An in-flight step has no finish and no output yet: the legacy transcript gate blocks on it.
+      messages: async () => ({ data: opts.assistantStepInFlight ? [{ info: { role: "assistant" }, parts: [] }] : [] }),
       promptAsync: async (_input: PromptAsyncInput) => ({ ok: true }),
     },
   } satisfies PromptDispatchClient & {
@@ -80,10 +84,11 @@ function createHarness(opts: {
     userMessageInProgressWindowMs: 500,
     postDispatchHoldMs: 250,
     ...(opts.maxActiveDeferMs === undefined ? {} : { maxActiveDeferMs: opts.maxActiveDeferMs }),
+    ...(opts.nativeSteerDelivery === undefined ? {} : { nativeSteerDelivery: opts.nativeSteerDelivery }),
     now: () => currentTime,
     settleAfterSessionIdle: async () => {},
     dispatchInternalPrompt: async (args): Promise<InternalPromptDispatchResult> => {
-      calls.push({ source: args.source, input: args.input, checkStatus: args.checkStatus })
+      calls.push({ source: args.source, input: args.input, checkStatus: args.checkStatus, checkToolState: args.checkToolState })
       return { status: "dispatched", response: { ok: true } }
     },
     scheduleFlush: () => {},
@@ -174,6 +179,46 @@ describe("monitor terminal batch parent wake", () => {
 
     harness.injector.queueBatch(createRecord(), createBatch(1, false))
     harness.advance(600_000)
+    await harness.injector.flushMonitor("mon_1")
+
+    expect(harness.calls).toHaveLength(0)
+  })
+
+  test.each([
+    [true, 1],
+    [false, 0],
+  ] as const)("native steer delivery %s: over-ceiling terminal batch during an in-flight step dispatches %d times", async (nativeSteerDelivery, dispatched) => {
+    const harness = createHarness({ active: true, maxActiveDeferMs: 60_000, assistantStepInFlight: true, nativeSteerDelivery })
+
+    harness.injector.queueBatch(createRecord(), createBatch(1, false))
+    await harness.injector.flushMonitor("mon_1")
+    expect(harness.calls).toHaveLength(0)
+
+    harness.advance(60_000)
+    await harness.injector.flushMonitor("mon_1")
+
+    expect(harness.calls).toHaveLength(dispatched)
+    if (dispatched === 1) {
+      expect(harness.calls[0]?.input.body.noReply).toBe(false)
+      expect(harness.calls[0]?.checkStatus).toBe(false)
+      expect(harness.calls[0]?.checkToolState).toBe(false)
+    }
+  })
+
+  test("native steer delivery never force dispatches a streaming batch during an in-flight step", async () => {
+    const harness = createHarness({ active: true, maxActiveDeferMs: 60_000, assistantStepInFlight: true, nativeSteerDelivery: true })
+
+    harness.injector.queueBatch(createRecord({ status: "running", exitCode: undefined }), createBatch(1, true))
+    harness.advance(600_000)
+    await harness.injector.flushMonitor("mon_1")
+
+    expect(harness.calls).toHaveLength(0)
+  })
+
+  test("native steer delivery keeps the transcript gate for an idle parent", async () => {
+    const harness = createHarness({ assistantStepInFlight: true, nativeSteerDelivery: true })
+
+    harness.injector.queueBatch(createRecord(), createBatch(1, false))
     await harness.injector.flushMonitor("mon_1")
 
     expect(harness.calls).toHaveLength(0)

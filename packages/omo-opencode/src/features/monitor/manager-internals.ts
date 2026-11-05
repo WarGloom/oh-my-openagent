@@ -43,6 +43,8 @@ export interface MonitorManagerDeps {
 export interface MonitorManagerOptions {
   pluginContext: Pick<PluginInput, "client" | "directory">
   readonly environment?: (sessionID: string) => Promise<Readonly<Record<string, string>> | undefined>
+  /** Set only for an OpenCode 2.x plugin input, whose host steers internal prompts at safe step boundaries. */
+  readonly nativeSteerDelivery?: boolean
   config?: Partial<MonitorConfig>
   deps?: MonitorManagerDeps
 }

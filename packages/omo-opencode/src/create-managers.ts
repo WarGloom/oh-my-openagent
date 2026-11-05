@@ -108,7 +108,7 @@ export function createManagers(args: {
     ? deps.createMonitorManagerFn({
       pluginContext: { client: ctx.client, directory: ctx.directory },
       config: pluginConfig.monitor,
-      ...(isV2PluginInput(ctx) ? { environment: getV2SessionEnvironment(ctx) } : {}),
+      ...(isV2PluginInput(ctx) ? { environment: getV2SessionEnvironment(ctx), nativeSteerDelivery: true } : {}),
     })
     : undefined
 

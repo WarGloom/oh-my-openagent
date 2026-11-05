@@ -93,8 +93,7 @@ export class MonitorManager implements MonitorManagerContract {
     }
 
     const injector = createMonitorInjector(
-      this.options.deps,
-      this.options.pluginContext,
+      this.options,
       record,
       (monitorId, delayMs, operation) => this.scheduleFlush(monitorId, delayMs, operation),
     )
