@@ -91,8 +91,8 @@ task(subagent_type="librarian", load_skills=[], prompt="CONTEXT: working with [T
 grep(pattern="relevant_pattern", path="src/")
 read_file(filePath="known/important/file")
 
-// Collect background results when ready
-deep_context = background_output(task_id=...)
+// Inspect the delivered native <subagent> terminal result/error.
+// Use background_output(task_id=...) only for missing/truncated output or transcript/diagnostic detail.
 
 // Merge ALL findings for comprehensive understanding
 ```
@@ -108,7 +108,7 @@ deep_context = background_output(task_id=...)
 
 **Execute:**
 - Surgical, minimal changes matching existing patterns
-- If delegating: every child prompt carries GOAL, STOP WHEN (the exact observable condition that ends its run — the child stops the moment it holds), and EVIDENCE (what it returns so you can verify, not trust) — plus exhaustive context. Judge the child by its returned EVIDENCE against its STOP WHEN, never by its self-report.
+- If delegating: give a concrete goal, observable acceptance criteria, required evidence, scope, and sourced hard limits. Pass relevant context labeled verified, assumed, or unknown. A capable worker owns the method; give procedural detail only when the contract or a mechanical/limited-worker task requires it. Judge returned evidence against acceptance criteria, not the worker's self-report. Write normal prose with spaces and preserve exact identifiers.
 
 **Verify (per-scenario, not just "at the end"):**
 - Existing tests read (intent / coverage / pass), stale expectations updated
