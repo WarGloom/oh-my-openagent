@@ -20,6 +20,14 @@ function toV1Error(error: V2StructuredError): NonNullable<V1MessageInfo["error"]
   }
 }
 
+function toV1Model(model: V2ModelRef): NonNullable<V1MessageInfo["model"]> {
+  return {
+    providerID: model.providerID,
+    modelID: model.id,
+    ...(model.variant === undefined || model.variant === "default" ? {} : { variant: model.variant }),
+  }
+}
+
 /**
  * The 2.x session log as 1.x `{ info, parts }` messages. 2.x keeps injected context as separate
  * log entries where 1.x folded it into the user message's parts, so each becomes a user message
@@ -44,23 +52,18 @@ export function translateMessages(input: TranslateInput): V1Message[] {
     messageID,
     ...fields,
   })
-  const userInfo = (id: string, created: number): V1MessageInfo => ({
-    id,
-    sessionID,
-    role: "user",
-    time: { created },
-    agent,
-    ...(model === undefined
-      ? {}
-      : {
-          model: {
-            providerID: model.providerID,
-            modelID: model.id,
-            ...(model.variant === undefined ? {} : { variant: model.variant }),
-          },
-        }),
-    ...(model?.variant === undefined ? {} : { variant: model.variant }),
-  })
+  const userInfo = (id: string, created: number): V1MessageInfo => {
+    const v1Model = model === undefined ? undefined : toV1Model(model)
+    return {
+      id,
+      sessionID,
+      role: "user",
+      time: { created },
+      agent,
+      ...(v1Model === undefined ? {} : { model: v1Model }),
+      ...(v1Model?.variant === undefined ? {} : { variant: v1Model.variant }),
+    }
+  }
   const pushUser = (id: string, created: number, parts: V1Part[]) => {
     parentID = id
     result.push({ info: userInfo(id, created), parts })
@@ -104,7 +107,7 @@ export function translateMessages(input: TranslateInput): V1Message[] {
             ...(parentID === undefined ? {} : { parentID }),
             agent,
             mode: agent,
-            ...(model === undefined ? {} : { providerID: model.providerID, modelID: model.id }),
+            ...(model === undefined ? {} : toV1Model(model)),
             cost: 0,
             tokens: NO_TOKENS,
             path,
@@ -128,7 +131,7 @@ export function translateMessages(input: TranslateInput): V1Message[] {
             parentID: message.id,
             agent,
             mode: agent,
-            ...(model === undefined ? {} : { providerID: model.providerID, modelID: model.id }),
+            ...(model === undefined ? {} : toV1Model(model)),
             finish: "stop",
             cost: 0,
             tokens: NO_TOKENS,
@@ -171,9 +174,7 @@ export function translateMessages(input: TranslateInput): V1Message[] {
           ...(parentID === undefined ? {} : { parentID }),
           agent: message.agent,
           mode: message.agent,
-          providerID: message.model.providerID,
-          modelID: message.model.id,
-          ...(message.model.variant === undefined ? {} : { variant: message.model.variant }),
+          ...toV1Model(message.model),
           ...(message.finish === undefined ? {} : { finish: message.finish }),
           cost: message.cost ?? 0,
           tokens: message.tokens ?? NO_TOKENS,
