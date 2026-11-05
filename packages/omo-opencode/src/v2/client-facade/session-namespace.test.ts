@@ -5,6 +5,7 @@ import { createSessionTracker } from "../session-tracker"
 import { createSessionNamespace } from "./session-namespace"
 import { createClientFacade } from "./create-client-facade"
 import { recoverUnarchivedTask } from "../../tools/delegate-task/unarchived-session-recovery"
+import { createInternalAgentTextPart, withInternalNoReplyMarker } from "@oh-my-opencode/utils/internal-initiator-marker"
 
 const opus = { providerID: "anthropic", id: "claude-opus" }
 
@@ -276,19 +277,23 @@ describe("createSessionNamespace", () => {
       ])
     })
 
-    it("#when every text part is synthetic #then it is sent as a synthetic message", async () => {
+    it.each([
+      [{ type: "text", text: "context", synthetic: true }, false, "synthetic"],
+      [createInternalAgentTextPart("terminal notice"), false, "prompt"],
+      [withInternalNoReplyMarker(createInternalAgentTextPart("intermediate notice")), true, "prompt"],
+    ] as const)("#when internal context %j has noReply=%s #then native steering preserves reply intent", async (part, noReply, kind) => {
       // given
       const { fake, session } = setup()
 
       // when
       await session.promptAsync({
         path: { id: "ses_1" },
-        body: { parts: [{ type: "text", text: "<system-reminder>x</system-reminder>", synthetic: true }] },
+        body: { noReply, parts: [part] },
       })
 
       // then
       expect(fake.sessionCalls).toEqual([
-        { kind: "synthetic", input: { sessionID: "ses_1", text: "<system-reminder>x</system-reminder>", delivery: "queue", resume: true } },
+        { kind, input: { sessionID: "ses_1", text: part.text, delivery: "steer", resume: !noReply } },
       ])
     })
 
