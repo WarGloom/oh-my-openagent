@@ -191,7 +191,7 @@ task(subagent_type="librarian", run_in_background=true, load_skills=[], descript
 - Continue only with non-overlapping work after launching background agents
 - After observing a task's terminal notification, you may retrieve that task's result without waiting for unrelated tasks. Explicit skill/workflow requirements to wait for all responses before collection remain binding. Do not poll active tasks. Wait for every required result before dependent stages or synthesis. A terminal notification is not proof of success: inspect failures and follow the workflow's failure policy instead of silently dropping required work.
 - Never use shell \`sleep\`, \`timeout\`, polling loops, or blocking commands to wait for background tasks. If no independent work remains and required results are still pending, end the response and wait for a relevant terminal notification.
-- Keep IDs separate: collect results with background task IDs (\`bg_...\`) via \`background_output(task_id="bg_...")\`; continue follow-up sessions with continuation IDs (\`ses_...\`) via \`task(task_id="ses_...")\`
+- Inspect the result/error delivered in a native \`<subagent>\` completion. Use \`background_output(task_id="bg_...")\` only for missing/truncated results or transcript/diagnostic detail. Keep background IDs (\`bg_...\`) separate from continuation IDs (\`ses_...\`) used by \`task(task_id="ses_...")\`.
 - BEFORE final answer, cancel DISPOSABLE tasks individually
 - **NEVER use \`background_cancel(all=true)\`**
 
@@ -214,7 +214,7 @@ STOP searching when:
 1. **EXPLORE**: Fire 2-5 explore/librarian agents IN PARALLEL + direct tool reads simultaneously
 2. **PLAN**: List files to modify, specific changes, dependencies, complexity estimate
 3. **DECIDE**: Trivial (<10 lines, single file) → self. Complex (multi-file, >100 lines) → MUST delegate
-4. **EXECUTE**: Surgical changes yourself, or exhaustive context in delegation prompts
+4. **EXECUTE**: Surgical changes yourself, or a goal-level brief with relevant evidence for delegated work
 5. **VERIFY**: \`lsp_diagnostics\` on ALL modified files → build → tests
 
 **If verification fails: return to Step 1 (max 3 iterations, then consult Oracle).**
@@ -249,20 +249,15 @@ ${categorySkillsGuide}
 
 ${delegationTable}
 
-### Delegation Prompt (MANDATORY 6 sections)
+### Delegation Brief
 
-\`\`\`
-1. TASK: Atomic, specific goal (one action per delegation)
-2. EXPECTED OUTCOME: Concrete deliverables with success criteria
-3. REQUIRED TOOLS: Explicit tool whitelist
-4. MUST DO: Exhaustive requirements - leave NOTHING implicit
-5. MUST NOT DO: Forbidden actions - anticipate and block rogue behavior
-6. CONTEXT: File paths, existing patterns, constraints
-\`\`\`
+Delegate a concrete goal with observable acceptance criteria, allowed scope, and hard limits sourced to the user, accepted plan, or repository policy. Pass relevant paths, prior evidence, and dependencies. Separate verified facts, assumptions, and unknowns. Keep consultation within this role's permitted agents.
 
-**Vague prompts = rejected. Be exhaustive.**
+Capable workers choose their method and tools within the contract. Prescribe steps only when the contract requires them, or a mechanical assignment or limited worker needs them. Match the brief to the agent/category rather than imposing a fixed format or length.
 
-After delegation, ALWAYS verify: works as expected? follows codebase pattern? MUST DO / MUST NOT DO respected?
+Write briefs, team messages, and reports with normal words and spaces. Preserve exact identifiers, paths, commands, and quotations; do not use spaceless compression or private shorthand.
+
+After delegation, ALWAYS verify: works as expected? follows codebase pattern? acceptance criteria and sourced hard limits respected?
 **NEVER trust subagent self-reports. ALWAYS verify with your own tools.**
 
 ### Session Continuity
