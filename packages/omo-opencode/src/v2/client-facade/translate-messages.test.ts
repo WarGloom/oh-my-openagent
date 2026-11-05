@@ -1,5 +1,10 @@
 import { describe, expect, it } from "bun:test"
-import type { V2SessionMessage } from "../context-types"
+import {
+  resolveLatestSessionPromptConfig,
+  resolveSessionPromptConfig,
+} from "../../hooks/compaction-context-injector/session-prompt-config-resolver"
+import { validateCheckpointModel } from "../../hooks/compaction-context-injector/validated-model"
+import type { V2ModelRef, V2SessionMessage } from "../context-types"
 import { translateMessages } from "./translate-messages"
 
 const base = { sessionID: "ses_1", directory: "/work/app/packages/web", worktree: "/work/app" }
@@ -266,6 +271,20 @@ describe("translateMessages", () => {
       expect(translated[1]?.parts).toEqual([])
     })
 
+    it("#when a named variant fails #then the idle error retains that variant", () => {
+      const messages: V2SessionMessage[] = [
+        {
+          type: "model-switched",
+          id: "msg_0",
+          model: { providerID: "qa", id: "model", variant: "high" },
+          time: { created: 0 },
+        },
+        user("msg_1", "hi"),
+        failedIdle,
+      ]
+      expect(translate(messages)[1]?.info).toMatchObject({ providerID: "qa", modelID: "model", variant: "high" })
+    })
+
     it("#when the assistant message before it already carries the error #then no second message is added", () => {
       // given
       const failedAssistant: AssistantMessage = {
@@ -308,6 +327,80 @@ describe("translateMessages", () => {
       // when / then
       expect(translate([user("msg_1", "hi"), succeeded]).map((message) => message.info.id)).toEqual(["msg_1"])
     })
+  })
+
+  describe("#given a compaction checkpoint captured from translated history", () => {
+    const sessionID = "ses_checkpoint"
+    const assistantOn = (model: V2ModelRef): AssistantMessage => ({
+      type: "assistant",
+      id: "msg_2",
+      agent: "Sisyphus",
+      model,
+      time: { created: 2_000, completed: 2_100 },
+      finish: "stop",
+      content: [{ type: "text", text: "ok" }],
+    })
+    const compaction: V2SessionMessage = {
+      type: "compaction",
+      id: "msg_9",
+      status: "completed",
+      reason: "auto",
+      summary: "QA_SUMMARY",
+      time: { created: 9_000 },
+    }
+    const resolverContext = (model: V2ModelRef, messages: ReadonlyArray<V2SessionMessage>) => ({
+      directory: base.directory,
+      client: {
+        session: {
+          messages: async () => ({
+            data: translateMessages({ ...base, sessionID, messages, initial: { agent: "Sisyphus", model } }),
+          }),
+        },
+      },
+    })
+    it.each([
+      {
+        name: "named",
+        session: { providerID: "qa", id: "gpt-small", variant: "checkpoint" },
+        switched: [],
+        restored: { providerID: "qa", modelID: "gpt-small", variant: "checkpoint" },
+      },
+      {
+        name: "default",
+        session: { providerID: "qa", id: "gpt-small", variant: "default" },
+        switched: [],
+        restored: { providerID: "qa", modelID: "gpt-small" },
+      },
+      {
+        name: "different named",
+        session: { providerID: "qa", id: "gpt-small", variant: "checkpoint" },
+        switched: [
+          {
+            type: "model-switched",
+            id: "msg_3",
+            model: { providerID: "qa", id: "gpt-small", variant: "high" },
+            time: { created: 3_000 },
+          },
+        ],
+        restored: undefined,
+      },
+    ] satisfies ReadonlyArray<{
+      name: string
+      session: V2ModelRef
+      switched: ReadonlyArray<V2SessionMessage>
+      restored: { providerID: string; modelID: string; variant?: string } | undefined
+    }>)(
+      "#when $name is selected before compaction #then the checkpoint resolves to the expected restore",
+      async ({ session, switched, restored }) => {
+        const before: V2SessionMessage[] = [user("msg_1", "work"), assistantOn(session)]
+        const checkpoint = await resolveSessionPromptConfig(resolverContext(session, before), sessionID)
+        const current = await resolveLatestSessionPromptConfig(
+          resolverContext(session, [...before, ...switched, compaction]),
+          sessionID,
+        )
+        expect(validateCheckpointModel(checkpoint.model, current.model)).toEqual(restored)
+      },
+    )
   })
 
   describe("#given a compaction entry", () => {

@@ -33,7 +33,7 @@ function sameModel(left: V2ModelRef, right: V2ModelRef | undefined): boolean {
     right !== undefined &&
     left.providerID === right.providerID &&
     left.id === right.id &&
-    left.variant === right.variant
+    (left.variant ?? "default") === (right.variant ?? "default")
   )
 }
 
