@@ -1,10 +1,11 @@
 /// <reference types="bun-types" />
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 
+import * as validation from "./config/validate"
 import { MIRROR_SCHEMA_VERSION } from "./features/tui-sidebar/constants"
 import { viewKey } from "./features/tui-sidebar/compute-view"
 import { mirrorFilePath } from "./features/tui-sidebar/mirror-path"
@@ -67,6 +68,34 @@ describe("TUI session Jobs", () => {
       process.env.XDG_DATA_HOME = originalXdgDataHome
     }
     rmSync(tempDir, { recursive: true, force: true })
+  })
+
+  it("#given configured models #when readView refreshes #then it validates once and retains the selected roster", async () => {
+    // given
+    mkdirSync(join(tempDir, ".omo"), { recursive: true })
+    writeFileSync(
+      join(tempDir, ".omo", "omo.jsonc"),
+      JSON.stringify({
+        "[opencode]": { agents: { atlas: { model: "provider/refresh-selected" } } },
+      }),
+    )
+    const validate = spyOn(validation, "validatePluginConfig")
+
+    try {
+      // when
+      const view = await readView(tempDir, null, new TeamSessionCache())
+
+      // then
+      expect(view.kind).toBe("idle")
+      if (view.kind !== "idle") throw new Error("expected idle roster")
+      expect(view.roster).toMatchObject({
+        kind: "rows",
+        rows: expect.arrayContaining([{ label: "atlas", model: "refresh-selected" }]),
+      })
+      expect(validate).toHaveBeenCalledTimes(1)
+    } finally {
+      validate.mockRestore()
+    }
   })
 
   it("#given hostile global mirrors and no exact session file #when deriving home and settings-equivalent views #then global Jobs cannot activate the sidebar", async () => {
