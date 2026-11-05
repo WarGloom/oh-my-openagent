@@ -2,6 +2,7 @@ import type { V2ModelRef, V2PluginContext } from "../context-types"
 import { settle } from "./v1-result"
 import { setSessionSystem } from "../session-system"
 import { normalizeAction } from "../config-bridge"
+import { isSyntheticOrInternalOnlyTextParts } from "@oh-my-opencode/utils/internal-initiator-marker"
 
 type PromptPart = {
   readonly type: string
@@ -131,11 +132,13 @@ export function createPromptAsync(context: V2PluginContext, report: Report) {
         }
       }
       if (body.system !== undefined) await setSessionSystem(context, sessionID, body.system)
+      // Plugin notices steer: queued rows promote one per turn and park behind user prompts.
+      const internal = files.length === 0 && isSyntheticOrInternalOnlyTextParts(textParts)
       const input = {
         sessionID,
         text: textParts.map((part) => part.text).join("\n\n"),
         ...(files.length === 0 ? {} : { files }),
-        delivery: "queue" as const,
+        delivery: internal ? ("steer" as const) : ("queue" as const),
         resume: body.noReply !== true,
       }
       if (files.length === 0 && textParts.every((part) => part.synthetic === true))
