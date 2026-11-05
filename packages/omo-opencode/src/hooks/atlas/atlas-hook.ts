@@ -3,6 +3,9 @@ import { createAtlasEventHandler } from "./event-handler"
 import { AtlasLifecycleStore } from "./atlas-lifecycle-store"
 import { createToolExecuteAfterHandler } from "./tool-execute-after"
 import { createToolExecuteBeforeHandler } from "./tool-execute-before"
+import { handleNativeCompletion } from "./native-completion"
+import { isCallerOrchestrator } from "../../shared/session-utils"
+import type { NativeAtlasCompletion } from "./native-completion"
 import type { AtlasHookOptions, SessionState } from "./types"
 
 export function createAtlasHook(ctx: PluginInput, options?: AtlasHookOptions) {
@@ -14,6 +17,13 @@ export function createAtlasHook(ctx: PluginInput, options?: AtlasHookOptions) {
   }
 
   return {
+    nativeCompletion: async (completion: NativeAtlasCompletion) => {
+      const isOrchestrator =
+        options?.isCallerOrchestrator ??
+        ((sessionID: string | undefined) => isCallerOrchestrator(sessionID, ctx.client))
+      if (!(await isOrchestrator(completion.sessionID))) return
+      return handleNativeCompletion({ ctx, completion, autoCommit, getState })
+    },
     handler: createAtlasEventHandler({
       ctx,
       options,

@@ -52,6 +52,7 @@ async function rollbackOwnedAddition(input: {
         source: "team-add-rollback",
         reason: "add_rollback",
         skipNotification: true,
+        revokeTeamProvisioning: true,
       })
       .catch((error: unknown) => {
         errors.push(error)

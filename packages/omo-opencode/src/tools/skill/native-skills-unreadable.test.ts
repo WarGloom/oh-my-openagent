@@ -46,3 +46,24 @@ test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     expect(skills[0]?.definition.template).toContain("locked host content")
   },
 )
+
+test("a host-registry skill:// row loads from the host content without a filesystem read or rejection", () => {
+  // given: a V2 host registry row at a virtual location, merged in the project the process runs in;
+  // a relative path resolve of the URI lands inside that project
+  const id = `virtual-${crypto.randomUUID()}`
+  const content = `---\nname: ${id}\nmcp:\n  probe:\n    command: probe-server\n---\n${id} host body\n`
+  const entries = [{ name: id, description: "fixture", content, location: `skill://${id}/SKILL.md` }]
+  const rejected: string[] = []
+  const skills: LoadedSkill[] = []
+  // when
+  mergeNativeSkills(skills, entries, undefined, process.cwd(), (name) => {
+    rejected.push(name)
+  })
+  // then: the row is kept, classified as host, and its template and MCP come from the host content
+  expect(rejected).toEqual([])
+  expect(skills.map((skill) => skill.name)).toEqual([id])
+  expect(skills[0]?.provenance?.kind).toBe("host")
+  expect(skills[0]?.definition.template).toBe(content)
+  expect(Object.keys(skills[0]?.mcpConfig ?? {})).toEqual(["probe"])
+  expect(skills[0]?.mcpSourcePath).toBe(`skill://${id}/SKILL.md`)
+})

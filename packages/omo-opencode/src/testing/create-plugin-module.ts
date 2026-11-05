@@ -252,7 +252,7 @@ export function createPluginModule(overrides: Partial<PluginModuleDeps> = {}): D
     deps.warmLiveServerProbe()
     const runtimeSecuritySkills = selectRuntimeSecuritySkills(pluginConfig)
     let runtimeSkillSource: Awaited<ReturnType<PluginModuleDeps["createRuntimeSkillSourceServer"]>> | undefined
-    if (runtimeSecuritySkills.length > 0) {
+    if (runtimeSecuritySkills.length > 0 && !isV2PluginInput(input)) {
       try {
         runtimeSkillSource = await deps.createRuntimeSkillSourceServer({ skills: runtimeSecuritySkills })
       } catch (error) {

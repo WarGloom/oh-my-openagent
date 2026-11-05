@@ -301,9 +301,15 @@ describe("stopTeamMemberRemoval", () => {
     )
       expect(aborts).toEqual(["worker-session"])
     if (scenario === "wrong-session") expect(cancellations).toEqual([])
-    if (scenario === "success")
+    if (scenario === "success" || scenario === "terminal")
       expect(cancellations).toEqual([
-        { id: "background-worker", abortSession: true, skipNotification: true, source: "team-remove-member" },
+        {
+          id: "background-worker",
+          abortSession: true,
+          skipNotification: true,
+          revokeTeamProvisioning: true,
+          source: "team-remove-member",
+        },
       ])
   })
 })

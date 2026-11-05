@@ -171,7 +171,13 @@ describe("installConfigBridge", () => {
       await fake
         .builtCommands()
         .get("triage")
-        ?.execute({ sessionID: "ses_1", prompt: { text: "login bug" }, delivery: "steer" })
+        ?.execute({
+          invocationID: "command_1",
+          agent: "Sisyphus",
+          sessionID: "ses_1",
+          prompt: { text: "login bug" },
+          delivery: "steer",
+        })
 
       // then
       expect(beforeCommand).toHaveBeenCalledTimes(1)
@@ -199,6 +205,111 @@ describe("installConfigBridge", () => {
 
       // then
       expect(fake.commandReloadCount()).toBe(before + 1)
+    })
+  })
+
+  describe("#given native OpenGateway registration", () => {
+    it.each([false, true])(
+      "#when connected=%s #then the host connection gates catalog availability",
+      async (connected) => {
+        // given
+        const fake = createFakePluginContext({ connectedIntegrations: connected ? ["opengateway"] : [] })
+        // when
+        const dispose = await installConfigBridge(fake.context, async () => {}, { warn: () => {} })
+        try {
+          // then
+          expect(fake.builtIntegrations().get("opengateway")?.methods).toEqual([
+            { type: "key", label: "Manually enter API Key" },
+            { type: "env", names: ["OPENGATEWAY_API_KEY"] },
+          ])
+          expect(fake.builtProviders().get("opengateway")?.provider).toMatchObject({
+            activation: "auto",
+            settings: { baseURL: "https://apis.opengateway.ai/v1" },
+          })
+          expect((await fake.context.provider.list()).data.some((provider) => provider.id === "opengateway")).toBe(
+            connected,
+          )
+          const model = fake.builtProviders().get("opengateway")?.models.get("anthropic/claude-fable-5")
+          expect(model).toMatchObject({
+            limit: { context: 1_000_000, output: 128_000 },
+            capabilities: { tools: true, input: ["text", "image"], output: ["text"] },
+            cost: [{ input: 10, output: 50, cache: { read: 1, write: 12.5 } }],
+          })
+        } finally {
+          await dispose()
+        }
+      },
+    )
+
+    it("#when the host owns provider settings and a model #then catalog defaults preserve them", async () => {
+      // given
+      const custom = {
+        ...opus,
+        id: "anthropic/claude-fable-5",
+        providerID: "opengateway",
+        limit: { context: 123_456, output: 789 },
+      }
+      const fake = createFakePluginContext({
+        providers: [
+          {
+            id: "opengateway",
+            name: "User gateway",
+            activation: "enabled",
+            package: "user-package",
+            settings: { baseURL: "https://user.invalid" },
+          },
+        ],
+        models: [custom],
+      })
+      // when
+      const dispose = await installConfigBridge(fake.context, async () => {}, { warn: () => {} })
+      try {
+        // then
+        expect(fake.builtProviders().get("opengateway")?.provider).toMatchObject({
+          name: "User gateway",
+          package: "user-package",
+          settings: { baseURL: "https://user.invalid" },
+        })
+        expect(fake.builtProviders().get("opengateway")?.models.get(custom.id)).toEqual(custom)
+      } finally {
+        await dispose()
+      }
+    })
+
+    it("#when the hook reads native provider facts #then headers and effective limits arrive without catalog vision routing", async () => {
+      // given
+      const fake = createFakePluginContext({
+        providers: [
+          { id: "anthropic", name: "Anthropic", activation: "enabled", headers: { "anthropic-beta": "context-1m" } },
+        ],
+        models: [
+          {
+            ...opus,
+            limit: { context: 765_432, output: 8_000 },
+            capabilities: { tools: true, input: ["text", "image"], output: ["text"] },
+          },
+        ],
+      })
+      let seen: unknown
+      // when
+      const dispose = await installConfigBridge(
+        fake.context,
+        async (config) => {
+          seen = structuredClone(config.provider)
+        },
+        { warn: () => {} },
+      )
+      try {
+        // then
+        expect(seen).toEqual({
+          anthropic: {
+            options: { headers: { "anthropic-beta": "context-1m" } },
+            models: { "claude-opus": { limit: { context: 765_432 } } },
+          },
+        })
+      } finally {
+        await dispose()
+      }
     })
   })
 

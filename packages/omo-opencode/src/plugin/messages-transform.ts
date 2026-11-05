@@ -26,6 +26,7 @@ type MessageWithParts = {
 
 type MessagesTransformOutput = { messages: MessageWithParts[] }
 type MessagesTransformHooks = {
+  atlasHook?: CreatedHooks["atlasHook"]
   btwSideContextInjector?: CreatedHooks["btwSideContextInjector"]
   contextInjectorMessagesTransform?: CreatedHooks["contextInjectorMessagesTransform"]
   teamModeStatusInjector?: CreatedHooks["teamModeStatusInjector"]

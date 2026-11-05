@@ -153,6 +153,11 @@ describe("createPluginModule()", () => {
       // then
       expect(enabled).toEqual([false, true])
       expect(goalEnabled).toEqual([false, true])
+      expect(mockCreateRuntimeSkillSourceServer).toHaveBeenCalledTimes(1)
+      expect(mockCreateManagers.mock.calls.map(([args]) => args.runtimeSkillSourceUrl)).toEqual([
+        undefined,
+        "http://127.0.0.1:49152/security-research,security-review",
+      ])
       await v2.dispose?.()
       await v1.dispose?.()
     } finally {

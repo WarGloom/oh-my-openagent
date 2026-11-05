@@ -1,4 +1,5 @@
 import type { PluginInput } from "@opencode-ai/plugin"
+import { getNativeIdleArbiter } from "../../v2/native-idle-arbiter"
 import type { BoulderState } from "../../features/boulder-state"
 import { completeBoulder, formatDurationHuman, getWorkById, getWorkForSession } from "../../features/boulder-state"
 import { isAgentRegistered, resolveRegisteredAgentName } from "../../features/claude-code-session-state"
@@ -97,22 +98,25 @@ export async function handleCompletedBoulderIdle(input: {
       return
     }
 
-    const promptResult = await dispatchInternalPrompt({
-      mode: "async",
-      client: ctx.client,
-      sessionID,
-      source: HOOK_NAME,
-      settleMs: options?.idleSettleMs,
-      queueBehavior: "defer",
-      input: {
-        path: { id: sessionID },
-        body: {
-          agent: atlasAgent,
-          parts: [createInternalAgentContinuationTextPart(prompt)],
-        },
-        query: { directory: ctx.directory },
-      },
-    })
+    const arbiter = getNativeIdleArbiter(ctx)
+    const promptResult = arbiter
+      ? await arbiter.admit(sessionID, prompt, HOOK_NAME)
+      : await dispatchInternalPrompt({
+          mode: "async",
+          client: ctx.client,
+          sessionID,
+          source: HOOK_NAME,
+          settleMs: options?.idleSettleMs,
+          queueBehavior: "defer",
+          input: {
+            path: { id: sessionID },
+            body: {
+              agent: atlasAgent,
+              parts: [createInternalAgentContinuationTextPart(prompt)],
+            },
+            query: { directory: ctx.directory },
+          },
+        })
     if (!isInternalPromptDispatchAccepted(promptResult)) {
       if (promptResult.status === "failed" && isAmbiguousPostDispatchPromptFailure(promptResult)) {
         sessionState.boulderCompletionNudgedAt = {

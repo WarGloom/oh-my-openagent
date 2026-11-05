@@ -92,6 +92,7 @@ function createAgentConfigCacheKey(config: Record<string, unknown>, projectAgent
     agent: config.agent,
     default_agent: config.default_agent,
     model: config.model,
+    provider: config.provider,
     skills: config.skills,
     project_agent_source: projectAgentSourceSignature,
   })

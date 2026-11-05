@@ -64,7 +64,12 @@ function fixture(
       ...(typeof config.runtime_fallback === "object" ? config.runtime_fallback : {}),
     },
   })
-  cleanups.push(() => runtime.dispose?.())
+  cleanups.push(() => {
+    for (const call of fake.sessionCalls) {
+      if ("sessionID" in call) runtime.native?.forget(call.sessionID)
+    }
+    runtime.dispose?.()
+  })
   const hooks: Hooks = {}
   bindNativeRuntimeFallback(hooks, runtime)
   return { fake, input, runtime, hooks }
@@ -75,7 +80,7 @@ function retry(error: V2StructuredError, overrides: Partial<V2RetryHookEvent> = 
     sessionID: "ses_main",
     agent: "Sisyphus",
     model: first,
-    attempt: 2,
+    attempt: 3,
     decision: { retry: false },
     error,
     ...overrides,
@@ -90,6 +95,41 @@ async function install(f: ReturnType<typeof fixture>) {
 }
 
 describe("native runtime fallback", () => {
+  test("preserves the first same-model 503 retry at attempt 2 before switching once at attempt 3", async () => {
+    // given
+    const f = fixture()
+    await install(f)
+    const error = { type: "provider.api", message: "Service unavailable", status: 503 }
+    const event = retry(error, { attempt: 2, decision: { retry: true, delay: 4567 } })
+    const decision = event.decision
+    // when
+    await f.fake.triggerRetry(event)
+    // then
+    expect(event.decision).toBe(decision)
+    expect(f.fake.sessionCalls).toEqual([])
+    const next = await f.fake.triggerRetry(retry(error, { attempt: 3 }))
+    expect(next.decision).toEqual({ retry: true, delay: 0 })
+    expect(f.fake.sessionCalls).toEqual([
+      { kind: "switchModel", sessionID: "ses_main", model: { ...second, variant: undefined } },
+    ])
+  })
+
+  test.each([
+    { type: "provider.quota", message: "balance unavailable" },
+    { type: "provider.no-route", message: "Model unavailable" },
+  ])("switches immediately at attempt 2 for $type", async (error) => {
+    // given
+    const f = fixture()
+    await install(f)
+    // when
+    const event = await f.fake.triggerRetry(retry(error, { attempt: 2 }))
+    // then
+    expect(event.decision).toEqual({ retry: true, delay: 0 })
+    expect(f.fake.sessionCalls).toEqual([
+      { kind: "switchModel", sessionID: "ses_main", model: { ...second, variant: undefined } },
+    ])
+  })
+
   test("uses configured first-progress and stall limits to interrupt and resume with a native fallback", async () => {
     const clock = installRuntimeFallbackTestClock()
     cleanups.push(clock.restore)
@@ -426,7 +466,8 @@ describe("native runtime fallback", () => {
     expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["switchModel", "synthetic"])
     const continuation = f.fake.sessionCalls.find((call) => call.kind === "synthetic")
     expect(continuation?.input).toMatchObject({ sessionID: "ses_main", resume: true, delivery: "steer" })
-    expect(continuation?.input.id).toBeUndefined()
+    // a stable per-failure ID lets the host's atomic recovery admission deduplicate replays
+    expect(continuation?.input.id).toMatch(/^msg_[0-9a-f]{26}$/)
   })
 
   test("keeps recovered failures away from legacy error and idle consumers through real setup", async () => {

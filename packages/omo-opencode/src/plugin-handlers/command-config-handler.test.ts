@@ -10,6 +10,10 @@ import type { LoadedSkill } from "../features/opencode-skill-loader/types"
 import type { PluginComponents } from "./plugin-components-loader"
 import { applyCommandConfig } from "./command-config-handler"
 import { initDeepSkill } from "@oh-my-opencode/skills-loader-core/builtin-skills/skills/init-deep"
+import { createFakePluginContext } from "../v2/fake-plugin-context"
+import { buildConfigSnapshot } from "../v2/config-bridge/snapshot"
+import { createOwnedProviders } from "../v2/config-bridge/apply-providers"
+import { readDesiredConfig } from "../v2/config-bridge/desired-config"
 import { getAgentDisplayName, getAgentListDisplayName } from "../shared/agent-display-names"
 
 function createPluginComponents(): PluginComponents {
@@ -86,6 +90,38 @@ describe("applyCommandConfig", () => {
     loadOpencodeProjectSkillsSpy.mockRestore()
     loadProjectAgentsSkillsSpy.mockRestore()
     loadGlobalAgentsSkillsSpy.mockRestore()
+  })
+
+  test.each([false, true])("publishes only OMO command sources for native=%s", async (native) => {
+    // given
+    loadBuiltinCommandsSpy.mockReturnValue({ "qa-builtin": { template: "builtin" } })
+    loadUserCommandsSpy.mockResolvedValue({ "qa-user": { template: "user" } })
+    loadProjectCommandsSpy.mockResolvedValue({ "qa-claude": { template: "claude" } })
+    loadOpencodeGlobalCommandsSpy.mockResolvedValue({ "qa-global": { template: "global" } })
+    loadOpencodeProjectCommandsSpy.mockResolvedValue({ "qa-expand": { template: "host $ARGUMENTS" } })
+    const config = native
+      ? (await buildConfigSnapshot(createFakePluginContext().context, createOwnedProviders())).config
+      : {}
+    config.command = { "qa-config": { template: "config" } }
+
+    // when
+    await applyCommandConfig({
+      config,
+      pluginConfig: createPluginConfig(),
+      ctx: { directory: "/tmp" },
+      pluginComponents: createPluginComponents(),
+    })
+
+    // then
+    const names = readDesiredConfig(config)
+      .commands.map(([name]) => name)
+      .filter((name) => name.startsWith("qa-"))
+      .sort()
+    expect(names).toEqual(
+      native
+        ? ["qa-builtin", "qa-claude", "qa-user"]
+        : ["qa-builtin", "qa-claude", "qa-config", "qa-expand", "qa-global", "qa-user"],
+    )
   })
 
   test("includes .agents skills in command config", async () => {

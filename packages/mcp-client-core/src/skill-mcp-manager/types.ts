@@ -20,6 +20,7 @@ export interface McpClient {
 }
 
 export interface SkillMcpClientInfo {
+  readonly acceptedRevision?: string
   sourcePath?: string
   sourceKind?: "frontmatter" | "sidecar"
   provenance?: {

@@ -61,6 +61,7 @@ export async function handleSubagentCompletionAfter(input: {
   toolInput: ToolExecuteAfterInput
   toolOutput: ToolExecuteAfterOutput
   metadataSessionId: string | undefined
+  nativeCompletion?: { readonly pendingTaskRef: PendingTaskRef | undefined; readonly succeeded: boolean }
 }): Promise<void> {
   const {
     ctx,
@@ -74,7 +75,8 @@ export async function handleSubagentCompletionAfter(input: {
     metadataSessionId,
   } = input
   const outputStr = typeof toolOutput.output === "string" ? toolOutput.output : ""
-  const pendingTaskRef = toolInput.callID ? pendingTaskRefs.get(toolInput.callID) : undefined
+  const pendingTaskRef =
+    input.nativeCompletion?.pendingTaskRef ?? (toolInput.callID ? pendingTaskRefs.get(toolInput.callID) : undefined)
   if (toolInput.callID) {
     pendingTaskRefs.delete(toolInput.callID)
   }
@@ -99,11 +101,20 @@ export async function handleSubagentCompletionAfter(input: {
     return
   }
 
+  const extractedSessionId = metadataSessionId ?? extractSessionIdFromOutput(outputStr)
+  const sessionState = toolInput.sessionID ? getState(toolInput.sessionID) : undefined
+  if (
+    !input.nativeCompletion &&
+    toolInput.tool === "background_output" &&
+    extractedSessionId &&
+    sessionState?.nativeCompletionSessions?.has(extractedSessionId)
+  )
+    return
+
   const worktreePath = boulderState?.worktree_path?.trim()
   const verificationDirectory = worktreePath ? worktreePath : ctx.directory
-  const gitStats = collectGitDiffStatsImpl(verificationDirectory)
+  const gitStats = input.nativeCompletion ? [] : collectGitDiffStatsImpl(verificationDirectory)
   const fileChanges = formatFileChangesImpl(gitStats)
-  const extractedSessionId = metadataSessionId ?? extractSessionIdFromOutput(outputStr)
 
   if (!boulderState) {
     const lineageSessionIDs = toolInput.sessionID ? [toolInput.sessionID] : []
@@ -113,9 +124,10 @@ export async function handleSubagentCompletionAfter(input: {
       lineageSessionIDs,
     })
     const preferredSessionId = pendingTaskRef?.kind === "skip" ? undefined : subagentSessionId
-    toolOutput.output += `\n<system-reminder>\n${buildStandaloneVerificationReminder(
+    const reminder = `\n<system-reminder>\n${buildStandaloneVerificationReminder(
       resolvePreferredSessionId(preferredSessionId),
     )}\n</system-reminder>`
+    toolOutput.output = input.nativeCompletion ? reminder : toolOutput.output + reminder
 
     log(`[${HOOK_NAME}] Verification reminder appended for orchestrator`, {
       sessionID: toolInput.sessionID,
@@ -151,7 +163,6 @@ export async function handleSubagentCompletionAfter(input: {
     planPath,
   )
   const trackedTaskSession = currentTask ? getTaskSessionState(ctx.directory, currentTask.key) : null
-  const sessionState = toolInput.sessionID ? getState(toolInput.sessionID) : undefined
 
   const lineageSessionIDs = sessionWork?.session_ids ?? boulderState.session_ids
   const subagentSessionId = await validateSubagentSessionId({
@@ -210,7 +221,17 @@ export async function handleSubagentCompletionAfter(input: {
     sessionState,
     isAlreadyVerified,
     autoCommit,
+    completionSucceeded: input.nativeCompletion?.succeeded,
   })
+
+  if (input.nativeCompletion) {
+    if (sessionState && extractedSessionId) {
+      sessionState.nativeCompletionSessions ??= new Set()
+      sessionState.nativeCompletionSessions.add(extractedSessionId)
+    }
+    toolOutput.output = [reminderDecision.leadReminder, reminderDecision.followupReminder].filter(Boolean).join("\n\n")
+    return
+  }
 
   toolOutput.output = `
 <system-reminder>
