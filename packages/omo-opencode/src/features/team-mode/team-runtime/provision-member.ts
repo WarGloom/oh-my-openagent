@@ -175,6 +175,13 @@ export async function provisionTeamMember(input: ProvisionTeamMemberInput): Prom
     parentSessionId: input.leadSessionId,
     parentMessageId: input.parentMessageId,
     teamRunId: input.teamRunId,
+    nativeInvocation:
+      input.ctx.nativeInvocation?.kind === "tool"
+        ? { ...input.ctx.nativeInvocation, team: { teamRunID: input.teamRunId, member: input.member.name } }
+        : input.ctx.nativeInvocation,
+    nativeSignal: input.ctx.abortSignal,
+    nativeTaskKey: input.member.name,
+    nativeCompletion: "none",
     suppressTmuxSpawn: true,
     model: resolvedMember.model,
     fallbackChain: resolvedMember.fallbackChain,

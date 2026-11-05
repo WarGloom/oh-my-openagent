@@ -171,6 +171,26 @@ describe("Config handler hot path caching", () => {
     expect(unsafeTestValue(agents.createBuiltinAgents).mock.calls).toHaveLength(2)
   })
 
+  test("re-resolves the agent roster when configured vision input arrives after startup", async () => {
+    // given
+    const handler = createConfigHandler({
+      ctx: { directory: "/tmp" },
+      pluginConfig: createPluginConfig(),
+      modelCacheState: { anthropicContext1MEnabled: false, modelContextLimitsCache: new Map() },
+    })
+    await handler({ model: "qa/gpt-fake", agent: {}, provider: {} })
+
+    // when
+    await handler({
+      model: "qa/gpt-fake",
+      agent: {},
+      provider: { qa: { models: { "gpt-vision": { modalities: { input: ["text", "image"] } } } } },
+    })
+
+    // then
+    expect(unsafeTestValue(agents.createBuiltinAgents).mock.calls).toHaveLength(2)
+  })
+
   test("preserves agent_order on cache hits when default_agent is only a fallback", async () => {
     // #given
     installAgentSortShim()

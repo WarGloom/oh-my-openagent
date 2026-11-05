@@ -4,6 +4,13 @@ import { z } from "zod"
 import { log } from "../shared"
 import type { SkillLoadOptions } from "../tools/skill/types"
 import type { PluginContext } from "./types"
+import { getNativeSkillState } from "../v2/native-skill-state"
+import type { LoadedSkill } from "../features/opencode-skill-loader"
+import { mergeNativeSkills } from "../tools/skill/native-skills"
+import { loadSkillFromPath } from "@oh-my-opencode/skills-loader-core/opencode-skill-loader/loaded-skill-from-path"
+import { dirname } from "node:path"
+import { NativeSkillError } from "../v2/native-skill-expansion"
+import { existsSync } from "node:fs"
 
 const NativeSkillEntrySchema = z.object({
   name: z.string(),
@@ -14,6 +21,50 @@ const NativeSkillEntrySchema = z.object({
 const NativeSkillEntriesSchema = z.array(NativeSkillEntrySchema)
 
 type NativeSkills = NonNullable<SkillLoadOptions["nativeSkills"]>
+
+export function createNativeLoadedSkillsResolver(options: {
+  readonly skills: ReadonlyArray<LoadedSkill>
+  readonly nativeSkills: NativeSkills
+  readonly directory: string
+  readonly disabledSkills: ReadonlySet<string>
+}): () => Promise<LoadedSkill[]> {
+  return async () => {
+    const skills = [...options.skills]
+    const native = await options.nativeSkills.all()
+    mergeNativeSkills(skills, native, options.disabledSkills, options.directory)
+    return Promise.all(
+      skills.map(async (skill) => {
+        if (
+          options.skills.includes(skill) ||
+          !skill.path ||
+          skill.path.startsWith("skill://") ||
+          !existsSync(skill.path)
+        )
+          return skill
+        const metadata = await loadSkillFromPath({
+          skillPath: skill.path,
+          resolvedPath: dirname(skill.path),
+          defaultName: skill.name,
+          scope: skill.scope,
+          provenance: skill.provenance,
+        })
+        if (!metadata)
+          throw new NativeSkillError(skill.name, `Native skill metadata could not be loaded from ${skill.path}`)
+        return {
+          ...metadata,
+          name: skill.name,
+          definition: {
+            ...metadata.definition,
+            name: skill.name,
+            description: skill.definition.description,
+            template: native.find((entry) => entry.name === skill.name)?.content ?? skill.definition.template,
+          },
+          lazyContent: skill.lazyContent,
+        }
+      }),
+    )
+  }
+}
 
 function getObjectProperty(value: unknown, property: string): unknown {
   if (typeof value !== "object" || value === null) return undefined
@@ -37,6 +88,17 @@ function getGeneratedClientFromPluginClient(client: PluginContext["client"]): un
 }
 
 export function getPluginInputNativeSkills(ctx: PluginContext): NativeSkills | undefined {
+  const state = getNativeSkillState(ctx)
+  if (state) {
+    const all = async () =>
+      (await state.context.skill.list()).data.map((skill) => ({
+        name: skill.name,
+        description: skill.description ?? "",
+        location: skill.path,
+        content: skill.content,
+      }))
+    return { all, get: async (name) => (await all()).find((skill) => skill.name === name), dirs: () => [] }
+  }
   const value = getObjectProperty(ctx, "skills")
   return isNativeSkills(value) ? value : undefined
 }

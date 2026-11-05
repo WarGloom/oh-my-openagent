@@ -1,4 +1,6 @@
 import type { V2ToastRpc } from "./toast-channel"
+import type { V2ExperimentalSkillDomain, V2SkillDomain, V2SubagentSkillsDomain } from "./native-skill-types"
+import type { NativeSubagentDomain } from "./native-subagent-types"
 
 /**
  * Structural view of the OpenCode 2.x plugin context (`@opencode/plugin` `Plugin.Context`).
@@ -104,6 +106,12 @@ export type V2ToolDomain = {
 
 export type V2Listed<T> = { readonly data: ReadonlyArray<T> }
 
+export type V2ConfiguredModelInputs = {
+  readonly providerID: string
+  readonly modelID: string
+  readonly input: ReadonlyArray<string>
+}
+
 export type V2ModelRef = { readonly providerID: string; readonly id: string; readonly variant?: string }
 
 export type V2ModelInfo = {
@@ -131,6 +139,8 @@ export type V2ProviderInfo = {
   readonly activation: "auto" | "enabled" | "disabled"
   readonly package?: string
   readonly settings?: Readonly<Record<string, unknown>>
+  readonly headers?: Readonly<Record<string, string>>
+  readonly integrationID?: string
 }
 
 export type V2PermissionRule = {
@@ -170,12 +180,75 @@ export type V2AgentInfo = {
 }
 
 export type V2ModelDomain = {
+  readonly transform: (callback: (editor: V2ModelEditor) => void) => Promise<V2Registration>
+  readonly reload: () => Promise<void>
   readonly list: () => Promise<V2Listed<V2ModelInfo>>
   readonly default: () => Promise<{ readonly data: V2ModelInfo | null }>
 }
 
+/** A mutable 2.x provider definition as the provider transform hands it out (the fields OMO writes). */
+export type V2ModelEditor = {
+  readonly get: (providerID: string, modelID: string) => V2ModelInfo | undefined
+  readonly update: (
+    providerID: string,
+    modelID: string,
+    update: (model: { variants: Array<V2ModelInfo["variants"][number]> }) => void,
+  ) => void
+  readonly provider: { readonly get: (providerID: string) => { readonly provider: V2ProviderInfo } | undefined }
+}
+
+export type V2ProviderDraft = {
+  id: string
+  name: string
+  activation: "auto" | "enabled" | "disabled"
+  package: string
+  integrationID?: string
+  settings?: Record<string, unknown>
+  headers?: Record<string, string>
+}
+
+/** A mutable 2.x model definition as the provider transform hands it out (the fields OMO writes). */
+export type V2ModelDraft = {
+  id: string
+  name: string
+  variants: Array<V2ModelInfo["variants"][number]>
+  capabilities: { tools: boolean; input: string[]; output: string[]; temperature?: boolean }
+  cost: Array<{ input: number; output: number; cache: { read: number; write: number } }>
+  limit: { context: number; input?: number; output: number }
+}
+
+export type V2ProviderEditor = {
+  readonly get: (
+    providerID: string,
+  ) => { readonly provider: V2ProviderInfo; readonly models: ReadonlyMap<string, V2ModelInfo> } | undefined
+  /** Creates the provider from the host's empty definition (activation `auto`) when the id is unknown. */
+  readonly update: (providerID: string, update: (provider: V2ProviderDraft) => void) => void
+  readonly models: {
+    /** Creates the model from the host's default definition when the id is unknown. */
+    readonly update: (providerID: string, modelID: string, update: (model: V2ModelDraft) => void) => void
+  }
+}
+
 export type V2ProviderDomain = {
   readonly list: () => Promise<V2Listed<V2ProviderInfo>>
+  readonly transform: (callback: (editor: V2ProviderEditor) => void) => Promise<V2Registration>
+  readonly reload: () => Promise<void>
+}
+
+export type V2IntegrationMethod =
+  { readonly type: "key"; readonly label?: string } | { readonly type: "env"; readonly names: ReadonlyArray<string> }
+
+export type V2IntegrationEditor = {
+  readonly get: (id: string) => { readonly id: string; readonly name: string } | undefined
+  readonly update: (id: string, update: (integration: { id: string; name: string }) => void) => void
+  readonly method: {
+    readonly update: (input: { readonly integrationID: string; readonly method: V2IntegrationMethod }) => void
+  }
+}
+
+export type V2IntegrationDomain = {
+  readonly transform: (callback: (editor: V2IntegrationEditor) => void) => Promise<V2Registration>
+  readonly reload: () => Promise<void>
 }
 
 /** A mutable 2.x agent as the agent transform hands it out. */
@@ -242,10 +315,28 @@ export type V2McpDomain = {
   readonly reload: () => Promise<void>
 }
 
+export type V2PromptMention = { readonly start: number; readonly end: number; readonly text: string }
+export type V2PromptFile = {
+  readonly uri: string
+  readonly name?: string
+  readonly description?: string
+  readonly source?: { readonly type: "inline" } | { readonly type: "uri"; readonly uri: string }
+  readonly mention?: V2PromptMention
+} & Readonly<Record<string, unknown>>
+
 export type V2PromptInput = {
   readonly sessionID: string
   readonly text: string
-  readonly files?: ReadonlyArray<{ readonly uri: string; readonly name?: string }>
+  /** Host attachment objects; fields beyond `uri`/`name` (source, mention, description) pass through unchanged. */
+  readonly files?: ReadonlyArray<V2PromptFile>
+  readonly agents?: ReadonlyArray<{ readonly name: string; readonly mention?: V2PromptMention }>
+  readonly skills?: ReadonlyArray<{
+    readonly id: string
+    readonly arguments?: string
+    readonly mention?: V2PromptMention
+  }>
+  /** Carried to the `prompt` hook and stored on the user message. */
+  readonly metadata?: Readonly<Record<string, unknown>>
   readonly delivery?: "steer" | "queue" | null
   /** false enqueues the message without starting a turn. */
   readonly resume?: boolean | null
@@ -408,6 +499,15 @@ export type V2CompactionResult = { summary: string } & Record<string, unknown>
 
 export type V2CompactionHookEvent = V2ContextHookEvent & { result?: V2CompactionResult }
 
+export type V2CompactionContinueEvent = {
+  readonly sessionID: string
+  readonly compactionID: string
+  readonly reason: "auto" | "overflow"
+  readonly agent: string
+  readonly model: V2ModelRef
+  enabled: boolean
+}
+
 export type V2RetryHookEvent = {
   readonly sessionID: string
   readonly agent: string
@@ -419,6 +519,11 @@ export type V2RetryHookEvent = {
 
 export type V2IdleHookEvent = {
   readonly sessionID: string
+  readonly admit: (input: {
+    readonly id: string
+    readonly text: string
+    readonly description?: string
+  }) => Promise<"admitted" | "duplicate" | "stale">
   readonly background: ReadonlyArray<
     | { readonly kind: "shell"; readonly sessionID: string; readonly shellID: string; readonly command: string }
     | {
@@ -427,6 +532,7 @@ export type V2IdleHookEvent = {
         readonly childSessionID: string
         readonly agent: string
         readonly description: string
+        readonly wakes?: boolean
       }
     | { readonly kind: "image"; readonly sessionID: string; readonly path: string; readonly model: string }
   >
@@ -489,15 +595,38 @@ export type V2SessionDomain = {
     (name: "context", callback: (event: V2ContextHookEvent) => Promise<void> | void): Promise<V2Registration>
     (name: "model.request", callback: (event: V2ModelRequestHookEvent) => Promise<void> | void): Promise<V2Registration>
     (name: "compaction", callback: (event: V2CompactionHookEvent) => Promise<void> | void): Promise<V2Registration>
+    (
+      name: "experimental.compaction.continue",
+      callback: (event: V2CompactionContinueEvent) => Promise<void> | void,
+    ): Promise<V2Registration>
     (name: "retry", callback: (event: V2RetryHookEvent) => Promise<void> | void): Promise<V2Registration>
     (name: "experimental.idle", callback: (event: V2IdleHookEvent) => Promise<void> | void): Promise<V2Registration>
   }
 }
 
 export type V2CommandInvocation = {
+  readonly invocationID: string
+  readonly agent: string
+  readonly metadata?: Readonly<Record<string, unknown>>
   readonly sessionID: string
-  readonly prompt: { readonly text: string }
+  readonly prompt: Omit<V2PromptInput, "sessionID" | "delivery" | "resume" | "metadata">
   readonly delivery: "steer" | "queue"
+}
+
+export type V2CommandBeforeEvent = {
+  readonly invocationID: string
+  readonly agent: string
+  readonly name: string
+  readonly sessionID: string
+  readonly delivery: "steer" | "queue"
+  prompt: {
+    text: string
+    files?: V2PromptInput["files"]
+    agents?: V2PromptInput["agents"]
+    skills?: V2PromptInput["skills"]
+  }
+  metadata?: Record<string, unknown>
+  disposition: "continue" | "handled" | "cancelled"
 }
 
 export type V2CommandDefinition = {
@@ -507,6 +636,10 @@ export type V2CommandDefinition = {
 }
 
 export type V2CommandDomain = {
+  readonly hook: (
+    name: "experimental.command.before",
+    callback: (event: V2CommandBeforeEvent) => Promise<void> | void,
+  ) => Promise<V2Registration>
   readonly transform: (
     callback: (editor: { readonly add: (definition: V2CommandDefinition) => void }) => void,
   ) => Promise<V2Registration>
@@ -520,14 +653,62 @@ export type V2EventDomain = {
   readonly subscribe: (options?: { readonly signal?: AbortSignal }) => AsyncIterable<V2Event>
 }
 
+/** Experimental host recovery admission; mirrors `context.experimental.session.continueAfterFailure`. */
+export type V2ContinueAfterFailureInput = {
+  readonly sessionID: string
+  /** Newest durable history entry the caller observed as the failed idle. */
+  readonly boundaryID: string
+  readonly id: string
+  readonly text: string
+  readonly description?: string
+  readonly model?: V2ModelRef
+}
+
+export type V2ContinueAfterIdleInput = {
+  readonly sessionID: string
+  readonly boundaryID: string
+  readonly id: string
+  readonly text: string
+  readonly description?: string
+}
+
+export type V2ExperimentalSessionDomain = {
+  /** Trusted process snapshot; undefined preserves host process inheritance. */
+  readonly environment: (input: { readonly sessionID: string }) => Promise<Readonly<Record<string, string>> | undefined>
+  /** Accepts a failed boundary, or an interrupted boundary journaled by this plugin's own `interrupt`. */
+  readonly continueAfterFailure: (input: V2ContinueAfterFailureInput) => Promise<"admitted" | "duplicate" | "stale">
+  readonly continueAfterIdle: (input: V2ContinueAfterIdleInput) => Promise<"admitted" | "duplicate" | "stale">
+  readonly recover: (
+    input: { readonly sessionID: string },
+    callback: (input: { readonly boundaryID: string }) => Promise<boolean>,
+    options?: { readonly signal?: AbortSignal },
+  ) => Promise<boolean>
+  /** Plugin-owned interrupt; `boundaryID` is the interrupted idle this call produced, journaled for this plugin. */
+  readonly interrupt: (input: {
+    readonly sessionID: string
+  }) => Promise<{ readonly interrupted: boolean; readonly boundaryID?: string }>
+}
+
 export type V2PluginContext = {
+  readonly experimental: {
+    readonly session: V2ExperimentalSessionDomain
+    readonly model: { readonly configuredInputs: () => Promise<ReadonlyArray<V2ConfiguredModelInputs>> }
+    readonly formatter: {
+      readonly file: (input: { readonly sessionID: string; readonly filepath: string }) => Promise<boolean>
+    }
+    readonly variant: { readonly resolve: (input: { readonly model: V2ModelInfo }) => Promise<V2ModelInfo["variants"]> }
+    readonly skill: V2ExperimentalSkillDomain
+    readonly subagent: NativeSubagentDomain & V2SubagentSkillsDomain
+  }
   readonly rpc: V2ToastRpc
   readonly app: V2App
   readonly location: V2Location
   readonly options: Readonly<Record<string, unknown>>
   readonly tool: V2ToolDomain
+  readonly skill: V2SkillDomain
   readonly model: V2ModelDomain
   readonly provider: V2ProviderDomain
+  readonly integration: V2IntegrationDomain
   readonly agent: V2AgentDomain
   readonly mcp: V2McpDomain
   readonly command: V2CommandDomain

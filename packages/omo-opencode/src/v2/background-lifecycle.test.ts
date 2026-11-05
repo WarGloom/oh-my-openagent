@@ -11,10 +11,18 @@ import { createModelCacheState } from "../plugin-state"
 import { createV2Setup } from "./create-v2-setup"
 import { createFakePluginContext } from "./fake-plugin-context"
 import type { V2StorageDomain, V2SyntheticInput } from "./context-types"
+import { BackgroundManager } from "../features/background-agent/manager"
+import { backgroundTaskRecord, encodeBackgroundTask } from "./background-task-record"
+import {
+  fixture as nativeFixture,
+  cleanups as nativeCleanups,
+  cleanupNativeFixtures,
+} from "./native-subagent-jobs-test-fixture"
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup()
+  await cleanupNativeFixtures()
   clearBackgroundTaskRegistryForTesting()
 })
 
@@ -256,36 +264,51 @@ describe("V2 durable background lifecycle", () => {
 
   it("#given a queued launch #when host memory is lost #then its original ID starts after the recovered running task completes", async () => {
     // given
-    const f = await fixture()
-    const input = {
-      parentSessionId: "parent",
-      parentMessageId: "request",
-      agent: "Sisyphus",
-      description: "queued task",
-      prompt: "work",
-      model: { providerID: "openai", modelID: "gpt-6.1-sol" },
-    }
-    const admitted = f.nextPrompt()
-    const first = await f.manager().launch(input)
+    const f = await nativeFixture()
+    const admitted = f.nextStart()
+    const first = await f.manager.launch(f.launch("first"))
     await admitted
-    const queued = await f.manager().launch(input)
-    expect(f.manager().getTask(queued.id)?.status).toBe("pending")
+    const queued = await f.manager.launch(f.launch("queued"))
+    expect(f.manager.getTask(queued.id)?.status).toBe("pending")
     // when
-    await f.reload(true)
-    const nextAdmission = f.nextPrompt()
-    const sessionID = f.manager().getTask(first.id)?.sessionId
-    if (!sessionID) throw new Error("recovered child missing")
-    await f.fake.triggerIdle({ sessionID, background: [] })
+    await f.manager.shutdown()
+    const persisted = [...f.stored.values()].map((record) => backgroundTaskRecord.parse(record))
+    clearBackgroundTaskRegistryForTesting()
+    const manager = new BackgroundManager({
+      pluginContext: f.input,
+      config: { defaultConcurrency: 1 },
+      nativeJobs: f.createJobs(),
+      nativeLifecycle: {
+        save: async (task) => {
+          f.stored.set(task.id, encodeBackgroundTask(task))
+        },
+        notify: async (task) => {
+          f.notices.push(task.id)
+        },
+      },
+      preserveSessionsOnShutdown: true,
+    })
+    nativeCleanups.push(() => manager.shutdown())
+    for (const task of persisted) manager.adoptRetainedTask(task)
+    await manager.restoreNativeJobs()
+    expect(manager.getTask(queued.id)?.status).toBe("pending")
+    const nextAdmission = f.nextStart()
+    const running = manager.getTask(first.id)
+    if (!running?.nativeAdmissionID) throw new Error("recovered native admission missing")
+    const completed = manager.waitForNativeTask(first.id, new AbortController().signal)
+    f.finish(running.nativeAdmissionID)
     await nextAdmission
+    await completed
     // then
-    expect(f.manager().getTask(queued.id)?.status).toBe("running")
+    expect(manager.getTask(queued.id)?.status).toBe("running")
     expect(
-      f
-        .manager()
+      manager
         .getTasksByParentSession("parent")
         .map((task) => task.id)
         .sort(),
     ).toEqual([first.id, queued.id].sort())
+    expect(manager.getTask(first.id)?.sessionId).toBe(first.sessionId)
+    expect(manager.getTask(queued.id)?.sessionId).toBe(queued.sessionId)
   })
 
   it("#given the child finishes while the plugin is absent #when setup sees native idle state #then it requests a fresh native completion boundary", async () => {

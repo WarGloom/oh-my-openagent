@@ -4,8 +4,10 @@ import type { NativeBackgroundLifecycle } from "../features/background-agent/nat
 import type { BackgroundTask } from "../features/background-agent/types"
 import { TERMINAL_TASK_TTL_MS } from "../features/background-agent/constants"
 import { getRegisteredBackgroundTask, takeBackgroundTasksAfterReload } from "../features/background-agent/task-registry"
-import type { V2IdleHookEvent, V2PluginContext, V2Registration, V2StorageDomain } from "./context-types"
+import type { V2IdleHookEvent, V2PluginContext, V2StorageDomain } from "./context-types"
 import { backgroundTaskRecord, encodeBackgroundTask } from "./background-task-record"
+import { bindNativeTeamJobs } from "./native-team-jobs"
+import { bindNativeCommandJobs } from "./config-bridge/command-subtasks"
 
 function messageID(task: BackgroundTask, kind: string): string {
   return `msg_${createHash("sha256")
@@ -18,7 +20,6 @@ function messageID(task: BackgroundTask, kind: string): string {
 
 export class V2BackgroundLifecycle implements NativeBackgroundLifecycle {
   private manager?: BackgroundManager
-  private registration?: V2Registration
   private readonly restored: Array<BackgroundTask & { readonly recoveryPrompt?: string }> = []
   private readonly recovered = new Set<string>()
   private readonly idleBeforeSetup = new Set<string>()
@@ -77,31 +78,35 @@ export class V2BackgroundLifecycle implements NativeBackgroundLifecycle {
       }
       after = page.next
     } while (after)
-    this.registration = await this.context.session.hook("experimental.idle", async (event) => {
-      const task = this.manager?.findBySession(event.sessionID)
-      if (task && task.status !== "running") return
-      if (task?.status === "running") await this.save(task)
-      if (task || !this.manager) this.idle.set(event.sessionID, event)
-      if (!this.stopped && event.background.length === 0) {
-        await this.manager?.completeNativeTask(event.sessionID)
-        for (const [ancestorID, idle] of this.idle) {
-          if (!idle.background.some((job) => job.sessionID === event.sessionID)) continue
-          const task = this.manager?.findBySession(ancestorID)
-          if (!task || task.status !== "running") continue
-          this.idle.delete(ancestorID)
-          await this.context.session.synthetic({
-            sessionID: ancestorID,
-            id: messageID(task, `settled:${event.sessionID}`),
-            text: "The descendant's background work settled. Consume its results before reporting completion.",
-            resume: true,
-          })
-        }
+  }
+
+  async onIdle(event: V2IdleHookEvent): Promise<void> {
+    const task = this.manager?.findBySession(event.sessionID)
+    if (task?.nativeAdmissionID) return
+    if (task && task.status !== "running") return
+    if (task?.status === "running") await this.save(task)
+    if (task || !this.manager) this.idle.set(event.sessionID, event)
+    if (!this.stopped && event.background.length === 0) {
+      await this.manager?.completeNativeTask(event.sessionID)
+      for (const [ancestorID, idle] of this.idle) {
+        if (!idle.background.some((job) => job.sessionID === event.sessionID)) continue
+        const task = this.manager?.findBySession(ancestorID)
+        if (!task || task.status !== "running") continue
+        this.idle.delete(ancestorID)
+        await this.context.session.synthetic({
+          sessionID: ancestorID,
+          id: messageID(task, `settled:${event.sessionID}`),
+          text: "The descendant's background work settled. Consume its results before reporting completion.",
+          resume: true,
+        })
       }
-    })
+    }
   }
 
   connect(manager: BackgroundManager): void {
     this.manager = manager
+    bindNativeTeamJobs(this.context, manager)
+    bindNativeCommandJobs(this.context, manager)
     const retained = takeBackgroundTasksAfterReload(this.context.location.directory)
     const retainedIDs = new Set(retained.map((task) => task.id))
     for (const task of retained) {
@@ -110,7 +115,9 @@ export class V2BackgroundLifecycle implements NativeBackgroundLifecycle {
       this.restored.push(task)
       this.migrated.push(task)
     }
-    for (const task of this.restored) {
+    for (const task of [...this.restored].sort(
+      (left, right) => Number(left.status === "pending") - Number(right.status === "pending"),
+    )) {
       if (task.status === "pending" && !task.sessionId) continue
       const previous = getRegisteredBackgroundTask(task.id)
       const runningInProcess =
@@ -122,12 +129,18 @@ export class V2BackgroundLifecycle implements NativeBackgroundLifecycle {
     }
   }
 
+  hasPendingWork(sessionID: string): boolean {
+    return !this.manager || this.manager.hasActiveChildTasks(sessionID) || this.manager.hasPendingParentWake(sessionID)
+  }
+
   async start(): Promise<void> {
+    await this.manager?.restoreNativeJobs()
     for (const task of this.migrated) await this.save(task)
     for (const event of this.idle.values()) {
       if (event.background.length === 0) await this.manager?.completeNativeTask(event.sessionID)
     }
     for (const task of this.restored) {
+      if (task.nativeAdmissionID) continue
       if (task.status === "pending" && !task.sessionId) {
         this.manager?.adoptRetainedTask(task)
         continue
@@ -168,6 +181,7 @@ export class V2BackgroundLifecycle implements NativeBackgroundLifecycle {
 
   async notify(task: BackgroundTask, text: string): Promise<void> {
     await this.save(task)
+    if (task.nativeRun) return
     await this.context.session.synthetic({
       sessionID: task.parentSessionId,
       id: messageID(task, "complete"),
@@ -182,6 +196,5 @@ export class V2BackgroundLifecycle implements NativeBackgroundLifecycle {
 
   async dispose(): Promise<void> {
     this.stopped = true
-    await this.registration?.dispose()
   }
 }

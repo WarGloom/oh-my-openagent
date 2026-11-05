@@ -4,6 +4,7 @@ import { getConnectionType } from "./connection-type"
 import { createCleanMcpEnvironment } from "./env-cleaner"
 import { redactSensitiveData } from "./error-redaction"
 import { buildSkillMcpClientKey } from "./manager"
+import { policyHash } from "./project-env-policy"
 
 describe("skill MCP core behavior", () => {
   it("#given MCP config variants #when detecting connection type #then legacy sse maps to http", () => {
@@ -61,5 +62,19 @@ describe("skill MCP core behavior", () => {
     expect(buildSkillMcpClientKey(info, { cdpUrl: "ws://127.0.0.1/devtools" })).toBe(
       "ses_1:skill-a:server-a::cdp=ws://127.0.0.1/devtools",
     )
+  })
+
+  it("preserves legacy provenance keys and separates accepted revisions for the same target client", () => {
+    const provenance = { kind: "host", selectedRoot: "/skills", projectRoot: "/repo" } as const
+    const info = { sessionID: "ses_1", skillName: "skill-a", serverName: "server-a", provenance }
+    const legacy = `ses_1:skill-a:server-a::provenance=${policyHash(provenance)}`
+    expect(buildSkillMcpClientKey(info)).toBe(legacy)
+    expect(buildSkillMcpClientKey({ ...info, acceptedRevision: undefined }, { cdpUrl: "ws://target" })).toBe(
+      `${legacy}::cdp=ws://target`,
+    )
+    const keys = [undefined, "source-a", "source-b"].map((acceptedRevision) =>
+      buildSkillMcpClientKey({ ...info, acceptedRevision }),
+    )
+    expect(new Set(keys).size).toBe(3)
   })
 })

@@ -14,8 +14,8 @@ import type { BackgroundManager } from "../features/background-agent"
 
 const BACKGROUND_WAIT_BLOCK_MESSAGE = [
   "Background task wait is already managed by the plugin.",
-  "End this response now and wait for the <system-reminder> completion notification.",
-  "After that reminder arrives, call background_output with the task_id from the launch result.",
+  "End this response now and wait for the completion notification.",
+  "Inspect the delivered native <subagent> result or error. Use background_output with the launch task_id only for missing/truncated output or transcript/diagnostic detail.",
 ].join(" ")
 
 const BTW_DELEGATION_TOOLS = new Set([

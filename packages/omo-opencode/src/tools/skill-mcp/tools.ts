@@ -10,6 +10,9 @@ import { skillMcpClientInfo } from "../skill/skill-mcp-authority"
 interface SkillMcpToolOptions {
   manager: SkillMcpManager
   getLoadedSkills: () => LoadedSkill[] | Promise<LoadedSkill[]>
+  getLoadedSkillsForSession?: (
+    context: Pick<ToolContext, "sessionID" | "agent">,
+  ) => Promise<ReadonlyArray<{ readonly skill: LoadedSkill; readonly revision: string }>>
   getSessionID?: () => string | undefined
 }
 
@@ -125,7 +128,10 @@ export function createSkillMcpTool(options: SkillMcpToolOptions): ToolDefinition
     },
     async execute(args: SkillMcpArgs, toolContext: ToolContext) {
       const operation = validateOperationParams(args)
-      const skills = await getLoadedSkills()
+      const accepted = options.getLoadedSkillsForSession
+        ? await options.getLoadedSkillsForSession(toolContext)
+        : undefined
+      const skills = accepted === undefined ? await getLoadedSkills() : accepted.map((entry) => entry.skill)
       const found = findMcpServer(args.mcp_name, skills)
 
       if (!found) {
@@ -148,7 +154,11 @@ export function createSkillMcpTool(options: SkillMcpToolOptions): ToolDefinition
         throw new Error("No active session available for skill MCP call.")
       }
 
-      const info: SkillMcpClientInfo = skillMcpClientInfo(found.skill, args.mcp_name, sessionID, toolContext.directory)
+      const revision = accepted?.find((entry) => entry.skill === found.skill)?.revision
+      const info: SkillMcpClientInfo = {
+        ...skillMcpClientInfo(found.skill, args.mcp_name, sessionID, toolContext.directory),
+        ...(revision === undefined ? {} : { acceptedRevision: revision }),
+      }
 
       const context: SkillMcpServerContext = {
         config: found.config,

@@ -104,10 +104,6 @@ describe("V2 background task reload", () => {
         model: task.model,
       })
       expect(second.backgroundManager.getTasksByParentSession("parent")).toHaveLength(1)
-      const settled = second.backgroundManager.awaitScheduledFlush(
-        "parent",
-        second.backgroundManager.getScheduledFlushSettledCount("parent"),
-      )
       messages.push({
         type: "assistant",
         id: "answer",
@@ -117,9 +113,9 @@ describe("V2 background task reload", () => {
         finish: "stop",
         time: { created: Date.now() - 1000, completed: Date.now() },
       })
+      await fake.triggerIdle({ sessionID: "child", background: [] })
       fake.emit({ type: "session.execution.succeeded", data: { sessionID: "child" } })
       const notification = await delivered.promise
-      await settled
 
       // then
       expect(notification.sessionID).toBe("parent")
@@ -211,12 +207,9 @@ describe("V2 background task reload", () => {
         finish: "stop",
         time: { created: Date.now() - 1000, completed: Date.now() },
       })
-      const queued = first.backgroundManager.awaitScheduledFlush(
-        "parent",
-        first.backgroundManager.getScheduledFlushSettledCount("parent"),
-      )
+      await fake.triggerIdle({ sessionID: "child", background: [] })
       fake.emit({ type: "session.execution.succeeded", data: { sessionID: "child" } })
-      await queued
+      await delivered.promise
 
       // when
       await cleanup()
@@ -224,13 +217,9 @@ describe("V2 background task reload", () => {
       cleanup = await setup(fake.context)
       const second = generations[1]
       if (!second) throw new Error("second generation missing")
-      const settled = second.backgroundManager.awaitScheduledFlush(
-        "parent",
-        second.backgroundManager.getScheduledFlushSettledCount("parent"),
-      )
+      await fake.triggerIdle({ sessionID: "parent", background: [] })
       fake.emit({ type: "session.execution.succeeded", data: { sessionID: "parent" } })
       const notification = await delivered.promise
-      await settled
 
       // then
       expect(notification.sessionID).toBe("parent")

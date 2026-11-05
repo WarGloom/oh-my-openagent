@@ -49,7 +49,7 @@ function resolveDispatchMessage(result: AutoRetryDispatchOutcome, newModel: stri
   return `Switched to ${modelName} for next request`
 }
 
-async function showFallbackToast(deps: HookDeps, sessionID: string, message: string): Promise<void> {
+export async function showFallbackToast(deps: HookDeps, sessionID: string, message: string): Promise<void> {
   if (!deps.config.notify_on_fallback) return
 
   try {

@@ -26,6 +26,7 @@ export interface CallOmoAgentSyncResult {
   output: string
 }
 export type ToolContextWithMetadata = {
+  callID?: string
   sessionID: string
   messageID: string
   agent: string

@@ -70,4 +70,5 @@ export interface SessionState {
   activeContinuationPlanPath?: string
   /** Top-level task keys whose completion gate already fired, used to suppress repeat 4-phase reminders. */
   verifiedTaskKeys?: Set<string>
+  nativeCompletionSessions?: Set<string>
 }

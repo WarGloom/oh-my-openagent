@@ -1,6 +1,6 @@
 import type { Hooks, Plugin } from "@opencode-ai/plugin"
 import type { V2Cleanup, V2PluginContext, V2Registration } from "./context-types"
-import { createPluginInput } from "./create-plugin-input"
+import { bindV2BackgroundJobs, createPluginInput } from "./create-plugin-input"
 import { startEventBridge } from "./event-bridge"
 import { installHooks } from "./install-hooks"
 import { createSessionTracker } from "./session-tracker"
@@ -9,6 +9,13 @@ import { installNativeRuntimeFallback } from "./native-runtime-fallback"
 import { V2BackgroundLifecycle } from "./background-lifecycle"
 import { registerSessionSystem } from "./session-system"
 import { toastChannel, type V2ToastRegistration } from "./toast-channel"
+import { installNativeSkills } from "./native-skills"
+import { V2NativeSubagentJobs } from "./native-subagent-jobs"
+import { activateNativeSubagentSkills } from "./native-skill-delegation"
+import { restoreNativeSkills } from "./native-skill-restore"
+import { bindNativeIdleArbiter, NativeIdleArbiter } from "./native-idle-arbiter"
+import { isNativeRecoveryPending } from "./native-recovery-state"
+import { settleCompactionRestore } from "./compaction-continuation"
 
 export type V2SetupDeps = {
   readonly serverPlugin: Plugin
@@ -32,6 +39,8 @@ const warnOnce = (): ((message: string) => void) => {
 export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => Promise<V2Cleanup> {
   const warn = deps.warn ?? warnOnce()
   return async (context) => {
+    if (!context.storage) throw new Error("Native background jobs require host storage")
+    if (!context.experimental.subagent) throw new Error("Native background jobs require the host subagent domain")
     const tracker = createSessionTracker()
     const bridge = startEventBridge(context, { tracker, warn })
     let hooks: Hooks | undefined
@@ -39,12 +48,15 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
     let fallback: Awaited<ReturnType<typeof installNativeRuntimeFallback>>
     let toast: V2ToastRegistration | undefined
     let sessionSystem: V2Registration | undefined
-    const background = context.storage ? new V2BackgroundLifecycle(context, context.storage) : undefined
+    let skills: V2Registration | undefined
+    let arbiter: NativeIdleArbiter | undefined
+    let idleListener: V2Registration | undefined
+    const background = new V2BackgroundLifecycle(context, context.storage)
     try {
       toast = await context.rpc.register(toastChannel, {})
       const toastEvents = toast.events
       sessionSystem = await registerSessionSystem(context)
-      await background?.load()
+      await background.load()
       let cursor: string | null | undefined
       do {
         const page = await context.session.list({
@@ -59,7 +71,40 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
         { tracker, warn, emitToast: (body) => toastEvents.emit("toast", body) },
         background,
       )
+      const jobs = new V2NativeSubagentJobs(context, context.experimental.subagent, {
+        save: (task) => background.save(task),
+        activateSkills: (task) => {
+          if (!task.nativeAdmissionID || !task.nativePromptID || !task.sessionId)
+            throw new Error("Native skill acceptance requires a prepared task")
+          return activateNativeSubagentSkills(input, {
+            admissionID: task.nativeAdmissionID,
+            promptID: task.nativePromptID,
+            sessionID: task.sessionId,
+            agent: task.agent,
+            names: task.skills ?? [],
+            commandSkills: task.nativePrompt?.skills,
+          })
+        },
+        restoreSkills: (task) => {
+          if (!task.sessionId) throw new Error("Native skill replay requires a child session")
+          return restoreNativeSkills(input, {
+            sessionID: task.sessionId,
+            agent: task.agent,
+            activationIDs: task.nativeSkillActivationIDs ?? [],
+          })
+        },
+      })
+      bindV2BackgroundJobs(input, jobs)
+      arbiter = new NativeIdleArbiter(context, {
+        isNativeRecoveryPending,
+        settleCompactionRestore,
+        hasPendingWork: (sessionID) => background.hasPendingWork(sessionID),
+      })
+      bindNativeIdleArbiter(input, arbiter)
+      idleListener = arbiter.onIdle((event) => background.onIdle(event))
+      await arbiter.start()
       hooks = await deps.serverPlugin(input, { ...context.options })
+      skills = await installNativeSkills(input)
       fallback = await installNativeRuntimeFallback(context, hooks)
       bridge.setInterceptor(fallback?.beforeEvent)
       uninstall = await installHooks(context, hooks, { warn })
@@ -72,12 +117,15 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
         }
       }
       bridge.setHandler(hooks.event)
-      await background?.start()
+      await background.start()
     } catch (error) {
       bridge.stop()
-      await background?.dispose()
+      await idleListener?.dispose()
+      await arbiter?.dispose()
+      await background.dispose()
       await fallback?.dispose()
       await uninstall?.()
+      await skills?.dispose()
       await sessionSystem?.dispose()
       await hooks?.dispose?.()
       await toast?.dispose()
@@ -88,8 +136,11 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
       if (disposed) return
       disposed = true
       bridge.stop()
-      await background?.dispose()
+      await idleListener?.dispose()
+      await arbiter?.dispose()
+      await background.dispose()
       await uninstall?.()
+      await skills?.dispose()
       await sessionSystem?.dispose()
       await hooks?.dispose?.()
       await toast?.dispose()

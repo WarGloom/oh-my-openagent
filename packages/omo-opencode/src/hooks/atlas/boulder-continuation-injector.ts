@@ -1,4 +1,5 @@
 import type { PluginInput } from "@opencode-ai/plugin"
+import { getNativeIdleArbiter } from "../../v2/native-idle-arbiter"
 import { isAgentRegistered, resolveRegisteredAgentName } from "../../features/claude-code-session-state"
 import { stripAgentListSortPrefix } from "../../shared/agent-display-names"
 import { log } from "../../shared/logger"
@@ -92,26 +93,29 @@ export async function injectBoulderContinuation(input: {
       : undefined
     const launchVariant = promptContext.model?.variant
 
-    const promptResult = await dispatchInternalPrompt({
-      mode: "async",
-      client: ctx.client,
-      sessionID,
-      source: HOOK_NAME,
-      settleMs: idleSettleMs,
-      queueBehavior: "defer",
-      semanticDedupeHoldMs: CONTINUATION_COOLDOWN_MS,
-      input: {
-        path: { id: sessionID },
-        body: {
-          agent: continuationAgent,
-          ...(launchModel ? { model: launchModel } : {}),
-          ...(launchVariant ? { variant: launchVariant } : {}),
-          ...(inheritedTools ? { tools: inheritedTools } : {}),
-          parts: [createInternalAgentContinuationTextPart(prompt)],
-        },
-        query: { directory: ctx.directory },
-      },
-    })
+    const arbiter = getNativeIdleArbiter(ctx)
+    const promptResult = arbiter
+      ? await arbiter.admit(sessionID, prompt, HOOK_NAME)
+      : await dispatchInternalPrompt({
+          mode: "async",
+          client: ctx.client,
+          sessionID,
+          source: HOOK_NAME,
+          settleMs: idleSettleMs,
+          queueBehavior: "defer",
+          semanticDedupeHoldMs: CONTINUATION_COOLDOWN_MS,
+          input: {
+            path: { id: sessionID },
+            body: {
+              agent: continuationAgent,
+              ...(launchModel ? { model: launchModel } : {}),
+              ...(launchVariant ? { variant: launchVariant } : {}),
+              ...(inheritedTools ? { tools: inheritedTools } : {}),
+              parts: [createInternalAgentContinuationTextPart(prompt)],
+            },
+            query: { directory: ctx.directory },
+          },
+        })
     if (promptResult.status === "failed") {
       if (isAmbiguousPostDispatchPromptFailure(promptResult)) {
         sessionState.promptFailureCount = 0

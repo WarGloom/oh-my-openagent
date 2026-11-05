@@ -2,6 +2,9 @@
 import { describe, test, expect } from "bun:test"
 
 import { buildTeamIdleWakeHintClient } from "./build-team-idle-wake-hint-client"
+import { createFakePluginContext } from "../v2/fake-plugin-context"
+import { createPluginInput } from "../v2/create-plugin-input"
+import { createSessionTracker } from "../v2/session-tracker"
 
 type FakeSdkHttp = {
   post: (args: { url: string; body?: unknown }) => Promise<{ url: string; body?: unknown }>
@@ -26,6 +29,29 @@ function createSdkLikeSession(http: FakeSdkHttp): SdkLikeSession {
 }
 
 describe("buildTeamIdleWakeHintClient", () => {
+  test("preserves the native mailbox operation without a legacy prompt", async () => {
+    // given
+    const fake = createFakePluginContext()
+    const input = createPluginInput(fake.context, { tracker: createSessionTracker(), warn: () => {} })
+    const delivered: string[] = []
+    const nativeTeamMailbox = async () => {
+      delivered.push("native")
+      return ["message"]
+    }
+    Object.assign(input.client.session, { nativeTeamMailbox })
+    // when
+    const wrapped = buildTeamIdleWakeHintClient(input.client)
+    await wrapped.session.nativeTeamMailbox?.({
+      teamRunId: "run",
+      memberName: "worker",
+      sessionID: "session",
+      config: {} as never,
+    })
+    // then
+    expect(delivered).toEqual(["native"])
+    expect(fake.sessionCalls).toEqual([])
+  })
+
   test("#given a real-SDK-like session whose promptAsync reads this._client #when the wrapper dispatches the bound method #then the SDK receives the call with _client preserved", async () => {
     // given
     const calls: Array<{ url: string; body?: unknown }> = []

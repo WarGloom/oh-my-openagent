@@ -4,10 +4,29 @@ import { createClientFacade } from "./client-facade"
 import type { ClientFacadeDeps } from "./client-facade/create-client-facade"
 import { V2UnsupportedOperationError } from "./unsupported-operation-error"
 import type { V2BackgroundLifecycle } from "./background-lifecycle"
+import type { NativeBackgroundJobs } from "../features/background-agent/native-lifecycle"
+import { attachNativeSkillState } from "./native-skill-state"
 
 type V1Shell = PluginInput["$"]
 const v2Inputs = new WeakSet<PluginInput>()
 const backgroundLifecycles = new WeakMap<PluginInput, V2BackgroundLifecycle>()
+const backgroundJobs = new WeakMap<PluginInput, NativeBackgroundJobs>()
+const sessionEnvironments = new WeakMap<
+  PluginInput,
+  (sessionID: string) => Promise<Readonly<Record<string, string>> | undefined>
+>()
+
+export function getV2SessionEnvironment(input: PluginInput) {
+  return sessionEnvironments.get(input)
+}
+
+export function bindV2BackgroundJobs(input: PluginInput, jobs: NativeBackgroundJobs): void {
+  backgroundJobs.set(input, jobs)
+}
+
+export function getV2BackgroundJobs(input: PluginInput): NativeBackgroundJobs | undefined {
+  return backgroundJobs.get(input)
+}
 
 export function getV2BackgroundLifecycle(input: PluginInput): V2BackgroundLifecycle | undefined {
   return backgroundLifecycles.get(input)
@@ -51,6 +70,8 @@ export function createPluginInput(
     $: resolveShell(),
   }
   v2Inputs.add(input)
+  sessionEnvironments.set(input, (sessionID) => context.experimental.session.environment({ sessionID }))
+  attachNativeSkillState(input, context)
   if (backgroundLifecycle) backgroundLifecycles.set(input, backgroundLifecycle)
   return input
 }

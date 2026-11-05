@@ -48,7 +48,14 @@ export function applyOpenGatewayProviderConfig(config: Record<string, unknown>):
   if (!hasCredential()) {
     return
   }
+  injectOpenGatewayProvider(config)
+}
 
+/**
+ * Fills the OpenGateway provider and catalog into `config.provider` without the credential gate.
+ * The 2.x host gates availability on its own integration connection, so its config bridge calls this directly.
+ */
+export function injectOpenGatewayProvider(config: Record<string, unknown>): void {
   const existingProviders = config.provider
   const providers: Record<string, unknown> = isRecord(existingProviders) ? existingProviders : {}
   config.provider = providers
