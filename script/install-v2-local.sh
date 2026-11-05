@@ -8,8 +8,8 @@ repo=$ws/.omo/worktrees/omo-v2-dev
 host=$ws/opencode-wt/v2
 binary=$host/packages/cli/dist/cli-linux-x64/bin/opencode
 launcher=/home/nikita/.local/bin/opencode-v2-lab
-host_oid=d465e37a13cd96d3f5e3f0193cf30c951cbb075e
-host_hash=358450f0e2ba37c899361870743e8248a59c575868bc261293792534dabb3e53
+host_oid=57518725a3cf2ba2820af3993d924561229a190c
+host_hash=0dcc31132338292efd4d9bf7cf676ae49dee24bfd6c207729005758f8471ee4b
 paths=(dist packages/lsp-tools-mcp/dist packages/lsp-daemon/dist packages/git-bash-mcp/dist packages/shared-skills/skills)
 
 fail() {
@@ -43,9 +43,10 @@ evidence=$repo/.omo/evidence/v2-install-$stamp
 mkdir -p "$evidence/candidate" "$evidence/previous" "$evidence/failed"
 exec 9>"$repo/.omo/v2-install.lock"
 flock -n 9 || fail 'Another canonical V2 installation is active.'
-work=$(mktemp -d "$ws/.omo/evidence/omo-v2-build.XXXXXXXX")
+[[ -d $ws/.tmp ]] || fail 'Workspace .tmp directory required.'
+work=$(mktemp -d "$ws/.tmp/omo-v2-build.XXXXXXXX")
 copy=$work/source
-mkdir "$copy"
+mkdir "$copy" "$work/home" "$work/tmp"
 # Archive committed bytes, never the dirty port tree or generated Senpi working files.
 g -C "$repo" archive "$omo_oid" | tar -xf - -C "$copy"
 cp -p "$repo/.git" "$copy/.git"
@@ -60,14 +61,14 @@ printf 'omo_commit=%s\nhost_commit=%s\nhost_sha256=%s\nbuild_copy=%s\n' \
 	"$omo_oid" "$host_oid" "$host_hash" "$copy" >"$evidence/provenance"
 
 # The source bind is a real directory: materialization must rename entire directories.
-unshare -r bwrap --ro-bind / / --dev /dev --unshare-pid --proc /proc \
-	--tmpfs /tmp --bind "$work" "$work" --dir /tmp/omo-build-home \
+TMPDIR="$work/tmp" unshare -r bwrap --ro-bind / / --dev /dev --unshare-pid --proc /proc \
+	--bind "$work" "$work" \
 	--bind "$copy" "$repo" --overlay-src "$common" --tmp-overlay "$common" \
 	--clearenv \
 	--setenv PATH "/home/nikita/.local/bin:/home/nikita/.nvm/versions/node/v24.16.0/bin:/usr/bin:/bin:$repo/node_modules/.bin" \
-	--setenv HOME /tmp/omo-build-home --setenv TMPDIR /tmp \
-	--setenv XDG_CONFIG_HOME /tmp/omo-build-home/config --setenv XDG_DATA_HOME /tmp/omo-build-home/data \
-	--setenv XDG_CACHE_HOME /tmp/omo-build-home/cache --setenv XDG_STATE_HOME /tmp/omo-build-home/state \
+	--setenv HOME "$work/home" --setenv TMPDIR "$work/tmp" \
+	--setenv XDG_CONFIG_HOME "$work/home/config" --setenv XDG_DATA_HOME "$work/home/data" \
+	--setenv XDG_CACHE_HOME "$work/home/cache" --setenv XDG_STATE_HOME "$work/home/state" \
 	--setenv CI true --setenv GIT_MASTER 1 --setenv GIT_TERMINAL_PROMPT 0 \
 	--setenv GIT_CONFIG_NOSYSTEM 1 --setenv GIT_CONFIG_GLOBAL /dev/null \
 	--setenv GIT_CONFIG_COUNT 1 --setenv GIT_CONFIG_KEY_0 safe.directory --setenv GIT_CONFIG_VALUE_0 '*' \
