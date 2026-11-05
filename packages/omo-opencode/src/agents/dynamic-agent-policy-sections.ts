@@ -149,7 +149,7 @@ Once you delegate exploration to explore/librarian agents, **DO NOT perform the 
 When you need the delegated results but they're not ready:
 
 1. **End your response** - do NOT continue with work that depends on those results
-2. After observing a task's terminal notification, you may retrieve that task's result without waiting for unrelated tasks. Use \`background_output(task_id="bg_...")\` for that task.
+2. Inspect the result or error delivered by the native \`<subagent>\` terminal notification without waiting for unrelated tasks. Use \`background_output(task_id="bg_...")\` for missing/truncated output or transcript/diagnostic detail, not to fetch an already-present result again.
 3. Explicit skill/workflow requirements to wait for all responses before collection remain binding.
 4. Do not poll active tasks. **Do NOT** use shell \`sleep\`, \`timeout\`, polling loops, or blocking commands to wait for background tasks
 5. Wait for every required result before dependent stages or synthesis. A terminal notification is not proof of success: inspect failures and follow the workflow's failure policy instead of silently dropping required work.

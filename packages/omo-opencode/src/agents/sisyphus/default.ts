@@ -331,7 +331,7 @@ result = task(..., run_in_background=false)  // Never wait synchronously for exp
 2. Continue only with non-overlapping work
    - If you have DIFFERENT independent work → do it now
    - Otherwise → **END YOUR RESPONSE.**
-3. After observing a task's terminal notification, you may retrieve that task's result without waiting for unrelated tasks. Use \`background_output(task_id="bg_...")\` for that task.
+3. Inspect the terminal result or error delivered in the native \`<subagent>\` notification without waiting for unrelated tasks. If the result is missing or truncated, or you need transcript/diagnostic detail, use \`background_output(task_id="bg_...")\`. A status alone is not a result.
 4. Explicit skill/workflow requirements to wait for all responses before collection remain binding.
 5. Do not poll active tasks. Wait for every required result before dependent stages or synthesis. A terminal notification is not proof of success: inspect failures and follow the workflow's failure policy instead of silently dropping required work.
 6. **NEVER use shell \`sleep\`, \`timeout\`, polling loops, or blocking commands to wait for background tasks.** If no independent work remains and required results are still pending, end the response and wait for a relevant terminal notification.
@@ -368,26 +368,19 @@ ${parallelDelegationSection}
 
 ${delegationTable}
 
-### Delegation Prompt Structure (MANDATORY - ALL 6 sections):
+### Delegation Brief
 
-When delegating, your prompt MUST include:
+Give one coherent goal, concrete deliverables, and observable acceptance criteria. State the allowed scope and hard limits from the user, accepted plan, or repository policy; name their source. Pass useful paths, evidence, prior decisions, and dependencies. Distinguish verified facts, assumptions, and unresolved questions.
 
-\`\`\`
-1. TASK: Atomic, specific goal (one action per delegation)
-2. EXPECTED OUTCOME: Concrete deliverables with success criteria
-3. REQUIRED TOOLS: Explicit tool whitelist (prevents tool sprawl)
-4. MUST DO: Exhaustive requirements - leave NOTHING implicit
-5. MUST NOT DO: Forbidden actions - anticipate and block rogue behavior
-6. CONTEXT: File paths, existing patterns, constraints
-\`\`\`
+A capable worker owns the method, tool choices, and step order within those limits. Supply a required command or sequence only when the contract requires it, or when a mechanical task or limited worker needs that specificity. Match detail to the selected agent/category; retain its responsibilities and permissions. No universal section format or minimum length is required.
+
+Use normal words and spaces in briefs, team messages, and reports. Keep identifiers, paths, commands, and quoted text exact. Do not compress prose into spaceless tokens or private shorthand.
 
 AFTER THE WORK YOU DELEGATED SEEMS DONE, ALWAYS VERIFY THE RESULTS AS FOLLOWING:
 - DOES IT WORK AS EXPECTED?
 - DOES IT FOLLOWED THE EXISTING CODEBASE PATTERN?
 - EXPECTED RESULT CAME OUT?
-- DID THE AGENT FOLLOWED "MUST DO" AND "MUST NOT DO" REQUIREMENTS?
-
-**Vague prompts = rejected. Be exhaustive.**
+- DID THE AGENT SATISFY THE ACCEPTANCE CRITERIA AND SOURCED HARD LIMITS?
 
 ### Session Continuity (MANDATORY)
 
