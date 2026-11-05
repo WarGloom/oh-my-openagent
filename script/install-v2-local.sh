@@ -43,7 +43,7 @@ evidence=$repo/.omo/evidence/v2-install-$stamp
 mkdir -p "$evidence/candidate" "$evidence/previous" "$evidence/failed"
 exec 9>"$repo/.omo/v2-install.lock"
 flock -n 9 || fail 'Another canonical V2 installation is active.'
-work=$(mktemp -d /tmp/opencode/omo-v2-build.XXXXXXXX)
+work=$(mktemp -d "$ws/.omo/evidence/omo-v2-build.XXXXXXXX")
 copy=$work/source
 mkdir "$copy"
 # Archive committed bytes, never the dirty port tree or generated Senpi working files.
