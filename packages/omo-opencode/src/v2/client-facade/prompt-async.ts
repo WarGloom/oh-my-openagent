@@ -29,7 +29,7 @@ type PromptBody = NonNullable<PromptAsyncArgs["body"]>
 export type Report = (key: string, message: string) => void
 
 function sameModel(left: V2ModelRef, right: V2ModelRef | undefined): boolean {
-  return right !== undefined && left.providerID === right.providerID && left.id === right.id && left.variant === right.variant
+  return right !== undefined && left.providerID === right.providerID && left.id === right.id && (left.variant ?? "default") === (right.variant ?? "default")
 }
 
 async function targetModel(context: V2PluginContext, body: PromptBody, current: V2ModelRef | undefined, agent: string | undefined): Promise<V2ModelRef | undefined> {
