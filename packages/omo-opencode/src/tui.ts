@@ -1,4 +1,5 @@
 import type { TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
+import type { PluginConfigValidation } from "./config/validate"
 
 import { registerBtwSideTui } from "./features/btw-side"
 import { registerNativeEditionNudgeTui } from "./features/native-edition-nudge"
@@ -86,28 +87,17 @@ function materializeNode<Node>(node: ViewNode, solid: SolidRuntime<Node>): Node 
   return element
 }
 
-type RosterResolver = (directory: string) => RosterRow[]
-type PluginValidation = {
-  readonly valid: boolean
-  readonly messages: readonly string[]
-  readonly config: {
-    readonly tui?: {
-      readonly sidebar?: {
-        readonly enabled?: boolean
-      }
-    }
-  }
-}
-
-async function loadPluginValidation(directory: string): Promise<PluginValidation> {
+async function loadPluginValidation(directory: string): Promise<PluginConfigValidation> {
   const { validatePluginConfig } = await import("./config/validate")
   return validatePluginConfig(directory)
 }
 
-async function loadRosterRows(directory: string): Promise<readonly RosterRow[]> {
+async function loadRosterRows(
+  directory: string,
+  config: PluginConfigValidation["config"],
+): Promise<readonly RosterRow[]> {
   const { resolveRoster } = await import("./features/tui-sidebar/roster-resolver")
-  const resolver: RosterResolver = resolveRoster
-  return resolver(directory)
+  return resolveRoster(directory, config)
 }
 
 export async function readView(
@@ -117,7 +107,7 @@ export async function readView(
 ): Promise<SidebarView> {
   const validation = await loadPluginValidation(directory)
   const mirror = readMirror(directory)
-  const roster = await loadRosterRows(directory)
+  const roster = await loadRosterRows(directory, validation.config)
   const freshTeams = deriveTeams(mirror)
   const activity = deriveCurrentSessionActivity(directory, sessionId)
   teamCache.update(freshTeams)
