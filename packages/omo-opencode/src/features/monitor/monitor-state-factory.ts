@@ -8,6 +8,7 @@ import type {
   InternalMonitorState,
   MonitorInjector,
   MonitorManagerDeps,
+  MonitorManagerOptions,
   MonitorPromptClient,
 } from "./manager-internals"
 import {
@@ -153,11 +154,11 @@ export function spawnMonitorProcess(
 }
 
 export function createMonitorInjector(
-  deps: MonitorManagerDeps | undefined,
-  pluginContext: Pick<PluginInput, "client" | "directory">,
+  options: Pick<MonitorManagerOptions, "deps" | "pluginContext" | "nativeSteerDelivery">,
   record: MonitorRecord,
   scheduleFlush: (monitorId: string, delayMs: number, operation: () => Promise<void>) => void,
 ): MonitorInjector {
+  const { deps, pluginContext } = options
   if (deps?.createInjector) {
     return deps.createInjector(record, scheduleFlush)
   }
@@ -170,6 +171,7 @@ export function createMonitorInjector(
     userMessageInProgressWindowMs: MONITOR_OUTPUT_USER_MESSAGE_IN_PROGRESS_WINDOW_MS,
     postDispatchHoldMs: MONITOR_OUTPUT_POST_DISPATCH_HOLD_MS,
     maxActiveDeferMs: MONITOR_OUTPUT_MAX_ACTIVE_DEFER_MS,
+    ...(options.nativeSteerDelivery === true ? { nativeSteerDelivery: true } : {}),
     scheduleFlush,
   })
 }
