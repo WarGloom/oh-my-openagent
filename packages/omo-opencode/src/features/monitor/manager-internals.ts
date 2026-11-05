@@ -42,6 +42,7 @@ export interface MonitorManagerDeps {
 
 export interface MonitorManagerOptions {
   pluginContext: Pick<PluginInput, "client" | "directory">
+  readonly environment?: (sessionID: string) => Promise<Readonly<Record<string, string>> | undefined>
   config?: Partial<MonitorConfig>
   deps?: MonitorManagerDeps
 }

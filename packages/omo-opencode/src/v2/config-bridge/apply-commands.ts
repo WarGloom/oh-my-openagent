@@ -6,6 +6,7 @@ export type ApplyCommandsDeps = {
   readonly session: V2SessionDomain
   readonly agents: V2AgentDomain
   readonly beforeHook: BeforeCommandHook | undefined
+  readonly launchSubtask?: Parameters<typeof createCommandExecutor>[0]["launchSubtask"]
 }
 
 /** Applies the desired commands inside a 2.x command transform. */
@@ -20,7 +21,7 @@ export function applyDesiredCommands(
     editor.add({
       name,
       ...(spec.description === undefined ? {} : { description: spec.description }),
-      execute: createCommandExecutor({ name, spec, session: deps.session, agents: deps.agents, beforeHook: deps.beforeHook }),
+      execute: createCommandExecutor({ name, spec, session: deps.session, agents: deps.agents, beforeHook: deps.beforeHook, launchSubtask: deps.launchSubtask }),
     })
   }
 }

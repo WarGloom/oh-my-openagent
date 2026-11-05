@@ -1,6 +1,7 @@
 import type { FallbackEntry } from "../../shared/model-requirements"
 import type { DelegatedModelConfig } from "../../shared/model-resolution-types"
 import type { SessionPermissionRule } from "../../shared/question-denied-session-permission"
+import type { NativeSubagentInvocation, NativeSubagentPrompt, NativeSubagentRun, NativeSubagentSkillSelection } from "../../v2/native-subagent-types"
 
 export type BackgroundTaskStatus =
   | "pending"
@@ -45,6 +46,21 @@ export interface BackgroundTaskAttempt {
 }
 
 export interface BackgroundTask {
+  nativeAdmissionID?: string
+  nativeProvisioningAdmissionID?: string
+  nativeSkillActivationIDs?: readonly string[]
+  nativeSkillSelections?: readonly NativeSubagentSkillSelection[]
+  nativeAcceptedSkillsAdmissionID?: string
+  nativePromptID?: string
+  nativeRun?: NativeSubagentRun
+  nativeInvocation?: NativeSubagentInvocation
+  nativeCompletion?: "parent" | "none"
+  nativeMode?: "foreground" | "background"
+  nativeInheritedPermit?: boolean
+  nativePrompt?: NativeSubagentPrompt
+  nativeMetadata?: Readonly<Record<string, unknown>>
+  nativeTaskKey?: string
+  skills?: string[]
   id: string
   sessionId?: string
   rootSessionId?: string
@@ -128,6 +144,14 @@ export interface BackgroundTaskSnapshot {
 }
 
 export interface LaunchInput {
+  nativeInheritedPermit?: boolean
+  nativeSignal?: AbortSignal
+  nativePrompt?: NativeSubagentPrompt
+  nativeMetadata?: Readonly<Record<string, unknown>>
+  nativeTaskKey?: string
+  nativeInvocation?: NativeSubagentInvocation
+  nativeCompletion?: "parent" | "none"
+  nativeMode?: "foreground" | "background"
   description: string
   prompt: string
   agent: string
@@ -154,6 +178,15 @@ export interface LaunchInput {
 }
 
 export interface ResumeInput {
+  nativeInheritedPermit?: boolean
+  nativeSignal?: AbortSignal
+  nativePrompt?: NativeSubagentPrompt
+  nativeMetadata?: Readonly<Record<string, unknown>>
+  nativePromptID?: string
+  nativeInvocation?: NativeSubagentInvocation
+  nativeCompletion?: "parent" | "none"
+  nativeMode?: "foreground" | "background"
+  skills?: string[]
   sessionId: string
   prompt: string
   system?: string

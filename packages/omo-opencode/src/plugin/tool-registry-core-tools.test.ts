@@ -188,6 +188,8 @@ describe("#given the plugin runs on OpenCode 2.x (a V2 plugin input)", () => {
     expect(tools.grep).toBeUndefined()
     expect(tools.glob).toBeUndefined()
     expect(tools.create_goal).toBeUndefined()
+    expect(tools.skill).toBeUndefined()
+    expect(tools.skill_mcp).toBeDefined()
   })
 
   test("#when the same tools register on V1 #then grep, glob and goal tools are present", () => {
@@ -198,5 +200,7 @@ describe("#given the plugin runs on OpenCode 2.x (a V2 plugin input)", () => {
     expect(tools.grep).toBeDefined()
     expect(tools.glob).toBeDefined()
     expect(tools.create_goal).toBeDefined()
+    expect(tools.skill).toBeDefined()
+    expect(tools.skill_mcp).toBeDefined()
   })
 })

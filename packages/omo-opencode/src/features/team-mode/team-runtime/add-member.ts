@@ -48,6 +48,7 @@ async function rollbackOwnedAddition(input: {
       source: "team-add-rollback",
       reason: "add_rollback",
       skipNotification: true,
+      revokeTeamProvisioning: true,
     }).catch((error: unknown) => { errors.push(error) })
     const task = input.bgMgr.getTask(input.resource.taskId)
     if (!task || !(task.status === "completed" || task.status === "error" || task.status === "cancelled" || task.status === "interrupt")) {

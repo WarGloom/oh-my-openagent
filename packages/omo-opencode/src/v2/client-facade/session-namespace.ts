@@ -9,6 +9,7 @@ import { settle, v1Error, type V1Result } from "./v1-result"
 import { deliverMailboxV2 } from "@oh-my-opencode/team-core/team-mailbox"
 import type { TeamModeConfig } from "../../config/schema/team-mode"
 import { readSessionTodos } from "../session-todos"
+import { admitNativeTeamMessage } from "../native-team-jobs"
 
 type SessionRef = { readonly path: { readonly id: string } }
 
@@ -146,7 +147,7 @@ export function createSessionNamespace(context: V2PluginContext, deps: SessionNa
       })
     },
     nativeTeamMailbox: (input: { readonly teamRunId: string; readonly memberName: string; readonly sessionID: string; readonly config: TeamModeConfig }) =>
-      deliverMailboxV2({ ...input, admit: async (message) => { await context.session.synthetic({ ...message, delivery: "steer", resume: true }) } }),
+      deliverMailboxV2({ ...input, admit: (message) => admitNativeTeamMessage(context, message, input) }),
 
     status: async () => ({ data: deps.tracker.statuses() }),
 

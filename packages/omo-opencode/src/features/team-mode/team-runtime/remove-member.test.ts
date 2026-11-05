@@ -198,6 +198,6 @@ describe("stopTeamMemberRemoval", () => {
     }
     if (["absent", "terminal", "pending", "not-found", "direct-response-error", "false-response", "timeout", "false-terminal"].includes(scenario)) expect(aborts).toEqual(["worker-session"])
     if (scenario === "wrong-session") expect(cancellations).toEqual([])
-    if (scenario === "success") expect(cancellations).toEqual([{ id: "background-worker", abortSession: true, skipNotification: true, source: "team-remove-member" }])
+    if (scenario === "success" || scenario === "terminal") expect(cancellations).toEqual([{ id: "background-worker", abortSession: true, skipNotification: true, revokeTeamProvisioning: true, source: "team-remove-member" }])
   })
 })

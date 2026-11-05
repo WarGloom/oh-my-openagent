@@ -92,6 +92,10 @@ export async function deleteTeam(
     }
 
     if (options?.force !== true) {
+      // Inactive members keep their provisioning anchors until deletion revokes them.
+      await Promise.all(teamTasks.map((task) => bgMgr.cancelTask(task.id, {
+        source: "team-mode-delete", reason: `delete team ${teamRunId}`, revokeTeamProvisioning: true,
+      })))
       return await deleteTeamResources(teamRunId, config, runtimeState, tmuxMgr, options, deps)
     }
 
@@ -104,6 +108,7 @@ export async function deleteTeam(
     await Promise.all(teamTasks.map((task) => bgMgr.cancelTask(task.id, {
       source: "team-mode-delete",
       reason: `delete team ${teamRunId}`,
+      revokeTeamProvisioning: true,
     })))
   }
 

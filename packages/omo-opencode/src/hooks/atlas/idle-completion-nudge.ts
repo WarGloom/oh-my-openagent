@@ -1,4 +1,5 @@
 import type { PluginInput } from "@opencode-ai/plugin"
+import { getNativeIdleArbiter } from "../../v2/native-idle-arbiter"
 import type { BoulderState } from "../../features/boulder-state"
 import {
   completeBoulder,
@@ -107,7 +108,8 @@ export async function handleCompletedBoulderIdle(input: {
       return
     }
 
-    const promptResult = await dispatchInternalPrompt({
+    const arbiter = getNativeIdleArbiter(ctx)
+    const promptResult = arbiter ? await arbiter.admit(sessionID, prompt, HOOK_NAME) : await dispatchInternalPrompt({
       mode: "async",
       client: ctx.client,
       sessionID,

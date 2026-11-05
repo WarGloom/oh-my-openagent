@@ -21,6 +21,7 @@ import { selectAgentWithJev } from "./jev-routing"
 import type { AvailableSkill } from "../../agents/dynamic-agent-prompt-builder"
 import { mergeNativeSkillInfos, type NativeSkillEntry } from "../skill/native-skills"
 import type { SkillInfo } from "../skill/types"
+import { executeNativeDelegate } from "./native-execution"
 
 const RUNTIME_PLAN_AGENT_DISABLED_MESSAGE = `OpenCode runtime plan agent is disabled in OMO task routing. Use metis for pre-plan sanity, momus for saved .omo/plans/*.md review, oracle for hard architecture/debugging, or a category for execution.`
 
@@ -84,11 +85,11 @@ function buildDelegateTaskArgsSchema(availableSubagentNames?: readonly string[],
       .optional()
       .describe("Skill names to inject. Optional; defaults to [] when omitted. Pass an explicit array (e.g. [\"git-master\"]) for skill-specific tasks."),
     description: tool.schema.string().optional().describe("Short task description (3-5 words). Auto-generated from prompt if omitted."),
-    prompt: tool.schema.string().describe("Full detailed prompt for the agent"),
+      prompt: tool.schema.string().describe("Concrete goal, acceptance criteria, allowed scope, sourced hard limits, and relevant context labeled verified, assumed, or unknown. Capable workers own the method; add steps only when required by the contract or a mechanical/limited-worker assignment. Use normal prose and spaces; preserve exact identifiers."),
     run_in_background: tool.schema
       .boolean()
       .optional()
-      .describe("true is the standard spawn: returns a background task ID `bg_...` at once; the completion notification delivers the result, which background_output reads. false blocks this response until the child finishes; use it only for a short child whose result gates your very next call. Omitted counts as false."),
+        .describe("true is the standard spawn: returns a background task ID `bg_...` at once; inspect the result/error delivered in the native completion notification. background_output is optional for missing/truncated output or transcript/diagnostic detail. false blocks this response until the child finishes; use it only for a short child whose result gates your very next call. Omitted counts as false."),
     category: tool.schema.string().optional().describe("REQUIRED if subagent_type not provided. Do NOT provide both category and subagent_type."),
     model_routing: tool.schema.boolean().optional().describe("Set false to bypass optional Jev routing for category auto or an agent ladder; omitted uses the configured mode. Does not affect team members or real named agents."),
     subagent_type: buildSubagentTypeSchema(availableSubagentNames, aliases),
@@ -130,7 +131,9 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
 
       const runInBackground = delegateTaskArgs.run_in_background === true
 
-      const { content: skillContent, contents: skillContents, error: skillError } = await resolveSkillContent(delegateTaskArgs.load_skills, {
+      const { content: skillContent, contents: skillContents, error: skillError } = options.manager.nativeJobs
+        ? { content: undefined, contents: undefined, error: undefined }
+        : await resolveSkillContent(delegateTaskArgs.load_skills, {
         gitMasterConfig: options.gitMasterConfig,
         browserProvider: options.browserProvider,
         disabledSkills: options.disabledSkills,
@@ -162,6 +165,7 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
 
       if (delegateTaskArgs.task_id) {
         ctx.abort?.throwIfAborted()
+        if (options.manager.nativeJobs) return executeNativeDelegate({ args: delegateTaskArgs, ctx, executor: options, parent: parentContext, system: continuationSystemContent })
         if (runInBackground) {
           return executeBackgroundContinuation(delegateTaskArgs, ctx, options, parentContext, continuationSystemContent)
         }
@@ -239,6 +243,7 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
             availableSkills,
             nativeSkillInfos,
           })
+          if (options.manager.nativeJobs) return executeNativeDelegate({ args: { ...delegateTaskArgs, run_in_background: true }, ctx, executor: options, parent: parentContext, agent: agentToUse, model: categoryModel, system: systemContent, fallbackChain })
           return executeUnstableAgentTask(delegateTaskArgs, ctx, options, parentContext, agentToUse, categoryModel, systemContent, actualModel, fallbackChain)
         }
       } else {
@@ -264,6 +269,8 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
       })
 
       ctx.abort?.throwIfAborted()
+
+      if (options.manager.nativeJobs) return executeNativeDelegate({ args: delegateTaskArgs, ctx, executor: options, parent: parentContext, agent: agentToUse, model: categoryModel, system: systemContent, fallbackChain })
 
       if (runInBackground) {
         return executeBackgroundTask(delegateTaskArgs, ctx, options, parentContext, agentToUse, categoryModel, systemContent, fallbackChain)

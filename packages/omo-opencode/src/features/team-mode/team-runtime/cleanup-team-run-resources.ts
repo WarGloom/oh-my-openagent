@@ -56,6 +56,7 @@ export async function cleanupTeamRunResources(args: {
           source: "team-create-rollback",
           reason: "creating_rollback",
           skipNotification: true,
+          revokeTeamProvisioning: true,
         })
         cleanupReport.cancelledTaskIds.push(resource.taskId)
       } catch (cancelError) {

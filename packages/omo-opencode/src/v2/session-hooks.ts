@@ -8,6 +8,8 @@ import { registerNativeTeamStatus } from "./native-team-status"
 import { registerNativeMonitorStatus } from "./native-monitor-status"
 import { registerNativeCategoryReminder } from "./native-category-reminder"
 import { registerNativeTeamMailbox } from "./native-team-mailbox"
+import { registerCompactionContinuation } from "./compaction-continuation"
+import { registerNativeAtlasCompletion } from "./native-atlas-completion"
 
 type V1ChatRequestInput = {
   readonly sessionID: string
@@ -153,6 +155,10 @@ export async function installSessionHooks(
 ): Promise<() => Promise<void>> {
   const v1: V1SessionHooks = hooks
   const registrations: V2Registration[] = []
+  const autocontinue = Reflect.get(hooks, "experimental.compaction.autocontinue")
+  if (typeof autocontinue === "function") {
+    registrations.push(await registerCompactionContinuation(context, (input, output) => Reflect.apply(autocontinue, undefined, [input, output])))
+  }
 
   const messages = v1["experimental.chat.messages.transform"]
   const transformHooks = messages === undefined ? undefined : getMessagesTransformHooks(messages)
@@ -160,6 +166,8 @@ export async function installSessionHooks(
   const monitorStatus = transformHooks?.monitorStatusInjector
   const categoryReminder = transformHooks?.categorySkillReminder
   const teamMailbox = transformHooks?.teamMailboxInjector
+  const atlas = transformHooks?.atlasHook
+  if (atlas) registrations.push(await registerNativeAtlasCompletion(context, atlas))
   if (teamStatus) registrations.push(await registerNativeTeamStatus(context, teamStatus))
   if (monitorStatus) registrations.push(await registerNativeMonitorStatus(context, monitorStatus))
   if (categoryReminder) registrations.push(await registerNativeCategoryReminder(context, categoryReminder))

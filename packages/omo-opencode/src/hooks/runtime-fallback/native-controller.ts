@@ -9,12 +9,14 @@ import { applySessionPromptParams } from "../../shared/session-prompt-params-hel
 import { clearSessionPromptParams } from "../../shared/session-prompt-params-state"
 import { HOOK_NAME } from "./constants"
 import { getRawFallbackModels } from "./fallback-models"
-import { areRuntimeModelsEquivalent, createFallbackState, prepareFallback } from "./fallback-state"
+import { areRuntimeModelsEquivalent, createFallbackState, isModelInCooldown, prepareFallback, stringifyRuntimeModelWithVariant } from "./fallback-state"
 import { restoreFallbackState, snapshotFallbackState } from "./fallback-state-snapshot"
 import { buildRetryModelPayload } from "./retry-model-payload"
 import { resolveRuntimeModelSettings } from "./runtime-model-settings"
 import { resolveFallbackBootstrapModel } from "./fallback-bootstrap-model"
 import type { HookDeps } from "./types"
+import { forgetNativeRecovery, nativeRecoveryState } from "../../v2/native-recovery-state"
+import { showFallbackToast } from "./fallback-retry-dispatcher"
 
 const nativeClients = new WeakSet<object>()
 
@@ -25,7 +27,7 @@ export function hasNativeRuntimeFallback(client: object): boolean {
 type RetryModel = NonNullable<ReturnType<typeof buildRetryModelPayload>>
 
 /** The model native fallback last applied to a session, so task records report the model that answered. */
-const nativeSessionModels = new Map<string, RetryModel>()
+const nativeSessionModels = nativeRecoveryState.models
 
 export function getNativeFallbackModel(sessionID: string): RetryModel | undefined {
   return nativeSessionModels.get(sessionID)
@@ -35,10 +37,12 @@ export type NativeFallbackInput = {
   readonly sessionID: string
   readonly agent: string | undefined
   readonly model: string | undefined
+  readonly variant?: string
   readonly error: unknown
   readonly reason?: "timeout"
   /** Host model availability; a model it rejects is skipped like an unreachable V1 fallback. */
   readonly isAvailable?: (model: { providerID: string; modelID: string }) => boolean
+  readonly onExhausted?: () => void
 }
 
 function nativeModelChain(config: Partial<FallbackModelObject> & { fallback_models?: FallbackModels; models?: FallbackModels }) {
@@ -51,7 +55,7 @@ function nativeModelChain(config: Partial<FallbackModelObject> & { fallback_mode
 
 export function createNativeFallbackController(deps: HookDeps) {
   let active = false
-  const promptParamSessions = new Set<string>()
+  const promptParamSessions = nativeRecoveryState.promptParams
   // Native sessions can start outside OMO's model resolver; retain their untried configured primary.
   const categories = Object.fromEntries(Object.entries(deps.pluginConfig?.categories ?? {}).map(([key, value]) => [
     key, { ...value, fallback_models: nativeModelChain(value) },
@@ -81,11 +85,37 @@ export function createNativeFallbackController(deps: HookDeps) {
       deps.sessionStates.delete(sessionID)
       deps.sessionLastAccess.delete(sessionID)
       if (promptParamSessions.delete(sessionID)) clearSessionPromptParams(sessionID)
-      nativeSessionModels.delete(sessionID)
+      forgetNativeRecovery(sessionID)
     },
-    async recover(input: NativeFallbackInput, apply: (model: RetryModel) => Promise<RetryModel | void>): Promise<boolean> {
+    async restorePrimary(input: { readonly sessionID: string; readonly agent?: string; readonly model: string; readonly variant?: string }, apply: (model: RetryModel) => Promise<void>): Promise<void> {
+      const state = nativeRecoveryState.states.get(input.sessionID)
+      if (!state || nativeRecoveryState.inFlight.has(input.sessionID)) return
+      const applied = nativeSessionModels.get(input.sessionID)
+      if (!areRuntimeModelsEquivalent(state.currentModel, input.model) || (applied && applied.variant !== input.variant)) {
+        nativeRecoveryState.states.set(input.sessionID, createFallbackState(stringifyRuntimeModelWithVariant(input.model, input.variant)))
+        nativeSessionModels.delete(input.sessionID)
+        if (promptParamSessions.delete(input.sessionID)) clearSessionPromptParams(input.sessionID)
+        return
+      }
+      if (!deps.config.restore_primary_after_cooldown || areRuntimeModelsEquivalent(state.currentModel, state.originalModel) || state.pendingFallbackModel || isModelInCooldown(state.originalModel, state, deps.config.cooldown_seconds)) return
+      const settings = resolveRuntimeModelSettings(input.sessionID, input.agent ? getAgentConfigKey(input.agent) : undefined, pluginConfig)
+      const payload = buildRetryModelPayload(state.originalModel, settings)
+      if (!payload) return
+      nativeRecoveryState.inFlight.add(input.sessionID)
+      try {
+        await apply(payload)
+        const restored = createFallbackState(state.originalModel)
+        nativeRecoveryState.states.set(input.sessionID, restored)
+        deps.sessionStates.set(input.sessionID, restored)
+        nativeSessionModels.set(input.sessionID, payload)
+        if (promptParamSessions.delete(input.sessionID)) clearSessionPromptParams(input.sessionID)
+      } finally {
+        nativeRecoveryState.inFlight.delete(input.sessionID)
+      }
+    },
+    async recover(input: NativeFallbackInput, apply: (model: RetryModel) => Promise<RetryModel | "declined" | "duplicate" | void>): Promise<boolean> {
       if (!deps.config.enabled || (input.reason !== "timeout" && !isRetryableError(input.error, deps.config.retry_on_errors))) return false
-      if (deps.sessionRetryInFlight.has(input.sessionID)) return false
+      if (deps.sessionRetryInFlight.has(input.sessionID) || nativeRecoveryState.inFlight.has(input.sessionID)) return false
       const agent = input.agent ? getAgentConfigKey(input.agent) : undefined
       const entries = (getRawFallbackModels(input.sessionID, agent, pluginConfig) ?? []).filter((entry) => {
         const parsed = parseModelString(typeof entry === "string" ? entry : entry.model)
@@ -95,17 +125,24 @@ export function createNativeFallbackController(deps: HookDeps) {
         return false
       })
       const models = flattenToFallbackModelStrings(entries) ?? []
-      if (models.length === 0) return false
-      let state = deps.sessionStates.get(input.sessionID)
-      const currentModel = input.model ?? state?.currentModel ?? resolveFallbackBootstrapModel({ sessionID: input.sessionID, source: "native", resolvedAgent: agent, pluginConfig }) ?? models[0]
+      if (models.length === 0) {
+        input.onExhausted?.()
+        return false
+      }
+      let state = nativeRecoveryState.states.get(input.sessionID) ?? deps.sessionStates.get(input.sessionID)
+      const currentModel = stringifyRuntimeModelWithVariant(input.model, input.variant) ?? state?.currentModel ?? resolveFallbackBootstrapModel({ sessionID: input.sessionID, source: "native", resolvedAgent: agent, pluginConfig }) ?? models[0]
       if (!state || !areRuntimeModelsEquivalent(state.currentModel, currentModel)) {
         state = createFallbackState(currentModel)
         deps.sessionStates.set(input.sessionID, state)
       }
+      nativeRecoveryState.states.set(input.sessionID, state)
       deps.sessionLastAccess.set(input.sessionID, Date.now())
       const snapshot = snapshotFallbackState(state)
       const selected = prepareFallback(input.sessionID, state, models, deps.config)
-      if (!selected.success || !selected.newModel) return false
+      if (!selected.success || !selected.newModel) {
+        input.onExhausted?.()
+        return false
+      }
       const entry = entries[state.fallbackIndex]
       const entrySettings = typeof entry === "object" ? entry : undefined
       const runtimeSettings = resolveRuntimeModelSettings(input.sessionID, agent, pluginConfig)
@@ -121,8 +158,14 @@ export function createNativeFallbackController(deps: HookDeps) {
         return false
       }
       deps.sessionRetryInFlight.add(input.sessionID)
+      nativeRecoveryState.inFlight.add(input.sessionID)
       try {
         const applied = await apply(payload)
+        // Only a new host admission spends a fallback attempt or emits a toast.
+        if (applied === "declined" || applied === "duplicate") {
+          restoreFallbackState(state, snapshot)
+          return applied === "duplicate"
+        }
         state.pendingFallbackModel = undefined
         nativeSessionModels.set(input.sessionID, applied ?? payload)
         const requestSettings = {
@@ -138,12 +181,14 @@ export function createNativeFallbackController(deps: HookDeps) {
         } else if (promptParamSessions.delete(input.sessionID)) {
           clearSessionPromptParams(input.sessionID)
         }
+        await showFallbackToast(deps, input.sessionID, `Switched to ${selected.newModel.split("/").pop()} for next request`)
         return true
       } catch (error) {
         restoreFallbackState(state, snapshot)
         throw error
       } finally {
         deps.sessionRetryInFlight.delete(input.sessionID)
+        nativeRecoveryState.inFlight.delete(input.sessionID)
       }
     },
   }

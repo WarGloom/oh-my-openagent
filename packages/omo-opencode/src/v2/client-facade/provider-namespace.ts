@@ -9,7 +9,7 @@ export function toV1Model(model: V2ModelInfo) {
     status: model.status,
     attachment: model.capabilities.input.some((kind) => kind !== "text"),
     reasoning: model.variants.length > 0,
-    temperature: true,
+    temperature: model.capabilities.temperature ?? true,
     tool_call: model.capabilities.tools,
     modalities: { input: [...model.capabilities.input], output: [...model.capabilities.output] },
     limit: {
@@ -17,8 +17,8 @@ export function toV1Model(model: V2ModelInfo) {
       output: model.limit.output,
       ...(model.limit.input === undefined ? {} : { input: model.limit.input }),
     },
-    options: {},
-    variants: Object.fromEntries(model.variants.map((variant) => [variant.id, {}])),
+    options: { ...model.settings },
+    variants: Object.fromEntries(model.variants.map((variant) => [variant.id, { ...variant.settings }])),
   }
 }
 
@@ -38,14 +38,22 @@ export function createProviderNamespace(context: V2PluginContext) {
       for (const model of models.data) modelsByProvider.set(model.providerID, [...(modelsByProvider.get(model.providerID) ?? []), model])
       const known = new Map<string, string>(providers.data.map((provider) => [provider.id, provider.name]))
       for (const providerID of modelsByProvider.keys()) if (!known.has(providerID)) known.set(providerID, providerID)
-      const all = [...known].map(([id, name]) => ({
+      const all = [...known].map(([id, name]) => {
+        const provider = providers.data.find((entry) => entry.id === id)
+        return {
         id,
         name,
         source: "api",
         env: [] as string[],
-        options: {},
+        options: {
+          ...provider?.settings,
+          ...(provider?.headers
+            ? { headers: { ...provider.headers } }
+            : {}),
+        },
         models: Object.fromEntries((modelsByProvider.get(id) ?? []).map((model) => [model.modelID, toV1Model(model)])),
-      }))
+        }
+      })
       const connected = all
         .filter((provider) => (modelsByProvider.get(provider.id) ?? []).some((model) => model.enabled))
         .map((provider) => provider.id)

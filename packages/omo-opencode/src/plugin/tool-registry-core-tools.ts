@@ -13,7 +13,7 @@ import { createGoalTools } from "../hooks/goal/tools"
 import * as openclawRuntimeDispatch from "../openclaw/runtime-dispatch"
 import { log } from "../shared"
 import { getSisyphusJuniorModelOverride } from "./tool-registry-team-tools"
-import { createNativeSkills, getPluginInputNativeSkills } from "./native-skills"
+import { createNativeSkills, createNativeLoadedSkillsResolver, getPluginInputNativeSkills } from "./native-skills"
 import { createSkillContext } from "./skill-context"
 import { createRuntimeSkillsResolver, readRuntimeHostSkills } from "./runtime-skill-resolver"
 import { loadProjectAgents, loadUserAgents } from "../features/claude-code-agent-loader"
@@ -21,6 +21,9 @@ import { BUILTIN_SUBAGENT_TYPES } from "../tools/delegate-task/builtin-subagent-
 import { isDirectSubagentTypeDisabled } from "../tools/delegate-task/builtin-subagent-types"
 import { isPlanAgent } from "../tools/delegate-task/constants"
 import { isV2PluginInput } from "../v2/create-plugin-input"
+import { setNativeSkillOptions } from "../v2/native-skill-state"
+import type { SkillLoadOptions } from "../tools/skill/types"
+import { getAcceptedNativeSkillMcps } from "../v2/native-skill-mcp"
 
 export function createCoreTools(args: {
   readonly ctx: PluginContext
@@ -48,7 +51,9 @@ export function createCoreTools(args: {
     directory: ctx.directory,
   })
   const getSessionIDForMcp = (): string | undefined => getMainSessionID()
-  const getLoadedSkills = createRuntimeSkillsResolver({
+  const getLoadedSkills = isV2PluginInput(ctx) ? createNativeLoadedSkillsResolver({
+    skills: skillContext.mergedSkills, nativeSkills, directory: ctx.directory, disabledSkills: skillContext.disabledSkills,
+  }) : createRuntimeSkillsResolver({
     baseSkills: skillContext.mergedSkills,
     readRuntimeHostSkills: () => readRuntimeHostSkills(ctx.client),
     buildMergedSkills: async (hostSkills) =>
@@ -121,12 +126,13 @@ export function createCoreTools(args: {
     manager: managers.skillMcpManager,
     getLoadedSkills,
     getSessionID: getSessionIDForMcp,
+    ...(isV2PluginInput(ctx) ? { getLoadedSkillsForSession: (invocation) => getAcceptedNativeSkillMcps(ctx, invocation) } : {}),
   })
   const commands = factories.discoverCommandsSync(ctx.directory, {
     pluginsEnabled: pluginConfig.claude_code?.plugins ?? true,
     enabledPluginsOverride: pluginConfig.claude_code?.plugins_override,
   })
-  const skillTool = factories.createSkillTool({
+  const skillOptions: SkillLoadOptions = {
     directory: ctx.directory,
     commands,
     skills: skillContext.mergedSkills,
@@ -141,7 +147,8 @@ export function createCoreTools(args: {
     pluginsEnabled: pluginConfig.claude_code?.plugins ?? true,
     enabledPluginsOverride: pluginConfig.claude_code?.plugins_override,
     includeSkillsInDescription: true,
-  })
+  }
+  if (isV2PluginInput(ctx)) setNativeSkillOptions(ctx, skillOptions)
 
   const tools: ToolsRecord = {
     ...factories.createSessionManagerTools(ctx),
@@ -157,7 +164,7 @@ export function createCoreTools(args: {
   }
   tools.task = delegateTask
   tools.skill_mcp = skillMcpTool
-  tools.skill = skillTool
+  if (!isV2PluginInput(ctx)) tools.skill = factories.createSkillTool(skillOptions)
 
   // On 2.x the host goal (command, tools, hook) stays reachable; OMO does not register its own.
   if (pluginConfig.goal?.enabled && !isV2PluginInput(ctx)) {

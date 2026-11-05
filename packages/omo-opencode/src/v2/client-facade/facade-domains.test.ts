@@ -23,12 +23,16 @@ describe("V2 facade domain parity", () => {
     // given
     const fake = createFakePluginContext({ models: [{
       id: "p/m", modelID: "m", providerID: "p", name: "Model", status: "active", enabled: true,
-      capabilities: { tools: true, input: ["text", "image"], output: ["text"] }, variants: [{ id: "high" }], limit: { context: 100, output: 20 },
-    }] })
+      capabilities: { tools: true, input: ["text", "image"], output: ["text"], temperature: false },
+      settings: { customModel: 42 }, variants: [{ id: "high", settings: { effort: "high" } }], limit: { context: 100, output: 20 },
+    }], providers: [{ id: "p", name: "Provider", activation: "enabled", settings: { baseURL: "https://example.invalid" }, headers: { "custom-header": "value" } }] })
     const client = createClientFacade(fake.context, { tracker: createSessionTracker(), warn: () => {} })
     // when
     const result = await client.model.list()
     // then
-    expect(result.data).toMatchObject([{ id: "m", provider: "p", providerID: "p", attachment: true, variants: { high: {} }, limit: { context: 100, output: 20 } }])
+    expect(result.data).toMatchObject([{ id: "m", provider: "p", providerID: "p", attachment: true, temperature: false,
+      options: { customModel: 42 }, variants: { high: { effort: "high" } }, limit: { context: 100, output: 20 } }])
+    const provider = await client.provider.list()
+    expect(provider.data?.all[0]).toMatchObject({ options: { baseURL: "https://example.invalid", headers: { "custom-header": "value" } } })
   })
 })

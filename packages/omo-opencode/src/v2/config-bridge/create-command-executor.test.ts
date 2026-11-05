@@ -2,10 +2,46 @@ import { describe, expect, it, mock } from "bun:test"
 import type { V2CommandInvocation } from "../context-types"
 import { createFakePluginContext } from "../fake-plugin-context"
 import { createCommandExecutor, type BeforeCommandHook } from "./create-command-executor"
+import { installSessionHooks } from "../session-hooks"
+import { consumeNativeGoalCommandMarker, markNativeGoalCommand } from "../../plugin/command-execute-before"
 
-const invocation: V2CommandInvocation = { sessionID: "ses_1", prompt: { text: "fix the bug" }, delivery: "queue" }
+const invocation: V2CommandInvocation = { invocationID: "command_1", agent: "Sisyphus", sessionID: "ses_1", prompt: { text: "fix the bug" }, delivery: "queue" }
 
 describe("createCommandExecutor", () => {
+  it("#when a command carries attachments and a native marker #then the prompt hook consumes only the marker", async () => {
+    // given
+    const fake = createFakePluginContext()
+    let consumed = false
+    const dispose = await installSessionHooks(fake.context, { "chat.message": async (_input, output) => {
+      consumed = consumeNativeGoalCommandMarker(output.parts)
+    } }, { warn: () => {} })
+    const files = [{ uri: "file:///work/input.txt", name: "input.txt", description: "user attachment" }]
+    const agents = [{ name: "explore" }]
+    const skills = [{ id: "skill_1" }]
+    const execute = createCommandExecutor({
+      name: "goal", spec: { template: "$ARGUMENTS" }, session: fake.context.session, agents: fake.context.agent,
+      beforeHook: async (_input, output) => {
+        markNativeGoalCommand(output.parts)
+        output.parts.push({ type: "file", url: "file:///work/hook.txt", filename: "hook.txt" })
+      },
+    })
+    try {
+      // when
+      await execute({ ...invocation, prompt: { text: "set goal", files, agents, skills } })
+      const call = fake.sessionCalls.find((entry) => entry.kind === "prompt")
+      if (call?.kind !== "prompt") throw new Error("Command did not admit its prompt")
+      const event = await fake.triggerPrompt({ sessionID: "ses_1", messageID: "msg_1", prompt: { text: call.input.text }, metadata: { ...call.input.metadata } })
+      // then
+      expect(consumed).toBe(true)
+      expect(event.prompt.text).toBe("set goal")
+      expect(call.input.files).toEqual([...files, { uri: "file:///work/hook.txt", name: "hook.txt" }])
+      expect(call.input.agents).toEqual(agents)
+      expect(call.input.skills).toEqual(skills)
+    } finally {
+      await dispose()
+    }
+  })
+
   describe("#given a command template", () => {
     it("#when run without a before-hook #then the rendered template is prompted with the invocation's delivery", async () => {
       // given
@@ -47,7 +83,7 @@ describe("createCommandExecutor", () => {
       await execute(invocation)
 
       // then
-      expect(seen).toEqual([{ command: "triage", sessionID: "ses_1", arguments: "fix the bug" }])
+      expect(seen).toEqual([{ command: "triage", sessionID: "ses_1", arguments: "fix the bug", invocationID: "command_1", agent: "Sisyphus" }])
       expect(fake.sessionCalls[0]).toEqual({
         kind: "prompt",
         input: { sessionID: "ses_1", text: "Triage: fix the bug\n(extra context)", delivery: "queue" },

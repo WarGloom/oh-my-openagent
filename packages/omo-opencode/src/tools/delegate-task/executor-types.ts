@@ -2,8 +2,10 @@ import type { BackgroundManager } from "../../features/background-agent"
 import type { CategoriesConfig, GitMasterConfig, BrowserAutomationProvider, AgentOverrides, SisyphusAgentConfig, JevRoutingConfig } from "../../config/schema"
 import type { ModelFallbackControllerAccessor } from "../../hooks/model-fallback"
 import type { OpencodeClient } from "./types"
+import type { NativeSubagentInvocation } from "../../v2/native-subagent-types"
 
 export interface ExecutorContext {
+  nativeInvocation?: NativeSubagentInvocation
   manager: BackgroundManager
   client: OpencodeClient
   directory: string

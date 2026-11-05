@@ -9,6 +9,7 @@ import type { HashlineEdit } from "./types"
 import { HashlineMismatchError } from "./validation"
 import { runFormattersForFile, type FormatterClient } from "./formatter-trigger"
 import type { PluginContext } from "../../plugin/types"
+import { getNativeFormatter } from "../../v2/native-formatter"
 
 interface HashlineEditArgs {
   filePath: string
@@ -126,7 +127,9 @@ export async function executeHashlineEditTool(args: HashlineEditArgs, context: T
     await bunWrite(filePath, writeContent)
 
     if (pluginCtx?.client) {
-      await runFormattersForFile(pluginCtx.client as FormatterClient, context.directory, filePath)
+      const nativeFormatter = getNativeFormatter(pluginCtx.client)
+      if (nativeFormatter) await nativeFormatter({ sessionID: context.sessionID, filepath: filePath })
+      else await runFormattersForFile(pluginCtx.client as FormatterClient, context.directory, filePath)
       const formattedContent = Buffer.from(await bunFile(filePath).arrayBuffer()).toString("utf8")
       if (formattedContent !== writeContent) {
         const formattedEnvelope = canonicalizeFileText(formattedContent)

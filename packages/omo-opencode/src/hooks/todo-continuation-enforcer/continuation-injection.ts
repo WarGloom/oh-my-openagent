@@ -24,6 +24,7 @@ import {
   normalizeAgentForPrompt,
 } from "../../shared/agent-display-names"
 import { dispatchInternalPrompt, isInternalPromptDispatchAccepted } from "../shared/prompt-async-gate"
+import { getNativeIdleArbiter } from "../../v2/native-idle-arbiter"
 
 import {
   CONTINUATION_PROMPT,
@@ -201,6 +202,8 @@ ${todoList}`
     return
   }
 
+  const arbiter = getNativeIdleArbiter(ctx)
+
   if (injectionState) {
     injectionState.inFlight = true
   }
@@ -231,7 +234,7 @@ ${todoList}`
       query: { directory: ctx.directory },
     }
 
-    const promptResult = await dispatchInternalPrompt({
+    const promptResult = arbiter ? await arbiter.admit(sessionID, prompt, HOOK_NAME) : await dispatchInternalPrompt({
       mode: "async",
       client: ctx.client,
       sessionID,
@@ -258,7 +261,7 @@ ${todoList}`
       throw promptResult.error
     }
     if (!isInternalPromptDispatchAccepted(promptResult)) {
-      if (promptResult.status === "reserved" || promptResult.status === "active") {
+      if (!arbiter && (promptResult.status === "reserved" || promptResult.status === "active")) {
         const queuedResult = await dispatchInternalPrompt({
           mode: "async",
           client: ctx.client,

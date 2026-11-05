@@ -1,5 +1,6 @@
 import type { Hooks } from "@opencode-ai/plugin"
 import { isRecord } from "@oh-my-opencode/utils"
+import { z } from "zod"
 import type { V2ModelRef, V2PluginContext, V2Registration, V2SessionInfo } from "./context-types"
 
 interface PromptHooks {
@@ -9,6 +10,7 @@ interface PromptHooks {
   }): Promise<void> | void
 }
 type ModelOverride = { readonly previous: V2ModelRef; readonly selected: V2ModelRef }
+const commandPartsSchema = z.array(z.object({ type: z.literal("text"), text: z.string(), synthetic: z.boolean().optional() }))
 
 function sameModel(left: V2ModelRef | undefined, right: V2ModelRef): boolean {
   return left?.providerID === right.providerID && left.id === right.id && left.variant === right.variant
@@ -56,15 +58,21 @@ export async function registerPromptHook(
     const model = current && { providerID: current.providerID, modelID: current.id }
     const variant = current && "variant" in current ? current.variant : undefined
     const original = event.prompt.text
+    const commandParts = event.metadata?.omoCommandParts === undefined
+      ? undefined
+      : commandPartsSchema.parse(event.metadata.omoCommandParts)
     const output: Parameters<NonNullable<PromptHooks["chat.message"]>>[1] = {
       message: {
         id: event.messageID, sessionID: event.sessionID, role: "user", time: { created: Date.now() },
         ...(session?.agent === undefined ? {} : { agent: session.agent }),
         ...(model ? { model } : {}), ...(variant === undefined ? {} : { variant }),
       },
-      parts: [{ type: "text", text: original, id: event.messageID, sessionID: event.sessionID, messageID: event.messageID }],
+      parts: (commandParts ?? [{ type: "text", text: original }]).map((part) => ({
+        ...part, id: event.messageID, sessionID: event.sessionID, messageID: event.messageID,
+      })),
     }
     await handler({ sessionID: event.sessionID, messageID: event.messageID, agent: session?.agent, ...(model ? { model } : {}) }, output)
+    if (event.metadata) delete event.metadata.omoCommandParts
     const selectedModel = output.message.model
     if (isRecord(selectedModel) && typeof selectedModel.providerID === "string" && typeof selectedModel.modelID === "string") {
       const selected: V2ModelRef = {

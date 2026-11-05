@@ -59,15 +59,19 @@ function skipUnloadableNative(path: string, error: unknown): void {
 }
 
 function nativeSkillToLoadedSkill(native: NativeSkillEntry, directory = process.cwd()): LoadedSkill {
-  const provenance = skillProvenance(native.location, "config", {
+  // A V2 host-registry row at a virtual skill:// location has no file: its host content is authoritative.
+  // Resolving the URI as a relative path would misclassify it as a project file and fail on realpath.
+  const virtual = native.location.startsWith("skill://")
+  const classified = skillProvenance(native.location, "config", {
     kind: native.location === "<built-in>" ? "builtin" : "host",
     selectedRoot: native.location, projectRoot: detectWorktreePath(directory) ?? directory,
   })
+  const provenance = virtual ? { ...classified, kind: "host" as const } : classified
   const checked = provenance.kind === "project-auto"
     ? readSkillFileChecked(native.location, provenance) : undefined
-  const raw = checked ?? (provenance.kind !== "builtin" && existsSync(native.location)
+  const raw = checked ?? (provenance.kind !== "builtin" && !virtual && existsSync(native.location)
     ? readHostSkillFile(native, provenance) : native.content)
-  const sidecar = provenance.kind === "builtin" ? undefined : readMcpJsonFromDirChecked(dirname(native.location), provenance)
+  const sidecar = provenance.kind === "builtin" || virtual ? undefined : readMcpJsonFromDirChecked(dirname(native.location), provenance)
   return {
     name: native.name,
     path: provenance.kind === "builtin" ? undefined : native.location,

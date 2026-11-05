@@ -36,11 +36,12 @@ export async function buildSubagentCompletionReminder(input: {
   readonly sessionState: SessionState | undefined
   readonly isAlreadyVerified: boolean
   readonly autoCommit: boolean
+  readonly completionSucceeded?: boolean
 }): Promise<ReminderDecision> {
   const shouldPauseForApproval = input.sessionState
     ? shouldPauseForFinalWaveApproval({
         planPath: input.planPath,
-        taskOutput: input.originalResponse,
+        taskOutput: input.completionSucceeded === false ? "" : input.originalResponse,
         sessionState: input.sessionState,
       })
     : false
@@ -49,7 +50,7 @@ export async function buildSubagentCompletionReminder(input: {
   const isFinalWaveTask = input.currentTask?.key.startsWith("final-wave:") === true
     || ((finalWavePlanState?.pendingImplementationTaskCount ?? 1) === 0
       && (finalWavePlanState?.pendingFinalWaveTaskCount ?? 0) > 0)
-  const finalWaveVerdict = isFinalWaveTask
+  const finalWaveVerdict = isFinalWaveTask && input.completionSucceeded !== false
     ? classifyFinalWaveVerdict(input.originalResponse)
     : "missing"
   const isMissingFinalWaveVerdict = isFinalWaveTask && finalWaveVerdict === "missing"
@@ -107,7 +108,7 @@ export async function buildSubagentCompletionReminder(input: {
     }
   }
 
-  if (input.isAlreadyVerified) {
+  if (input.isAlreadyVerified && input.completionSucceeded !== false) {
     return {
       leadReminder: buildAdvanceDirective(input.planName),
       followupReminder: null,
@@ -118,7 +119,7 @@ export async function buildSubagentCompletionReminder(input: {
     }
   }
 
-  if (input.currentTask && input.sessionState && !isFinalWaveTask) {
+  if (input.currentTask && input.sessionState && !isFinalWaveTask && input.completionSucceeded !== false) {
     input.sessionState.verifiedTaskKeys ??= new Set<string>()
     input.sessionState.verifiedTaskKeys.add(input.currentTask.key)
   }

@@ -84,6 +84,9 @@ export function createTeamAddMemberTool(
         userCategories: executorConfig?.userCategories,
         jevRouting: executorConfig?.jevRouting,
         abortSignal: runtimeContext.abort,
+        ...(runtimeContext.callID && runtimeContext.messageID && runtimeContext.agent ? { nativeInvocation: {
+          kind: "tool" as const, agent: runtimeContext.agent, messageID: runtimeContext.messageID, toolCallID: runtimeContext.callID,
+        } } : {}),
         sisyphusJuniorModel: executorConfig?.sisyphusJuniorModel,
         agentOverrides: executorConfig?.agentOverrides,
         disabledAgents: executorConfig?.disabledAgents,

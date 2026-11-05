@@ -102,7 +102,7 @@ type RemovalTask = Pick<BackgroundTask, "id" | "sessionId" | "status">
 type RemovalBackgroundManager = {
   readonly findBySession: (sessionId: string) => RemovalTask | undefined
   readonly getTask: (taskId: string) => RemovalTask | undefined
-  readonly cancelTask: (taskId: string, options: { source: string; abortSession: true; skipNotification: true }) => Promise<boolean>
+  readonly cancelTask: (taskId: string, options: { source: string; abortSession: true; skipNotification: true; revokeTeamProvisioning: true }) => Promise<boolean>
 }
 
 export async function stopTeamMemberRemoval(input: BeginTeamMemberRemovalInput & {
@@ -116,11 +116,14 @@ export async function stopTeamMemberRemoval(input: BeginTeamMemberRemovalInput &
     await withDispatchTimeout(fenceInternalPrompts(removal.sessionId), timeoutMs, "team removal dispatch drain")
     const task = input.bgMgr.findBySession(removal.sessionId)
     if (task && task.sessionId !== removal.sessionId) throw new TeamMemberRemovalError("stop_unverified", removal.operationId)
-    const wasRunning = task?.status === "running"
-    if (task && (wasRunning || task.status === "pending")) {
+    const wasActive = task?.status === "running" || task?.status === "pending"
+    if (task) {
+      // Idle or completed members still hold a provisioning anchor; cancelTask revokes it in every state.
       await withDispatchTimeout(input.bgMgr.cancelTask(task.id, {
-        source: "team-remove-member", abortSession: true, skipNotification: true,
+        source: "team-remove-member", abortSession: true, skipNotification: true, revokeTeamProvisioning: true,
       }), timeoutMs, "team removal cancellation")
+    }
+    if (task && wasActive) {
       const stopped = input.bgMgr.getTask(task.id)
       if (!stopped || stopped.sessionId !== removal.sessionId || stopped.status === "running" || stopped.status === "pending") {
         throw new TeamMemberRemovalError("stop_unverified", removal.operationId)

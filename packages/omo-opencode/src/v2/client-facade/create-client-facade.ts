@@ -9,6 +9,7 @@ import { bindTodoWriter } from "../session-todos"
 import type { V2ToastEmitter } from "../toast-channel"
 import { settle, type V1Result } from "./v1-result"
 import { bindNativeSdkStorage } from "../../shared/opencode-storage-detection"
+import { bindNativeFormatter } from "../native-formatter"
 
 type V1Client = PluginInput["client"]
 type FacadeClient = V1Client & { readonly model: { readonly list: () => Promise<V1Result<Array<ReturnType<typeof toV1Model> & { provider: string }>>> } }
@@ -41,5 +42,6 @@ export function createClientFacade(context: V2PluginContext, deps: ClientFacadeD
   }) as unknown as FacadeClient
   bindTodoWriter(client, context)
   bindNativeSdkStorage(client)
+  bindNativeFormatter(client, context)
   return client
 }

@@ -1,4 +1,5 @@
 import type { PluginInput } from "@opencode-ai/plugin"
+import { getNativeIdleArbiter } from "../../v2/native-idle-arbiter"
 import {
   isAgentRegistered,
   resolveRegisteredAgentName,
@@ -95,7 +96,8 @@ export async function injectBoulderContinuation(input: {
       : undefined
     const launchVariant = promptContext.model?.variant
 
-    const promptResult = await dispatchInternalPrompt({
+    const arbiter = getNativeIdleArbiter(ctx)
+    const promptResult = arbiter ? await arbiter.admit(sessionID, prompt, HOOK_NAME) : await dispatchInternalPrompt({
       mode: "async",
       client: ctx.client,
       sessionID,

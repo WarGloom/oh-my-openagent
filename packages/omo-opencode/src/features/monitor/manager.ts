@@ -61,6 +61,7 @@ export class MonitorManager implements MonitorManagerContract {
       throw new Error("monitor_start is only available from a primary session")
     }
 
+    const env = this.options.environment ? await this.options.environment(opts.parentSessionId) : undefined
     this.assertSessionCapacity(opts.parentSessionId)
 
     const id = this.createId()
@@ -71,7 +72,7 @@ export class MonitorManager implements MonitorManagerContract {
       throw new Error(`monitor_start match_pattern rejected: ${filterResult.error ?? "invalid pattern"}`)
     }
 
-    const monitoredProcess = spawnMonitorProcess(this.options.deps, opts.command, this.config.max_runtime_ms)
+    const monitoredProcess = spawnMonitorProcess(this.options.deps, { command: opts.command, maxRuntimeMs: this.config.max_runtime_ms, env })
     const ring = new MonitorRingBuffer({ ringMaxLines: this.config.ring_max_lines })
     const batcher = new MonitorBatcher({
       batchMaxLines: this.config.batch_max_lines,

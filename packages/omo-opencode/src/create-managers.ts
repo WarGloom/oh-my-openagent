@@ -24,7 +24,7 @@ import { markServerRunningInProcess } from "./shared/tmux/tmux-utils/server-heal
 import type { ModelFallbackControllerAccessor } from "./hooks/model-fallback"
 import { subscribeSkillDiagnostics } from "@oh-my-opencode/skills-loader-core/opencode-skill-loader"
 import { showSkillSecurityNotice } from "./plugin/skill-security-notice"
-import { getV2BackgroundLifecycle, isV2PluginInput } from "./v2/create-plugin-input"
+import { getV2BackgroundJobs, getV2BackgroundLifecycle, getV2SessionEnvironment, isV2PluginInput } from "./v2/create-plugin-input"
 
 type CreateManagersDeps = {
   BackgroundManagerClass: typeof BackgroundManager
@@ -71,6 +71,11 @@ export function createManagers(args: {
 }): Managers {
   const { ctx, pluginConfig, tmuxConfig, modelCacheState, backgroundNotificationHookEnabled, runtimeSkillSourceUrl } = args
   const deps = { ...defaultCreateManagersDeps, ...args.deps }
+  const nativeLifecycle = getV2BackgroundLifecycle(ctx)
+  const nativeJobs = getV2BackgroundJobs(ctx)
+  if (isV2PluginInput(ctx) && (!nativeLifecycle || !nativeJobs)) {
+    throw new Error("Native background manager requires bound storage and jobs")
+  }
   const unsubscribeSkillDiagnostics = subscribeSkillDiagnostics((diagnostic) => showSkillSecurityNotice(ctx, diagnostic.message, diagnostic.category))
   configureTeamSessionRemoval(pluginConfig.team_mode)
 
@@ -103,6 +108,7 @@ export function createManagers(args: {
     ? deps.createMonitorManagerFn({
       pluginContext: { client: ctx.client, directory: ctx.directory },
       config: pluginConfig.monitor,
+      ...(isV2PluginInput(ctx) ? { environment: getV2SessionEnvironment(ctx) } : {}),
     })
     : undefined
 
@@ -120,7 +126,8 @@ export function createManagers(args: {
   })
 
   backgroundManager = new deps.BackgroundManagerClass({
-    nativeLifecycle: getV2BackgroundLifecycle(ctx),
+    nativeLifecycle,
+    nativeJobs,
     onTaskTerminal: async (outcome) => {
       if (!pluginConfig.team_mode?.enabled) return
       await reconcileTeamBackgroundOutcome(outcome, pluginConfig.team_mode, () => {
@@ -193,7 +200,7 @@ export function createManagers(args: {
     modelFallbackControllerAccessor,
   })
 
-  getV2BackgroundLifecycle(ctx)?.connect(backgroundManager)
+  nativeLifecycle?.connect(backgroundManager)
 
   if (pluginConfig.tui?.sidebar?.enabled !== false) {
     tuiStateMirror = new deps.TuiStateMirrorClass({
