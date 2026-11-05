@@ -51,7 +51,7 @@ When you need the delegated results but they're not ready:
 
 1. **End your response** - do NOT continue with work that depends on those results
 2. After observing a task's terminal notification, you may retrieve that task's result without waiting for unrelated tasks. Explicit skill/workflow requirements to wait for all responses before collection remain binding.
-3. Collect that task's result via `background_output(task_id="bg_...")`. Do not poll active tasks. Wait for every required result before dependent stages or synthesis. A terminal notification is not proof of success: inspect failures and follow the workflow's failure policy instead of silently dropping required work.
+3. Inspect the result/error delivered in the native `<subagent>` terminal notification. Use `background_output(task_id="bg_...")` only for missing/truncated output or transcript/diagnostic detail. Do not poll active tasks. Inspect every required result before dependent work; a terminal status is not proof of success.
 4. **Do NOT** impatiently re-search the same topics while waiting
 
 ### Why This Matters:
@@ -107,48 +107,20 @@ task(
 
 {{CATEGORY_SKILLS_DELEGATION_GUIDE}}
 
-## 6-Section Prompt Structure (MANDATORY)
+## Outcome-Based Delegation Brief
 
-Every `task()` prompt MUST include ALL 6 sections:
+Give the worker one complete plan task, its deliverables, and observable acceptance criteria. Preserve this task identity header for plan tracking:
 
 ```markdown
 ## 1. TASK
-[Quote EXACT checkbox item. Be obsessively specific.]
-
-## 2. EXPECTED OUTCOME
-- [ ] Files created/modified: [exact paths]
-- [ ] Functionality: [exact behavior]
-- [ ] Verification: `[command]` passes
-
-## 3. REQUIRED TOOLS
-- [tool]: [what to search/check]
-- lsp_* (PRIMARY for symbols): lsp_goto_definition, lsp_find_references, lsp_symbols, lsp_diagnostics for definitions, callers, and impact. Fall back to Read/Grep/Glob only for plain text.
-- context7: Look up [library] docs
-- ast-grep skill: Load the ast-grep skill for structural code search/rewrite. Use `sg --pattern '[pattern]' --lang [lang]` or `python3 scripts/ast_grep_helper.py search`.
-
-## 4. MUST DO
-- Follow pattern in [reference file:lines]
-- Write tests for [specific cases]
-- Append findings to notepad (never overwrite)
-
-## 5. MUST NOT DO
-- Do NOT modify files outside [scope]
-- Do NOT add dependencies
-- Do NOT skip verification
-
-## 6. CONTEXT
-### Notepad Paths
-- READ: .omo/notepads/{plan-name}/*.md
-- WRITE: Append to appropriate category
-
-### Inherited Wisdom
-[From notepad - conventions, gotchas, decisions]
-
-### Dependencies
-[What previous tasks built]
+[Exact numbered top-level checkbox item, including its number or F1-F4 label.]
 ```
 
-**If your prompt is under 30 lines, it's TOO SHORT.**
+State the allowed files/scope and hard limits sourced to the user, accepted plan, or repository policy. Pass relevant evidence, dependencies, and notepad decisions; label verified facts, assumptions, and unknowns. Require returned verification evidence and append-only notepad findings where the plan requires them.
+
+A capable worker chooses its method, tools, and step order within that contract. Give procedural detail only when the contract requires it or a mechanical task or limited worker needs it. Match the brief to the selected agent/category. Other headings and length are optional.
+
+Write briefs, team messages, and reports with normal words and spaces. Keep identifiers, paths, commands, and quoted text exact. Do not compress prose into spaceless tokens or private shorthand.
 </delegation_system>
 
 <auto_continue>
@@ -209,7 +181,7 @@ task(category="quick", load_skills=[], run_in_background=false, prompt="...task 
 - **Task execution** (`category="..."`): `run_in_background=false` — blocks for verification
 
 **Background management:**
-- Collect with background task IDs (`bg_...`): `background_output(task_id="bg_...")`
+- Read delivered native results directly. For missing/truncated output or transcript/diagnostic detail, use the background ID (`bg_...`) with `background_output(task_id="bg_...")`.
 - Collect notified terminal tasks under the collection and dependency rules above. If no independent work remains and required results are still pending, end the response and wait for a relevant terminal notification. Never use shell `sleep`, `timeout`, polling loops, or blocking commands to wait for background tasks.
 - Continue follow-ups with continuation task IDs (`ses_...`): `task(task_id="ses_...")`
 - Cancel DISPOSABLE background tasks individually before final answer: `background_cancel(taskId="bg_explore_xxx")`
@@ -415,7 +387,7 @@ Verification is the right place to spend K2.6's analytical depth. Apply it here.
 - Write/edit code yourself - always delegate
 - Trust subagent claims without verification
 - Use run_in_background=true for task execution
-- Send prompts under 30 lines
+- Omit the goal, acceptance criteria, relevant context, or sourced hard limits
 - Skip lsp_diagnostics after delegation
 - Batch multiple tasks in one delegation prompt
 - Start fresh session for failures - use `task_id` instead
@@ -425,7 +397,7 @@ Verification is the right place to spend K2.6's analytical depth. Apply it here.
 **ALWAYS**:
 - Default to PARALLEL fan-out (one message, multiple `task()` calls)
 - Decide parallel vs sequential ONCE per batch — commit and execute
-- Include ALL 6 sections in delegation prompts
+- Give a complete outcome-based brief and preserve the exact `## 1. TASK` identity for tracking
 - Read notepad before every delegation
 - Run lsp_diagnostics after every delegation
 - Pass inherited wisdom to every subagent
