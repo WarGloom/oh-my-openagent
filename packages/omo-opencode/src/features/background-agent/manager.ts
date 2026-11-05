@@ -1,9 +1,11 @@
 import { join } from "node:path"
+import { createHash } from "node:crypto"
 import { assertTeamSessionCanContinue, isTeamSessionDenied } from "../team-mode/team-session-registry"
 import { isProviderExhaustionFallbackEligible } from "@oh-my-opencode/model-core"
 import { withDispatchTimeout } from "@oh-my-opencode/utils/prompt-async-gate/timing"
 import type { PluginInput } from "@opencode-ai/plugin"
-import type { NativeBackgroundLifecycle } from "./native-lifecycle"
+import type { NativeBackgroundJobs, NativeBackgroundLifecycle } from "./native-lifecycle"
+import type { NativeSubagentReceipt } from "../../v2/native-subagent-types"
 import type { BackgroundTaskConfig, TmuxConfig } from "../../config/schema"
 import type { ModelFallbackControllerAccessor } from "../../hooks/model-fallback"
 import {
@@ -408,6 +410,7 @@ const PARENT_WAKE_FAILURE_REQUEUE_WINDOW_MS = 5_000
 
 export interface BackgroundManagerConfig {
   nativeLifecycle?: NativeBackgroundLifecycle
+  nativeJobs?: NativeBackgroundJobs
   pluginContext: PluginInput
   config?: BackgroundTaskConfig
   tmuxConfig?: TmuxConfig
@@ -439,6 +442,12 @@ export class BackgroundManager {
   private shutdownTriggered = false
   private readonly preserveSessionsOnShutdown: boolean
   private readonly nativeLifecycle?: NativeBackgroundLifecycle
+  readonly nativeJobs?: NativeBackgroundJobs
+  private nativeRestoring = false
+  private readonly nativeSettlements = new Map<string, Promise<void>>()
+  private readonly nativeSteers = new Map<string, Promise<void>>()
+  private readonly nativeLaunches = new Map<string, Promise<BackgroundTask>>()
+  private readonly nativeStartWaiters = new Map<string, Set<() => void>>()
   private config?: BackgroundTaskConfig
   private tmuxEnabled: boolean
   private onSubagentSessionCreated?: OnSubagentSessionCreated
@@ -485,6 +494,8 @@ export class BackgroundManager {
     this.directory = pluginContext.directory
     this.preserveSessionsOnShutdown = options.preserveSessionsOnShutdown ?? false
     this.nativeLifecycle = options.nativeLifecycle
+    this.nativeJobs = options.nativeJobs
+    this.nativeRestoring = options.nativeJobs !== undefined
     this.concurrencyManager = new ConcurrencyManager(options.config)
     this.config = options.config
     this.tmuxEnabled = options?.tmuxConfig?.enabled ?? false
@@ -802,6 +813,25 @@ export class BackgroundManager {
   }
 
   async launch(input: LaunchInput): Promise<BackgroundTask> {
+    if (!this.nativeJobs || !input.nativeInvocation) return this.launchPrepared(input)
+    const taskID = `bg_${createHash("sha256")
+      .update(JSON.stringify([input.parentSessionId, input.nativeInvocation, input.nativeTaskKey]))
+      .digest("hex")
+      .slice(0, 16)}`
+    const previous = this.getTask(taskID)
+    if (previous) return { ...previous }
+    const inFlight = this.nativeLaunches.get(taskID)
+    if (inFlight) return inFlight
+    const launch = Promise.resolve().then(() => this.launchPrepared(input, taskID))
+    this.nativeLaunches.set(taskID, launch)
+    try {
+      return await launch
+    } finally {
+      this.nativeLaunches.delete(taskID)
+    }
+  }
+
+  private async launchPrepared(input: LaunchInput, nativeTaskID?: string): Promise<BackgroundTask> {
     log("[background-agent] launch() called with:", {
       agent: input.agent,
       model: input.model,
@@ -838,7 +868,7 @@ export class BackgroundManager {
 
       // Create task immediately with status="pending"
       const task: BackgroundTask = {
-        id: `bg_${crypto.randomUUID().slice(0, 8)}`,
+        id: nativeTaskID ?? `bg_${crypto.randomUUID().slice(0, 8)}`,
         status: "pending",
         queuedAt: new Date(),
         rootSessionId: spawnReservation.spawnContext.rootSessionID,
@@ -863,8 +893,18 @@ export class BackgroundManager {
         category: input.category,
         cwd: input.cwd,
         onSessionCreated: input.onSessionCreated,
+        nativeInvocation: input.nativeInvocation,
+        nativeCompletion: input.nativeCompletion,
+        nativeMode: input.nativeMode,
+        nativeInheritedPermit: input.nativeInheritedPermit,
+        nativePrompt: input.nativePrompt,
+        nativeMetadata: input.nativeMetadata,
+        nativeTaskKey: input.nativeTaskKey,
+        skills: input.skills,
       }
       const firstAttempt = startAttempt(task, input.model)
+
+      if (this.nativeJobs) await this.nativeJobs.prepare(task, input, getMaxSubagentDepth(this.config))
 
       this.addTask(task)
       this.taskHistory.record(input.parentSessionId, {
@@ -884,7 +924,7 @@ export class BackgroundManager {
 
       // Add to queue
       const rawConcurrencyKey = this.getRawConcurrencyKeyFromInput(input)
-      const key = this.concurrencyManager.getConcurrencyKey(rawConcurrencyKey)
+      const key = this.getTaskQueueKey(task, rawConcurrencyKey)
       const queue = this.queuesByKey.get(key) ?? []
       queue.push({ task, input, attemptID: firstAttempt.attemptId, rawConcurrencyKey })
       this.queuesByKey.set(key, queue)
@@ -921,6 +961,7 @@ export class BackgroundManager {
   }
 
   private async processKey(key: string): Promise<void> {
+    if (this.nativeRestoring) return
     if (this.processingKeys.has(key)) {
       return
     }
@@ -936,7 +977,8 @@ export class BackgroundManager {
         }
 
         try {
-          await this.concurrencyManager.acquire(item.rawConcurrencyKey ?? key, item.task.id)
+          if (!item.task.nativeInheritedPermit)
+            await this.concurrencyManager.acquire(item.rawConcurrencyKey ?? key, item.task.id)
         } catch (error) {
           if (item.task.status === "cancelled" || item.task.status === "error" || item.task.status === "interrupt") {
             this.rollbackPreStartDescendantReservation(item.task)
@@ -947,8 +989,13 @@ export class BackgroundManager {
 
         if (item.task.status === "cancelled" || item.task.status === "error" || item.task.status === "interrupt") {
           this.rollbackPreStartDescendantReservation(item.task)
-          this.concurrencyManager.release(key)
+          if (!item.task.nativeInheritedPermit) this.concurrencyManager.release(key)
           continue
+        }
+
+        if (this.nativeJobs && this.shutdownTriggered) {
+          if (!item.task.nativeInheritedPermit) this.concurrencyManager.release(key)
+          return
         }
 
         try {
@@ -976,11 +1023,13 @@ export class BackgroundManager {
             item.task.completedAt = new Date()
           }
           this.clearFallbackRetryResultsForTask(item.task)
+          for (const resolve of this.nativeStartWaiters.get(item.task.id) ?? []) resolve()
+          this.nativeStartWaiters.delete(item.task.id)
 
           if (item.task.concurrencyKey) {
             this.concurrencyManager.release(item.task.concurrencyKey)
             item.task.concurrencyKey = undefined
-          } else {
+          } else if (!item.task.nativeInheritedPermit) {
             this.concurrencyManager.release(key)
           }
 
@@ -989,7 +1038,8 @@ export class BackgroundManager {
           // Abort the orphaned session if one was created before the error
           if (item.task.sessionId) {
             clearDelegatedChildSessionBootstrap(item.task.sessionId)
-            await this.abortSessionWithLogging(item.task.sessionId, "startTask error cleanup")
+            if (this.nativeJobs && item.task.nativeAdmissionID) await this.nativeJobs.cancel(item.task)
+            else await this.abortSessionWithLogging(item.task.sessionId, "startTask error cleanup")
           }
 
           // Update continuation marker for CLI run mode
@@ -1064,25 +1114,28 @@ export class BackgroundManager {
       return
     }
 
-    const createResult = await this.client.session.create({
-      body: {
-        parentID: input.parentSessionId,
-        title: sessionTitle,
-        ...(input.sessionPermission ? { permission: input.sessionPermission } : {}),
-        ...(input.model
-          ? {
-              model: {
-                id: input.model.modelID,
-                providerID: input.model.providerID,
-                ...(launchSessionVariant ? { variant: launchSessionVariant } : {}),
-              },
-            }
-          : {}),
-      } as Record<string, unknown>,
-      query: {
-        directory: childDirectory,
-      },
-    })
+    const createResult =
+      this.nativeJobs && task.sessionId
+        ? { data: { id: task.sessionId }, error: undefined }
+        : await this.client.session.create({
+            body: {
+              parentID: input.parentSessionId,
+              title: sessionTitle,
+              ...(input.sessionPermission ? { permission: input.sessionPermission } : {}),
+              ...(input.model
+                ? {
+                    model: {
+                      id: input.model.modelID,
+                      providerID: input.model.providerID,
+                      ...(launchSessionVariant ? { variant: launchSessionVariant } : {}),
+                    },
+                  }
+                : {}),
+            } as Record<string, unknown>,
+            query: {
+              directory: childDirectory,
+            },
+          })
 
     if (createResult.error) {
       throw new Error(`Failed to create background session: ${createResult.error}`)
@@ -1098,7 +1151,7 @@ export class BackgroundManager {
       void fenceInternalPrompts(sessionID)
       clearDelegatedChildSessionBootstrap(sessionID)
       await this.abortSessionWithLogging(sessionID, "cancelled pre-start cleanup")
-      this.concurrencyManager.release(concurrencyKey)
+      if (!task.nativeInheritedPermit) this.concurrencyManager.release(concurrencyKey)
       return
     }
 
@@ -1122,7 +1175,7 @@ export class BackgroundManager {
       if (task.rootSessionId) {
         this.unregisterRootDescendant(task.rootSessionId)
       }
-      this.concurrencyManager.release(concurrencyKey)
+      if (!task.nativeInheritedPermit) this.concurrencyManager.release(concurrencyKey)
       return
     }
 
@@ -1135,7 +1188,7 @@ export class BackgroundManager {
       if (task.rootSessionId) {
         this.unregisterRootDescendant(task.rootSessionId)
       }
-      this.concurrencyManager.release(concurrencyKey)
+      if (!task.nativeInheritedPermit) this.concurrencyManager.release(concurrencyKey)
       return
     }
 
@@ -1143,7 +1196,7 @@ export class BackgroundManager {
       toolCalls: 0,
       lastUpdate: new Date(),
     }
-    task.concurrencyKey = concurrencyKey
+    task.concurrencyKey = task.nativeInheritedPermit ? undefined : concurrencyKey
     task.concurrencyGroup = concurrencyKey
 
     if (this.nativeLifecycle) await this.nativeLifecycle.save(task)
@@ -1205,6 +1258,21 @@ export class BackgroundManager {
       hasSkillContent: !!input.skillContent,
       promptLength: input.prompt.length,
     })
+
+    if (this.nativeJobs) {
+      if ((await this.nativeJobs.start(task, promptBody)) === "suspended") return
+      this.observeNativeTask(task)
+      invokeTmuxSessionCreatedCallback({
+        callback: this.onSubagentSessionCreated,
+        tmuxEnabled: this.tmuxEnabled,
+        suppress: input.suppressTmuxSpawn === true,
+        sessionID,
+        parentID: input.parentSessionId,
+        title: input.description,
+        log,
+      })
+      return
+    }
 
     promptWithRetryInDirectory(
       this.client,
@@ -1620,6 +1688,11 @@ export class BackgroundManager {
     return this.concurrencyManager.getConcurrencyKey(this.getRawConcurrencyKeyFromInput(input))
   }
 
+  private getTaskQueueKey(task: BackgroundTask, rawKey: string): string {
+    const key = this.concurrencyManager.getConcurrencyKey(rawKey)
+    return task.nativeInheritedPermit ? `${key}:inherited:${task.id}` : key
+  }
+
   private getRawConcurrencyKeyFromInput(input: LaunchInput): string {
     const modelKey = input.model ? `${input.model.providerID}/${input.model.modelID}` : input.agent
 
@@ -1784,10 +1857,10 @@ export class BackgroundManager {
       throw new Error(`Task ${task.id} is already tracked`)
     }
     this.addTask(task)
-    if (this.nativeLifecycle && task.status === "pending" && !task.sessionId) {
+    if (this.nativeLifecycle && task.status === "pending" && (!task.sessionId || task.nativeAdmissionID)) {
       const input: LaunchInput = { ...task }
       const rawConcurrencyKey = this.getRawConcurrencyKeyFromInput(input)
-      const key = this.concurrencyManager.getConcurrencyKey(rawConcurrencyKey)
+      const key = this.getTaskQueueKey(task, rawConcurrencyKey)
       const queue = this.queuesByKey.get(key) ?? []
       queue.push({ task, input, attemptID: ensureCurrentAttempt(task, task.model).attemptId, rawConcurrencyKey })
       this.queuesByKey.set(key, queue)
@@ -1802,7 +1875,7 @@ export class BackgroundManager {
     }
     if (task.status === "running" && task.sessionId) {
       const key = this.getRawConcurrencyKeyFromTask(task)
-      this.concurrencyManager.restore(key)
+      if (!task.nativeAdmissionID) this.concurrencyManager.restore(key)
       task.concurrencyKey = this.concurrencyManager.getConcurrencyKey(key)
       subagentSessions.add(task.sessionId)
       delegatedTaskSessions.add(task.sessionId)
@@ -1836,13 +1909,14 @@ export class BackgroundManager {
       this.pendingByParent.set(task.parentSessionId, pending)
       this.updateBackgroundTaskMarker(task.parentSessionId)
       this.startPolling()
-    } else {
+    } else if (!task.teamRunId) {
       this.scheduleTaskRemoval(task.id)
     }
   }
 
   async completeNativeTask(sessionID: string): Promise<void> {
     const task = this.findBySession(sessionID)
+    if (task?.nativeAdmissionID) return
     if (!this.nativeLifecycle || !task || this.hasActiveChildTasks(sessionID)) return
     await this.tryCompleteTask(task, "v2.idle")
   }
@@ -1851,6 +1925,155 @@ export class BackgroundManager {
     const task = this.getTask(taskID)
     if (!this.nativeLifecycle || !task) return
     await this.notifyParentSession(task)
+  }
+
+  async restoreNativeJobs(): Promise<void> {
+    if (!this.nativeJobs) return
+    await this.nativeJobs.restore([...this.tasks.values()], async (states) => {
+      const occupied = new Set<string>()
+      for (const [key, queue] of this.queuesByKey)
+        this.queuesByKey.set(
+          key,
+          queue.filter((item) => !item.task.nativeAdmissionID),
+        )
+      for (const { task, receipt } of states) {
+        task.concurrencyKey = undefined
+        if (receipt.run && (receipt.status === "running" || receipt.status === "accepted")) {
+          const runKey = `${receipt.run.childSessionID}:${receipt.run.generation}`
+          if (occupied.has(runKey)) continue
+          occupied.add(runKey)
+          const key = this.getRawConcurrencyKeyFromTask(task)
+          if (!task.nativeInheritedPermit) {
+            this.concurrencyManager.restore(key)
+            task.concurrencyKey = this.concurrencyManager.getConcurrencyKey(key)
+          }
+        }
+        if (!receipt.run && task.status === "error") {
+          if (task.currentAttemptID) finalizeAttempt(task, task.currentAttemptID, "error", task.error)
+          this.cleanupPendingByParent(task)
+          this.updateBackgroundTaskMarker(task.parentSessionId)
+          await this.nativeLifecycle?.save(task)
+        }
+        if (task.status !== "pending") continue
+        const input: LaunchInput = { ...task, onSessionCreated: undefined, suppressTmuxSpawn: true }
+        const rawConcurrencyKey = this.getRawConcurrencyKeyFromInput(input)
+        const key = this.getTaskQueueKey(task, rawConcurrencyKey)
+        const queue = this.queuesByKey.get(key) ?? []
+        queue.push({ task, input, attemptID: ensureCurrentAttempt(task, task.model).attemptId, rawConcurrencyKey })
+        this.queuesByKey.set(key, queue)
+        this.markPreStartDescendantReservation(task)
+      }
+    })
+    for (const task of this.tasks.values()) {
+      if (task.nativeRun && task.status === "running") this.observeNativeTask(task)
+    }
+    this.nativeRestoring = false
+    for (const key of this.queuesByKey.keys()) void this.processKey(key)
+  }
+
+  private async cancelInterruptedForegroundTask(taskID: string): Promise<void> {
+    const task = this.getTask(taskID)
+    // A child that never started has no transcript to continue.
+    const started = task?.status === "running" && task.sessionId !== undefined
+    const cancelled = await this.cancelTask(taskID, { source: "native-sync-interrupt", skipNotification: true })
+    if (!cancelled || !task || !started) return
+    try {
+      await this.nativeJobs?.noteForegroundInterrupted?.(task)
+    } catch (error) {
+      log("[background-agent] Failed to note the interrupted foreground task for its parent", {
+        taskID,
+        error: String(error),
+      })
+    }
+  }
+
+  async waitForNativeTask(taskID: string, signal: AbortSignal): Promise<BackgroundTask> {
+    const task = this.getTask(taskID)
+    if (!task) throw new Error(`Task not found: ${taskID}`)
+    if (signal.aborted) {
+      await this.cancelInterruptedForegroundTask(taskID)
+      signal.throwIfAborted()
+    }
+    if ((task.status === "pending" || task.status === "running") && !this.nativeSettlements.has(taskID)) {
+      const started = Promise.withResolvers<void>()
+      const listeners = this.nativeStartWaiters.get(taskID) ?? new Set<() => void>()
+      listeners.add(started.resolve)
+      this.nativeStartWaiters.set(taskID, listeners)
+      const abort = () => {
+        void this.cancelInterruptedForegroundTask(taskID).then(
+          () => started.reject(signal.reason),
+          started.reject,
+        )
+      }
+      signal.addEventListener("abort", abort, { once: true })
+      try {
+        signal.throwIfAborted()
+        await started.promise
+      } finally {
+        signal.removeEventListener("abort", abort)
+        listeners.delete(started.resolve)
+      }
+    }
+    const interrupted = Promise.withResolvers<void>()
+    const abort = () => {
+      void this.cancelInterruptedForegroundTask(taskID).then(
+        () => interrupted.reject(signal.reason),
+        interrupted.reject,
+      )
+    }
+    signal.addEventListener("abort", abort, { once: true })
+    try {
+      signal.throwIfAborted()
+      await Promise.race([this.nativeSettlements.get(taskID), interrupted.promise])
+      signal.throwIfAborted()
+      return task
+    } finally {
+      signal.removeEventListener("abort", abort)
+    }
+  }
+
+  private observeNativeTask(task: BackgroundTask): void {
+    const jobs = this.nativeJobs
+    if (!jobs || !task.nativeRun) return
+    const generation = task.nativeRun.generation
+    const settlement = jobs.wait({ ...task }).then(async (receipt: NativeSubagentReceipt) => {
+      const steering = this.nativeSteers.get(task.id)
+      if (steering) await Promise.allSettled([steering])
+      if (this.shutdownTriggered || task.nativeRun?.generation !== generation || task.status !== "running") return
+      switch (receipt.status) {
+        case "completed":
+        case "error":
+        case "cancelled":
+          if (task.currentAttemptID) finalizeAttempt(task, task.currentAttemptID, receipt.status, receipt.error)
+          else {
+            task.status = receipt.status
+            task.completedAt = new Date()
+            task.error = receipt.error
+          }
+          task.result = receipt.output
+          if (task.concurrencyKey) this.concurrencyManager.release(task.concurrencyKey)
+          task.concurrencyKey = undefined
+          if (task.rootSessionId) this.unregisterRootDescendant(task.rootSessionId)
+          this.cleanupPendingByParent(task)
+          removeTaskToastTracking(task.id)
+          this.updateBackgroundTaskMarker(task.parentSessionId)
+          this.recordTerminalOutcome(task)
+          await this.nativeLifecycle?.save(task)
+          if (!task.teamRunId) this.scheduleTaskRemoval(task.id)
+          return
+        case "authorizing":
+        case "prepared":
+        case "accepted":
+        case "running":
+          throw new Error(`Native wait returned a nonterminal receipt: ${receipt.status}`)
+      }
+    })
+    this.nativeSettlements.set(task.id, settlement)
+    void settlement.catch((error: unknown) =>
+      this.logger("[background-agent] Native task settlement failed", { taskID: task.id, error }),
+    )
+    for (const resolve of this.nativeStartWaiters.get(task.id) ?? []) resolve()
+    this.nativeStartWaiters.delete(task.id)
   }
 
   async resume(input: ResumeInput): Promise<BackgroundTask> {
@@ -1870,6 +2093,37 @@ export class BackgroundManager {
     }
 
     if (existingTask.status === "running") {
+      if (this.nativeJobs && input.nativeInvocation?.kind === "team") {
+        const jobs = this.nativeJobs
+        const steering = (async () => {
+          const prepared = { ...existingTask, skills: input.skills ?? [] }
+          await jobs.prepare(prepared, input, getMaxSubagentDepth(this.config))
+          existingTask.nativeAdmissionID = prepared.nativeAdmissionID
+          existingTask.nativePromptID = prepared.nativePromptID
+          existingTask.nativeInvocation = prepared.nativeInvocation
+          existingTask.skills = prepared.skills
+          const outcome = await jobs.start(
+            existingTask,
+            buildTaskPromptBody({
+              kind: "resume",
+              agent: existingTask.agent,
+              model: existingTask.model,
+              prompt: input.prompt,
+              system: existingTask.skillContent,
+              includeTeamToolDenylist: false,
+              userPermission: existingTask.userPermission,
+            }),
+          )
+          if (outcome === "started") this.observeNativeTask(existingTask)
+        })()
+        this.nativeSteers.set(existingTask.id, steering)
+        try {
+          await steering
+        } finally {
+          this.nativeSteers.delete(existingTask.id)
+        }
+        return existingTask
+      }
       throw new Error(
         `Task ${existingTask.id} is currently running and cannot accept a continuation prompt. ` +
           "Wait for it to complete before resuming it with task_id.",
@@ -1889,6 +2143,8 @@ export class BackgroundManager {
           "Wait for it to complete before resuming it with task_id.",
       )
     }
+
+    if (this.nativeJobs) return this.queueNativeResume(existingTask, input)
 
     const resumeSnapshot = this.captureResumeTaskSnapshot(existingTask, input.parentSessionId)
     const completionTimer = this.completionTimers.get(existingTask.id)
@@ -1964,6 +2220,57 @@ export class BackgroundManager {
         this.restoreTaskAfterSkippedResume(existingTask, resumeSnapshot, "unavailable")
       })
     return existingTask
+  }
+
+  private async queueNativeResume(task: BackgroundTask, input: ResumeInput): Promise<BackgroundTask> {
+    const jobs = this.nativeJobs
+    if (!jobs || !task.sessionId) throw new Error("Native continuation has no execution owner")
+    this.resumesAwaitingAdmission.add(task.id)
+    try {
+      const prepared: BackgroundTask = {
+        ...task,
+        prompt: input.prompt,
+        skillContent: input.system ?? task.skillContent,
+        nativePrompt: input.nativePrompt,
+        nativeMetadata: input.nativeMetadata,
+        nativeInheritedPermit: input.nativeInheritedPermit ?? false,
+        skills: input.skills ?? [],
+        nativeCompletion: input.nativeCompletion ?? task.nativeCompletion,
+        nativeMode: input.nativeMode ?? task.nativeMode,
+        parentMessageId: input.parentMessageId,
+        onSessionCreated: undefined,
+        parentAgent: input.parentAgent,
+        parentModel: input.parentModel,
+        queuedAt: new Date(),
+        result: undefined,
+      }
+      const attempt = startAttempt(prepared, task.model)
+      prepared.sessionId = task.sessionId
+      await jobs.prepare(prepared, input, getMaxSubagentDepth(this.config))
+      const timer = this.completionTimers.get(task.id)
+      if (timer) {
+        clearTimeout(timer)
+        this.completionTimers.delete(task.id)
+      }
+      Object.assign(task, prepared)
+      this.nativeSettlements.delete(task.id)
+      const launchInput: LaunchInput = { ...task, suppressTmuxSpawn: true }
+      const rawConcurrencyKey = this.getRawConcurrencyKeyFromInput(launchInput)
+      const key = this.getTaskQueueKey(task, rawConcurrencyKey)
+      const queue = this.queuesByKey.get(key) ?? []
+      queue.push({ task, input: launchInput, attemptID: attempt.attemptId, rawConcurrencyKey })
+      this.queuesByKey.set(key, queue)
+      if (task.rootSessionId) this.registerRootDescendant(task.rootSessionId)
+      this.markPreStartDescendantReservation(task)
+      const pending = this.pendingByParent.get(task.parentSessionId) ?? new Set<string>()
+      pending.add(task.id)
+      this.pendingByParent.set(task.parentSessionId, pending)
+      await this.nativeLifecycle?.save(task)
+      void this.processKey(key)
+      return task
+    } finally {
+      this.resumesAwaitingAdmission.delete(task.id)
+    }
   }
 
   private async startResumedTask(
@@ -2737,6 +3044,7 @@ export class BackgroundManager {
     source?: string
   }): Promise<void> {
     const { task, errorInfo, errorMessage, errorName, source = "session.error" } = args
+    if (task.nativeAdmissionID) return
 
     if (!task.fallbackChain && task.sessionId) {
       const sessionFallbackChain = this.modelFallbackControllerAccessor?.getSessionFallbackChain(task.sessionId)
@@ -2965,6 +3273,7 @@ export class BackgroundManager {
     source: string,
   ): Promise<boolean> {
     if (task.status === "cancelled") return false
+    if (task.nativeAdmissionID) return false
     if (task.sessionId && isTeamSessionDenied(task.sessionId)) return false
     const previousSessionID = task.sessionId
     const existing = previousSessionID ? this.fallbackRetryResultsBySession.get(previousSessionID) : undefined
@@ -3311,9 +3620,17 @@ export class BackgroundManager {
 
   async cancelTask(
     taskId: string,
-    options?: { source?: string; reason?: string; abortSession?: boolean; skipNotification?: boolean },
+    options?: {
+      source?: string
+      reason?: string
+      abortSession?: boolean
+      skipNotification?: boolean
+      revokeTeamProvisioning?: true
+    },
   ): Promise<boolean> {
     const task = this.tasks.get(taskId)
+    // Membership end revokes the team anchor in every task state; the host keeps the historical receipt.
+    if (task && options?.revokeTeamProvisioning && this.nativeJobs) await this.nativeJobs.revokeProvisioning(task)
     if (!task || (task.status !== "running" && task.status !== "pending")) {
       return false
     }
@@ -3323,9 +3640,11 @@ export class BackgroundManager {
     const abortSession = options?.abortSession !== false
     const reason = options?.reason
 
+    if (task.nativeAdmissionID && this.nativeJobs) await this.nativeJobs.cancel(task)
+
     if (task.status === "pending") {
       const rawKey = this.getRawConcurrencyKeyFromTask(task)
-      const key = this.concurrencyManager.getConcurrencyKey(rawKey)
+      const key = this.getTaskQueueKey(task, rawKey)
       const queue = this.queuesByKey.get(key)
       if (queue) {
         const index = queue.findIndex((item) => item.task.id === taskId)
@@ -3352,7 +3671,7 @@ export class BackgroundManager {
     }
     const dispatchDrain = Promise.all([...stoppedSessions].map(fenceInternalPrompts))
 
-    if (!terminalCancellation && wasRunning && abortSession && task.sessionId) {
+    if (!terminalCancellation && wasRunning && abortSession && task.sessionId && !task.nativeAdmissionID) {
       const aborted = await this.abortSessionWithLogging(task.sessionId, `task cancellation (${source})`)
       if (!aborted) return false
 
@@ -3373,6 +3692,8 @@ export class BackgroundManager {
     if (wasRunning && task.rootSessionId) {
       this.unregisterRootDescendant(task.rootSessionId)
     }
+    for (const resolve of this.nativeStartWaiters.get(task.id) ?? []) resolve()
+    this.nativeStartWaiters.delete(task.id)
     this.taskHistory.record(task.parentSessionId, {
       id: task.id,
       sessionID: task.sessionId,
@@ -3417,7 +3738,10 @@ export class BackgroundManager {
           return false
         },
       )
-      const aborted = sessionID ? await this.abortSessionWithLogging(sessionID, `task cancellation (${source})`) : true
+      const aborted =
+        sessionID && !task.nativeAdmissionID
+          ? await this.abortSessionWithLogging(sessionID, `task cancellation (${source})`)
+          : true
       stopped = drained && aborted
       for (const id of stoppedSessions) {
         clearDelegatedChildSessionBootstrap(id)
@@ -3425,7 +3749,8 @@ export class BackgroundManager {
       }
     }
 
-    if (options?.skipNotification) {
+    if (options?.skipNotification || task.nativeRun) {
+      await this.nativeLifecycle?.save(task)
       this.recordTerminalOutcome(task)
       this.cleanupPendingByParent(task)
       this.scheduleTaskRemoval(task.id)
@@ -3630,6 +3955,11 @@ export class BackgroundManager {
   }
 
   private async notifyParentSession(task: BackgroundTask): Promise<void> {
+    if (task.nativeRun) {
+      this.cleanupPendingByParent(task)
+      await this.nativeLifecycle?.save(task)
+      return
+    }
     await this.terminalOutcomeUpdates.get(task.id)
     if (this.nativeLifecycle) await this.nativeLifecycle.save(task)
     const duration = formatDuration(task.startedAt ?? new Date(), task.completedAt)
@@ -4305,6 +4635,7 @@ export class BackgroundManager {
   async shutdown(): Promise<void> {
     if (this.shutdownTriggered) return
     this.shutdownTriggered = true
+    this.nativeJobs?.stop()
     log("[background-agent] Shutting down BackgroundManager")
     this.stopPolling()
     const nativeLifecycle = this.nativeLifecycle

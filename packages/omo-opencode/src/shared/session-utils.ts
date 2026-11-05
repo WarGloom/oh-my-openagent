@@ -1,6 +1,6 @@
 import { findNearestMessageWithFields, findNearestMessageWithFieldsFromSDK } from "../features/hook-message-injector"
 import { getMessageDir } from "./opencode-message-dir"
-import { isSqliteBackend } from "./opencode-storage-detection"
+import { hasNativeSdkStorage, isSqliteBackend } from "./opencode-storage-detection"
 import { log } from "./logger"
 import { getAgentConfigKey } from "./agent-display-names"
 import type { PluginInput } from "@opencode-ai/plugin"
@@ -8,7 +8,7 @@ import type { PluginInput } from "@opencode-ai/plugin"
 export async function isCallerOrchestrator(sessionID?: string, client?: PluginInput["client"]): Promise<boolean> {
   if (!sessionID) return false
 
-  if (isSqliteBackend() && client) {
+  if (client && (hasNativeSdkStorage(client) || isSqliteBackend())) {
     try {
       const nearest = await findNearestMessageWithFieldsFromSDK(client, sessionID)
       return getAgentConfigKey(nearest?.agent ?? "") === "atlas"

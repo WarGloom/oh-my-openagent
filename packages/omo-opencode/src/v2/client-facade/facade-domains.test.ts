@@ -39,9 +39,19 @@ describe("V2 facade domain parity", () => {
           name: "Model",
           status: "active",
           enabled: true,
-          capabilities: { tools: true, input: ["text", "image"], output: ["text"] },
-          variants: [{ id: "high" }],
+          capabilities: { tools: true, input: ["text", "image"], output: ["text"], temperature: false },
+          settings: { customModel: 42 },
+          variants: [{ id: "high", settings: { effort: "high" } }],
           limit: { context: 100, output: 20 },
+        },
+      ],
+      providers: [
+        {
+          id: "p",
+          name: "Provider",
+          activation: "enabled",
+          settings: { baseURL: "https://example.invalid" },
+          headers: { "custom-header": "value" },
         },
       ],
     })
@@ -55,9 +65,15 @@ describe("V2 facade domain parity", () => {
         provider: "p",
         providerID: "p",
         attachment: true,
-        variants: { high: {} },
+        temperature: false,
+        options: { customModel: 42 },
+        variants: { high: { effort: "high" } },
         limit: { context: 100, output: 20 },
       },
     ])
+    const provider = await client.provider.list()
+    expect(provider.data?.all[0]).toMatchObject({
+      options: { baseURL: "https://example.invalid", headers: { "custom-header": "value" } },
+    })
   })
 })

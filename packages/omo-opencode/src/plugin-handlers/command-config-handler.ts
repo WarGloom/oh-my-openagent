@@ -30,6 +30,7 @@ import { adaptHostSkillConfig } from "../shared/host-skill-config"
 import { collectDisabledSkillAliases } from "../plugin/skill-context"
 import type { LoadedSkill } from "../features/opencode-skill-loader/types"
 import { detectWorktreePath } from "@oh-my-opencode/skills-loader-core/shared/project-discovery-dirs"
+import { isNativeConfigSnapshot } from "../v2/config-bridge/snapshot"
 
 export async function applyCommandConfig(params: {
   config: Record<string, unknown>
@@ -53,7 +54,8 @@ export async function applyCommandConfig(params: {
   for (const disabledCommand of params.pluginConfig.disabled_commands ?? []) {
     delete builtinSkillCommands[disabledCommand]
   }
-  const systemCommands = (params.config.command as Record<string, unknown>) ?? {}
+  const nativeCommands = isNativeConfigSnapshot(params.config)
+  const systemCommands = nativeCommands ? {} : ((params.config.command as Record<string, unknown>) ?? {})
 
   const includeClaudeCommands = params.pluginConfig.claude_code?.commands ?? true
   const includeClaudeSkills = params.pluginConfig.claude_code?.skills ?? true
@@ -98,8 +100,8 @@ export async function applyCommandConfig(params: {
     }),
     includeClaudeCommands ? loadUserCommands() : Promise.resolve({}),
     includeClaudeCommands ? loadProjectCommands(params.ctx.directory) : Promise.resolve({}),
-    loadOpencodeGlobalCommands(),
-    loadOpencodeProjectCommands(params.ctx.directory),
+    nativeCommands ? Promise.resolve({}) : loadOpencodeGlobalCommands(),
+    nativeCommands ? Promise.resolve({}) : loadOpencodeProjectCommands(params.ctx.directory),
     includeClaudeSkills ? loadUserSkills() : Promise.resolve({}),
     includeClaudeSkills ? loadGlobalAgentsSkills() : Promise.resolve({}),
     includeClaudeSkills ? loadProjectSkills(params.ctx.directory, sourceProvenance) : Promise.resolve({}),

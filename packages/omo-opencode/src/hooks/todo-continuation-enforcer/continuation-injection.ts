@@ -21,6 +21,7 @@ import { log } from "../../shared/logger"
 import { isSqliteBackend } from "../../shared/opencode-storage-detection"
 import { getAgentConfigKey, normalizeAgentForPrompt } from "../../shared/agent-display-names"
 import { dispatchInternalPrompt, isInternalPromptDispatchAccepted } from "../shared/prompt-async-gate"
+import { getNativeIdleArbiter } from "../../v2/native-idle-arbiter"
 
 import { CONTINUATION_PROMPT, CONTINUATION_COOLDOWN_MS, DEFAULT_SKIP_AGENTS, HOOK_NAME } from "./constants"
 import { isCompactionGuardActive } from "./compaction-guard"
@@ -197,6 +198,8 @@ ${todoList}`
     return
   }
 
+  const arbiter = getNativeIdleArbiter(ctx)
+
   if (injectionState) {
     injectionState.inFlight = true
   }
@@ -225,16 +228,18 @@ ${todoList}`
       query: { directory: ctx.directory },
     }
 
-    const promptResult = await dispatchInternalPrompt({
-      mode: "async",
-      client: ctx.client,
-      sessionID,
-      source: HOOK_NAME,
-      settleMs: 0,
-      queueBehavior: "defer",
-      semanticDedupeHoldMs: CONTINUATION_COOLDOWN_MS,
-      input,
-    })
+    const promptResult = arbiter
+      ? await arbiter.admit(sessionID, prompt, HOOK_NAME)
+      : await dispatchInternalPrompt({
+          mode: "async",
+          client: ctx.client,
+          sessionID,
+          source: HOOK_NAME,
+          settleMs: 0,
+          queueBehavior: "defer",
+          semanticDedupeHoldMs: CONTINUATION_COOLDOWN_MS,
+          input,
+        })
     if (promptResult.status === "failed") {
       if (isAmbiguousPostDispatchPromptFailure(promptResult)) {
         if (injectionState) {
@@ -252,7 +257,7 @@ ${todoList}`
       throw promptResult.error
     }
     if (!isInternalPromptDispatchAccepted(promptResult)) {
-      if (promptResult.status === "reserved" || promptResult.status === "active") {
+      if (!arbiter && (promptResult.status === "reserved" || promptResult.status === "active")) {
         const queuedResult = await dispatchInternalPrompt({
           mode: "async",
           client: ctx.client,

@@ -3,6 +3,10 @@
 import { afterEach, describe, expect, test } from "bun:test"
 
 import { injectContinuation } from "./continuation-injection"
+import { NativeIdleArbiter, bindNativeIdleArbiter } from "../../v2/native-idle-arbiter"
+import { createFakePluginContext } from "../../v2/fake-plugin-context"
+import { createPluginInput } from "../../v2/create-plugin-input"
+import { createSessionTracker } from "../../v2/session-tracker"
 import { OMO_INTERNAL_INITIATOR_MARKER } from "../../shared/internal-initiator-marker"
 import {
   dispatchInternalPrompt,
@@ -11,6 +15,64 @@ import {
 } from "../shared/prompt-async-gate"
 
 describe("injectContinuation", () => {
+  test("ends native stale admission without enqueueing a legacy continuation", async () => {
+    // given
+    const fake = createFakePluginContext()
+    const input = createPluginInput(fake.context, { tracker: createSessionTracker(), warn: () => {} })
+    let prompts = 0
+    let admissions = 0
+    Object.assign(input.client.session, {
+      todo: async () => ({ data: [{ id: "1", content: "unfinished", status: "pending", priority: "high" }] }),
+      promptAsync: async () => {
+        prompts++
+        return {}
+      },
+    })
+    const context = {
+      ...fake.context,
+      experimental: {
+        ...fake.context.experimental,
+        session: {
+          ...fake.context.experimental.session,
+          continueAfterIdle: async () => {
+            admissions++
+            return "stale" as const
+          },
+        },
+      },
+    }
+    const arbiter = new NativeIdleArbiter(context, {
+      isNativeRecoveryPending: () => false,
+      settleCompactionRestore: async () => {},
+      hasPendingWork: () => false,
+    })
+    await arbiter.start()
+    bindNativeIdleArbiter(input, arbiter)
+    fake.sessionHistory("native-stale").push({
+      id: "assistant",
+      type: "assistant",
+      agent: "sisyphus",
+      model: { providerID: "qa", id: "local" },
+      content: [],
+      time: { created: 1 },
+    })
+    await fake.triggerIdle({ sessionID: "native-stale", background: [] })
+    // when
+    await injectContinuation({
+      ctx: input,
+      sessionID: "native-stale",
+      resolvedInfo: { agent: "sisyphus", model: { providerID: "qa", modelID: "local" } },
+      sessionStateStore: {
+        getExistingState: () => ({ inFlight: false, lastInjectedAt: 0, consecutiveFailures: 0 }),
+      } as never,
+    })
+    // then
+    expect(fake.sessionCalls).toEqual([])
+    expect(admissions).toBe(1)
+    expect(prompts).toBe(0)
+    await arbiter.dispose()
+  })
+
   afterEach(() => {
     releaseAllPromptAsyncReservationsForTesting()
   })

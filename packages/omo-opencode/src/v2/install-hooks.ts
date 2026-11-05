@@ -72,7 +72,8 @@ export async function installHooks(
     hooks["chat.headers"] !== undefined ||
     hooks["experimental.chat.system.transform"] !== undefined ||
     hooks["experimental.chat.messages.transform"] !== undefined ||
-    hooks["experimental.session.compacting"] !== undefined
+    hooks["experimental.session.compacting"] !== undefined ||
+    Reflect.get(hooks, "experimental.compaction.autocontinue") !== undefined
   if (bridgesSessionHook) {
     registrations.push({ dispose: await installSessionHooks(context, hooks, { warn: deps.warn }) })
   }

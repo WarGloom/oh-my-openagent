@@ -1,18 +1,21 @@
 import type { V2AgentDomain, V2CommandInvocation, V2ModelRef, V2SessionDomain } from "../context-types"
 import { renderCommandTemplate } from "./render-command-template"
+import { buildCommandPrompt, commandPromptParts } from "./command-prompt"
+import type { launchCommandSubtask } from "./command-subtasks"
 
 export type CommandSpec = {
   readonly template: string
   readonly description?: string
   readonly agent?: string
   readonly model?: string
+  readonly subtask?: boolean
 }
 
 export type CommandPart = { type: string; text?: string; [key: string]: unknown }
 
-/** The plugin's 1.x `command.execute.before` hook, which 2.x has no global counterpart for. */
+/** The plugin's 1.x command hook, translated at native dispatch or after an OMO template renders. */
 export type BeforeCommandHook = (
-  input: { command: string; sessionID: string; arguments: string },
+  input: { command: string; sessionID: string; arguments: string; invocationID?: string; agent?: string },
   output: { parts: CommandPart[] },
 ) => Promise<void>
 
@@ -22,6 +25,7 @@ export type CommandExecutorDeps = {
   readonly session: V2SessionDomain
   readonly agents: V2AgentDomain
   readonly beforeHook: BeforeCommandHook | undefined
+  readonly launchSubtask?: (input: Parameters<typeof launchCommandSubtask>[1]) => Promise<void>
 }
 
 function parseModel(model: string | undefined): V2ModelRef | undefined {
@@ -46,25 +50,54 @@ function parseModel(model: string | undefined): V2ModelRef | undefined {
 export function createCommandExecutor(deps: CommandExecutorDeps): (invocation: V2CommandInvocation) => Promise<void> {
   return async (invocation) => {
     const argumentText = invocation.prompt.text
-    const parts: CommandPart[] = [{ type: "text", text: renderCommandTemplate(deps.spec.template, argumentText) }]
-    await deps.beforeHook?.({ command: deps.name, sessionID: invocation.sessionID, arguments: argumentText }, { parts })
-    const text = parts
-      .filter((part) => part.type === "text" && typeof part.text === "string")
-      .map((part) => part.text as string)
-      .join("\n")
-    if (text.trim().length === 0) return
+    const original = {
+      ...invocation.prompt,
+      text: renderCommandTemplate(deps.spec.template, argumentText),
+      metadata: invocation.metadata,
+    }
+    const parts = commandPromptParts(original)
+    await deps.beforeHook?.(
+      {
+        command: deps.name,
+        sessionID: invocation.sessionID,
+        arguments: argumentText,
+        invocationID: invocation.invocationID,
+        agent: invocation.agent,
+      },
+      { parts },
+    )
+    const prompt = buildCommandPrompt(original, parts)
+    if (!prompt) return
     const agentName = deps.spec.agent
+    const agent = (await deps.agents.list()).data.find((entry) => entry.id === (agentName ?? invocation.agent))
+    const model = parseModel(deps.spec.model) ?? agent?.model
+    if (deps.spec.subtask ?? agent?.mode === "subagent") {
+      if (!deps.launchSubtask) throw new Error("Native command subtask launcher is not configured")
+      const parent = await deps.session.get({ sessionID: invocation.sessionID })
+      const { metadata, ...nativePrompt } = prompt
+      await deps.launchSubtask({
+        name: deps.name,
+        invocation,
+        agent: agentName ?? invocation.agent,
+        ...((model ?? parent.model) ? { model: model ?? parent.model } : {}),
+        description: deps.spec.description ?? deps.name,
+        prompt: nativePrompt,
+        ...(metadata ? { metadata } : {}),
+      })
+      return
+    }
     if (agentName !== undefined) {
       const current = await deps.session.get({ sessionID: invocation.sessionID })
       if (current.agent !== agentName)
         await deps.session.switchAgent({ sessionID: invocation.sessionID, agent: agentName })
     }
-    const agentModel =
-      agentName === undefined || deps.spec.model !== undefined
-        ? undefined
-        : (await deps.agents.list()).data.find((agent) => agent.id === agentName)?.model
-    const model = parseModel(deps.spec.model) ?? agentModel
-    if (model !== undefined) await deps.session.switchModel({ sessionID: invocation.sessionID, model })
-    await deps.session.prompt({ sessionID: invocation.sessionID, text, delivery: invocation.delivery })
+    const inlineModel = parseModel(deps.spec.model) ?? (agentName === undefined ? undefined : agent?.model)
+    if (inlineModel !== undefined)
+      await deps.session.switchModel({ sessionID: invocation.sessionID, model: inlineModel })
+    await deps.session.prompt({
+      ...prompt,
+      sessionID: invocation.sessionID,
+      delivery: invocation.delivery,
+    })
   }
 }

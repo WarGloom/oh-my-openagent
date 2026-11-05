@@ -137,23 +137,19 @@ export function observeProcessExit(
 
 export function spawnMonitorProcess(
   deps: MonitorManagerDeps | undefined,
-  command: string,
-  maxRuntimeMs: number,
+  input: Parameters<typeof spawnMonitoredProcess>[0],
 ): MonitoredProcess {
   const spawn = deps?.spawnMonitoredProcess ?? spawnMonitoredProcess
-  return spawn(
-    { command, maxRuntimeMs },
-    {
-      setTimer(fn, ms) {
-        const timer = setTimeout(fn, ms)
-        timer.unref?.()
-        return timer
-      },
-      clearTimer(handle) {
-        clearTimeout(handle)
-      },
+  return spawn(input, {
+    setTimer(fn, ms) {
+      const timer = setTimeout(fn, ms)
+      timer.unref?.()
+      return timer
     },
-  )
+    clearTimer(handle) {
+      clearTimeout(handle)
+    },
+  })
 }
 
 export function createMonitorInjector(

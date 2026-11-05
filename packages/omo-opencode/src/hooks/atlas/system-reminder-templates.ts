@@ -141,7 +141,7 @@ task(
   category="quick",
   load_skills=[],
   run_in_background=true,
-  prompt="[6 sections: TASK / EXPECTED OUTCOME / REQUIRED TOOLS / MUST DO / MUST NOT DO / CONTEXT]"
+  prompt="[Exact ## 1. TASK identity; goal, acceptance criteria, scope, sourced hard limits, relevant verified/assumed/unknown context]"
 )
 \`\`\`
 
@@ -159,26 +159,11 @@ export const SINGLE_TASK_DIRECTIVE = `
 
 ${createSystemDirective(SystemDirectiveTypes.SINGLE_TASK_ONLY)}
 
-**EXECUTION PROTOCOL**
+**DELEGATED OUTCOME**
 
-Work systematically. Each unit must be verified before proceeding.
+Complete the assigned goal and its acceptance criteria within the user, plan, and repository limits. Follow the accepted plan's dependencies and permissions. A capable worker owns the method and tool choices; retain required procedures when the contract or a mechanical assignment specifies them.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Verify the complete deliverable with the required diagnostics, tests, build, and real-surface evidence. Report the result, evidence, assumptions, and unresolved blockers. Track completed work immediately. A broad but coherent goal is not permission to stop after its first unit; finish it or name the concrete blocker.
 
-| Step | Action | Verification |
-|------|--------|--------------|
-| 1 | Identify first atomic unit | Smallest complete piece of work |
-| 2 | Execute fully | Implement the change |
-| 3 | Verify | \`lsp_diagnostics\`, tests, build |
-| 4 | Report | State what's done, what remains |
-| 5 | Continue | Next unit, or await if scope unclear |
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-**VERIFICATION IS MANDATORY.** No skipping. No batching completions.
-
-**IF SCOPE SEEMS BROAD:**
-Complete the first logical unit. Report progress. Await further instruction if needed.
-
-**REMEMBER:** Prometheus already decomposed the work. Execute what you receive.
+Use normal prose with spaces in messages and reports. Preserve exact identifiers, paths, commands, and quotations.
 `

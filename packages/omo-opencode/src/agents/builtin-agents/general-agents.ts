@@ -10,6 +10,8 @@ import { applyOverrides } from "./agent-overrides"
 import { applyEnvironmentContext } from "./environment-context"
 import { applyModelResolution, getFirstFallbackModel } from "./model-resolution"
 import { log } from "../../shared/logger"
+import { readVisionCapableModelsCache } from "../../shared/vision-capable-models-cache"
+import { buildMultimodalLookerFallbackChain } from "../../tools/look-at/multimodal-fallback-chain"
 
 export function collectPendingBuiltinAgents(input: {
   agentSources: Record<BuiltinAgentName, import("../agent-builder").AgentSource>
@@ -62,7 +64,14 @@ export function collectPendingBuiltinAgents(input: {
     const override =
       agentOverrides[agentName] ??
       Object.entries(agentOverrides).find(([key]) => key.toLowerCase() === agentName.toLowerCase())?.[1]
-    const requirement = AGENT_MODEL_REQUIREMENTS[agentName]
+    const configuredVision = agentName === "multimodal-looker" ? readVisionCapableModelsCache() : []
+    const requirement =
+      agentName === "multimodal-looker"
+        ? {
+            ...AGENT_MODEL_REQUIREMENTS[agentName],
+            fallbackChain: buildMultimodalLookerFallbackChain(configuredVision),
+          }
+        : AGENT_MODEL_REQUIREMENTS[agentName]
 
     // Check if agent requires a specific model
     if (requirement?.requiresModel && availableModels) {
@@ -81,7 +90,13 @@ export function collectPendingBuiltinAgents(input: {
       uiSelectedModel: isPrimaryAgent && override?.model === undefined ? uiSelectedModel : undefined,
       userModel: override?.model,
       requirement,
-      availableModels,
+      availableModels:
+        configuredVision.length > 0
+          ? new Set([
+              ...availableModels,
+              ...configuredVision.map(({ providerID, modelID }) => `${providerID}/${modelID}`),
+            ])
+          : availableModels,
       systemDefaultModel,
     })
     if (!resolution) {

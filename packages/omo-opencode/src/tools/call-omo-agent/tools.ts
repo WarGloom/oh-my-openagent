@@ -19,6 +19,8 @@ import { createOrGetSession } from "./session-creator"
 import { processMessages } from "./message-processor"
 import { waitForCompletion } from "./completion-poller"
 import { getFirstFallbackModel } from "../../agents/builtin-agents/model-resolution"
+import { executeNativeDelegate } from "../delegate-task/native-execution"
+import { resolveParentContext } from "../delegate-task/parent-context-resolver"
 
 function createSyncExecutorDeps(modelFallbackControllerAccessor?: ModelFallbackControllerAccessor) {
   return {
@@ -118,7 +120,11 @@ export function createCallOmoAgent(
     description,
     args: {
       description: tool.schema.string().describe("A short (3-5 words) description of the task"),
-      prompt: tool.schema.string().describe("The task for the agent to perform"),
+      prompt: tool.schema
+        .string()
+        .describe(
+          "Bounded research goal, expected evidence, relevant verified context, assumptions/unknowns, and sourced constraints. Use normal prose with spaces and exact identifiers; let the research agent choose its method unless the contract requires one.",
+        ),
       subagent_type: tool.schema.string().describe("The agent to invoke. Only explore and librarian are allowed."),
       run_in_background: tool.schema
         .boolean()
@@ -158,6 +164,17 @@ export function createCallOmoAgent(
         agentOverrides,
         userCategories,
       })
+
+      if (backgroundManager.nativeJobs)
+        return executeNativeDelegate({
+          args: { ...args, task_id: args.session_id, load_skills: [] },
+          ctx: toolCtx,
+          executor: { manager: backgroundManager, client: ctx.client, directory: ctx.directory },
+          parent: await resolveParentContext(toolCtx, ctx.client),
+          agent: args.subagent_type,
+          model: resolvedModel,
+          fallbackChain,
+        })
 
       if (args.run_in_background) {
         if (args.session_id) {

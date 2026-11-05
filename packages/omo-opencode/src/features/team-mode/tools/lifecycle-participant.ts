@@ -7,6 +7,7 @@ import type { RuntimeState } from "@oh-my-opencode/team-core/types"
 const ACTIVE_RUNTIME_STATUSES = new Set<RuntimeState["status"]>(["creating", "active", "shutdown_requested"])
 
 export type TeamLifecycleToolContext = {
+  callID?: string
   sessionID: string
   directory?: string
   agent?: string

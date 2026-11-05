@@ -3,6 +3,8 @@ import type { BackgroundTask } from "../features/background-agent/types"
 
 const status = z.enum(["pending", "running", "completed", "error", "cancelled", "interrupt"])
 const date = z.coerce.date().optional()
+const mention = z.object({ start: z.number(), end: z.number(), text: z.string() })
+const skillSelection = z.object({ id: z.string(), arguments: z.string().optional(), mention: mention.optional() })
 const settings = {
   variant: z.string().optional(),
   reasoning: z.string().optional(),
@@ -81,6 +83,62 @@ export const backgroundTaskRecord = z.object({
   error: z.string().optional(),
   deliveredNoticeID: z.string().optional(),
   recoveryPrompt: z.string().optional(),
+  nativeAdmissionID: z.string().optional(),
+  nativePromptID: z.string().optional(),
+  nativeProvisioningAdmissionID: z.string().optional(),
+  nativeSkillActivationIDs: z.array(z.string()).optional(),
+  nativeSkillSelections: z.array(skillSelection).optional(),
+  nativeAcceptedSkillsAdmissionID: z.string().optional(),
+  nativeRun: z.object({ childSessionID: z.string(), generation: z.string() }).optional(),
+  nativeInvocation: z
+    .discriminatedUnion("kind", [
+      z.object({
+        kind: z.literal("tool"),
+        agent: z.string(),
+        messageID: z.string(),
+        toolCallID: z.string(),
+        team: z.object({ teamRunID: z.string(), member: z.string() }).optional(),
+      }),
+      z.object({ kind: z.literal("command"), agent: z.string(), invocationID: z.string(), command: z.string() }),
+      z.object({
+        kind: z.literal("team"),
+        agent: z.string(),
+        invocationID: z.string(),
+        teamRunID: z.string(),
+        member: z.string(),
+        provisioningAdmissionID: z.string(),
+      }),
+    ])
+    .optional(),
+  nativeCompletion: z.enum(["parent", "none"]).optional(),
+  nativeMode: z.enum(["foreground", "background"]).optional(),
+  nativeInheritedPermit: z.boolean().optional(),
+  nativePrompt: z
+    .object({
+      text: z.string(),
+      files: z
+        .array(
+          z.object({
+            uri: z.string(),
+            name: z.string().optional(),
+            description: z.string().optional(),
+            mention: mention.optional(),
+            source: z
+              .discriminatedUnion("type", [
+                z.object({ type: z.literal("inline") }),
+                z.object({ type: z.literal("uri"), uri: z.string() }),
+              ])
+              .optional(),
+          }),
+        )
+        .optional(),
+      agents: z.array(z.object({ name: z.string(), mention: mention.optional() })).optional(),
+      skills: z.array(skillSelection).optional(),
+    })
+    .optional(),
+  nativeMetadata: z.record(z.string(), z.json()).optional(),
+  nativeTaskKey: z.string().optional(),
+  skills: z.array(z.string()).optional(),
   progress: z
     .object({ toolCalls: z.number(), lastTool: z.string().optional(), lastUpdate: z.coerce.date() })
     .optional(),

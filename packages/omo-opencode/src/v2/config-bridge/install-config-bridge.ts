@@ -1,11 +1,16 @@
 import type { V2PluginContext } from "../context-types"
 import { setTimeout as delay } from "node:timers/promises"
+import { injectOpenGatewayProvider } from "../../features/opengateway-provider"
 import { applyDesiredAgents } from "./apply-agents"
 import { applyDesiredCommands } from "./apply-commands"
 import { applyDesiredMcp } from "./apply-mcp"
+import { applyDesiredIntegrations, applyDesiredProviders, createOwnedProviders } from "./apply-providers"
 import type { BeforeCommandHook } from "./create-command-executor"
 import { EMPTY_DESIRED_CONFIG, readDesiredConfig, type DesiredConfig } from "./desired-config"
 import { buildConfigSnapshot } from "./snapshot"
+import { registerNativeCommandBefore } from "./native-command-before"
+import { applyProviderVariants, refreshProviderVariants } from "./refresh-provider-variants"
+import { launchCommandSubtask } from "./command-subtasks"
 
 export type ConfigHook = (config: Record<string, unknown>) => Promise<void>
 
@@ -28,7 +33,7 @@ const REFRESH_EVENTS: ReadonlySet<string> = new Set([
 
 /**
  * Runs the plugin's 1.x `config` hook against a snapshot built from 2.x state and applies the result
- * to the 2.x agent, MCP and command registries.
+ * to the 2.x agent, MCP, command, provider and integration registries.
  *
  * Host state is not final when a plugin's setup runs (providers from config arrive afterwards), so
  * the hook runs once at install and again after the events above. A run whose output equals the
@@ -41,6 +46,8 @@ export async function installConfigBridge(
 ): Promise<() => Promise<void>> {
   let desired: DesiredConfig = EMPTY_DESIRED_CONFIG
   let appliedKey = ""
+  let appliedProvidersKey = JSON.stringify(EMPTY_DESIRED_CONFIG.providers)
+  const owned = createOwnedProviders()
   const agentRegistration = await context.agent.transform((editor) => applyDesiredAgents(editor, desired))
   const mcpRegistration = await context.mcp.transform((editor) => applyDesiredMcp(editor, desired))
   const commandRegistration = await context.command.transform((editor) =>
@@ -48,8 +55,23 @@ export async function installConfigBridge(
       session: context.session,
       agents: context.agent,
       beforeHook: deps.beforeCommand,
+      launchSubtask: (input) => launchCommandSubtask(context, input),
     }),
   )
+  const providerRegistration = await context.provider.transform((editor) =>
+    applyDesiredProviders(editor, desired, owned),
+  )
+  const modelRegistration = await context.model.transform((editor) => applyProviderVariants(editor, owned))
+  const integrationRegistration = await context.integration.transform((editor) =>
+    applyDesiredIntegrations(editor, desired, owned),
+  )
+  const commandBefore = deps.beforeCommand
+    ? await registerNativeCommandBefore(
+        context.command,
+        deps.beforeCommand,
+        (name) => name !== "goal" && desired.commands.some(([id]) => id === name),
+      )
+    : undefined
   const warned = new Set<string>()
   const warnOnce = (message: string): void => {
     if (warned.has(message)) return
@@ -59,11 +81,17 @@ export async function installConfigBridge(
 
   const runOnce = async (): Promise<void> => {
     try {
-      const snapshot = await buildConfigSnapshot(context)
-      await configHook(snapshot)
-      const next = readDesiredConfig(snapshot)
+      const snapshot = await buildConfigSnapshot(context, owned)
+      await configHook(snapshot.config)
+      // The 1.x hook adds OpenGateway only with a credential. On 2.x the host's integration connection
+      // gates availability, so the catalog is always registered and connecting it needs no 1.x credential.
+      injectOpenGatewayProvider(snapshot.config)
+      const next = readDesiredConfig(snapshot.config, snapshot.providerBaseline)
       const key = JSON.stringify(next)
-      if (key === appliedKey) return
+      if (key === appliedKey) {
+        await refreshProviderVariants(context, desired, owned)
+        return
+      }
       desired = next
       appliedKey = key
       for (const name of next.skippedMcp) warnOnce(`Skipping MCP server "${name}": 2.x cannot represent this entry`)
@@ -71,6 +99,14 @@ export async function installConfigBridge(
       await context.agent.reload()
       await context.mcp.reload()
       await context.command.reload()
+      const providersKey = JSON.stringify(next.providers)
+      if (providersKey !== appliedProvidersKey) {
+        appliedProvidersKey = providersKey
+        // The integration transform reads which providers the provider transform created.
+        await context.provider.reload()
+        await context.integration.reload()
+      }
+      await refreshProviderVariants(context, desired, owned)
     } catch (error) {
       deps.warn(`config hook failed: ${error instanceof Error ? error.message : String(error)}`)
     }
@@ -113,6 +149,10 @@ export async function installConfigBridge(
   return async () => {
     abort.abort()
     clearTimeout(timer)
+    await commandBefore?.dispose()
+    await integrationRegistration.dispose()
+    await modelRegistration.dispose()
+    await providerRegistration.dispose()
     await commandRegistration.dispose()
     await mcpRegistration.dispose()
     await agentRegistration.dispose()

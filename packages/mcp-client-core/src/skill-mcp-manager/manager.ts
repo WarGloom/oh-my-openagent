@@ -25,11 +25,13 @@ export interface SkillMcpClientOptions {
 export function buildSkillMcpClientKey(info: SkillMcpClientInfo, options?: SkillMcpClientOptions): string {
   const baseKey = `${info.sessionID}:${info.skillName}:${info.serverName}`
   const authorityKey = info.provenance ? `${baseKey}::provenance=${policyHash(info.provenance)}` : baseKey
+  const revisionKey =
+    info.acceptedRevision === undefined ? authorityKey : `${authorityKey}::revision=${info.acceptedRevision}`
   if (!options?.cdpUrl) {
-    return authorityKey
+    return revisionKey
   }
 
-  return `${authorityKey}::cdp=${options.cdpUrl}`
+  return `${revisionKey}::cdp=${options.cdpUrl}`
 }
 
 export class SkillMcpManager {

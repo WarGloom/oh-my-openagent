@@ -1,4 +1,5 @@
 import type { PluginInput } from "@opencode-ai/plugin"
+import { isV2PluginInput } from "../../v2/create-plugin-input"
 import { log } from "../../shared/logger"
 import { resolveMessageEventSessionID, resolveSessionEventID } from "../../shared/event-session-id"
 import { HOOK_NAME } from "./hook-name"
@@ -33,7 +34,7 @@ export function createAtlasEventHandler(input: {
           sessionID,
         })
         if (activeBoulderSession) getState(sessionID).lastEventWasAbortError = true
-      } else {
+      } else if (!isV2PluginInput(ctx)) {
         const previousInjectedAt = sessions.get(sessionID)?.lastContinuationInjectedAt
         await handleAtlasSessionIdle({ ctx, options, getState, sessionID })
         const state = sessions.get(sessionID)
@@ -112,6 +113,7 @@ export function createAtlasEventHandler(input: {
       const sessionID = resolveSessionEventID(props)
       if (sessionID) {
         cleanupSession(sessionID)
+        getState(sessionID).lastCompactedAt = Date.now()
         log(`[${HOOK_NAME}] Session compacted: cleaned up`, { sessionID })
       }
     }
