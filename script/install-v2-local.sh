@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Commit current product changes first, then run this helper from the canonical dev checkout.
+# Install the latest committed product snapshot; in-progress working files are not included.
 set -Eeuo pipefail
 umask 077
 
@@ -31,12 +31,7 @@ identity() {
 	[[ $(g -C "$host" rev-parse HEAD) == "$host_oid" ]] || fail 'Host source changed; a separately verified host build is required.'
 	[[ $(digest "$binary") == "$host_hash" ]] || fail 'Installed host differs from the verified baseline.'
 }
-fresh() {
-	identity
-	[[ -z $(g -C "$repo" status --porcelain --untracked-files=all -- . ':!packages/omo-senpi/plugin') ]] ||
-		fail 'Commit product changes first. Only generated Senpi plugin WIP may remain; it is excluded from the snapshot.'
-}
-fresh
+identity
 grep -Fxq "  port|dev) omo=\$ws/.omo/worktrees/omo-v2-dev ;;" "$launcher" ||
 	fail 'Apply the canonical port/dev launcher mapping before installation.'
 for tool in bun node git tar cp bwrap unshare jq flock; do
@@ -96,7 +91,7 @@ done
 printf 'archive_sha256=%s\n' "$(digest "$evidence/artifacts.tar.gz")" >>"$evidence/provenance"
 cp -p "$evidence/provenance" "$evidence/candidate/dist/v2-provenance"
 cp -p "$evidence/artifacts.sha256" "$evidence/candidate/dist/v2-artifacts.sha256"
-fresh
+identity
 
 activation=0
 moved=()
@@ -130,7 +125,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 activation=1
 lab service stop >"$evidence/stop.log" 2>&1
-fresh
+identity
 for path in "${paths[@]}"; do
 	moved+=("$path")
 	mv -T "$repo/$path" "$evidence/previous/$path"
