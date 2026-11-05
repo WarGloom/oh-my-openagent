@@ -64,25 +64,33 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
   const watchdog = createNativeProgressWatchdog({
     context, timeouts: controller.timeouts,
     warn: (error) => log("[runtime-fallback] Native watchdog failed", { error: error instanceof Error ? error.message : String(error) }),
-    recover: (sessionID, request, current, boundaryID) => recoverNativeFailure(sessionID, boundaryID, async () => {
+    recover: async (sessionID, request, ownership) => {
+      const watermark = (await context.session.context({ sessionID })).at(-1)?.id
       const host = await hostModels(context)
-      if (!current()) return false
+      if (!ownership.current()) return false
       return controller.recover({ sessionID, agent: request.agent, model: `${request.model.providerID}/${request.model.id}`, variant: request.model.variant === "default" ? undefined : request.model.variant, reason: "timeout", error: { name: "RequestTimeoutError", data: { message: "Native request made no progress before its configured deadline" } }, isAvailable: host.isAvailable }, async (payload) => {
         const model = host.modelRef(sessionID, payload)
-        if (!current()) return "declined"
-        // One host admission switches the model and resumes only while the watchdog's own abort is still the newest entry.
-        const outcome = await context.experimental.session.continueAfterFailure({
-          sessionID, boundaryID, id: recoveryMessageID(boundaryID), model,
-          text: "Continue the existing task after the model timeout. Preserve completed work.",
-        })
-        switch (outcome) {
-          case "stale": return "declined"
-          case "duplicate": return "duplicate"
-          case "admitted": return { ...payload, variant: model.variant }
-          default: return outcome satisfies never
-        }
+        const newest = (await context.session.context({ sessionID })).at(-1)?.id
+        if (!ownership.current() || newest !== watermark) return "declined"
+        let duplicate = true
+        const committed = await context.experimental.session.recover({ sessionID }, ({ boundaryID }) => recoverNativeFailure(sessionID, boundaryID, async () => {
+          if (!ownership.current()) return false
+          // Only a selected candidate may interrupt; admission still requires that exact captured boundary.
+          const outcome = await context.experimental.session.continueAfterFailure({
+            sessionID, boundaryID, id: recoveryMessageID(boundaryID), model,
+            text: "Continue the existing task after the model timeout. Preserve completed work.",
+          })
+          switch (outcome) {
+            case "stale": return false
+            case "duplicate": return true
+            case "admitted": duplicate = false; return true
+            default: return outcome satisfies never
+          }
+        }), { signal: ownership.signal })
+        if (!committed) return "declined"
+        return duplicate ? "duplicate" : { ...payload, variant: model.variant }
       })
-    }),
+    },
   })
   const watchdogRegistration = await context.session.hook("model.request", (event) => {
     if (event.kind === "primary") watchdog.start(event.sessionID, event.agent, event.model)

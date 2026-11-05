@@ -15,7 +15,7 @@ type Request = {
 export function createNativeProgressWatchdog(deps: {
   readonly context: V2PluginContext
   readonly timeouts: { readonly firstProgressMs: number; readonly stallMs: number; readonly hardMs: number }
-  readonly recover: (sessionID: string, request: { readonly agent: string; readonly model: V2ModelRef }, current: () => boolean, boundaryID: string) => Promise<boolean>
+  readonly recover: (sessionID: string, request: { readonly agent: string; readonly model: V2ModelRef }, ownership: { readonly current: () => boolean; readonly signal: AbortSignal }) => Promise<boolean>
   readonly warn: (error: unknown) => void
 }) {
   const requests = new Map<string, Request>()
@@ -37,10 +37,10 @@ export function createNativeProgressWatchdog(deps: {
     let recovered = false
     try {
       if (request.unsafe) await deps.context.experimental.session.interrupt({ sessionID })
-      else recovered = await deps.context.experimental.session.recover({ sessionID }, async ({ boundaryID }) => {
-        if (disposed || recovering.get(sessionID) !== recovery) return false
-        return deps.recover(sessionID, request, () => !disposed && recovering.get(sessionID) === recovery, boundaryID)
-      }, { signal: recovery.abort.signal })
+      else recovered = await deps.recover(sessionID, request, {
+        current: () => !disposed && recovering.get(sessionID) === recovery,
+        signal: recovery.abort.signal,
+      })
     } finally {
       recovery.settled.resolve(recovered)
       if (!recovered && interruptions.get(sessionID) === recovery.settled.promise) interruptions.delete(sessionID)
