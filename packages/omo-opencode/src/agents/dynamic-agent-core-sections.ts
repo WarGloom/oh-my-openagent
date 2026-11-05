@@ -149,7 +149,7 @@ Briefly announce "Consulting Oracle for [reason]" before invocation.
 - While waiting, only do non-overlapping prep work. Never ship implementation decisions Oracle was asked to decide.
 - Never "time out and continue anyway" for Oracle-dependent tasks.
 
-- Oracle takes minutes. When done with your own work: **end your response** - wait for the \`<system-reminder>\`.
+- Oracle can take minutes. When no independent work remains, **end your response** and wait for completion. Inspect the delivered native \`<subagent>\` result/error; use \`background_output\` only for missing/truncated output or transcript/diagnostic detail.
 - Do NOT poll \`background_output\` on a running Oracle. The notification will come.
 - Never cancel Oracle.
 </Oracle_Usage>`
@@ -195,19 +195,13 @@ export function buildParallelDelegationSection(model: string, categories: Availa
 3. **NEVER work sequentially.** If 4 independent units exist, spawn 4 agents simultaneously. Not 1 at a time. Not 2 then 2.
 4. **NEVER implement directly** when delegation is possible. You write prompts, not code.
 
-**YOUR PROMPT TO EACH AGENT MUST INCLUDE:**
-- GOAL with explicit success criteria (what "done" looks like)
-- File paths and constraints (where to work, what not to touch)
-- Existing patterns to follow (reference specific files the agent should read)
-- Clear scope boundary (what is IN scope, what is OUT of scope)
-
-**Vague delegation = failed delegation.** If your prompt to the subagent is shorter than 5 lines, it is too vague.
+**DELEGATION CONTRACT:** Follow this role's Delegation Brief guidance. Pass reference files and patterns when you have verified that they matter; otherwise let the worker discover them. Match detail to the worker and contract, without a universal recipe or minimum prompt length.
 
 | You Want To Do | You MUST Do Instead |
 |---|---|
-| Write code yourself | Delegate to \`deep\` or \`unspecified-high\` agent, or the specific domain category |
+| Write code yourself | Delegate to \`deep-low\` or \`unspecified-high\` agent, or the specific domain category |
 | Handle 3 changes sequentially | Spawn 3 agents in parallel |${hasQuickCategory(categories) ? "\n| Run tests/typecheck/build or collect logs only | Follow Routine Verification Routing above |" : ""}
-| Fix failing verification | Delegate the fix to \`deep\`, \`unspecified-high\`, or the specific domain category |
+| Fix failing verification | Delegate the fix to \`deep-low\`, \`unspecified-high\`, or the specific domain category |
 | "Quickly fix this one thing" | Still delegate to the proper implementation category - your "quick fix" is slower and worse than a subagent's |
 
 **Your value is orchestration, decomposition, and quality control. Delegating with crystal-clear prompts IS your work.**`
