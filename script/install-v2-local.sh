@@ -160,11 +160,24 @@ printf '%s' "$password" | OMO_INSTALL_WORKSPACE="$ws" bun -e '
 try {
 	const password = (await Bun.stdin.text()).trim()
 	if (!password) throw new Error("credential unavailable")
+	const signal = AbortSignal.timeout(120000)
+	const authorization = `Basic ${btoa(`opencode:${password}`)}`
+	// RPC awaits native activation; the event-only OMO channel rejects this probe before any handler executes.
+	const readyURL = new URL("http://127.0.0.1:49375/api/rpc/omo/__omo_install_activation_probe__")
+	readyURL.searchParams.set("location[directory]", process.env.OMO_INSTALL_WORKSPACE)
+	const ready = await fetch(readyURL, {
+		method: "POST",
+		headers: { authorization, "content-type": "application/json" },
+		body: "{}",
+		signal,
+	})
+	const readiness = await ready.json()
+	if (ready.status !== 400 || readiness?._tag !== "RpcError" || readiness.type !== "rpc.method_not_found") throw new Error("activation barrier failed")
 	const url = new URL("http://127.0.0.1:49375/api/agent")
 	url.searchParams.set("location[directory]", process.env.OMO_INSTALL_WORKSPACE)
 	const response = await fetch(url, {
-		headers: { authorization: `Basic ${btoa(`opencode:${password}`)}` },
-		signal: AbortSignal.timeout(120000),
+		headers: { authorization },
+		signal,
 	})
 	if (response.status !== 200) {
 		console.error(`OMO activation check failed: HTTP ${response.status}`)
