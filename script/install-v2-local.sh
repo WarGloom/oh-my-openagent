@@ -8,8 +8,8 @@ repo=$ws/.omo/worktrees/omo-v2-dev
 host=$ws/opencode-wt/v2
 binary=$host/packages/cli/dist/cli-linux-x64/bin/opencode
 launcher=/home/nikita/.local/bin/opencode-v2-lab
-host_oid=a6ac73be5e69235d5b6af19342401ca1038d5318
-host_hash=15ac7836a3656aa616abf88d7b48ddb22eb5e4f133f8a008737cb32ae6e47bc0
+host_oid=d465e37a13cd96d3f5e3f0193cf30c951cbb075e
+host_hash=358450f0e2ba37c899361870743e8248a59c575868bc261293792534dabb3e53
 paths=(dist packages/lsp-tools-mcp/dist packages/lsp-daemon/dist packages/git-bash-mcp/dist packages/shared-skills/skills)
 
 fail() {
@@ -154,5 +154,33 @@ identity
 	sha256sum --check "$evidence/artifacts.sha256"
 ) >"$evidence/installed-hashes.log"
 printf 'running_pid=%s\nrunning_exe_sha256=%s\n' "$pid" "$host_hash" >>"$evidence/provenance"
+# A matching server executable does not prove that the workspace plugin loaded.
+password=$(lab service get password 2>/dev/null) || fail 'Unable to obtain the V2 service credential.'
+printf '%s' "$password" | OMO_INSTALL_WORKSPACE="$ws" bun -e '
+try {
+	const password = (await Bun.stdin.text()).trim()
+	if (!password) throw new Error("credential unavailable")
+	const url = new URL("http://127.0.0.1:49375/api/agent")
+	url.searchParams.set("location[directory]", process.env.OMO_INSTALL_WORKSPACE)
+	const response = await fetch(url, {
+		headers: { authorization: `Basic ${btoa(`opencode:${password}`)}` },
+		signal: AbortSignal.timeout(120000),
+	})
+	if (response.status !== 200) {
+		console.error(`OMO activation check failed: HTTP ${response.status}`)
+		process.exit(1)
+	}
+	const body = await response.json()
+	if (!Array.isArray(body?.data)) throw new Error("invalid response")
+	const ids = body.data.map((agent) => agent?.id).filter((id) => typeof id === "string")
+	const primary = [/sisyphus/i, /hephaestus/i, /prometheus/i, /atlas/i]
+	if (!primary.every((name) => ids.some((id) => name.test(id)))) throw new Error("missing primary")
+	console.log(`OMO activation check: HTTP 200; primary agents ${primary.length}`)
+} catch {
+	console.error("OMO activation check failed: credential, request, response, or primary agents invalid")
+	process.exit(1)
+}
+' || fail 'OMO plugin activation was not verified.'
+unset password
 activation=0
 printf 'Installed OMO %s using host %s; receipt and rollback: %s\n' "$omo_oid" "$host_oid" "$evidence"
