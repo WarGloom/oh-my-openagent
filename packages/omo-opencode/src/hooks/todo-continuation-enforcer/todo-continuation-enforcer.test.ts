@@ -313,13 +313,8 @@ describe("todo-continuation-enforcer", () => {
         event: { type: "session.idle", properties: { sessionID } },
       })
 
-      // then - countdown toast shown
-      await fakeTimers.advanceBy(50, true)
-      expect(toastCalls.length).toBeGreaterThanOrEqual(1)
-      expect(toastCalls[0].title).toBe("Todo Continuation")
-
       // then - after countdown, continuation injected
-      await fakeTimers.advanceBy(2500, true)
+      await fakeTimers.advanceBy(2550, true)
       expect(promptCalls.length).toBe(1)
       expect(promptCalls[0].text).toContain("TODO CONTINUATION")
     },
@@ -1295,12 +1290,12 @@ describe("todo-continuation-enforcer", () => {
       event: { type: "session.idle", properties: { sessionID } },
     })
 
-    await fakeTimers.advanceBy(100)
-    expect(toastCalls.length).toBeGreaterThanOrEqual(1)
+    await fakeTimers.advanceBy(2500, true)
+    expect(promptCalls).toHaveLength(1)
   })
 
   test(
-    "should show countdown toast updates",
+    "#given incomplete todos #when the countdown runs #then no countdown toast fires and continuation still dispatches",
     async () => {
       // given - session with incomplete todos
       const sessionID = "main-toast"
@@ -1308,15 +1303,20 @@ describe("todo-continuation-enforcer", () => {
 
       const hook = createTodoContinuationEnforcer(createMockPluginInput(), {})
 
-      // when - session goes idle
+      // when - session goes idle and the countdown is midway
       await hook.handler({
         event: { type: "session.idle", properties: { sessionID } },
       })
+      await fakeTimers.advanceBy(1500, true)
 
-      // then - multiple toast updates during countdown (2s countdown = 2 toasts: "2s" and "1s")
-      await fakeTimers.advanceBy(1500)
-      expect(toastCalls.length).toBeGreaterThanOrEqual(2)
-      expect(toastCalls[0].message).toContain("2s")
+      // then - no countdown toast and no early dispatch
+      expect(toastCalls).toHaveLength(0)
+      expect(promptCalls).toHaveLength(0)
+
+      // then - the countdown still elapses into one continuation
+      await fakeTimers.advanceBy(1000, true)
+      expect(promptCalls).toHaveLength(1)
+      expect(toastCalls).toHaveLength(0)
     },
     { timeout: 15000 },
   )
