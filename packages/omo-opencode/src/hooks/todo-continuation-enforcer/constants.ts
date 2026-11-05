@@ -15,7 +15,6 @@ Incomplete tasks remain in your todo list. Continue working on the next pending 
 - If you believe all work is already complete, the system is questioning your completion claim. Critically re-examine each todo item from a skeptical perspective, verify the work was actually done correctly, and update the todo list accordingly.`
 
 export const COUNTDOWN_SECONDS = 2
-export const TOAST_DURATION_MS = 900
 export const COUNTDOWN_GRACE_PERIOD_MS = 500
 
 export const ABORT_WINDOW_MS = 3000
