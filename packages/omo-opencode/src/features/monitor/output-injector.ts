@@ -147,7 +147,13 @@ export class MonitorOutputInjector {
       pending.batches = [...forcedTerminalBatches, ...remainingBatches]
     }
 
-    if (await latestAssistantTurnBlocksMonitorOutput(this.deps.client, this.deps.directory, sessionID)) {
+    // Native steer waits for the host's safe step boundary, which replaces this transcript gate
+    // for a forced terminal batch; streaming batches stay deferred by the busy check below.
+    const steersPastActiveTurn = sessionActive && hasForcedTerminalBatch && this.deps.nativeSteerDelivery === true
+    if (
+      !steersPastActiveTurn &&
+      (await latestAssistantTurnBlocksMonitorOutput(this.deps.client, this.deps.directory, sessionID))
+    ) {
       this.scheduleFlush(monitorId)
       log("[monitor] Deferred output injection because latest assistant turn blocks internal prompts:", {
         sessionID,
@@ -244,7 +250,7 @@ export class MonitorOutputInjector {
         queueBehavior: "defer",
         postDispatchHoldMs: this.deps.postDispatchHoldMs,
         checkStatus: !forceActiveDispatch,
-        checkToolState: true,
+        checkToolState: !(forceActiveDispatch && this.deps.nativeSteerDelivery === true),
         input: {
           path: { id: sessionID },
           body: {

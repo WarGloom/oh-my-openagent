@@ -104,11 +104,8 @@ export class MonitorManager implements MonitorManagerContract {
       counters: ring.getCounters(),
     }
 
-    const injector = createMonitorInjector(
-      this.options.deps,
-      this.options.pluginContext,
-      record,
-      (monitorId, delayMs, operation) => this.scheduleFlush(monitorId, delayMs, operation),
+    const injector = createMonitorInjector(this.options, record, (monitorId, delayMs, operation) =>
+      this.scheduleFlush(monitorId, delayMs, operation),
     )
     const state = createMonitorState({
       record,
