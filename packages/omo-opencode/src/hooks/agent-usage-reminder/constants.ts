@@ -16,10 +16,10 @@ RECOMMENDED: Delegate to background agents instead:
 
 \`\`\`
 // Parallel execution across repos/commands
-task(subagent_type="explore", load_skills=[], run_in_background=true,
-  prompt="Run typecheck and report results")
+task(category="quick", load_skills=[], run_in_background=true,
+  prompt="Run the specified typecheck and report its exit code and diagnostics. Do not edit files.")
 
-task(category="deep", load_skills=[], run_in_background=true,
+task(category="deep-low", load_skills=[], run_in_background=true,
   prompt="Perform git sync: fetch upstream, merge dev, resolve conflicts")
 \`\`\`
 
@@ -55,9 +55,9 @@ RECOMMENDED: Use task with explore/librarian agents for better results:
 
 \`\`\`
 // Parallel exploration - fire multiple agents simultaneously
-task(subagent_type="explore", load_skills=[], prompt="Find all files matching pattern X")
-task(subagent_type="explore", load_skills=[], prompt="Search for implementation of Y")
-task(subagent_type="librarian", load_skills=[], prompt="Lookup documentation for Z")
+task(subagent_type="explore", load_skills=[], run_in_background=true, prompt="Find all files matching pattern X")
+task(subagent_type="explore", load_skills=[], run_in_background=true, prompt="Search for implementation of Y")
+task(subagent_type="librarian", load_skills=[], run_in_background=true, prompt="Lookup documentation for Z")
 
 // Then continue your work while they run in background
 // System will notify you when each completes
