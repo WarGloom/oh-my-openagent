@@ -56,7 +56,7 @@ export async function executeNativeDelegate(input: {
     model: resolveMetadataModel(input.model ?? task.model, parent.model),
   } })
   const metadata = task.sessionId ? buildTaskMetadataBlock({ sessionId: task.sessionId, backgroundTaskId: task.id, agent, category: task.category }) : ""
-  if (args.run_in_background) return `Background Task ID: ${task.id}\nDescription: ${task.description}\nAgent: ${agent}\nStatus: ${task.status}\nWait for the completion notification before calling background_output.\n${metadata}`
+  if (args.run_in_background) return `Background Task ID: ${task.id}\nDescription: ${task.description}\nAgent: ${agent}\nStatus: ${task.status}\nInspect the delivered completion result. Use background_output only if output is missing or truncated, or for history or diagnostics.\n${metadata}`
   try {
     const completed = await executor.manager.waitForNativeTask(task.id, ctx.abort)
     if (completed.status !== "completed") throw new Error(completed.error ?? `Native task ${completed.status}`)

@@ -144,7 +144,7 @@ export function createCallOmoAgent(
       run_in_background: tool.schema
         .boolean()
         .describe(
-          "REQUIRED. true: run asynchronously (use background_output to get results), false: run synchronously and wait for completion",
+          "REQUIRED. true: run asynchronously; inspect delivered results first and use background_output only if output is missing or truncated, or for history or diagnostics. false: run synchronously and wait for completion",
         ),
       session_id: tool.schema
         .string()
