@@ -1,8 +1,10 @@
-import { describe, expect, it } from "bun:test"
+import { describe, expect, it, spyOn } from "bun:test"
 import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
+import { getModelResolutionInfoWithOverrides } from "../../cli/doctor/checks/model-resolution"
+import * as capabilities from "../../shared/model-capabilities"
 import { resolveRoster } from "./roster-resolver"
 
 type EnvSnapshot = {
@@ -66,28 +68,44 @@ describe("resolveRoster", () => {
     })
   })
 
-  it("#given agent and category overrides #when resolving roster #then it flattens sorted display rows", () => {
+  it("#given agent and category overrides #when resolving roster #then it preserves doctor selections without capability diagnostics", () => {
     withIsolatedConfig("overrides", (root) => {
       // given
       const project = join(root, "project")
-      writeJson(join(project, ".omo", "omo.jsonc"), {
-        "[opencode]": {
+      const config = {
           agents: {
             sisyphus: { model: "provider/family/model-leaf" },
+            atlas: { model: "" },
+            oracle: { category: "deep-low" },
           },
           categories: {
             "deep-low": { model: "simple-model" },
+            quick: { model: "provider/" },
           },
-        },
+      }
+      writeJson(join(project, ".omo", "omo.jsonc"), {
+        "[opencode]": config,
       })
+      const doctor = getModelResolutionInfoWithOverrides(config)
+      expect(doctor.agents.find((entry) => entry.name === "sisyphus")?.capabilityDiagnostics).toBeDefined()
+      const expectedRows = [...doctor.agents, ...doctor.categories].map((entry) => ({
+        label: entry.name,
+        model: entry.effectiveModel.slice(entry.effectiveModel.lastIndexOf("/") + 1) || entry.effectiveModel,
+      })).sort((left, right) => left.label.localeCompare(right.label))
+      const capabilityLookup = spyOn(capabilities, "getModelCapabilities")
 
-      // when
-      const rows = resolveRoster(project)
+      try {
+        // when
+        const rows = resolveRoster(project)
 
-      // then
-      expect(rows).toEqual([...rows].sort((left, right) => left.label.localeCompare(right.label)))
-      expect(rows).toContainEqual({ label: "sisyphus", model: "model-leaf" })
-      expect(rows).toContainEqual({ label: "deep-low", model: "simple-model" })
+        // then
+        expect(rows).toEqual(expectedRows)
+        expect(rows).toContainEqual({ label: "sisyphus", model: "model-leaf" })
+        expect(rows).toContainEqual({ label: "deep-low", model: "simple-model" })
+        expect(capabilityLookup).not.toHaveBeenCalled()
+      } finally {
+        capabilityLookup.mockRestore()
+      }
     })
   })
 

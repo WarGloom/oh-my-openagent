@@ -1,24 +1,13 @@
-import { getModelResolutionInfoWithOverrides } from "../../cli/doctor/checks/model-resolution"
-import type { OmoConfig } from "../../cli/doctor/checks/model-resolution-types"
+import { getEffectiveModel } from "../../cli/doctor/checks/model-resolution-effective-model"
 import type { OhMyOpenCodeConfig } from "../../config"
 import { validatePluginConfig } from "../../config/validate"
 import { migrateDisabledAgents } from "../../shared/disabled-agents"
+import { AGENT_MODEL_REQUIREMENTS, CATEGORY_MODEL_REQUIREMENTS } from "../../shared/model-requirements"
 import type { RosterRow } from "./state-types"
 
 type ResolutionEntry = {
   readonly name: string
   readonly effectiveModel: string
-}
-
-type AgentModelConfig = {
-  model?: string
-  variant?: string
-  category?: string
-}
-
-type CategoryModelConfig = {
-  model?: string
-  variant?: string
 }
 
 function formatModelLabel(model: string): string {
@@ -36,46 +25,23 @@ function toRosterRow(entry: ResolutionEntry): RosterRow {
   }
 }
 
-function pickAgentModelConfig(agent: AgentModelConfig): AgentModelConfig {
-  const picked: AgentModelConfig = {}
-  if (agent.model !== undefined) picked.model = agent.model
-  if (agent.variant !== undefined) picked.variant = agent.variant
-  if (agent.category !== undefined) picked.category = agent.category
-  return picked
-}
-
-function pickCategoryModelConfig(category: CategoryModelConfig): CategoryModelConfig {
-  const picked: CategoryModelConfig = {}
-  if (category.model !== undefined) picked.model = category.model
-  if (category.variant !== undefined) picked.variant = category.variant
-  return picked
-}
-
-function toModelResolutionConfig(config: OhMyOpenCodeConfig): OmoConfig {
-  const agents: Record<string, AgentModelConfig> = {}
-  const categories: Record<string, CategoryModelConfig> = {}
-
-  for (const [name, agent] of Object.entries(config.agents ?? {})) {
-    if (agent) agents[name] = pickAgentModelConfig(agent)
-  }
-
-  for (const [name, category] of Object.entries(config.categories ?? {})) {
-    if (category) categories[name] = pickCategoryModelConfig(category)
-  }
-
-  return { agents, categories }
-}
-
-export function resolveRoster(directory: string): RosterRow[] {
+export function resolveRoster(directory: string, config?: OhMyOpenCodeConfig): RosterRow[] {
   try {
-    const config = validatePluginConfig(directory).config
+    const resolvedConfig = config ?? validatePluginConfig(directory).config
     const disabledAgents = new Set(
-      migrateDisabledAgents(config.disabled_agents).map((agent) => agent.toLowerCase()),
+      migrateDisabledAgents(resolvedConfig.disabled_agents).map((agent) => agent.toLowerCase()),
     )
-    const resolution = getModelResolutionInfoWithOverrides(toModelResolutionConfig(config))
     return [
-      ...resolution.agents.filter((entry) => !disabledAgents.has(entry.name.toLowerCase())),
-      ...resolution.categories,
+      ...Object.entries(AGENT_MODEL_REQUIREMENTS)
+        .filter(([name]) => !disabledAgents.has(name.toLowerCase()))
+        .map(([name, requirement]) => ({
+          name,
+          effectiveModel: getEffectiveModel(requirement, resolvedConfig.agents?.[name]?.model),
+        })),
+      ...Object.entries(CATEGORY_MODEL_REQUIREMENTS).map(([name, requirement]) => ({
+        name,
+        effectiveModel: getEffectiveModel(requirement, resolvedConfig.categories?.[name]?.model),
+      })),
     ]
       .map(toRosterRow)
       .sort((left, right) => left.label.localeCompare(right.label))
