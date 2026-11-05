@@ -45,15 +45,16 @@ function questionFixture() {
 }
 
 test.each([
-  { unsafe: false, chain: true, suppressed: true, delayed: false },
-  { unsafe: false, chain: true, suppressed: true, delayed: true },
-  { unsafe: true, chain: true, suppressed: false, delayed: true },
-  { unsafe: false, chain: false, suppressed: false, delayed: true },
+  { agent: "sisyphus", unsafe: false, chain: true, suppressed: true, delayed: false },
+  { agent: "sisyphus", unsafe: false, chain: true, suppressed: true, delayed: true },
+  { agent: "sisyphus", unsafe: true, chain: true, suppressed: false, delayed: true },
+  { agent: "sisyphus", unsafe: false, chain: false, suppressed: false, delayed: true },
+  { agent: "general", unsafe: false, chain: false, suppressed: false, delayed: true },
 ])(
-  "watchdog interruption suppresses idle only after accepted recovery: $unsafe / $chain / delayed=$delayed",
-  async ({ unsafe, chain, suppressed, delayed }) => {
+  "watchdog interrupts only for a candidate or unsafe tools and suppresses idle only after admission: $agent / $unsafe / $chain / delayed=$delayed",
+  async ({ agent, unsafe, chain, suppressed, delayed }) => {
     const clock = installRuntimeFallbackTestClock()
-    const fake = createFakePluginContext({ sessionAgent: "sisyphus" })
+    const fake = createFakePluginContext({ sessionAgent: agent })
     const ready = Promise.withResolvers<void>()
     const drained = Promise.withResolvers<void>()
     const model = { providerID: "anthropic", id: "first" }
@@ -117,9 +118,10 @@ test.each([
     })
     try {
       await ready.promise
-      await fake.triggerModelRequest({ sessionID: "timed", agent: "sisyphus", model, kind: "primary", headers: {} })
+      await fake.triggerModelRequest({ sessionID: "timed", agent, model, kind: "primary", headers: {} })
       if (unsafe) await installed.beforeEvent({ type: "session.tool.called", data: { sessionID: "timed", id: "call" } })
       await clock.advanceBy(1_000)
+      expect(fake.sessionCalls.filter((call) => call.kind === "interrupt")).toHaveLength(unsafe || chain ? 1 : 0)
       if (delayed) fake.emit({ type: "session.execution.interrupted", data: { sessionID: "timed", reason: "user" } })
       fake.emit({ type: "session.execution.interrupted", data: { sessionID: "other", reason: "user" } })
       await drained.promise
@@ -165,7 +167,7 @@ test.each([false, true])(
     await f.clock.advanceBy(tool ? 1_999 : 999)
     expect(f.fake.sessionCalls).toEqual([])
     await f.clock.advanceBy(1)
-    expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["interrupt"])
+    expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(tool ? ["interrupt"] : [])
     expect(f.recover).toHaveBeenCalledTimes(tool ? 0 : 1)
   },
 )
@@ -212,7 +214,7 @@ test("form cancellation never rearms or replays that request, but a later real r
   expect(f.fake.sessionCalls).toEqual([])
   f.watchdog.start("question", "sisyphus", { providerID: "qa", id: "gpt-fake" })
   await f.clock.advanceBy(1_000)
-  expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["interrupt"])
+  expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual([])
   expect(f.recover).toHaveBeenCalledTimes(1)
 })
 
@@ -257,6 +259,6 @@ test.each(["other", "global"])("a %s form cannot postpone an unrelated model tim
   f.watchdog.observe(f.form("foreign", sessionID))
   await f.clock.advanceBy(1_000)
   // then
-  expect(f.fake.sessionCalls).toEqual([{ kind: "interrupt", sessionID: "question" }])
+  expect(f.fake.sessionCalls).toEqual([])
   expect(f.recover).toHaveBeenCalledTimes(1)
 })
