@@ -13,7 +13,7 @@ export async function coldReviveTeam(store: TaskRecordStore, config: OmoTaskSett
   const stateDir = { project_dir: store.stateDir, task: { state_dir: store.stateDir } }
   const teamConfig = toTeamCoreConfig(config, teamStorageBaseDir(stateDir))
   const spec = normalizeSenpiTeamSpec({ members: [{ name: "alpha", kind: "category", category: "quick", prompt: "fixture" }] }, "fixture-team")
-  const runtime = await createRuntimeState(spec, "fixture-parent", "project", teamConfig)
+  const runtime = await createRuntimeState(spec, "fixture-parent", "project", teamConfig, process.cwd())
   const dirs = await ensureTeamRuntimeDirs(stateDir, runtime.teamRunId, ["alpha"])
   await writeMemberTaskMap(dirs.runtimeDir, { alpha: taskId })
   await transitionRuntimeState(runtime.teamRunId, (state) => ({ ...state, status: "active" }), teamConfig)

@@ -1,12 +1,14 @@
-import { stat } from "node:fs/promises"
-import { join } from "node:path"
+import { readFile, rename, stat, writeFile } from "node:fs/promises"
+import { join, relative } from "node:path"
 import { afterEach, describe, expect, test } from "bun:test"
+import { listActiveTeams, saveRuntimeState } from "@oh-my-opencode/team-core/team-state-store"
 
 import { readMemberTaskMap } from "./member-map"
 import { normalizeSenpiTeamSpec } from "./normalize"
 import { createTeam } from "./runtime"
 import { resolveStateDir } from "../store"
-import { resolveTeamRuntimeDirs } from "./storage"
+import { resolveTeamRuntimeDirs, teamStorageBaseDir } from "./storage"
+import { toTeamCoreConfig } from "./runtime-config"
 import {
   FakeTeamManager,
   cleanupTeamRuntimeTmp,
@@ -33,6 +35,38 @@ function threeMemberSpec() {
 }
 
 describe("createTeam", () => {
+  for (const status of ["deleted", "failed"] as const)
+  for (const nested of [false, true])
+  test(`relative Senpi member work survives ${status} runtime cleanup (nested=${nested})`, async () => {
+    // given
+    const projectDirectory = tempProjectDir()
+    const stateDir = { ...stateDirConfig(projectDirectory), task: { state_dir: join(projectDirectory, "state") } }
+    const settings = taskSettings()
+    const originalMemberDirectory = join(projectDirectory, "member-work")
+    const spec = normalizeSenpiTeamSpec({ members: [{ name: "worker", kind: "category", category: "quick", prompt: "work",
+      worktreePath: relative(process.cwd(), originalMemberDirectory) }] }, "cleanup-team")
+    const created = await createTeam(spec, "project", {
+      manager: new FakeTeamManager(), stateDir, taskSettings: settings, leadSessionId: "lead-session", spawnDepth: 1,
+    })
+    const dirs = resolveTeamRuntimeDirs(stateDir, created.runtimeState.teamRunId)
+    const memberDirectory = nested ? join(dirs.runtimeDir, "member-work") : originalMemberDirectory
+    if (nested) await rename(originalMemberDirectory, memberDirectory)
+    await writeFile(join(memberDirectory, "work.txt"), "Senpi member work")
+    const config = toTeamCoreConfig(settings, teamStorageBaseDir(stateDir))
+    await saveRuntimeState({ ...created.runtimeState, status,
+      members: created.runtimeState.members.map((member) => ({ ...member, worktreePath: relative(process.cwd(), memberDirectory) })),
+    }, config)
+
+    // when
+    const active = await listActiveTeams(config)
+
+    // then
+    expect(active).toEqual([])
+    await expect(stat(join(dirs.runtimeDir, "state.json"))).rejects.toThrow()
+    expect(await readFile(join(memberDirectory, "work.txt"), "utf8")).toBe("Senpi member work")
+    expect(created.runtimeState.projectDirectory).toBe(process.cwd())
+  })
+
   test("#given a member extension launch config #when a team member starts #then extension and durable identity env reach the manager spec", async () => {
     // given
     const stateDir = stateDirConfig(tempProjectDir())
