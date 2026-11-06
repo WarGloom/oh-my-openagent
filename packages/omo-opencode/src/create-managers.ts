@@ -24,6 +24,7 @@ import { showSkillSecurityNotice } from "./plugin/skill-security-notice"
 import {
   getV2BackgroundJobs,
   getV2BackgroundLifecycle,
+  getV2SessionAgentLookup,
   getV2SessionEnvironment,
   isV2PluginInput,
 } from "./v2/create-plugin-input"
@@ -76,6 +77,7 @@ export function createManagers(args: {
   const deps = { ...defaultCreateManagersDeps, ...args.deps }
   const nativeLifecycle = getV2BackgroundLifecycle(ctx)
   const nativeJobs = getV2BackgroundJobs(ctx)
+  const nativeSessionAgentLookup = getV2SessionAgentLookup(ctx)
   if (isV2PluginInput(ctx) && (!nativeLifecycle || !nativeJobs)) {
     throw new Error("Native background manager requires bound storage and jobs")
   }
@@ -222,6 +224,7 @@ export function createManagers(args: {
       backgroundManager,
       monitorManager,
       teamModeConfig: pluginConfig.team_mode,
+      ...(nativeSessionAgentLookup === undefined ? {} : { sessionAgentResolver: nativeSessionAgentLookup }),
     })
     tuiStateMirror.start()
   }

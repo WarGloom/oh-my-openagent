@@ -15,9 +15,15 @@ const sessionEnvironments = new WeakMap<
   PluginInput,
   (sessionID: string) => Promise<Readonly<Record<string, string>> | undefined>
 >()
+const sessionAgentLookups = new WeakMap<PluginInput, (sessionID: string) => Promise<string | null>>()
 
 export function getV2SessionEnvironment(input: PluginInput) {
   return sessionEnvironments.get(input)
+}
+
+/** Current selected agent from native session metadata; never reads the session transcript. */
+export function getV2SessionAgentLookup(input: PluginInput) {
+  return sessionAgentLookups.get(input)
 }
 
 export function bindV2BackgroundJobs(input: PluginInput, jobs: NativeBackgroundJobs): void {
@@ -71,6 +77,17 @@ export function createPluginInput(
   }
   v2Inputs.add(input)
   sessionEnvironments.set(input, (sessionID) => context.experimental.session.environment({ sessionID }))
+  // Lowercased like the V1 history resolver (hooks/atlas/session-last-agent.ts); a failed metadata
+  // read yields null so the sidebar keeps its session-id fallback instead of loading history.
+  sessionAgentLookups.set(input, async (sessionID) => {
+    try {
+      const info = await context.session.get({ sessionID })
+      return info.agent === undefined ? null : info.agent.toLowerCase()
+    } catch (error) {
+      if (error instanceof Error) return null
+      throw error
+    }
+  })
   attachNativeSkillState(input, context)
   if (backgroundLifecycle) backgroundLifecycles.set(input, backgroundLifecycle)
   return input
