@@ -9,6 +9,9 @@ import { LOOP_FRESH_MS } from "./constants"
 import { buildTuiRuntimeSnapshot } from "./snapshot-builder"
 import { TuiRuntimeSnapshotSchema } from "./snapshot-schema"
 import type { SessionAgentResolver } from "./snapshot-builder"
+import { createPluginInput, getV2SessionAgentLookup } from "../../v2/create-plugin-input"
+import { createFakePluginContext } from "../../v2/fake-plugin-context"
+import { createSessionTracker } from "../../v2/session-tracker"
 
 type StatusRow = { readonly type: string }
 type StatusMap = Record<string, StatusRow>
@@ -169,5 +172,56 @@ describe("buildTuiRuntimeSnapshot", () => {
     // then
     expect(snapshot.loop?.activeGoal).toBeNull()
     expect(JSON.stringify(snapshot)).not.toContain("sk-live")
+  })
+
+  it("#given the same busy session #when building with native metadata versus session history #then activeAgents match and the metadata path reads no history", async () => {
+    // given
+    const projectDir = makeTempDir("metadata-equivalence")
+    const statuses: StatusMap = { "ses-main": { type: "busy" }, "ses-idle": { type: "idle" } }
+    const history = [
+      { info: { agent: "build", time: { created: 1 } }, parts: [] },
+      { info: { agent: "Sisyphus", time: { created: 2 } }, parts: [] },
+      { info: { agent: "compaction", time: { created: 3 } }, parts: [{ type: "compaction" }] },
+    ]
+    const fake = createFakePluginContext({ sessionAgent: "Sisyphus" })
+    let contextCalls = 0
+    const context = {
+      ...fake.context,
+      session: {
+        ...fake.context.session,
+        context: async (input: { readonly sessionID: string }) => {
+          contextCalls += 1
+          return fake.context.session.context(input)
+        },
+      },
+    }
+    const metadataResolver = getV2SessionAgentLookup(createPluginInput(context, { tracker: createSessionTracker(), warn: () => {} }))
+    let metadataMessagesCalls = 0
+
+    // when
+    const fromHistory = await buildTuiRuntimeSnapshot({
+      projectDir,
+      client: { session: { status: async () => ({ data: statuses }), messages: async () => ({ data: history }) } },
+    })
+    const fromMetadata = await buildTuiRuntimeSnapshot({
+      projectDir,
+      client: {
+        session: {
+          status: async () => ({ data: statuses }),
+          messages: async () => {
+            metadataMessagesCalls += 1
+            return { data: history }
+          },
+        },
+      },
+      ...(metadataResolver === undefined ? {} : { sessionAgentResolver: metadataResolver }),
+    })
+
+    // then
+    expect(metadataResolver).toBeDefined()
+    expect(fromHistory.activeAgents).toEqual([{ name: "sisyphus", status: "busy" }])
+    expect(fromMetadata.activeAgents).toEqual(fromHistory.activeAgents)
+    expect(metadataMessagesCalls).toBe(0)
+    expect(contextCalls).toBe(0)
   })
 })
