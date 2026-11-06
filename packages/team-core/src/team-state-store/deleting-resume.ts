@@ -1,13 +1,12 @@
 import type { TeamModeConfig } from "../config"
 import type { RuntimeState } from "../types"
-import { cleanupMemberWorktrees, removeRuntimeDirectory } from "./runtime-cleanup"
+import { removeRuntimeDirectory } from "./runtime-cleanup"
 import { transitionRuntimeState } from "./store"
 
 export async function finishDeletingTeam(
   runtimeState: RuntimeState,
   config: TeamModeConfig,
 ): Promise<boolean> {
-  await cleanupMemberWorktrees(runtimeState)
   await transitionRuntimeState(runtimeState.teamRunId, (currentRuntimeState) => ({
     ...currentRuntimeState,
     status: "deleted",

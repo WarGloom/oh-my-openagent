@@ -10,14 +10,15 @@ export type NativeWorktreeDomain = {
 }
 
 export type NativeTeamWorktrees = {
+  readonly projectDirectory?: string
   readonly create: (directory: string) => Promise<NativeTeamWorktree>
   readonly inspect: (identity: NativeTeamWorktree) => Promise<NativeWorktreeStatus>
   readonly remove: (identity: NativeTeamWorktree) => Promise<void>
 }
 
-const owners = new WeakMap<object, NativeTeamWorktrees>()
+const owners = new WeakMap<object, NativeTeamWorktrees | undefined>()
 
-export function bindNativeTeamWorktrees(owner: object, worktrees: NativeTeamWorktrees): void {
+export function bindNativeTeamWorktrees(owner: object, worktrees: NativeTeamWorktrees | undefined): void {
   owners.set(owner, worktrees)
 }
 
@@ -25,28 +26,42 @@ export function getNativeTeamWorktrees(owner: object | undefined): NativeTeamWor
   return owner ? owners.get(owner) : undefined
 }
 
+export class NativeTeamWorktreeDomainUnavailableError extends Error {
+  constructor() {
+    super("Worktree members require the native V2 host worktree domain")
+    this.name = "NativeTeamWorktreeDomainUnavailableError"
+  }
+}
+
+export function requireNativeTeamWorktrees(owner: object): NativeTeamWorktrees {
+  const worktrees = getNativeTeamWorktrees(owner)
+  if (!worktrees) throw new NativeTeamWorktreeDomainUnavailableError()
+  return worktrees
+}
+
 export function createNativeTeamWorktrees(context: {
   readonly worktree?: NativeWorktreeDomain
   readonly location: { readonly directory: string; readonly project: { readonly id: string } }
-}): NativeTeamWorktrees {
+}): NativeTeamWorktrees | undefined {
+  const worktree = context.worktree
+  if (!worktree) return undefined
   return {
+    projectDirectory: context.location.directory,
     create: async (directory) => {
-      if (!context.worktree) throw new Error("Native team worktrees require the host worktree domain")
       const projectID = context.location.project.id
-      const created = await context.worktree.create({
+      const created = await worktree.create({
         projectID, from: context.location.directory, directory: path.dirname(directory), name: path.basename(directory),
       })
       return { projectID, directory: created.directory, sourceDirectory: context.location.directory }
     },
     inspect: (identity) => inspectNativeWorktree(identity.directory, identity.sourceDirectory ?? context.location.directory),
     remove: async (identity) => {
-      if (!context.worktree) throw new Error("Native team worktrees require the host worktree domain")
       const status = await inspectNativeWorktree(identity.directory, identity.sourceDirectory ?? context.location.directory)
       if (status.reason) throw new NativeWorktreeKeptError(status)
       if (!status.exists) return
-      const entries = await context.worktree.list({ projectID: identity.projectID })
+      const entries = await worktree.list({ projectID: identity.projectID })
       if (entries.some((entry) => entry.directory === identity.directory)) {
-        await context.worktree.remove({ projectID: identity.projectID, directory: identity.directory, force: false })
+        await worktree.remove({ projectID: identity.projectID, directory: identity.directory, force: false })
       } else {
         throw new NativeWorktreeKeptError({ ...status, reason: "worktree is absent from the native host registry" })
       }

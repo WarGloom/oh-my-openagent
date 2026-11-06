@@ -173,9 +173,6 @@ Snapshot date: 2026-08-31. Total shim exports found: 226.
 | `packages/omo-opencode/src/features/team-mode/team-tasklist/index.ts` | `@oh-my-opencode/team-core` |
 | `packages/omo-opencode/src/features/team-mode/team-tasklist/list.ts` | `@oh-my-opencode/team-core` |
 | `packages/omo-opencode/src/features/team-mode/team-tasklist/test-support.ts` | `@oh-my-opencode/team-core` |
-| `packages/omo-opencode/src/features/team-mode/team-worktree/cleanup.ts` | `@oh-my-opencode/team-core` |
-| `packages/omo-opencode/src/features/team-mode/team-worktree/index.ts` | `@oh-my-opencode/team-core` |
-| `packages/omo-opencode/src/features/team-mode/team-worktree/manager.ts` | `@oh-my-opencode/team-core` |
 | `packages/omo-opencode/src/features/team-mode/types.ts` | `@oh-my-opencode/team-core` |
 | `packages/omo-opencode/src/hooks/auto-slash-command/constants.ts` | `@oh-my-opencode/skills-loader-core` |
 | `packages/omo-opencode/src/hooks/auto-slash-command/detector.ts` | `@oh-my-opencode/skills-loader-core` |

@@ -1,7 +1,7 @@
 /// <reference types="bun-types" />
 
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test"
-import { mkdir, mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
@@ -53,6 +53,28 @@ describe("cleanupTeamRunResources", () => {
     mock.restore()
     clearTeamSessionRegistry()
     await Promise.all(temporaryDirectories.splice(0).map(async (directoryPath) => rm(directoryPath, { recursive: true, force: true })))
+  })
+
+  test("legacy rollback keeps and reports a plain member directory", async () => {
+    // given
+    const baseDir = await mkdtemp(path.join(tmpdir(), "cleanup-legacy-member-"))
+    temporaryDirectories.push(baseDir)
+    const teamRunId = "77777777-7777-4777-8777-777777777777"
+    const config = createConfig(baseDir)
+    await mkdir(path.join(baseDir, "runtime", teamRunId), { recursive: true })
+    await saveRuntimeState(createRuntimeState(teamRunId), config)
+    const worktreePath = path.join(baseDir, "legacy-member")
+    await mkdir(worktreePath)
+    await writeFile(path.join(worktreePath, "work.txt"), "member work")
+
+    // when
+    const report = await cleanupTeamRunResources({ teamRunId, config,
+      resources: [{ worktreePath }], bgMgr: createStubBgMgr(), createdLayout: false })
+
+    // then
+    expect(report.removedWorktrees).toEqual([])
+    expect(report.keptWorktrees).toMatchObject([{ directory: worktreePath, reason: "legacy-directory" }])
+    expect(await readFile(path.join(worktreePath, "work.txt"), "utf8")).toBe("member work")
   })
 
   test("unregisters every team-session-registry entry for the failed team so the gating hook cannot authorize stale participants", async () => {

@@ -244,34 +244,63 @@ describe("team-runtime shutdown", () => {
     ))).toBe(true)
   })
 
-  test("deletes team runtime resources after all non-lead members are approved", async () => {
+  for (const nested of [false, true])
+  test(`legacy-directory cleanup reports member work and deletes team state (nested=${nested})`, async () => {
     // given
     const fixture = await createFixture()
     temporaryDirectories.push(fixture.baseDir)
+    const runtimeStateDirectory = getRuntimeStateDir(resolveBaseDir(fixture.config), fixture.teamRunId)
+    if (nested) {
+      fixture.worktreePaths[0] = path.join(runtimeStateDirectory, "legacy-member")
+      await transitionRuntimeState(fixture.teamRunId, (state) => ({ ...state, members: state.members.map((member) =>
+        member.name === "member-a" ? { ...member, worktreePath: fixture.worktreePaths[0] } : member,
+      ) }), fixture.config)
+    }
     await updateMemberStatuses(fixture.teamRunId, fixture.config, {
       "member-a": "shutdown_approved",
       "member-b": "shutdown_approved",
     })
     await Promise.all(fixture.worktreePaths.map(async (worktreePath) => {
       await mkdir(worktreePath, { recursive: true })
+      await writeFile(path.join(worktreePath, "work.txt"), "member work")
     }))
     // when
     const result = await deleteTeam(fixture.teamRunId, fixture.config)
 
     // then
     expect(result.removedLayout).toBe(false)
-    expect(result.removedWorktrees.sort()).toEqual([...fixture.worktreePaths].sort())
-    await Promise.all(fixture.worktreePaths.map(async (worktreePath) => {
-      await access(worktreePath).then(
-        () => { throw new Error(`expected ${worktreePath} to be removed`) },
-        () => undefined,
-      )
-    }))
-    const runtimeStateDirectory = getRuntimeStateDir(resolveBaseDir(fixture.config), fixture.teamRunId)
-    await access(runtimeStateDirectory).then(
-      () => { throw new Error(`expected ${runtimeStateDirectory} to be removed`) },
-      () => undefined,
-    )
+    expect(result.removedWorktrees).toEqual([])
+    expect(result.keptWorktrees).toMatchObject(fixture.worktreePaths.map((directory, index) => ({
+      member: index === 0 ? "member-a" : "member-b", directory, reason: "legacy-directory",
+    })))
+    expect(await Promise.all(fixture.worktreePaths.map((directory) => readFile(path.join(directory, "work.txt"), "utf8")))).toEqual(["member work", "member work"])
+    await expect(loadRuntimeState(fixture.teamRunId, fixture.config)).rejects.toThrow()
+    if (!nested) await expect(access(runtimeStateDirectory)).rejects.toThrow()
+  })
+
+  for (const exists of [false, true])
+  test(`legacy reporting resolves relative member paths from the project (exists=${exists})`, async () => {
+    // given
+    const fixture = await createFixture()
+    temporaryDirectories.push(fixture.baseDir)
+    const directory = path.join(fixture.baseDir, "relative-member")
+    if (exists) {
+      await mkdir(directory)
+      await writeFile(path.join(directory, "work.txt"), "relative member work")
+    }
+    await transitionRuntimeState(fixture.teamRunId, (state) => ({ ...state, projectDirectory: fixture.baseDir,
+      members: state.members.map((member) => member.name === "member-a"
+        ? { ...member, status: "completed", worktreePath: "relative-member" }
+        : { ...member, status: "completed", worktreePath: undefined }),
+    }), fixture.config)
+
+    // when
+    const report = await deleteTeam(fixture.teamRunId, fixture.config)
+
+    // then
+    expect(report.keptWorktrees).toEqual(exists ? [{ directory, member: "member-a", exists: true, reason: "legacy-directory" }] : [])
+    if (exists) expect(await readFile(path.join(directory, "work.txt"), "utf8")).toBe("relative member work")
+    await expect(loadRuntimeState(fixture.teamRunId, fixture.config)).rejects.toThrow()
   })
 
   test("#given a team run is tracked for session cleanup #when deleteTeam succeeds #then it unregisters the run", async () => {
@@ -308,13 +337,9 @@ describe("team-runtime shutdown", () => {
 
     // then
     expect(result.removedLayout).toBe(false)
-    expect(result.removedWorktrees.sort()).toEqual([...fixture.worktreePaths].sort())
-    await Promise.all(fixture.worktreePaths.map(async (worktreePath) => {
-      await access(worktreePath).then(
-        () => { throw new Error(`expected ${worktreePath} to be removed`) },
-        () => undefined,
-      )
-    }))
+    expect(result.removedWorktrees).toEqual([])
+    expect(result.keptWorktrees).toMatchObject(fixture.worktreePaths.map((directory) => ({ directory, reason: "legacy-directory" })))
+    await Promise.all(fixture.worktreePaths.map((worktreePath) => access(worktreePath)))
     const runtimeStateDirectory = getRuntimeStateDir(resolveBaseDir(fixture.config), fixture.teamRunId)
     await access(runtimeStateDirectory).then(
       () => { throw new Error(`expected ${runtimeStateDirectory} to be removed`) },
@@ -378,7 +403,7 @@ describe("team-runtime shutdown", () => {
     )
   })
 
-  test("force removes lead member worktree if present", async () => {
+  test("force preserves a legacy lead worktree while deleting the team", async () => {
     // given
     const fixture = await createFixture()
     temporaryDirectories.push(fixture.baseDir)
@@ -402,11 +427,10 @@ describe("team-runtime shutdown", () => {
     const result = await deleteTeam(fixture.teamRunId, fixture.config, undefined, undefined, { force: true })
 
     // then
-    expect(result.removedWorktrees.sort()).toEqual([leadWorktreePath, ...fixture.worktreePaths].sort())
-    await access(leadWorktreePath).then(
-      () => { throw new Error(`expected ${leadWorktreePath} to be removed`) },
-      () => undefined,
-    )
+    expect(result.removedWorktrees).toEqual([])
+    expect(result.keptWorktrees).toMatchObject([{ member: "lead", directory: leadWorktreePath, reason: "legacy-directory" },
+      ...fixture.worktreePaths.map((directory) => ({ directory, reason: "legacy-directory" }))])
+    await access(leadWorktreePath)
   })
 
   test("force continues cleanup when removeTeamLayout throws", async () => {

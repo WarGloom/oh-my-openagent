@@ -198,6 +198,7 @@ export const RuntimeStateSchema = z.object({
   teamRunId: z.string().uuid(),
   teamName: z.string(),
   specSource: z.enum(["project", "user"]),
+  projectDirectory: z.string().optional(),
   createdAt: z.number().int().positive(),
   status: z.enum(RUNTIME_STATUSES),
   leadSessionId: z.string().optional(),

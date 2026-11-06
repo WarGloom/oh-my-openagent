@@ -12,7 +12,6 @@ import { activateTeamLayout } from "./activate-team-layout"
 import { cleanupTeamRunResources } from "./cleanup-team-run-resources"
 import { buildTeamRosterFromSpec } from "./member-prompt"
 import {
-  createMemberWorktree,
   provisionTeamMember,
   updateMemberInRuntimeState,
   type ProvisionedMemberResource,
@@ -21,7 +20,7 @@ import { shouldReuseCallerLeadSession } from "../resolve-caller-team-lead"
 import { sweepStaleTeamSessions } from "../team-layout-tmux/sweep-stale-team-sessions"
 import { registerTeamRunForSessionCleanup } from "./session-team-run-registry"
 import { assertNoUnresolvedTeamMembers, hasUnresolvedTeamMembers } from "./unresolved-team-members"
-import { getNativeTeamWorktrees } from "../../../v2/native-team-worktrees"
+import { requireNativeTeamWorktrees } from "../../../v2/native-team-worktrees"
 import type { KeptMemberWorktree } from "./shutdown-helpers"
 
 type CreateTeamRunOptions = {
@@ -80,6 +79,7 @@ export async function createTeamRun(
   tmuxMgr?: TmuxSessionManager,
   options?: CreateTeamRunOptions,
 ): Promise<RuntimeState> {
+  if (spec.members.some((member) => member.worktreePath)) requireNativeTeamWorktrees(bgMgr)
   const existingRuntime = await findExistingRuntime(spec, leadSessionId, config)
   if (existingRuntime) return existingRuntime
 
@@ -90,8 +90,8 @@ export async function createTeamRun(
   const baseDir = resolveBaseDir(config)
   await ensureBaseDirs(baseDir)
   const reusesCallerLeadSession = shouldReuseCallerLeadSession(spec, options?.callerAgentTypeId)
-    && !(getNativeTeamWorktrees(bgMgr) && spec.members.find((member) => member.name === spec.leadAgentId)?.worktreePath)
-  let runtimeState = await createRuntimeState(spec, leadSessionId, await resolveSpecSource(spec, ctx, config), config)
+    && !spec.members.find((member) => member.name === spec.leadAgentId)?.worktreePath
+  let runtimeState = await createRuntimeState(spec, leadSessionId, await resolveSpecSource(spec, ctx, config), config, ctx.directory)
   registerTeamRunForSessionCleanup(runtimeState.teamRunId)
   if (reusesCallerLeadSession && spec.leadAgentId) {
     const callerLeadSubagentType = options?.callerAgentTypeId
@@ -134,13 +134,6 @@ export async function createTeamRun(
 
         try {
           if (reusesCallerLeadSession && member.name === spec.leadAgentId) {
-            if (member.worktreePath) {
-              resource.worktreePath = await createMemberWorktree(member.worktreePath, ctx.directory)
-              await updateMemberInRuntimeState(runtimeState.teamRunId, member.name, (currentMember) => ({
-                ...currentMember,
-                worktreePath: resource.worktreePath,
-              }), config)
-            }
             continue
           }
 
@@ -188,6 +181,7 @@ export async function createTeamRun(
       bgMgr,
       tmuxMgr,
       createdLayout,
+      projectDirectory: ctx.directory,
     })
     const cause = error instanceof Error ? error : new Error(String(error))
     throw new TeamRunCreateError(`Failed to create team run '${spec.name}'`, cleanupReport, cause)

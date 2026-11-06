@@ -1,6 +1,6 @@
 import { isPlainRecord } from "@oh-my-opencode/utils/record-type-guard"
 import { randomUUID } from "node:crypto"
-import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises"
+import { mkdir, readFile, readdir, stat } from "node:fs/promises"
 import path from "node:path"
 
 import type { TeamModeConfig } from "../config"
@@ -10,6 +10,7 @@ import { getRuntimeStateDir, resolveBaseDir } from "../team-registry/paths"
 import { publishTeamRuntimeChange } from "./changes"
 import { atomicWrite, withLock } from "./locks"
 import { assertRosterWithinCapacity } from "./member-admission"
+import { getRuntimeWorktreePaths, removeProtectedRuntimeDirectory } from "./runtime-directory-removal"
 
 const STATE_FILE_NAME = "state.json"
 export const STALE_DELETING_TTL_MS = 60_000
@@ -43,12 +44,13 @@ function getStatePath(baseDir: string, teamRunId: string): string {
 }
 
 async function removeRuntimeDirectoryBestEffort(
-  baseDir: string,
-  teamRunId: string,
+  runtimeDirectory: string,
+  runtimeState: RuntimeState,
   reason: "deleted" | "failed" | "stale_deleting",
 ): Promise<void> {
+  const teamRunId = runtimeState.teamRunId
   try {
-    await rm(getRuntimeStateDir(baseDir, teamRunId), { recursive: true, force: true })
+    await removeProtectedRuntimeDirectory(runtimeDirectory, getRuntimeWorktreePaths(runtimeState))
     publishTeamRuntimeChange(teamRunId)
   } catch (error) {
     log("team runtime cleanup failed", {
@@ -126,6 +128,7 @@ export async function createRuntimeState(
   leadSessionId: string | undefined,
   specSource: "project" | "user",
   config: TeamModeConfig,
+  projectDirectory?: string,
 ): Promise<RuntimeState> {
   assertRosterWithinCapacity(spec.members.length, config.max_members, spec.name)
   const baseDir = resolveBaseDir(config)
@@ -136,6 +139,7 @@ export async function createRuntimeState(
     teamRunId,
     teamName: spec.name,
     specSource,
+    projectDirectory,
     createdAt: Date.now(),
     status: "creating",
     leadSessionId,
@@ -240,12 +244,12 @@ export async function listActiveTeams(
         const runtimeState = await loadRuntimeState(runtimeEntry.name, config)
 
         if (runtimeState.status === "deleted" || runtimeState.status === "failed") {
-          await removeRuntimeDirectoryBestEffort(baseDir, runtimeEntry.name, runtimeState.status)
+          await removeRuntimeDirectoryBestEffort(getRuntimeStateDir(baseDir, runtimeEntry.name), runtimeState, runtimeState.status)
           continue
         }
 
         if (runtimeState.status === "deleting" && await isDeletingRuntimeStale(baseDir, runtimeEntry.name, now)) {
-          await removeRuntimeDirectoryBestEffort(baseDir, runtimeEntry.name, "stale_deleting")
+          await removeRuntimeDirectoryBestEffort(getRuntimeStateDir(baseDir, runtimeEntry.name), runtimeState, "stale_deleting")
           continue
         }
 

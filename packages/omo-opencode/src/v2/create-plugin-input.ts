@@ -83,7 +83,7 @@ export function createPluginInput(context: V2PluginContext, deps: ClientFacadeDe
   }
   v2Inputs.add(input)
   nativeContexts.set(input, context)
-  if (context.worktree) bindNativeTeamWorktrees(input.client, createNativeTeamWorktrees(context))
+  bindNativeTeamWorktrees(input.client, createNativeTeamWorktrees(context))
   sessionEnvironments.set(input, (sessionID) => context.experimental.session.environment({ sessionID }))
   // Lowercased like the V1 history resolver (hooks/atlas/session-last-agent.ts); a failed metadata
   // read yields null so the sidebar keeps its session-id fallback instead of loading history.

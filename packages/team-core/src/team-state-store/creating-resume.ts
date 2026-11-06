@@ -1,6 +1,5 @@
 import type { TeamModeConfig } from "../config"
 import type { RuntimeState } from "../types"
-import { cleanupMemberWorktrees } from "./runtime-cleanup"
 import { transitionRuntimeState } from "./store"
 
 export function isCreatingStateStuck(
@@ -19,5 +18,4 @@ export async function markStuckCreatingTeamFailed(
     ...currentRuntimeState,
     status: "failed",
   }), config)
-  await cleanupMemberWorktrees(runtimeState)
 }

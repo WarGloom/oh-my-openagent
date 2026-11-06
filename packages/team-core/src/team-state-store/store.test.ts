@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { randomUUID } from "node:crypto"
 import { existsSync, readFileSync } from "node:fs"
-import { mkdtemp, mkdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, readFile, realpath, rm, stat, symlink, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
@@ -95,6 +95,67 @@ describe("runtime state store", () => {
     await Promise.all(temporaryDirectories.splice(0).map(async (directoryPath) => {
       await rm(directoryPath, { recursive: true, force: true })
     }))
+  })
+
+  for (const status of ["failed", "deleted", "deleting"] as const)
+  test(`discovery preserves nested current and archived member work for ${status} runtimes`, async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    temporaryDirectories.push(baseDir)
+    const config = createConfig(baseDir)
+    const state = await createRuntimeState(createSpec(), "lead-session", "project", config)
+    const runtimeDirectory = path.join(baseDir, "runtime", state.teamRunId)
+    const currentDirectory = path.join(runtimeDirectory, "current-member")
+    const archivedDirectory = path.join(runtimeDirectory, "archived-member")
+    await Promise.all([currentDirectory, archivedDirectory].map(async (directory) => {
+      await mkdir(directory)
+      await writeFile(path.join(directory, "work.txt"), "member work")
+    }))
+    await saveRuntimeState({ ...state, status,
+      members: state.members.map((member) => member.name === "worker" ? { ...member, worktreePath: currentDirectory } : member),
+      removedMembers: [{ member: { name: "archived", agentType: "general-purpose", status: "completed", pendingInjectedMessageIds: [],
+        nativeWorktree: { projectID: "native-project", directory: archivedDirectory } }, operationId: randomUUID(), removedAt: Date.now(), requeuedTaskIds: [] }],
+    }, config)
+    if (status === "deleting") {
+      const stale = new Date(Date.now() - STALE_DELETING_TTL_MS - 1000)
+      await utimes(path.join(runtimeDirectory, "state.json"), stale, stale)
+    }
+
+    // when
+    const teams = await listActiveTeams(config)
+
+    // then
+    expect(teams).toEqual([])
+    expect(await Promise.all([currentDirectory, archivedDirectory].map((directory) => readFile(path.join(directory, "work.txt"), "utf8")))).toEqual(["member work", "member work"])
+    expect(existsSync(path.join(runtimeDirectory, "state.json"))).toBe(false)
+  })
+
+  for (const relative of [false, true])
+  test(`explicit cleanup preserves member paths through a symlinked base (relative=${relative})`, async () => {
+    // given
+    const projectDirectory = await createTemporaryBaseDir()
+    temporaryDirectories.push(projectDirectory)
+    const realBase = path.join(projectDirectory, "data")
+    const linkedBase = path.join(projectDirectory, ".omo")
+    await mkdir(realBase)
+    await symlink(realBase, linkedBase, "dir")
+    const config = createConfig(linkedBase)
+    const state = await createRuntimeState(createSpec(), "lead-session", "project", config)
+    const directory = path.join(realBase, "runtime", state.teamRunId, "member")
+    await mkdir(directory)
+    await writeFile(path.join(directory, "work.txt"), "symlinked member work")
+    const worktreePath = relative ? path.relative(projectDirectory, directory) : await realpath(directory)
+    await saveRuntimeState({ ...state, projectDirectory,
+      members: state.members.map((member) => member.name === "worker" ? { ...member, worktreePath } : member),
+    }, config)
+
+    // when
+    const removed = await removeRuntimeDirectory(state.teamRunId, config)
+
+    // then
+    expect(removed).toBe(true)
+    expect(await readFile(path.join(directory, "work.txt"), "utf8")).toBe("symlinked member work")
+    expect(existsSync(path.join(linkedBase, "runtime", state.teamRunId, "state.json"))).toBe(false)
   })
 
   test("createRuntimeState persists creating state with computed bounds", async () => {

@@ -345,8 +345,7 @@ describe("createTeamRun", () => {
     }
   })
 
-  for (const native of [false, true])
-  test(`removes all created worktrees when spawn fails after worktree creation (${native ? "native" : "legacy"})`, async () => {
+  test("removes clean native worktrees when spawn fails after worktree creation", async () => {
     // given
     const baseDir = await mkdtemp(path.join(tmpdir(), "team-runtime-worktree-"))
     temporaryDirectories.push(baseDir)
@@ -358,7 +357,7 @@ describe("createTeamRun", () => {
     })
     const spec = createSpec(2, true)
     const nativeRemovals: string[] = []
-    if (native) bindNativeTeamWorktrees(manager, {
+    bindNativeTeamWorktrees(manager, {
       create: async (directory) => ({ projectID: "native-project", directory }),
       inspect: async (identity) => ({ directory: identity.directory, exists: true }),
       remove: async (identity) => { nativeRemovals.push(identity.directory) },
@@ -376,7 +375,7 @@ describe("createTeamRun", () => {
     // then
     expect(await pathExists(path.resolve(baseDir, "./worktrees/member-1"))).toBe(false)
     expect(await pathExists(path.resolve(baseDir, "./worktrees/member-2"))).toBe(false)
-    expect(nativeRemovals.sort()).toEqual(native ? [1, 2].map((index) => path.join(baseDir, `worktrees/member-${index}`)) : [])
+    expect(nativeRemovals.sort()).toEqual([1, 2].map((index) => path.join(baseDir, `worktrees/member-${index}`)))
   })
 
   test("passes the resolved worktree path as cwd to launch", async () => {
@@ -386,6 +385,11 @@ describe("createTeamRun", () => {
     let launchCount = 0
     const { manager, launchMock } = createManager(baseDir, async () => ({ id: `task-${++launchCount}`, sessionId: `session-${launchCount}`, status: "running" } as BackgroundTask))
     const spec = createSpec(2, true)
+    bindNativeTeamWorktrees(manager, {
+      create: async (directory) => ({ projectID: "native-project", directory }),
+      inspect: async (identity) => ({ directory: identity.directory, exists: true }),
+      remove: async () => undefined,
+    })
 
     // when
     await createTeamRun(spec, "lead-session", createContext(baseDir, manager), createConfig(baseDir), manager)
@@ -436,27 +440,39 @@ describe("createTeamRun", () => {
     expect(removed).toEqual([identity])
   })
 
-  test("preserves the directory route and caller-lead reuse with an absent native worktree domain", async () => {
+  for (const withWorktree of [true, false])
+  test(`native-only creation without a host domain (${withWorktree ? "worktree refuses before writes or launch" : "no worktree still works"})`, async () => {
     // given
     const baseDir = await mkdtemp(path.join(tmpdir(), "team-without-native-worktree-"))
     temporaryDirectories.push(baseDir)
-    const { manager, launchMock } = createManager(baseDir, async () => ({ id: "legacy-worker", sessionId: "legacy-session", status: "running", parentSessionId: "lead-session", parentMessageId: "create", description: "worker", prompt: "work", agent: "sisyphus" }))
+    const { manager, launchMock } = createManager(baseDir, async () => ({ id: "worker-task", sessionId: "worker-session", status: "running", parentSessionId: "lead-session", parentMessageId: "create", description: "worker", prompt: "work", agent: "sisyphus" }))
     const fake = createFakePluginContext({ directory: baseDir })
     const input = createPluginInput(fake.context, { tracker: createSessionTracker(), warn: () => {} })
     const nativeWorktrees = getNativeTeamWorktrees(input.client)
     if (nativeWorktrees) bindNativeTeamWorktrees(manager, nativeWorktrees)
-    const spec = createSpec(2, true)
-    spec.members[0] = { name: "member-1", kind: "subagent_type", subagent_type: "sisyphus", worktreePath: "./worktrees/member-1", backendType: "in-process", isActive: true }
+    const spec = createSpec(2)
+    spec.members[0] = { name: "member-1", kind: "subagent_type", subagent_type: "sisyphus", backendType: "in-process", isActive: true }
+    const worker = spec.members[1]
+    if (!worker) throw new Error("missing worker fixture")
+    if (withWorktree) spec.members[1] = { ...worker, worktreePath: "./worktrees/member-2" }
+    const before = await readdir(baseDir)
 
     // when
-    const state = await createTeamRun(spec, "lead-session", createContext(baseDir, manager), createConfig(baseDir), manager, undefined, { callerAgentTypeId: "sisyphus" })
+    const creation = createTeamRun(spec, "lead-session", createContext(baseDir, manager), createConfig(baseDir), manager, undefined, { callerAgentTypeId: "sisyphus" })
 
     // then
-    expect(state.members.map((member) => member.sessionId)).toEqual(["lead-session", "legacy-session"])
-    expect(launchMock.mock.calls.map(([launch]) => launch.cwd)).toEqual([path.join(baseDir, "worktrees/member-2")])
-    expect(state.members.map((member) => member.nativeWorktree)).toEqual([undefined, undefined])
-    expect(await pathExists(path.join(baseDir, "worktrees/member-1"))).toBe(true)
-    expect(await pathExists(path.join(baseDir, "worktrees/member-2"))).toBe(true)
+    if (withWorktree) {
+      await expect(creation).rejects.toThrow("native V2 host worktree domain")
+      expect(launchMock).not.toHaveBeenCalled()
+      expect(await readdir(baseDir)).toEqual(before)
+      expect(lookupTeamSession("lead-session")).toBeUndefined()
+    } else {
+      const state = await creation
+      expect(state.members.map((member) => member.sessionId)).toEqual(["lead-session", "worker-session"])
+      expect(launchMock.mock.calls.map(([launch]) => launch.cwd)).toEqual([undefined])
+      expect(state.members.map((member) => member.nativeWorktree)).toEqual([undefined, undefined])
+      expect(state.members.map((member) => member.worktreePath)).toEqual([undefined, undefined])
+    }
   })
 
   test("omits cwd when the member has no worktree", async () => {
