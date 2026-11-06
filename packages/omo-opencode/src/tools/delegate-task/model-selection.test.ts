@@ -5,6 +5,52 @@ import { resolveModelForDelegateTask } from "./model-selection"
 import * as connectedProvidersCache from "../../shared/connected-providers-cache"
 
 describe("resolveModelForDelegateTask", () => {
+	describe("quota exclusions", () => {
+		const input = {
+			userModel: "openai/primary",
+			userFallbackModels: ["openai/backup high"],
+			availableModels: new Set(["openai/primary", "openai/backup"]),
+		}
+
+		test("selects a configured fallback when the primary is quota-blocked", () => {
+			expect(resolveModelForDelegateTask(input, new Set(["openai/primary"]))).toEqual({
+				model: "openai/backup", variant: "high", userFallbackIndex: 0, matchedFallback: true,
+			})
+		})
+
+		test("preserves the baseline when negative knowledge cannot select an alternative", () => {
+			const baseline = { model: "openai/primary" }
+			for (const [candidate, blocked] of [
+				[input, undefined],
+				[input, new Set<string>()],
+				[input, new Set(["other/primary"])],
+				[input, new Set(["openai/primary", "openai/backup"])],
+				[{ ...input, availableModels: new Set<string>() }, new Set(["openai/primary"])],
+				[{ ...input, userFallbackModels: [] }, new Set(["openai/primary"])],
+			] as const) {
+				expect(resolveModelForDelegateTask(candidate, blocked)).toEqual(baseline)
+			}
+		})
+
+		test("does not escape to a blocked system default when no configured alternative matches", () => {
+			const result = resolveModelForDelegateTask({
+				categoryDefaultModel: "openai/primary",
+				availableModels: new Set(["openai/primary", "openai/unrelated"]),
+				systemDefaultModel: "openai/primary",
+			}, new Set(["openai/primary"]))
+			expect(result).toEqual({ model: "openai/primary" })
+		})
+
+		test("preserves an explicitly configured category model over fallback candidates", () => {
+			expect(resolveModelForDelegateTask({
+				categoryDefaultModel: "openai/primary",
+				isUserConfiguredCategoryModel: true,
+				userFallbackModels: ["openai/backup"],
+				availableModels: input.availableModels,
+			}, new Set(["openai/primary"]))).toEqual({ model: "openai/primary" })
+		})
+	})
+
 	let hasConnectedProvidersSpy: ReturnType<typeof spyOn> | undefined
 	let hasProviderModelsSpy: ReturnType<typeof spyOn> | undefined
 

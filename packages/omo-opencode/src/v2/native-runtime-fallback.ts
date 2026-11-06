@@ -61,6 +61,32 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
   const controller = controllers.get(hooks)
   if (!controller) return undefined
   let disposed = false
+  controller.setCurrentConnections(async () => {
+    const connections = new Map<string, string>()
+    try {
+      const providers = (await context.provider.list()).data
+      await Promise.all(providers.map(async (provider) => {
+        try {
+          const connection = await context.integration.connection?.active(provider.integrationID ?? provider.id)
+          if (!connection) return
+          switch (connection.type) {
+            case "credential": connections.set(provider.id, `credential:${connection.id}`); break
+            case "env": connections.set(provider.id, `env:${connection.name}`); break
+          }
+        } catch {
+          log("[runtime-fallback] Could not read active connection identity")
+        }
+      }))
+    } catch {
+      log("[runtime-fallback] Could not read provider identities")
+    }
+    return connections
+  })
+  const quotaRegistrations = await Promise.all(["openai", "anthropic"].map((providerID) =>
+    context.session.hook("http.response", (event) => {
+      if (!disposed) controller.observeQuota(event)
+    }, { providerID }),
+  ))
   const watchdog = createNativeProgressWatchdog({
     context, timeouts: controller.timeouts,
     warn: (error) => log("[runtime-fallback] Native watchdog failed", { error: error instanceof Error ? error.message : String(error) }),
@@ -225,6 +251,7 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
       await watchdogRegistration.dispose()
       await promptRegistration.dispose()
       controller.dispose()
+      for (const quotaRegistration of quotaRegistrations) await quotaRegistration.dispose()
       await registration.dispose()
     },
   }

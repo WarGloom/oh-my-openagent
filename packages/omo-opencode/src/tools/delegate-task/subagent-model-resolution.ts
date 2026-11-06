@@ -1,4 +1,5 @@
 import type { AgentOverrides } from "../../config/schema"
+import { getNativeUnavailableModels } from "../../hooks/runtime-fallback/native-controller"
 import type { DelegatedModelConfig } from "./types"
 import { getAgentConfigKey } from "../../shared/agent-display-names"
 import { fuzzyMatchModel } from "../../shared/model-availability"
@@ -75,7 +76,7 @@ export async function resolveSubagentModel(
       fallbackChain: agentRequirement?.fallbackChain,
       availableModels,
       systemDefaultModel: undefined,
-    })
+    }, await getNativeUnavailableModels(executorCtx.client))
 
     const resolutionSkipped = resolution && "skipped" in resolution
 

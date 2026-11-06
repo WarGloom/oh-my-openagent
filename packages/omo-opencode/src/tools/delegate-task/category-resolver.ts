@@ -1,4 +1,5 @@
 import type { ModelFallbackInfo } from "../../features/task-toast-manager/types"
+import { getNativeUnavailableModels } from "../../hooks/runtime-fallback/native-controller"
 import type { DelegateTaskArgs } from "./types"
 import type { ExecutorContext } from "./executor-types"
 import type { FallbackEntry } from "../../shared/model-requirements"
@@ -255,7 +256,7 @@ Available categories: ${allCategoryNames}`)
       fallbackChain: requirement.fallbackChain,
       availableModels,
       systemDefaultModel,
-    })
+    }, await getNativeUnavailableModels(client))
 
     if (resolution && "skipped" in resolution) {
       isModelResolutionSkipped = true

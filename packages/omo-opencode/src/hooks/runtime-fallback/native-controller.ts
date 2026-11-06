@@ -17,8 +17,14 @@ import { resolveFallbackBootstrapModel } from "./fallback-bootstrap-model"
 import type { HookDeps } from "./types"
 import { forgetNativeRecovery, nativeRecoveryState } from "../../v2/native-recovery-state"
 import { showFallbackToast } from "./fallback-retry-dispatcher"
+import { createNativeQuotaSignals } from "./native-quota-signals"
 
 const nativeClients = new WeakSet<object>()
+const nativeQuotaClients = new WeakMap<object, () => Promise<ReadonlySet<string>>>()
+
+export async function getNativeUnavailableModels(client: object): Promise<ReadonlySet<string> | undefined> {
+  return nativeQuotaClients.get(client)?.()
+}
 
 export function hasNativeRuntimeFallback(client: object): boolean {
   return nativeClients.has(client)
@@ -55,6 +61,16 @@ function nativeModelChain(config: Partial<FallbackModelObject> & { fallback_mode
 
 export function createNativeFallbackController(deps: HookDeps) {
   let active = false
+  const quota = createNativeQuotaSignals()
+  let currentConnections: () => Promise<ReadonlyMap<string, string>> = async () => new Map()
+  const unavailable = async (): Promise<ReadonlySet<string>> => {
+    const connections = await currentConnections()
+    const models = new Set<string>()
+    for (const [provider, key] of connections) {
+      for (const model of quota.unavailable(key)) if (model.startsWith(`${provider}/`)) models.add(model)
+    }
+    return models
+  }
   const promptParamSessions = nativeRecoveryState.promptParams
   // Native sessions can start outside OMO's model resolver; retain their untried configured primary.
   const categories = Object.fromEntries(Object.entries(deps.pluginConfig?.categories ?? {}).map(([key, value]) => [
@@ -76,11 +92,16 @@ export function createNativeFallbackController(deps: HookDeps) {
     activate() {
       active = true
       nativeClients.add(deps.ctx.client)
+      nativeQuotaClients.set(deps.ctx.client, unavailable)
     },
     dispose() {
       active = false
       nativeClients.delete(deps.ctx.client)
+      if (nativeQuotaClients.get(deps.ctx.client) === unavailable) nativeQuotaClients.delete(deps.ctx.client)
+      quota.clear()
     },
+    observeQuota: quota.observe,
+    setCurrentConnections: (read: () => Promise<ReadonlyMap<string, string>>) => { currentConnections = read },
     forget(sessionID: string) {
       deps.sessionStates.delete(sessionID)
       deps.sessionLastAccess.delete(sessionID)
@@ -101,6 +122,8 @@ export function createNativeFallbackController(deps: HookDeps) {
       const settings = resolveRuntimeModelSettings(input.sessionID, input.agent ? getAgentConfigKey(input.agent) : undefined, pluginConfig)
       const payload = buildRetryModelPayload(state.originalModel, settings)
       if (!payload) return
+      const blocked = await unavailable()
+      if (nativeRecoveryState.inFlight.has(input.sessionID) || nativeRecoveryState.states.get(input.sessionID) !== state || blocked.has(`${payload.model.providerID}/${payload.model.modelID}`)) return
       nativeRecoveryState.inFlight.add(input.sessionID)
       try {
         await apply(payload)
@@ -115,12 +138,16 @@ export function createNativeFallbackController(deps: HookDeps) {
     },
     async recover(input: NativeFallbackInput, apply: (model: RetryModel) => Promise<RetryModel | "declined" | "duplicate" | void>): Promise<boolean> {
       if (!deps.config.enabled || (input.reason !== "timeout" && !isRetryableError(input.error, deps.config.retry_on_errors))) return false
+      const blocked = await unavailable()
       if (deps.sessionRetryInFlight.has(input.sessionID) || nativeRecoveryState.inFlight.has(input.sessionID)) return false
       const agent = input.agent ? getAgentConfigKey(input.agent) : undefined
-      const entries = (getRawFallbackModels(input.sessionID, agent, pluginConfig) ?? []).filter((entry) => {
+      const allEntries = getRawFallbackModels(input.sessionID, agent, pluginConfig) ?? []
+      const entries = allEntries.filter((entry) => {
         const parsed = parseModelString(typeof entry === "string" ? entry : entry.model)
-        if (!parsed || !input.isAvailable) return true
-        if (input.isAvailable({ providerID: parsed.providerID, modelID: transformModelForProvider(parsed.providerID, parsed.modelID) })) return true
+        if (!parsed) return true
+        const modelID = transformModelForProvider(parsed.providerID, parsed.modelID)
+        if (blocked.has(`${parsed.providerID}/${modelID}`)) return false
+        if (!input.isAvailable || input.isAvailable({ providerID: parsed.providerID, modelID })) return true
         log(`[${HOOK_NAME}] Skipping fallback model unavailable on the host`, { sessionID: input.sessionID, model: typeof entry === "string" ? entry : entry.model })
         return false
       })
@@ -138,8 +165,13 @@ export function createNativeFallbackController(deps: HookDeps) {
       nativeRecoveryState.states.set(input.sessionID, state)
       deps.sessionLastAccess.set(input.sessionID, Date.now())
       const snapshot = snapshotFallbackState(state)
+      if (state.fallbackIndex >= 0) {
+        const currentIndex = allEntries.findIndex((entry) => areRuntimeModelsEquivalent(typeof entry === "string" ? entry : entry.model, state.currentModel))
+        if (currentIndex >= 0) state.fallbackIndex = allEntries.slice(0, currentIndex + 1).filter((entry) => entries.includes(entry)).length - 1
+      }
       const selected = prepareFallback(input.sessionID, state, models, deps.config)
       if (!selected.success || !selected.newModel) {
+        restoreFallbackState(state, snapshot)
         input.onExhausted?.()
         return false
       }

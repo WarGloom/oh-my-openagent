@@ -238,6 +238,7 @@ export type V2IntegrationEditor = {
 export type V2IntegrationDomain = {
   readonly transform: (callback: (editor: V2IntegrationEditor) => void) => Promise<V2Registration>
   readonly reload: () => Promise<void>
+  readonly connection?: { readonly active: (integrationID: string) => Promise<{ readonly type: "credential"; readonly id: string } | { readonly type: "env"; readonly name: string } | undefined> }
 }
 
 /** A mutable 2.x agent as the agent transform hands it out. */
@@ -454,8 +455,28 @@ export type V2ModelRequestHookEvent = {
   readonly agent: string
   readonly model: V2ModelRef
   readonly kind: V2SessionRequestKind
+  readonly connectionKey?: string
   baseURL?: string
   readonly headers: Record<string, string>
+}
+
+export type V2HttpRequestHookEvent = {
+  readonly sessionID: string
+  readonly agent: string
+  readonly model: V2ModelRef
+  readonly kind: V2SessionRequestKind
+  readonly connectionKey?: string
+  request: Request
+}
+
+export type V2HttpResponseHookEvent = {
+  readonly sessionID: string
+  readonly agent: string
+  readonly model: V2ModelRef
+  readonly kind: V2SessionRequestKind
+  readonly connectionKey?: string
+  readonly request: Request
+  response: Response
 }
 
 export type V2CompactionResult = { summary: string } & Record<string, unknown>
@@ -531,6 +552,8 @@ export type V2SessionDomain = {
     (name: "prompt", callback: (event: V2PromptHookEvent) => Promise<void> | void): Promise<V2Registration>
     (name: "context", callback: (event: V2ContextHookEvent) => Promise<void> | void): Promise<V2Registration>
     (name: "model.request", callback: (event: V2ModelRequestHookEvent) => Promise<void> | void): Promise<V2Registration>
+    (name: "http.request", callback: (event: V2HttpRequestHookEvent) => Promise<void> | void, options?: { readonly providerID?: string }): Promise<V2Registration>
+    (name: "http.response", callback: (event: V2HttpResponseHookEvent) => Promise<void> | void, options?: { readonly providerID?: string }): Promise<V2Registration>
     (name: "compaction", callback: (event: V2CompactionHookEvent) => Promise<void> | void): Promise<V2Registration>
     (name: "experimental.compaction.continue", callback: (event: V2CompactionContinueEvent) => Promise<void> | void): Promise<V2Registration>
     (name: "retry", callback: (event: V2RetryHookEvent) => Promise<void> | void): Promise<V2Registration>
