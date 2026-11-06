@@ -1,3 +1,5 @@
+export { publishTeamRuntimeChange, subscribeTeamRuntimeChanges } from "./changes"
+export type { TeamRuntimeChangeListener } from "./changes"
 export {
   InvalidTransitionError,
   RuntimeStateError,

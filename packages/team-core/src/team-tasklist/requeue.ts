@@ -2,6 +2,7 @@ import type { TeamModeConfig } from "../config"
 import type { MemberRemoval } from "../types"
 import { TaskSchema } from "../types"
 import { getTaskClaimLockPath, getTaskFilePath, resolveBaseDir } from "../team-registry"
+import { publishTeamRuntimeChange } from "../team-state-store/changes"
 import { atomicWrite, withLock } from "../team-state-store/locks"
 import { loadRuntimeState } from "../team-state-store/store"
 import { getTaskRemovalMetadata, REMOVAL_METADATA_KEY, TaskRemovalHoldError } from "./dependencies"
@@ -64,6 +65,7 @@ export async function requeueMemberTasks(input: MemberTaskRequeueInput): Promise
           },
         })
         await atomicWrite(getTaskFilePath(base, input.teamRunId, task.id), `${JSON.stringify(updated, null, 2)}\n`)
+        publishTeamRuntimeChange(input.teamRunId)
         return true
       },
       { ownerTag: `member-removal:${input.removal.operationId}` },

@@ -2,6 +2,7 @@ import { access, mkdir } from "node:fs/promises"
 
 import type { TeamModeConfig } from "../config"
 import { getTaskClaimLockPath, getTaskClaimsDir, getTaskFilePath, resolveBaseDir } from "../team-registry"
+import { publishTeamRuntimeChange } from "../team-state-store/changes"
 import { atomicWrite, detectStaleLock, reapStaleLock, withLock } from "../team-state-store/locks"
 import { TaskSchema } from "../types"
 import type { Task } from "../types"
@@ -95,6 +96,7 @@ export async function claimTask(
       })
 
       await atomicWrite(taskPath, `${JSON.stringify(updatedTask, null, 2)}\n`)
+      publishTeamRuntimeChange(teamRunId)
       return updatedTask
     },
     { ownerTag: memberName, staleAfterMs: CLAIM_STALE_AFTER_MS },

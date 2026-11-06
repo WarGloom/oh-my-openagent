@@ -1,5 +1,6 @@
 /// <reference types="bun-types" />
 import { expect, spyOn, test } from "bun:test"
+import { subscribeTeamRuntimeChanges } from "../team-state-store/changes"
 import { saveRuntimeState, transitionRuntimeState } from "../team-state-store/store"
 import * as locks from "../team-state-store/locks"
 import { getTaskClaimLockPath, getTaskFilePath, resolveBaseDir } from "../team-registry"
@@ -118,7 +119,7 @@ test("requeue leaves terminal, other-owned and unowned pending task bytes unchan
   }
 })
 
-test("requeue reconciles a partial write without duplicating audit on retry", async () => {
+test("requeue reconciles a partial write without duplicating audit on retry and notifies only committed writes", async () => {
   // given
   const f = await fixture()
   const write = locks.atomicWrite
@@ -133,17 +134,24 @@ test("requeue reconciles a partial write without duplicating audit on retry", as
     if (p === faultPath) throw new Error("controlled task write failure")
     return write(p, content, deps)
   })
+  const notified: string[] = []
+  const unsubscribe = subscribeTeamRuntimeChanges((teamRunId) => {
+    notified.push(teamRunId)
+  })
   try {
     // when
     await expect(requeueMemberTasks(f)).rejects.toThrow("controlled task write failure")
     const first = await getTask(f.teamRunId, tasks[0]?.id ?? "missing", f.config)
     expect(first.status).toBe("pending")
+    expect(notified).toEqual([f.teamRunId])
     fault.mockRestore()
     const ids = await requeueMemberTasks(f)
     // then
     expect(ids).toEqual(tasks.map((t) => t.id))
     expect(await getTask(f.teamRunId, first.id, f.config)).toEqual(first)
+    expect(notified).toEqual([f.teamRunId, f.teamRunId])
   } finally {
+    unsubscribe()
     fault.mockRestore()
     await f.cleanup()
   }

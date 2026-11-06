@@ -6,6 +6,7 @@ import { V2UnsupportedOperationError } from "./unsupported-operation-error"
 import type { V2BackgroundLifecycle } from "./background-lifecycle"
 import type { NativeBackgroundJobs } from "../features/background-agent/native-lifecycle"
 import { attachNativeSkillState } from "./native-skill-state"
+import type { DashboardOwners } from "./dashboard-projection"
 
 type V1Shell = PluginInput["$"]
 const v2Inputs = new WeakSet<PluginInput>()
@@ -16,6 +17,17 @@ const sessionEnvironments = new WeakMap<
   (sessionID: string) => Promise<Readonly<Record<string, string>> | undefined>
 >()
 const sessionAgentLookups = new WeakMap<PluginInput, (sessionID: string) => Promise<string | null>>()
+const nativeContexts = new WeakMap<PluginInput, V2PluginContext>()
+const dashboardOwners = new WeakMap<V2PluginContext, DashboardOwners>()
+
+export function bindV2DashboardOwners(input: PluginInput, owners: DashboardOwners): void {
+  const context = nativeContexts.get(input)
+  if (context) dashboardOwners.set(context, owners)
+}
+
+export function getV2DashboardOwners(context: V2PluginContext): DashboardOwners | undefined {
+  return dashboardOwners.get(context)
+}
 
 export function getV2SessionEnvironment(input: PluginInput) {
   return sessionEnvironments.get(input)
@@ -76,6 +88,7 @@ export function createPluginInput(
     $: resolveShell(),
   }
   v2Inputs.add(input)
+  nativeContexts.set(input, context)
   sessionEnvironments.set(input, (sessionID) => context.experimental.session.environment({ sessionID }))
   // Lowercased like the V1 history resolver (hooks/atlas/session-last-agent.ts); a failed metadata
   // read yields null so the sidebar keeps its session-id fallback instead of loading history.
