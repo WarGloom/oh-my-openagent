@@ -74,8 +74,8 @@ export function createCoreTools(args: {
     agentOverrides: pluginConfig.agents,
     disabledAgents: pluginConfig.disabled_agents,
     loadCurrentModelConfig: () => {
-      const current = loadPluginConfig(ctx.directory, process.env)
-      return { agents: current.agents, categories: current.categories, jev_routing: current.jev_routing }
+      const current = isV2PluginInput(ctx) ? pluginConfig : loadPluginConfig(ctx.directory, process.env)
+      return { agents: current.agents && { ...current.agents }, categories: current.categories && { ...current.categories }, jev_routing: current.jev_routing }
     },
     gitMasterConfig: pluginConfig.git_master,
     sisyphusJuniorModel: getSisyphusJuniorModelOverride(pluginConfig.agents?.["sisyphus-junior"]),

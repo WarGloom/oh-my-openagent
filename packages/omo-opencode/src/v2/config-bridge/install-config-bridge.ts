@@ -11,6 +11,7 @@ import { buildConfigSnapshot } from "./snapshot"
 import { registerNativeCommandBefore } from "./native-command-before"
 import { applyProviderVariants, refreshProviderVariants } from "./refresh-provider-variants"
 import { launchCommandSubtask } from "./command-subtasks"
+import { getModelConfigReload } from "../model-config-reload"
 
 export type ConfigHook = (config: Record<string, unknown>) => Promise<void>
 
@@ -70,6 +71,7 @@ export async function installConfigBridge(
 
   const runOnce = async (): Promise<void> => {
     try {
+      getModelConfigReload(configHook)?.reload()
       const snapshot = await buildConfigSnapshot(context, owned)
       await configHook(snapshot.config)
       // The 1.x hook adds OpenGateway only with a credential. On 2.x the host's integration connection
@@ -101,7 +103,16 @@ export async function installConfigBridge(
     }
   }
   let queue: Promise<void> = Promise.resolve()
-  const refresh = (): Promise<void> => (queue = queue.then(runOnce))
+  let pending = false
+  const refresh = (): Promise<void> => {
+    if (pending) return queue
+    pending = true
+    return queue = queue.then(async () => {
+      pending = false
+      await runOnce()
+    })
+  }
+  const stopModelWatch = getModelConfigReload(configHook)?.watch(() => { void refresh() })
 
   await refresh()
 
@@ -137,6 +148,8 @@ export async function installConfigBridge(
   return async () => {
     abort.abort()
     clearTimeout(timer)
+    stopModelWatch?.()
+    await queue
     await commandBefore?.dispose()
     await integrationRegistration.dispose()
     await modelRegistration.dispose()

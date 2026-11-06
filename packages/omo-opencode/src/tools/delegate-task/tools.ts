@@ -112,13 +112,21 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
     async execute(args, toolContext) {
       const ctx = toolContext as ToolContextWithMetadata
       ctx.abort?.throwIfAborted()
+      const currentModelConfig = options.loadCurrentModelConfig?.()
+      const agentOverrides = { ...(currentModelConfig === undefined ? options.agentOverrides : currentModelConfig.agents) }
+      const modelOptions = {
+        ...options,
+        agentOverrides,
+        userCategories: { ...(currentModelConfig === undefined ? options.userCategories : currentModelConfig.categories) },
+        jevRouting: currentModelConfig === undefined ? options.jevRouting : currentModelConfig.jev_routing,
+        sisyphusJuniorModel: currentModelConfig === undefined ? options.sisyphusJuniorModel : agentOverrides["sisyphus-junior"]?.model,
+      }
       const delegateTaskArgs = await prepareDelegateTaskArgs(args, ctx)
       if (!delegateTaskArgs.task_id && !delegateTaskArgs.category && delegateTaskArgs.subagent_type) {
-        const current = options.loadCurrentModelConfig?.()
-        const config = current?.jev_routing ?? options.jevRouting
+        const config = modelOptions.jevRouting
         const alias = delegateTaskArgs.subagent_type
         if (config?.agent_ladders && Object.hasOwn(config.agent_ladders, alias)) {
-          const context = { config, client: options.client, directory: options.directory, categories: current?.categories ?? options.userCategories, agentOverrides: current?.agents ?? options.agentOverrides, disabledAgents: options.disabledAgents, signal: ctx.abort }
+          const context = { config, client: options.client, directory: options.directory, categories: modelOptions.userCategories, agentOverrides, disabledAgents: options.disabledAgents, signal: ctx.abort }
           const chosen = await selectAgentWithJev(alias, delegateTaskArgs.prompt, { ...context, modelRouting: delegateTaskArgs.model_routing })
           if (!chosen) return `Unknown agent: "${alias}".`
           delegateTaskArgs.subagent_type = chosen
@@ -165,11 +173,11 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
 
       if (delegateTaskArgs.task_id) {
         ctx.abort?.throwIfAborted()
-        if (options.manager.nativeJobs) return executeNativeDelegate({ args: delegateTaskArgs, ctx, executor: options, parent: parentContext, system: continuationSystemContent })
+        if (options.manager.nativeJobs) return executeNativeDelegate({ args: delegateTaskArgs, ctx, executor: modelOptions, parent: parentContext, system: continuationSystemContent })
         if (runInBackground) {
-          return executeBackgroundContinuation(delegateTaskArgs, ctx, options, parentContext, continuationSystemContent)
+          return executeBackgroundContinuation(delegateTaskArgs, ctx, modelOptions, parentContext, continuationSystemContent)
         }
-        return executeSyncContinuation(delegateTaskArgs, ctx, options, parentContext, undefined, continuationSystemContent)
+        return executeSyncContinuation(delegateTaskArgs, ctx, modelOptions, parentContext, undefined, continuationSystemContent)
       }
 
       if (!delegateTaskArgs.category && !delegateTaskArgs.subagent_type) {
@@ -189,10 +197,6 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
         ? `${parentContext.model.providerID}/${parentContext.model.modelID}`
         : undefined
 
-      const currentModelConfig = options.loadCurrentModelConfig?.()
-      const modelOptions = currentModelConfig === undefined
-        ? options
-        : { ...options, userCategories: currentModelConfig.categories, agentOverrides: currentModelConfig.agents, jevRouting: currentModelConfig.jev_routing }
       const routingOptions = { ...modelOptions, abortSignal: ctx.abort }
 
       let agentToUse: string
@@ -243,8 +247,8 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
             availableSkills,
             nativeSkillInfos,
           })
-          if (options.manager.nativeJobs) return executeNativeDelegate({ args: { ...delegateTaskArgs, run_in_background: true }, ctx, executor: options, parent: parentContext, agent: agentToUse, model: categoryModel, system: systemContent, fallbackChain })
-          return executeUnstableAgentTask(delegateTaskArgs, ctx, options, parentContext, agentToUse, categoryModel, systemContent, actualModel, fallbackChain)
+          if (options.manager.nativeJobs) return executeNativeDelegate({ args: { ...delegateTaskArgs, run_in_background: true }, ctx, executor: modelOptions, parent: parentContext, agent: agentToUse, model: categoryModel, system: systemContent, fallbackChain })
+          return executeUnstableAgentTask(delegateTaskArgs, ctx, modelOptions, parentContext, agentToUse, categoryModel, systemContent, actualModel, fallbackChain)
         }
       } else {
         const resolution = await resolveSubagentExecution(delegateTaskArgs, modelOptions, parentContext.agent, categoryExamples, { defaultModel: systemDefaultModel ?? inheritedModel })
@@ -270,13 +274,13 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
 
       ctx.abort?.throwIfAborted()
 
-      if (options.manager.nativeJobs) return executeNativeDelegate({ args: delegateTaskArgs, ctx, executor: options, parent: parentContext, agent: agentToUse, model: categoryModel, system: systemContent, fallbackChain })
+      if (options.manager.nativeJobs) return executeNativeDelegate({ args: delegateTaskArgs, ctx, executor: modelOptions, parent: parentContext, agent: agentToUse, model: categoryModel, system: systemContent, fallbackChain })
 
       if (runInBackground) {
-        return executeBackgroundTask(delegateTaskArgs, ctx, options, parentContext, agentToUse, categoryModel, systemContent, fallbackChain)
+        return executeBackgroundTask(delegateTaskArgs, ctx, modelOptions, parentContext, agentToUse, categoryModel, systemContent, fallbackChain)
       }
 
-      return executeSyncTask(delegateTaskArgs, ctx, options, parentContext, agentToUse, categoryModel, systemContent, modelInfo, fallbackChain)
+      return executeSyncTask(delegateTaskArgs, ctx, modelOptions, parentContext, agentToUse, categoryModel, systemContent, modelInfo, fallbackChain)
     },
   })
 }

@@ -26,7 +26,7 @@ export function createTeamModeToolsRecord(args: {
       {
         userCategories: pluginConfig.categories,
         jevRouting: pluginConfig.jev_routing,
-        sisyphusJuniorModel: getSisyphusJuniorModelOverride(pluginConfig.agents?.["sisyphus-junior"]),
+        get sisyphusJuniorModel() { return getSisyphusJuniorModelOverride(pluginConfig.agents?.["sisyphus-junior"]) },
         agentOverrides: pluginConfig.agents,
         claudeCodeAgentsEnabled: pluginConfig.claude_code?.agents ?? true,
         disabledAgents: pluginConfig.disabled_agents,
@@ -39,7 +39,7 @@ export function createTeamModeToolsRecord(args: {
       {
         userCategories: pluginConfig.categories,
         jevRouting: pluginConfig.jev_routing,
-        sisyphusJuniorModel: getSisyphusJuniorModelOverride(pluginConfig.agents?.["sisyphus-junior"]),
+        get sisyphusJuniorModel() { return getSisyphusJuniorModelOverride(pluginConfig.agents?.["sisyphus-junior"]) },
         agentOverrides: pluginConfig.agents,
         disabledAgents: pluginConfig.disabled_agents,
       },

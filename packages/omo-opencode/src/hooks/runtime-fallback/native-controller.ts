@@ -73,18 +73,25 @@ export function createNativeFallbackController(deps: HookDeps) {
   }
   const promptParamSessions = nativeRecoveryState.promptParams
   // Native sessions can start outside OMO's model resolver; retain their untried configured primary.
-  const categories = Object.fromEntries(Object.entries(deps.pluginConfig?.categories ?? {}).map(([key, value]) => [
-    key, { ...value, fallback_models: nativeModelChain(value) },
-  ]))
-  const pluginConfig = deps.pluginConfig && {
-    ...deps.pluginConfig,
-    agents: Object.fromEntries(Object.entries(deps.pluginConfig.agents ?? {}).map(([key, value]) => [
-      key, value && { ...value, fallback_models: nativeModelChain({ ...value, fallback_models: value.fallback_models ?? value.models ?? (value.category ? categories[value.category]?.fallback_models : undefined) }) },
-    ])),
-    categories,
+  const snapshots = new Map<string, HookDeps["pluginConfig"]>()
+  const capture = (sessionID: string) => {
+    if (snapshots.has(sessionID)) return snapshots.get(sessionID)
+    const categories = Object.fromEntries(Object.entries(deps.pluginConfig?.categories ?? {}).map(([key, value]) => [
+      key, { ...value, fallback_models: nativeModelChain(value) },
+    ]))
+    const config = deps.pluginConfig && {
+      ...deps.pluginConfig,
+      agents: Object.fromEntries(Object.entries(deps.pluginConfig.agents ?? {}).map(([key, value]) => [
+        key, value && { ...value, fallback_models: nativeModelChain({ ...value, fallback_models: value.fallback_models ?? value.models ?? (value.category ? categories[value.category]?.fallback_models : undefined) }) },
+      ])),
+      categories,
+    }
+    snapshots.set(sessionID, config)
+    return config
   }
 
   return {
+    capture: (sessionID: string): void => { capture(sessionID) },
     get enabled() { return deps.config.enabled },
     get retryOnErrors() { return deps.config.retry_on_errors },
     get timeouts() { return { firstProgressMs: deps.config.first_progress_timeout_seconds * 1000, stallMs: deps.config.stall_timeout_seconds * 1000, hardMs: deps.config.hard_timeout_seconds * 1000 } },
@@ -99,10 +106,12 @@ export function createNativeFallbackController(deps: HookDeps) {
       nativeClients.delete(deps.ctx.client)
       if (nativeQuotaClients.get(deps.ctx.client) === unavailable) nativeQuotaClients.delete(deps.ctx.client)
       quota.clear()
+      snapshots.clear()
     },
     observeQuota: quota.observe,
     setCurrentConnections: (read: () => Promise<ReadonlyMap<string, string>>) => { currentConnections = read },
     forget(sessionID: string) {
+      snapshots.delete(sessionID)
       deps.sessionStates.delete(sessionID)
       deps.sessionLastAccess.delete(sessionID)
       if (promptParamSessions.delete(sessionID)) clearSessionPromptParams(sessionID)
@@ -119,7 +128,7 @@ export function createNativeFallbackController(deps: HookDeps) {
         return
       }
       if (!deps.config.restore_primary_after_cooldown || areRuntimeModelsEquivalent(state.currentModel, state.originalModel) || state.pendingFallbackModel || isModelInCooldown(state.originalModel, state, deps.config.cooldown_seconds)) return
-      const settings = resolveRuntimeModelSettings(input.sessionID, input.agent ? getAgentConfigKey(input.agent) : undefined, pluginConfig)
+      const settings = resolveRuntimeModelSettings(input.sessionID, input.agent ? getAgentConfigKey(input.agent) : undefined, capture(input.sessionID))
       const payload = buildRetryModelPayload(state.originalModel, settings)
       if (!payload) return
       const blocked = await unavailable()
@@ -141,6 +150,7 @@ export function createNativeFallbackController(deps: HookDeps) {
       const blocked = await unavailable()
       if (deps.sessionRetryInFlight.has(input.sessionID) || nativeRecoveryState.inFlight.has(input.sessionID)) return false
       const agent = input.agent ? getAgentConfigKey(input.agent) : undefined
+      const pluginConfig = capture(input.sessionID)
       const allEntries = getRawFallbackModels(input.sessionID, agent, pluginConfig) ?? []
       const entries = allEntries.filter((entry) => {
         const parsed = parseModelString(typeof entry === "string" ? entry : entry.model)
