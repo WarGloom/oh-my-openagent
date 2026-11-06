@@ -467,6 +467,7 @@ describe("createTeamRun", () => {
       if (native)
         bindNativeTeamWorktrees(manager, {
           create: async (directory) => ({ projectID: "native-project", directory }),
+          inspect: async (identity) => ({ directory: identity.directory, exists: true }),
           remove: async (identity) => {
             nativeRemovals.push(identity.directory)
           },
@@ -550,6 +551,7 @@ describe("createTeamRun", () => {
       const removed: (typeof identity)[] = []
       bindNativeTeamWorktrees(manager, {
         create: async () => identity,
+        inspect: async (identity) => ({ directory: identity.directory, exists: true }),
         remove: async (value) => {
           removed.push(value)
         },

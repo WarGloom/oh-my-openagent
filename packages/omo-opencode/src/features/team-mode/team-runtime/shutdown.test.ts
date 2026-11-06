@@ -1,7 +1,7 @@
 /// <reference types="bun-types" />
 
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test"
-import { access, mkdir, rm } from "node:fs/promises"
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 
 import { sendMessage } from "../team-mailbox/send"
@@ -9,7 +9,13 @@ import { getRuntimeStateDir, resolveBaseDir } from "../team-registry/paths"
 import * as runtimeStateStore from "../team-state-store/store"
 import { loadRuntimeState, transitionRuntimeState } from "../team-state-store/store"
 import type { DeleteTeamDeps } from "./delete-team"
-import { createFixture, createTestMessage, readInboxMessages, updateMemberStatuses } from "./shutdown-test-fixtures"
+import {
+  createFixture,
+  createNativeFixture,
+  createTestMessage,
+  readInboxMessages,
+  updateMemberStatuses,
+} from "./shutdown-test-fixtures"
 import {
   clearSessionTeamRunCleanupRegistry,
   getSessionCreatedTeamRunIds,
@@ -17,6 +23,8 @@ import {
 } from "./session-cleanup"
 
 const { approveShutdown, deleteTeam, rejectShutdown, requestShutdownOfMember } = await import("./shutdown")
+import { removeMemberWorktrees } from "./shutdown-helpers"
+import { bindNativeTeamWorktrees } from "../../../v2/native-team-worktrees"
 
 describe("team-runtime shutdown", () => {
   const temporaryDirectories: string[] = []
@@ -29,6 +37,157 @@ describe("team-runtime shutdown", () => {
     )
     clearSessionTeamRunCleanupRegistry()
     mock.restore()
+  })
+
+  for (const condition of [
+    "dirty",
+    "dirty-tracked",
+    "dirty-ignored",
+    "unintegrated",
+    "local-branch",
+    "tag-only",
+    "remote-only",
+    "old-integrated",
+    "old-merged",
+    "old-unintegrated",
+    "foreign-source",
+    "integrated",
+  ] as const) {
+    test(`native cleanup preserves work unless clean and integrated (${condition})`, async () => {
+      // given
+      const fixture = await createNativeFixture()
+      temporaryDirectories.push(fixture.baseDir)
+      const directory = fixture.worktreePaths[0]
+      if (!directory) throw new Error("missing member worktree")
+      if (condition === "dirty") await writeFile(path.join(directory, "member-work.txt"), "unfinished work")
+      if (condition === "dirty-tracked") {
+        const tracked = (await fixture.git(directory, "ls-files")).split("\n")[0]
+        if (!tracked) throw new Error("missing tracked fixture file")
+        await writeFile(path.join(directory, tracked), "unfinished tracked work")
+      }
+      if (condition === "dirty-ignored") {
+        const exclude = await fixture.git(directory, "rev-parse", "--git-path", "info/exclude")
+        await writeFile(exclude, "ignored-work.txt\n")
+        await writeFile(path.join(directory, "ignored-work.txt"), "unfinished ignored work")
+      }
+      if (
+        ["unintegrated", "local-branch", "tag-only", "remote-only", "old-merged", "old-unintegrated"].includes(
+          condition,
+        )
+      ) {
+        await fixture.git(directory, "switch", "--detach", fixture.next)
+      }
+      if (condition === "local-branch") {
+        await fixture.git(
+          directory,
+          "-c",
+          "user.name=Fixture",
+          "-c",
+          "user.email=fixture@example.invalid",
+          "commit",
+          "--quiet",
+          "--no-gpg-sign",
+          "--allow-empty",
+          "-m",
+          "saved descendant",
+        )
+        await fixture.git(directory, "branch", "saved-member", "HEAD")
+        await fixture.git(directory, "switch", "--detach", fixture.next)
+      }
+      if (condition === "tag-only") await fixture.git(directory, "tag", "member-backup", fixture.next)
+      if (condition === "remote-only")
+        await fixture.git(directory, "update-ref", "refs/remotes/origin/member", fixture.next)
+      if (condition === "old-merged") await fixture.git(fixture.directory, "merge", fixture.next)
+      const foreignSource = path.join(fixture.baseDir, "foreign-source")
+      if (condition === "foreign-source") {
+        await mkdir(foreignSource)
+        await fixture.git(foreignSource, "init", "--quiet")
+        await fixture.git(
+          foreignSource,
+          "-c",
+          "user.name=Fixture",
+          "-c",
+          "user.email=fixture@example.invalid",
+          "commit",
+          "--quiet",
+          "--no-gpg-sign",
+          "--allow-empty",
+          "-m",
+          "foreign repository",
+        )
+      }
+      const state = await loadRuntimeState(fixture.teamRunId, fixture.config)
+      const member = state.members[1]
+      if (!member) throw new Error("missing member")
+      const resource =
+        condition.startsWith("old-") && member.nativeWorktree
+          ? { ...member, nativeWorktree: { projectID: member.nativeWorktree.projectID, directory } }
+          : condition === "foreign-source" && member.nativeWorktree
+            ? { ...member, nativeWorktree: { ...member.nativeWorktree, sourceDirectory: foreignSource } }
+            : member
+
+      // when
+      const result = await removeMemberWorktrees([resource], fixture.owner)
+
+      // then
+      if (["integrated", "dirty-ignored", "local-branch", "old-integrated", "old-merged"].includes(condition)) {
+        expect(fixture.removals).toEqual([false])
+        expect(result.keptWorktrees).toEqual([])
+        await expect(access(directory)).rejects.toThrow()
+      } else {
+        expect(fixture.removals).toEqual([])
+        await access(directory)
+        const expectedReason = condition.startsWith("dirty")
+          ? "dirty"
+          : condition === "foreign-source"
+            ? "inspection failed"
+            : "unintegrated"
+        expect(result).toMatchObject({
+          keptWorktrees: [{ directory, reason: expect.stringContaining(expectedReason) }],
+        })
+        if (condition === "unintegrated")
+          expect(result).toMatchObject({
+            keptWorktrees: [{ sha: fixture.next, shortSha: fixture.next.slice(0, 12), ahead: 1 }],
+          })
+      }
+    })
+  }
+
+  test("native preflight refuses before changing team state or removing any worktree even with force", async () => {
+    // given
+    const fixture = await createNativeFixture()
+    temporaryDirectories.push(fixture.baseDir)
+    const directory = fixture.worktreePaths[1]
+    if (!directory) throw new Error("missing member worktree")
+    await fixture.git(directory, "switch", "--detach", fixture.next)
+    const statePath = path.join(getRuntimeStateDir(fixture.baseDir, fixture.teamRunId), "state.json")
+    const before = await readFile(statePath, "utf8")
+    const manager = {
+      getTasksByParentSession: () => [
+        {
+          id: "member-task",
+          parentSessionId: "lead-session",
+          parentMessageId: "create",
+          description: "member work",
+          prompt: "work",
+          agent: "atlas",
+          status: "running" as const,
+          teamRunId: fixture.teamRunId,
+        },
+      ],
+      cancelTask: mock(async () => true),
+    }
+    bindNativeTeamWorktrees(manager, fixture.worktrees)
+
+    // when
+    const deletion = deleteTeam(fixture.teamRunId, fixture.config, undefined, manager, { force: true })
+
+    // then
+    await expect(deletion).rejects.toThrow("member-b")
+    expect(await readFile(statePath, "utf8")).toBe(before)
+    expect(manager.cancelTask).not.toHaveBeenCalled()
+    expect(fixture.removals).toEqual([])
+    await Promise.all(fixture.worktreePaths.map((entry) => access(entry)))
   })
 
   test("refuses team deletion while non-lead members are still active", async () => {

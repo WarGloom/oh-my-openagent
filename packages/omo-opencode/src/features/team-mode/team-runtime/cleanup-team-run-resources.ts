@@ -41,6 +41,7 @@ export async function cleanupTeamRunResources(args: {
     cancelledTaskIds: [],
     removedLayout: false,
     removedWorktrees: [],
+    keptWorktrees: [],
     errors: [],
   }
 
@@ -61,7 +62,9 @@ export async function cleanupTeamRunResources(args: {
 
     if (resource.worktreePath || resource.nativeWorktree) {
       try {
-        cleanupReport.removedWorktrees.push(...(await removeMemberWorktrees([resource], args.bgMgr)))
+        const result = await removeMemberWorktrees([resource], args.bgMgr)
+        cleanupReport.removedWorktrees.push(...result.removedWorktrees)
+        cleanupReport.keptWorktrees?.push(...result.keptWorktrees)
       } catch (cleanupError) {
         cleanupReport.errors.push(`worktree ${resource.worktreePath}: ${normalizeError(cleanupError).message}`)
       }
