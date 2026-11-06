@@ -2,9 +2,9 @@ import type { MonitorStatusInjectorHook } from "../hooks/monitor-status-injector
 import { log } from "../shared/logger"
 import type { V2PluginContext, V2Registration } from "./context-types"
 import { toV1ToolName } from "./tool-names"
+import { getV2DashboardOwners } from "./create-plugin-input"
 
 const MONITOR_STATUS_KEY = "omo.monitor-status"
-const MONITOR_STATUS_POLL_MS = 1_000
 const MAX_INSTRUCTION_VALUE_BYTES = 256 * 1024
 const TRUNCATED_SUFFIX = " ... [truncated; use monitor_list for all] - call monitor_stop to stop"
 
@@ -57,13 +57,13 @@ export async function registerNativeMonitorStatus(
     const name = toV1ToolName(event.tool)
     if (name === "monitor_start" || name === "monitor_stop") await refresh(event.sessionID)
   })
-  const timer = setInterval(() => {
-    for (const sessionID of installed.keys()) void refresh(sessionID)
-  }, MONITOR_STATUS_POLL_MS)
+  const off = getV2DashboardOwners(context)?.monitorManager?.onVisibleChange((sessionID) => {
+    if (seen.has(sessionID)) void refresh(sessionID)
+  })
   return {
     dispose: async () => {
       disposed = true
-      clearInterval(timer)
+      off?.()
       await tool.dispose()
       await request.dispose()
       await queue
@@ -74,6 +74,8 @@ export async function registerNativeMonitorStatus(
           log("[v2] failed to remove monitor status entry", { sessionID, error })
         }
       }
+      installed.clear()
+      seen.clear()
     },
   }
 }

@@ -24,7 +24,7 @@ import { markServerRunningInProcess } from "./shared/tmux/tmux-utils/server-heal
 import type { ModelFallbackControllerAccessor } from "./hooks/model-fallback"
 import { subscribeSkillDiagnostics } from "@oh-my-opencode/skills-loader-core/opencode-skill-loader"
 import { showSkillSecurityNotice } from "./plugin/skill-security-notice"
-import { getV2BackgroundJobs, getV2BackgroundLifecycle, getV2SessionAgentLookup, getV2SessionEnvironment, isV2PluginInput } from "./v2/create-plugin-input"
+import { bindV2DashboardOwners, getV2BackgroundJobs, getV2BackgroundLifecycle, getV2SessionAgentLookup, getV2SessionEnvironment, isV2PluginInput } from "./v2/create-plugin-input"
 
 type CreateManagersDeps = {
   BackgroundManagerClass: typeof BackgroundManager
@@ -202,8 +202,9 @@ export function createManagers(args: {
   })
 
   nativeLifecycle?.connect(backgroundManager)
+  bindV2DashboardOwners(ctx, { backgroundManager, monitorManager, teamModeConfig: pluginConfig.team_mode })
 
-  if (pluginConfig.tui?.sidebar?.enabled !== false) {
+  if (!isV2PluginInput(ctx) && pluginConfig.tui?.sidebar?.enabled !== false) {
     tuiStateMirror = new deps.TuiStateMirrorClass({
       client: ctx.client,
       projectDir: ctx.directory,

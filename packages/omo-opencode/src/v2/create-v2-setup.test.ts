@@ -148,7 +148,6 @@ describe("createV2Setup", () => {
         },
       })
       await setup({ ...fake.context, options: {} })
-      await until(() => fake.activeSubscribers() === 1)
 
       // when
       fake.emit({ type: "session.execution.started", data: { sessionID: "ses_1" } })
@@ -169,7 +168,6 @@ describe("createV2Setup", () => {
       const fake = createFakePluginContext()
       const setup = createV2Setup({ serverPlugin: async () => ({}) as Hooks })
       const cleanup = await setup({ ...fake.context, options: {} })
-      await until(() => fake.activeSubscribers() === 1)
 
       // when
       await cleanup()

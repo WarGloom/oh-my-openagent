@@ -3,6 +3,7 @@ import path from "node:path"
 
 import type { TeamModeConfig } from "../config"
 import { getTaskFilePath, getTasksDir, resolveBaseDir } from "../team-registry"
+import { publishTeamRuntimeChange } from "../team-state-store/changes"
 import { atomicWrite, withLock } from "../team-state-store/locks"
 import { TaskSchema } from "../types"
 import type { Task } from "../types"
@@ -49,6 +50,7 @@ export async function createTask(
       getTaskFilePath(baseDirectory, teamRunId, task.id),
       `${JSON.stringify(task, null, 2)}\n`,
     )
+    publishTeamRuntimeChange(teamRunId)
 
     return task
   }, { ownerTag: `create-task:${teamRunId}` })

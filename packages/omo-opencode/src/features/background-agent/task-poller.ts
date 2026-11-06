@@ -31,6 +31,7 @@ export function pruneStaleTasksAndNotifications(args: {
   tasks: Map<string, BackgroundTask>
   notifications: Map<string, BackgroundTask[]>
   onTaskPruned: (taskId: string, task: BackgroundTask, errorMessage: string) => void
+  onTaskRemoved?: (task: BackgroundTask) => void
   taskTtlMs?: number
   taskCleanupDelayMs?: number
   sessionStatuses?: SessionStatusMap
@@ -68,7 +69,7 @@ export function pruneStaleTasksAndNotifications(args: {
       if (age <= terminalTtl) continue
 
       removeTaskToastTracking(taskId)
-      tasks.delete(taskId)
+      if (tasks.delete(taskId)) args.onTaskRemoved?.(task)
       continue
     }
 

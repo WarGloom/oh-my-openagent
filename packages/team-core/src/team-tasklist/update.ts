@@ -1,5 +1,6 @@
 import type { TeamModeConfig } from "../config"
 import { getTaskClaimLockPath, getTaskFilePath, resolveBaseDir } from "../team-registry"
+import { publishTeamRuntimeChange } from "../team-state-store/changes"
 import { atomicWrite, withLock } from "../team-state-store/locks"
 import { TaskSchema } from "../types"
 import type { Task } from "../types"
@@ -65,6 +66,7 @@ export async function updateTaskStatus(
     if (newStatus !== "deleted" && refreshedTask.owner !== memberName) throw new CrossOwnerUpdateError()
     const updatedTask = TaskSchema.parse({ ...refreshedTask, status: newStatus, updatedAt: Date.now() })
     await atomicWrite(getTaskFilePath(resolveBaseDir(config), teamRunId, taskId), `${JSON.stringify(updatedTask, null, 2)}\n`)
+    publishTeamRuntimeChange(teamRunId)
     return updatedTask
   }, { ownerTag: memberName })
 }

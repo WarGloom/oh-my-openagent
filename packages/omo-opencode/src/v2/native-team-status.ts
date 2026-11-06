@@ -2,9 +2,9 @@ import type { TeamModeStatusInjectorHook } from "../hooks/team-mode-status-injec
 import { log } from "../shared/logger"
 import type { V2PluginContext, V2Registration } from "./context-types"
 import { toV1ToolName } from "./tool-names"
+import { subscribeTeamRuntimeChanges } from "@oh-my-opencode/team-core/team-state-store"
 
 const TEAM_STATUS_KEY = "omo.team-status"
-const TEAM_STATUS_POLL_MS = 1_000
 
 export async function registerNativeTeamStatus(
   context: V2PluginContext,
@@ -12,7 +12,7 @@ export async function registerNativeTeamStatus(
 ): Promise<V2Registration> {
   const sessions = new Map<string, boolean>()
   let disposed = false
-  let polling = false
+  let queue = Promise.resolve()
   const prompt = await context.session.hook("prompt", async (event) => {
     const status = hook.nativeStatusForPrompt([{ type: "text", text: event.prompt.text }])
     if (status === undefined) return
@@ -31,10 +31,9 @@ export async function registerNativeTeamStatus(
     await context.session.instructions.entry.remove({ sessionID: event.sessionID, key: TEAM_STATUS_KEY })
     sessions.delete(event.sessionID)
   })
-  const timer = setInterval(() => {
-    if (disposed || polling) return
-    polling = true
-    void (async () => {
+  const off = subscribeTeamRuntimeChanges(() => {
+    queue = queue.then(async () => {
+      if (disposed) return
       for (const [sessionID, observed] of sessions) {
         const active = await hook.nativeHasActiveTeam(sessionID)
         if (disposed || !sessions.has(sessionID)) continue
@@ -44,14 +43,18 @@ export async function registerNativeTeamStatus(
           sessions.delete(sessionID)
         }
       }
-    })().catch((error: unknown) => log("[v2] failed to refresh team status", { error })).finally(() => { polling = false })
-  }, TEAM_STATUS_POLL_MS)
+    }).catch((error: unknown) => {
+      if (!(error instanceof Error)) throw error
+      log("[v2] failed to refresh team status", { error })
+    })
+  })
   return {
     dispose: async () => {
       disposed = true
-      clearInterval(timer)
+      off()
       await tool.dispose()
       await prompt.dispose()
+      await queue
       for (const sessionID of sessions.keys()) {
         try {
           await context.session.instructions.entry.remove({ sessionID, key: TEAM_STATUS_KEY })
@@ -59,6 +62,7 @@ export async function registerNativeTeamStatus(
           log("[v2] failed to remove team status entry", { sessionID, error })
         }
       }
+      sessions.clear()
     },
   }
 }

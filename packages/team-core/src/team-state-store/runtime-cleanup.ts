@@ -3,6 +3,7 @@ import { rm, stat } from "node:fs/promises"
 import type { TeamModeConfig } from "../config"
 import { getRuntimeStateDir, resolveBaseDir } from "../team-registry/paths"
 import type { RuntimeState } from "../types"
+import { publishTeamRuntimeChange } from "./changes"
 
 function isEnoentError(error: unknown): boolean {
   return typeof error === "object"
@@ -24,6 +25,7 @@ async function runtimeDirectoryExists(teamRunId: string, config: TeamModeConfig)
 export async function removeRuntimeDirectory(teamRunId: string, config: TeamModeConfig): Promise<boolean> {
   if (!(await runtimeDirectoryExists(teamRunId, config))) return false
   await rm(getRuntimeStateDir(resolveBaseDir(config), teamRunId), { recursive: true, force: true })
+  publishTeamRuntimeChange(teamRunId)
   return true
 }
 

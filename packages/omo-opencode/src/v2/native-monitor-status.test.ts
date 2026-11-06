@@ -5,22 +5,29 @@ import { createMonitorStatusInjectorHook } from "../hooks/monitor-status-injecto
 import { createMessagesTransformHandler } from "../plugin/messages-transform"
 import { createFakePluginContext } from "./fake-plugin-context"
 import { installSessionHooks } from "./session-hooks"
+import { bindV2DashboardOwners, createPluginInput } from "./create-plugin-input"
+import { createSessionTracker } from "./session-tracker"
 
 it("#given a V2 monitor #when it starts and stops #then the instruction entry replaces bridge injection", async () => {
   // given
   const counters: MonitorCounters = { totalLines: 0, matchedLines: 0, unmatchedLines: 0, droppedMatched: 0, droppedUnmatched: 0, bytesDropped: 0, lastSequence: 0 }
   const record: MonitorRecord = { id: "mon_1", command: "watch", label: "watch", mode: "idle", parentSessionId: "ses_1", startedAt: new Date(0), status: "running", counters }
   let active = true
+  const listeners = new Set<(sessionID: string) => void>()
   const manager: MonitorManager = {
+    onVisibleChange: (listener) => { listeners.add(listener); return () => { listeners.delete(listener) } },
     start: async () => record, stop: async () => {}, list: () => active ? [record] : [], get: () => record,
     getOutput: () => ({ lines: [], counters }), stopSessionMonitors: async () => {}, handleEvent: () => {}, shutdown: async () => {},
   }
   const fake = createFakePluginContext()
   const calls: Array<{ action: string; sessionID: string; key: string; value?: string }> = []
+  const removed = Promise.withResolvers<void>()
   const context = { ...fake.context, session: { ...fake.context.session, instructions: { entry: {
     put: async (input: { sessionID: string; key: string; value: string }) => { calls.push({ action: "put", ...input }) },
-    remove: async (input: { sessionID: string; key: string }) => { calls.push({ action: "remove", ...input }) },
+    remove: async (input: { sessionID: string; key: string }) => { calls.push({ action: "remove", ...input }); removed.resolve() },
   } } } }
+  const input = createPluginInput(context, { tracker: createSessionTracker(), warn: () => {} })
+  bindV2DashboardOwners(input, { backgroundManager: { getTasksByParentSession: () => [], onVisibleChange: () => () => {} }, monitorManager: manager })
   const hook = createMonitorStatusInjectorHook(manager, { enabled: true })
   const transform = createMessagesTransformHandler({ hooks: { monitorStatusInjector: hook } })
   const cleanup = await installSessionHooks(context, { "experimental.chat.messages.transform": transform } as Hooks, { warn: () => {} })
@@ -28,7 +35,8 @@ it("#given a V2 monitor #when it starts and stops #then the instruction entry re
     // when
     const event = await fake.triggerContext({ sessionID: "ses_1", agent: "sisyphus", model: { providerID: "openai", id: "gpt-test" }, system: [], messages: [{ id: "msg_1", role: "user", content: [{ type: "text", text: "go" }] }], options: {} })
     active = false
-    await fake.triggerToolAfter({ tool: "monitor_stop", sessionID: "ses_1", agent: "sisyphus", messageID: "msg_1", id: "call_1", input: {}, status: "completed", result: {} })
+    for (const listener of listeners) listener("ses_1")
+    await removed.promise
     // then
     expect(event.messages).toHaveLength(1)
     expect(calls.map(({ action, sessionID, key }) => ({ action, sessionID, key }))).toEqual([
@@ -38,6 +46,7 @@ it("#given a V2 monitor #when it starts and stops #then the instruction entry re
     expect(calls[0]?.value).toBe("Active monitors: mon_1 (watch, running, 0 matched) - call monitor_stop to stop")
   } finally {
     await cleanup()
+    expect(listeners.size).toBe(0)
   }
 })
 
@@ -46,6 +55,7 @@ it("#given a long monitor label #when V2 refreshes status #then the host accepts
   const counters: MonitorCounters = { totalLines: 0, matchedLines: 0, unmatchedLines: 0, droppedMatched: 0, droppedUnmatched: 0, bytesDropped: 0, lastSequence: 0 }
   const record: MonitorRecord = { id: "mon_1", command: "watch", label: '😀"\\\n'.repeat(100_000), mode: "idle", parentSessionId: "ses_1", startedAt: new Date(0), status: "running", counters }
   const manager: MonitorManager = {
+    onVisibleChange: () => () => {},
     start: async () => record, stop: async () => {}, list: () => [record], get: () => record,
     getOutput: () => ({ lines: [], counters }), stopSessionMonitors: async () => {}, handleEvent: () => {}, shutdown: async () => {},
   }

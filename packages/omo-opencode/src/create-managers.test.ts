@@ -13,7 +13,6 @@ import { bindV2BackgroundJobs, createPluginInput } from "./v2/create-plugin-inpu
 import { createFakePluginContext } from "./v2/fake-plugin-context"
 import { createSessionTracker } from "./v2/session-tracker"
 import type { NativeBackgroundJobs } from "./features/background-agent/native-lifecycle"
-import type { SessionAgentResolver } from "./features/tui-sidebar/snapshot-builder"
 
 
 type CleanupRegistration = {
@@ -417,7 +416,7 @@ describe("createManagers", () => {
     expect(tuiMirrorStartCount).toBe(0)
   })
 
-  it("#given a V2 plugin input #when managers are created #then the sidebar mirror resolves agent labels from native session metadata without reading session history", async () => {
+  it("#given a V2 plugin input #when managers are created #then no legacy sidebar mirror starts or reads history", async () => {
     // given
     const fake = createFakePluginContext({ sessionAgent: "sisyphus" })
     if (!fake.context.storage) throw new Error("fake context storage is required")
@@ -449,14 +448,12 @@ describe("createManagers", () => {
     }
 
     // when
-    createManagers(args)
-    const mirrorInput = tuiMirrorConstructedInputs.at(-1) as { readonly sessionAgentResolver?: SessionAgentResolver } | undefined
-    const resolver = mirrorInput?.sessionAgentResolver
+    const managers = createManagers(args)
 
     // then
-    expect(resolver).toBeDefined()
-    expect(await resolver?.("ses_1", input.client)).toBe("sisyphus")
-    expect(await resolver?.("ses_missing", input.client)).toBeNull()
+    expect(managers.tuiStateMirror).toBeUndefined()
+    expect(tuiMirrorConstructedInputs).toHaveLength(0)
+    expect(tuiMirrorStartCount).toBe(0)
     expect(contextCalls).toBe(0)
   })
 })

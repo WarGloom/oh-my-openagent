@@ -207,6 +207,8 @@ describe("MonitorManager", () => {
     test("#when stop is called twice #then it kills the process group once and remains stopped", async () => {
       // given
       const { manager, killCallsByCommand } = createManagerHarness()
+      const changes: Array<{ sessionID: string; statuses: string[] }> = []
+      const unsubscribe = manager.onVisibleChange(sessionID => changes.push({ sessionID, statuses: manager.list(sessionID).map(record => record.status) }))
       const record = await startMonitor(manager, "long-running", "s1")
 
       // when
@@ -216,6 +218,12 @@ describe("MonitorManager", () => {
       // then
       expect(killCallsByCommand.get("long-running")).toEqual(["SIGTERM"])
       expect(manager.get(record.id)?.status).toBe("stopped")
+      expect(changes).toEqual([{ sessionID: "s1", statuses: ["running"] }, { sessionID: "s1", statuses: ["stopped"] }])
+      const pending = manager.stopSessionMonitors("s1")
+      unsubscribe()
+      unsubscribe()
+      await pending
+      expect(changes).toHaveLength(2)
     })
   })
 
@@ -279,6 +287,9 @@ describe("MonitorManager", () => {
       await startMonitor(manager, "s1-b", "s1")
       await startMonitor(manager, "s2-a", "s2")
 
+      const removals: string[] = []
+      manager.onVisibleChange(sessionID => { if (manager.list(sessionID).length === 0) removals.push(sessionID) })
+
       // when
       await manager.stopSessionMonitors("s1")
 
@@ -288,6 +299,7 @@ describe("MonitorManager", () => {
       expect(killCallsByCommand.get("s2-a")).toEqual([])
       expect(manager.list("s1")).toEqual([])
       expect(manager.list("s2").map((record) => record.status)).toEqual(["running"])
+      expect(removals).toEqual(["s1", "s1"])
     })
 
     test("#when stopSessionMonitors runs #then it purges the session's monitor records from memory", async () => {
@@ -313,6 +325,8 @@ describe("MonitorManager", () => {
       // given
       const { manager } = createManagerHarness({ maxMonitorsPerSession: 2 })
       const internal = manager as unknown as { monitors: Map<string, unknown> }
+      const retained: string[][] = []
+      manager.onVisibleChange(sessionID => retained.push(manager.list(sessionID).map(record => record.label)))
 
       // when
       for (let index = 0; index < 6; index += 1) {
@@ -322,6 +336,8 @@ describe("MonitorManager", () => {
 
       // then
       expect(internal.monitors.size).toBeLessThanOrEqual(2)
+      expect(retained.at(-1)).toEqual(["short-4", "short-5"])
+      expect(retained).toHaveLength(16)
     })
   })
 
@@ -460,6 +476,8 @@ describe("MonitorManager", () => {
       // given
       const { manager, resolveExit, flushed } = createExitHarness()
       const record = await startMonitor(manager, "exiting-cmd", "s1")
+      const changes: Array<{ sessionID: string; record: MonitorRecord | undefined }> = []
+      manager.onVisibleChange(sessionID => changes.push({ sessionID, record: manager.get(record.id) }))
 
       // when
       resolveExit({ code: 0, signal: null })
@@ -467,6 +485,7 @@ describe("MonitorManager", () => {
 
       // then
       expect(flushed).toContain(record.id)
+      expect(changes).toMatchObject([{ sessionID: "s1", record: { status: "exited", exitCode: 0 } }])
     })
 
     test("#when an exited monitor remains recorded #then it does not block a new start at capacity", async () => {
@@ -525,6 +544,8 @@ describe("MonitorManager", () => {
       // given
       const { manager, rejectExit, flushed } = createExitHarness()
       const record = await startMonitor(manager, "failing-cmd", "s1")
+      const changes: string[] = []
+      manager.onVisibleChange(sessionID => changes.push(`${sessionID}:${manager.get(record.id)?.status}`))
 
       // when
       rejectExit(new Error("spawn failure"))
@@ -532,6 +553,7 @@ describe("MonitorManager", () => {
 
       // then
       expect(flushed).toContain(record.id)
+      expect(changes).toEqual(["s1:failed"])
     })
   })
 })
