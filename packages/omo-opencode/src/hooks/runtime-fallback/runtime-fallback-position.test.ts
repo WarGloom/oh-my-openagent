@@ -112,7 +112,7 @@ describe("runtime fallback position monotonicity (#6751)", () => {
           sessionID,
           agent: "sisyphus",
           model: "go/fallback-a",
-          status: { type: "retry", message: "rate limit exceeded", attempt: 1 },
+          status: { type: "retry", message: "monthly usage limit reached", attempt: 1 },
         },
       },
     })
