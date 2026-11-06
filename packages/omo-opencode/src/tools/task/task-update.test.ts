@@ -4,6 +4,9 @@ import { tmpdir } from "os"
 import { join } from "path"
 import type { TaskObject } from "./types"
 import { createTaskUpdateTool } from "./task-update"
+import type { PluginInput } from "@opencode-ai/plugin"
+import type { V2PluginContext } from "../../v2/context-types"
+import { bindTodoWriter, readSessionTodos } from "../../v2/session-todos"
 
 const TEST_SESSION_ID = "test-session-123"
 const TEST_ABORT_CONTROLLER = new AbortController()
@@ -34,6 +37,52 @@ describe("task_update tool", () => {
   })
 
   describe("update action", () => {
+    test("updates the owner's todo when another session updates a task", async () => {
+      // given
+      const values = new Map<string, unknown>()
+      const native = {
+        storage: {
+          get: async (key: string) => values.get(key),
+          set: async (key: string, value: unknown) => {
+            values.set(key, value)
+          },
+        },
+        session: { context: async () => [] },
+      } as unknown as V2PluginContext
+      const ctx = {
+        client: {
+          session: {
+            todo: async ({ path }: { path: { id: string } }) => ({ data: await readSessionTodos(native, path.id) }),
+          },
+        },
+      } as unknown as PluginInput
+      bindTodoWriter(ctx.client, native)
+      const task: TaskObject = {
+        id: "T-owner",
+        subject: "Owned",
+        description: "",
+        status: "pending",
+        blocks: [],
+        blockedBy: [],
+        threadID: "owner-A",
+      }
+      await Bun.write(join(testDir, `${task.id}.json`), JSON.stringify(task))
+      values.set("session-todos:owner-A", { todos: [{ id: task.id, content: "Owned", status: "pending" }] })
+      values.set("session-todos:caller-B", { todos: [{ id: "personal", content: "Personal", status: "pending" }] })
+      const update = createTaskUpdateTool({ sisyphus: { tasks: { storage_path: testDir } } }, ctx)
+
+      // when
+      await update.execute({ id: task.id, status: "completed" }, { ...TEST_CONTEXT, sessionID: "caller-B" })
+
+      // then
+      expect((await readSessionTodos(native, "owner-A")).map(({ id, status }) => ({ id, status }))).toEqual([
+        { id: task.id, status: "completed" },
+      ])
+      expect((await readSessionTodos(native, "caller-B")).map(({ id, status }) => ({ id, status }))).toEqual([
+        { id: "personal", status: "pending" },
+      ])
+    })
+
     test("updates task subject when provided", async () => {
       //#given
       const taskId = "T-test-123"
