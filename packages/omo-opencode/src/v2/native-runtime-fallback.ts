@@ -183,12 +183,16 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
     },
   })
   const watchdogRegistration = await context.session.hook("model.request", (event) => {
-    if (event.kind === "primary") watchdog.start(event.sessionID, event.agent, event.model)
+    if (event.kind === "primary") {
+      controller.capture(event.sessionID)
+      watchdog.start(event.sessionID, event.agent, event.model)
+    }
   })
   const promptRegistration = await context.session.hook("prompt", async (event) => {
     if (disposed) return
     const session = await context.session.get({ sessionID: event.sessionID })
     if (session.location.directory !== context.location.directory || !session.model) return
+    controller.capture(event.sessionID)
     const host = await hostModels(context)
     await controller.restorePrimary(
       {

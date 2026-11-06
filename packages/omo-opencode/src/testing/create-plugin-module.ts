@@ -41,6 +41,7 @@ import { createV2Setup, type DualPluginModule } from "../v2"
 import { isV2PluginInput } from "../v2/create-plugin-input"
 import { bindNativeRuntimeFallback } from "../v2/native-runtime-fallback"
 import { bindAgentModelOverrides } from "../v2/native-subagent-model"
+import { bindModelConfigReload, createModelConfigReload } from "../v2/model-config-reload"
 
 type StartupToastClient = {
   readonly tui?: {
@@ -233,6 +234,18 @@ export function createPluginModule(overrides: Partial<PluginModuleDeps> = {}): D
     deps.injectServerAuthIntoClient(input.client)
 
     const pluginConfig = startupValidation.config
+    const modelConfigReload = isV2PluginInput(input)
+      ? createModelConfigReload({
+          directory: input.directory,
+          config: pluginConfig,
+          activation: startupValidation,
+          load: deps.loadConfigChain,
+          report: (message) => {
+            deps.log("[v2] model configuration warning", { message })
+            showStartupToast(input.client, { title: "Model configuration", message, variant: "warning" }, deps.log)
+          },
+        })
+      : undefined
     try {
       deps.recordPluginTelemetry({ configEnabled: pluginConfig.telemetry })
     } catch (error) {
@@ -367,6 +380,7 @@ export function createPluginModule(overrides: Partial<PluginModuleDeps> = {}): D
 
     bindNativeRuntimeFallback(pluginHooks, hooks.runtimeFallback)
     bindAgentModelOverrides(pluginHooks, pluginConfig.agents)
+    if (modelConfigReload && pluginHooks.config) bindModelConfigReload(pluginHooks.config, modelConfigReload)
     return pluginHooks
   }
 
