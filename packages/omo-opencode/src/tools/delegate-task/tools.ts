@@ -145,18 +145,31 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
     async execute(args, toolContext) {
       const ctx = toolContext as ToolContextWithMetadata
       ctx.abort?.throwIfAborted()
+      const currentModelConfig = options.loadCurrentModelConfig?.()
+      const agentOverrides = {
+        ...(currentModelConfig === undefined ? options.agentOverrides : currentModelConfig.agents),
+      }
+      const modelOptions = {
+        ...options,
+        agentOverrides,
+        userCategories: {
+          ...(currentModelConfig === undefined ? options.userCategories : currentModelConfig.categories),
+        },
+        jevRouting: currentModelConfig === undefined ? options.jevRouting : currentModelConfig.jev_routing,
+        sisyphusJuniorModel:
+          currentModelConfig === undefined ? options.sisyphusJuniorModel : agentOverrides["sisyphus-junior"]?.model,
+      }
       const delegateTaskArgs = await prepareDelegateTaskArgs(args, ctx)
       if (!delegateTaskArgs.task_id && !delegateTaskArgs.category && delegateTaskArgs.subagent_type) {
-        const current = options.loadCurrentModelConfig?.()
-        const config = current?.jev_routing ?? options.jevRouting
+        const config = modelOptions.jevRouting
         const alias = delegateTaskArgs.subagent_type
         if (config?.agent_ladders && Object.hasOwn(config.agent_ladders, alias)) {
           const context = {
             config,
             client: options.client,
             directory: options.directory,
-            categories: current?.categories ?? options.userCategories,
-            agentOverrides: current?.agents ?? options.agentOverrides,
+            categories: modelOptions.userCategories,
+            agentOverrides,
             disabledAgents: options.disabledAgents,
             signal: ctx.abort,
           }
@@ -213,17 +226,23 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
           return executeNativeDelegate({
             args: delegateTaskArgs,
             ctx,
-            executor: options,
+            executor: modelOptions,
             parent: parentContext,
             system: continuationSystemContent,
           })
         if (runInBackground) {
-          return executeBackgroundContinuation(delegateTaskArgs, ctx, options, parentContext, continuationSystemContent)
+          return executeBackgroundContinuation(
+            delegateTaskArgs,
+            ctx,
+            modelOptions,
+            parentContext,
+            continuationSystemContent,
+          )
         }
         return executeSyncContinuation(
           delegateTaskArgs,
           ctx,
-          options,
+          modelOptions,
           parentContext,
           undefined,
           continuationSystemContent,
@@ -247,16 +266,6 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
         ? `${parentContext.model.providerID}/${parentContext.model.modelID}`
         : undefined
 
-      const currentModelConfig = options.loadCurrentModelConfig?.()
-      const modelOptions =
-        currentModelConfig === undefined
-          ? options
-          : {
-              ...options,
-              userCategories: currentModelConfig.categories,
-              agentOverrides: currentModelConfig.agents,
-              jevRouting: currentModelConfig.jev_routing,
-            }
       const routingOptions = { ...modelOptions, abortSignal: ctx.abort }
 
       let agentToUse: string
@@ -316,7 +325,7 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
             return executeNativeDelegate({
               args: { ...delegateTaskArgs, run_in_background: true },
               ctx,
-              executor: options,
+              executor: modelOptions,
               parent: parentContext,
               agent: agentToUse,
               model: categoryModel,
@@ -326,7 +335,7 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
           return executeUnstableAgentTask(
             delegateTaskArgs,
             ctx,
-            options,
+            modelOptions,
             parentContext,
             agentToUse,
             categoryModel,
@@ -369,7 +378,7 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
         return executeNativeDelegate({
           args: delegateTaskArgs,
           ctx,
-          executor: options,
+          executor: modelOptions,
           parent: parentContext,
           agent: agentToUse,
           model: categoryModel,
@@ -381,7 +390,7 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
         return executeBackgroundTask(
           delegateTaskArgs,
           ctx,
-          options,
+          modelOptions,
           parentContext,
           agentToUse,
           categoryModel,
@@ -393,7 +402,7 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
       return executeSyncTask(
         delegateTaskArgs,
         ctx,
-        options,
+        modelOptions,
         parentContext,
         agentToUse,
         categoryModel,

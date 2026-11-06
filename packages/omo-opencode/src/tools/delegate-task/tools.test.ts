@@ -129,6 +129,84 @@ function createTestAvailableModels(): Set<string> {
 }
 
 describe("sisyphus-task", () => {
+  test.each(["junior", "category", "agent"])(
+    "gate repair: uses one coherent %s model snapshot per execution",
+    async (kind: string) => {
+      // given
+      const { createDelegateTask } = require("./tools")
+      const first = "anthropic/claude-opus-4-7"
+      const second = "anthropic/claude-sonnet-4-6"
+      const agents = { "sisyphus-junior": { model: kind === "junior" ? second : first }, explore: { model: first } }
+      const categories: Record<string, { model?: string }> = {
+        "reload-category": kind === "junior" ? {} : { model: first },
+      }
+      const paused = Promise.withResolvers<void>()
+      const release = Promise.withResolvers<void>()
+      const launches: CapturedLaunchInput[] = []
+      let loads = 0
+      const task = createDelegateTask({
+        manager: {
+          launch: async (input: CapturedLaunchInput) => {
+            launches.push(input)
+            return {
+              id: "bg_snapshot",
+              status: "running",
+              agent: input.agent,
+              description: "snapshot",
+              sessionId: "ses_snapshot",
+            }
+          },
+        },
+        client: {
+          app: { agents: async () => ({ data: [{ name: "explore", mode: "subagent" }] }) },
+          config: { get: async () => ({ data: { model: first } }) },
+          session: { messages: async () => ({ data: [] }) },
+        },
+        sisyphusJuniorModel: kind === "junior" ? first : undefined,
+        loadCurrentModelConfig: () => {
+          loads += 1
+          return { agents, categories }
+        },
+        nativeSkills: {
+          all: async () => {
+            paused.resolve()
+            await release.promise
+            return []
+          },
+        },
+        connectedProvidersOverride: TEST_CONNECTED_PROVIDERS,
+        availableModelsOverride: createTestAvailableModels(),
+      })
+      // when
+      const pending = task.execute(
+        {
+          prompt: "Resolve the snapshot",
+          load_skills: [],
+          run_in_background: true,
+          ...(kind === "agent" ? { subagent_type: "explore" } : { category: "reload-category" }),
+        },
+        {
+          sessionID: "ses_snapshot_parent",
+          messageID: "msg_snapshot",
+          agent: "sisyphus",
+          abort: new AbortController().signal,
+        },
+      )
+      await paused.promise
+      if (kind !== "junior") {
+        agents.explore = { model: second }
+        categories["reload-category"] = { model: second }
+      }
+      release.resolve()
+      await pending
+      // then
+      expect(launches.map((input) => input.model?.modelID)).toEqual([
+        kind === "junior" ? "claude-sonnet-4-6" : "claude-opus-4-7",
+      ])
+      expect(loads).toBe(1)
+    },
+  )
+
   let cacheSpy: ReturnType<typeof spyOn>
   let providerModelsSpy: ReturnType<typeof spyOn>
 

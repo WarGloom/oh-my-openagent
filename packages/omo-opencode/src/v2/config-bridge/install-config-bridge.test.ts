@@ -2,6 +2,7 @@ import { describe, expect, it, mock } from "bun:test"
 import type { V2AgentInfo, V2ModelInfo } from "../context-types"
 import { createFakePluginContext } from "../fake-plugin-context"
 import { installConfigBridge } from "./install-config-bridge"
+import { bindModelConfigReload } from "../model-config-reload"
 
 type ConfigHook = Parameters<typeof installConfigBridge>[1]
 
@@ -47,6 +48,64 @@ function hookReturning(config: Record<string, unknown>): ConfigHook {
 }
 
 describe("installConfigBridge", () => {
+  it("gate repair: coalesces model notifications and drains an in-flight refresh before disposing transforms", async () => {
+    // given
+    const fake = createFakePluginContext({ agents: [build] })
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    let notify: (() => void) | undefined
+    let stopped = false
+    let runs = 0
+    let concurrent = 0
+    let maximum = 0
+    const hook: ConfigHook = async (config) => {
+      runs += 1
+      concurrent += 1
+      maximum = Math.max(maximum, concurrent)
+      if (runs === 2) {
+        entered.resolve()
+        await release.promise
+      }
+      config.agent = { reloaded: { mode: "subagent", model: `test/round-${runs}` } }
+      concurrent -= 1
+    }
+    bindModelConfigReload(hook, {
+      reload: () => {},
+      watch: (listener) => {
+        notify = listener
+        return () => {
+          stopped = true
+        }
+      },
+    })
+    const dispose = await installConfigBridge(fake.context, hook, { warn: () => {} })
+    let drain: Promise<void> | undefined
+    try {
+      if (!notify) throw new Error("Model watcher was not subscribed")
+      // when
+      notify()
+      notify()
+      notify()
+      await entered.promise
+      notify()
+      notify()
+      notify()
+      drain = dispose()
+      // then
+      expect(stopped).toBe(true)
+      expect(fake.builtAgents().has("reloaded")).toBe(true)
+      release.resolve()
+      await drain
+      expect(runs).toBe(3)
+      expect(maximum).toBe(1)
+      expect([...fake.builtAgents().keys()]).toEqual(["build"])
+      expect(fake.activeSubscribers()).toBe(0)
+    } finally {
+      release.resolve()
+      await (drain ?? dispose())
+    }
+  })
+
   describe("#given a config hook that defines agents", () => {
     it("#when installed #then the agents exist on the host with their mapped fields and the default agent is set", async () => {
       // given

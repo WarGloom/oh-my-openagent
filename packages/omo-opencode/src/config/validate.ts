@@ -21,6 +21,7 @@ export type PluginConfigValidation = {
   readonly warnings: readonly string[]
   readonly path: string | null
   readonly config: OhMyOpenCodeConfig
+  readonly modelConfigBase?: OhMyOpenCodeConfig
 }
 
 type LoadedConfigView = {
@@ -201,6 +202,7 @@ function migrateRalphLoopConfig(config: OhMyOpenCodeConfig): OhMyOpenCodeConfig 
 export function validatePluginConfig(
   directory: string,
   environment: OmoConfigEnv = process.env,
+  projectModels: (config: OhMyOpenCodeConfig) => OhMyOpenCodeConfig = (config) => config,
 ): PluginConfigValidation {
   const chain = loadOmoOpenCodeConfigChain(directory, environment)
   const homeDir = environment.HOME ?? environment.USERPROFILE
@@ -225,7 +227,8 @@ export function validatePluginConfig(
   const userConfig = parseConfig(
     prunePluginView({ config: chain.protectedUserView, homeDir, keyPrefix: "", path: "" }).config,
   )
-  const config = materializeAgentModelChains(applyDisabledProviders(protectUserFields(mergeViews(views), userConfig)))
+  const modelConfigBase = protectUserFields(mergeViews(views), userConfig)
+  const config = materializeAgentModelChains(applyDisabledProviders(projectModels(structuredClone(modelConfigBase))))
   warnLegacyUlwExecuteKey(chain.views)
   if (config.skills) {
     const owner = chain.views.findLast((view) => Object.hasOwn(view.config, "skills"))
@@ -258,6 +261,7 @@ export function validatePluginConfig(
     valid: messages.length === 0,
     messages,
     warnings,
+    modelConfigBase,
     path: failing[0]?.path ?? firstFailingView?.path ?? firstView?.path ?? null,
     config: migrateRalphLoopConfig(migrateLegacyUlwExecuteKey(config)),
   }

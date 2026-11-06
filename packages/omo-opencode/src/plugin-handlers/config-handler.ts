@@ -164,7 +164,11 @@ export function createConfigHandler(deps: ConfigHandlerDeps) {
     applyHookConfig({ pluginComponents })
 
     const projectAgentSourceSignature = createProjectAgentSourceSignature(ctx.directory)
-    const agentCacheKey = createAgentConfigCacheKey(config, projectAgentSourceSignature)
+    const agentCacheKey = JSON.stringify([
+      createAgentConfigCacheKey(config, projectAgentSourceSignature),
+      canonicalizeConfigValue(pluginConfig.agents),
+      canonicalizeConfigValue(pluginConfig.categories),
+    ])
     let agentResult: Record<string, unknown>
     if (!pluginComponentsLoadFailed && agentConfigSnapshot?.cacheKey === agentCacheKey) {
       config.agent = cloneAgentConfig(agentConfigSnapshot.agents)

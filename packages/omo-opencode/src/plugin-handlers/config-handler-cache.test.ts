@@ -103,6 +103,27 @@ afterEach(() => {
 })
 
 describe("Config handler hot path caching", () => {
+  test.each(["agents", "categories"] as const)(
+    "invalidates the roster when OMO %s models change with identical host input",
+    async (section) => {
+      // given
+      const pluginConfig = createPluginConfig({ [section]: { oracle: { model: "test/first" } } })
+      const handler = createConfigHandler({
+        ctx: { directory: process.env.HOME ?? process.cwd() },
+        pluginConfig,
+        modelCacheState: { anthropicContext1MEnabled: false, modelContextLimitsCache: new Map() },
+      })
+      await handler({ model: "test/host", agent: {} })
+
+      // when
+      pluginConfig[section] = { oracle: { model: "test/second", fallback_models: ["test/third"] } }
+      await handler({ model: "test/host", agent: {} })
+
+      // then
+      expect(unsafeTestValue(agents.createBuiltinAgents).mock.calls).toHaveLength(2)
+    },
+  )
+
   test("reuses the resolved agent roster for repeated config hook invocations with the same model", async () => {
     // #given
     const pluginConfig = createPluginConfig({

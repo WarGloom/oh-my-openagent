@@ -24,8 +24,9 @@ async function fixture(error: V2StructuredError, models = ["openai/gpt-6.1-sol",
     sessionMessages: [{ type: "idle", id: "msg_failed", outcome: "failed", error, time: { created: 1 } }],
   })
   const input = createPluginInput(fake.context, { tracker: createSessionTracker(), warn: () => {} })
+  const pluginConfig = OhMyOpenCodeConfigSchema.parse({ agents: { sisyphus: { models } } })
   const runtime = createRuntimeFallbackHook(input, {
-    pluginConfig: OhMyOpenCodeConfigSchema.parse({ agents: { sisyphus: { models } } }),
+    pluginConfig,
     config: { enabled: true, timeout_seconds: 0, notify_on_fallback: false },
   })
   const hooks: Hooks = {}
@@ -34,6 +35,7 @@ async function fixture(error: V2StructuredError, models = ["openai/gpt-6.1-sol",
   if (!installed) throw new Error("Native fallback was not installed")
   cleanups.push(async () => {
     runtime.native?.forget("ses_decision")
+    runtime.native?.forget("ses_reload")
     await installed.dispose()
     runtime.dispose?.()
   })
@@ -43,8 +45,71 @@ async function fixture(error: V2StructuredError, models = ["openai/gpt-6.1-sol",
     log.mock.calls
       .filter(([message]) => message === "[runtime-fallback] Native recovery decision")
       .map(([, details]) => details)
-  return { fake, installed, decisions }
+  return { fake, installed, decisions, pluginConfig }
 }
+
+test("uses reloaded fallback models for new sessions while an admitted session retains its chain", async () => {
+  // given
+  const error = { type: "provider.quota", status: 429, message: "balance unavailable" }
+  const f = await fixture(error)
+  await f.fake.triggerPrompt({ sessionID: "ses_decision", messageID: "msg_admitted", prompt: { text: "work" } })
+
+  // when
+  if (!f.pluginConfig.agents) throw new Error("Agent configuration missing")
+  f.pluginConfig.agents.sisyphus = { models: ["openai/gpt-6.1-sol", "anthropic/reloaded"] }
+  for (const sessionID of ["ses_reload", "ses_decision"]) {
+    await f.fake.triggerRetry({
+      sessionID,
+      agent: "sisyphus",
+      model: first,
+      error,
+      attempt: 1,
+      decision: { retry: true, delay: 0 },
+    })
+  }
+
+  // then
+  expect(f.fake.sessionCalls).toEqual([
+    {
+      kind: "switchModel",
+      sessionID: "ses_reload",
+      model: { providerID: "anthropic", id: "reloaded", variant: undefined },
+    },
+    { kind: "switchModel", sessionID: "ses_decision", model: { ...second, variant: undefined } },
+  ])
+})
+
+test("gate repair: ignores another directory before capturing fallback configuration", async () => {
+  // given
+  const error = { type: "provider.quota", status: 429, message: "balance unavailable" }
+  const f = await fixture(error)
+  const get = f.fake.context.session.get
+  f.fake.context.session.get = async (input) => {
+    const session = await get(input)
+    return { ...session, location: { ...session.location, directory: `${session.location.directory}/other` } }
+  }
+  await f.fake.triggerPrompt({ sessionID: "ses_decision", messageID: "msg_other", prompt: { text: "other directory" } })
+  f.fake.context.session.get = get
+  if (!f.pluginConfig.agents) throw new Error("Fixture agents missing")
+  // when
+  f.pluginConfig.agents.sisyphus = { models: ["openai/gpt-6.1-sol", "anthropic/reloaded"] }
+  await f.fake.triggerRetry({
+    sessionID: "ses_decision",
+    agent: "sisyphus",
+    model: first,
+    error,
+    attempt: 1,
+    decision: { retry: true, delay: 0 },
+  })
+  // then
+  expect(f.fake.sessionCalls).toEqual([
+    {
+      kind: "switchModel",
+      sessionID: "ses_decision",
+      model: { providerID: "anthropic", id: "reloaded", variant: undefined },
+    },
+  ])
+})
 
 test.each([
   {
