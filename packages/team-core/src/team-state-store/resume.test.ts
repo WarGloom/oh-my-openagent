@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, mock, test } from "bun:test"
 import { randomUUID } from "node:crypto"
-import { mkdtemp, mkdir, readdir, rm, stat, utimes, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
@@ -134,46 +134,58 @@ describe("resumeAllTeams", () => {
     mock.restore()
   })
 
-  test("marks stuck creating teams failed after reload recovery", async () => {
-    // given
-    const baseDir = await createTemporaryBaseDir()
-    temporaryDirectories.push(baseDir)
-    const config = createConfig(baseDir)
-    const runtimeState = await createRuntimeState(createSpec(), "ses_lead", "user", config)
-    const worktreePath = path.join(baseDir, "worktrees", runtimeState.teamRunId, "worker")
-    await mkdir(worktreePath, { recursive: true })
-    await saveRuntimeState(
-      {
-        ...runtimeState,
-        createdAt: Date.now() - 40 * 60 * 1000,
-        members: runtimeState.members.map((member) =>
-          member.name === "worker" ? { ...member, worktreePath } : member,
-        ),
-      },
-      config,
-    )
+  for (const native of [false, true])
+    test(`marks stuck creating teams failed after reload recovery (${native ? "native" : "legacy"} worktree)`, async () => {
+      // given
+      const baseDir = await createTemporaryBaseDir()
+      temporaryDirectories.push(baseDir)
+      const config = createConfig(baseDir)
+      const runtimeState = await createRuntimeState(createSpec(), "ses_lead", "user", config)
+      const worktreePath = path.join(baseDir, "worktrees", runtimeState.teamRunId, "worker")
+      await mkdir(worktreePath, { recursive: true })
+      await writeFile(path.join(worktreePath, "member-work.txt"), "keep native member work")
+      await saveRuntimeState(
+        {
+          ...runtimeState,
+          createdAt: Date.now() - 40 * 60 * 1000,
+          members: runtimeState.members.map((member) =>
+            member.name === "worker"
+              ? {
+                  ...member,
+                  worktreePath,
+                  nativeWorktree: native ? { projectID: "native-project", directory: worktreePath } : undefined,
+                }
+              : member,
+          ),
+        },
+        config,
+      )
 
-    // when
-    const report = await resumeAllTeams(createTeamSessionContext(baseDir), config)
-    const persistedState = await loadRuntimeState(runtimeState.teamRunId, config)
+      // when
+      const report = await resumeAllTeams(createTeamSessionContext(baseDir), config)
+      const persistedState = await loadRuntimeState(runtimeState.teamRunId, config)
 
-    // then
-    expect(persistedState.status).toBe("failed")
-    expect(report).toEqual({
-      resumed: 0,
-      marked_failed: 1,
-      marked_orphaned: 0,
-      cleaned: 0,
-      errors: [],
+      // then
+      expect(persistedState.status).toBe("failed")
+      expect(report).toEqual({
+        resumed: 0,
+        marked_failed: 1,
+        marked_orphaned: 0,
+        cleaned: 0,
+        errors: [],
+      })
+      if (native) {
+        expect(await readFile(path.join(worktreePath, "member-work.txt"), "utf8")).toBe("keep native member work")
+        return
+      }
+      let statError: NodeJS.ErrnoException | null = null
+      try {
+        await stat(worktreePath)
+      } catch (error) {
+        statError = error as NodeJS.ErrnoException
+      }
+      expect(statError?.code).toBe("ENOENT")
     })
-    let statError: NodeJS.ErrnoException | null = null
-    try {
-      await stat(worktreePath)
-    } catch (error) {
-      statError = error as NodeJS.ErrnoException
-    }
-    expect(statError?.code).toBe("ENOENT")
-  })
 
   test("leaves fresh creating teams pending during reload recovery", async () => {
     // given

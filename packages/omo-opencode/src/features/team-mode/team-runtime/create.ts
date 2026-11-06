@@ -27,6 +27,7 @@ import { sweepStaleTeamSessions } from "../team-layout-tmux/sweep-stale-team-ses
 import { registerTeamRunForSessionCleanup } from "./session-team-run-registry"
 import { assertNoUnresolvedTeamMembers, hasUnresolvedTeamMembers } from "./unresolved-team-members"
 import { getNativeTeamWorktrees } from "../../../v2/native-team-worktrees"
+import type { KeptMemberWorktree } from "./shutdown-helpers"
 
 type CreateTeamRunOptions = {
   callerAgentTypeId?: string
@@ -40,6 +41,7 @@ export class TeamRunCreateError extends Error {
       cancelledTaskIds: string[]
       removedLayout: boolean
       removedWorktrees: string[]
+      keptWorktrees?: KeptMemberWorktree[]
       errors: string[]
     },
     cause: Error,

@@ -271,6 +271,7 @@ describe("addTeamMember", () => {
       if (outcome === "native-remove-reject")
         bindNativeTeamWorktrees(manager, {
           create: async (directory) => ({ projectID: "native-project", directory }),
+          inspect: async (identity) => ({ directory: identity.directory, exists: true }),
           remove: async () => {
             throw new Error("native removal failed")
           },
