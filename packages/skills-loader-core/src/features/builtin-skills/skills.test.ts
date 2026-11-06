@@ -93,7 +93,7 @@ describe("createBuiltinSkills", () => {
 		expect(gitMaster).toBeDefined()
 	})
 
-	test("returns exactly 11 skills regardless of provider", () => {
+	test("returns exactly 12 skills regardless of provider", () => {
 		// given
 
 		// when
@@ -102,9 +102,9 @@ describe("createBuiltinSkills", () => {
 		const devBrowserSkills = createBuiltinSkills({ browserProvider: "dev-browser" })
 
 		// then
-		expect(defaultSkills).toHaveLength(11)
-		expect(cliSkills).toHaveLength(11)
-		expect(devBrowserSkills).toHaveLength(11)
+		expect(defaultSkills).toHaveLength(12)
+		expect(cliSkills).toHaveLength(12)
+		expect(devBrowserSkills).toHaveLength(12)
 	})
 
 	test("should exclude playwright when it is in disabledSkills", () => {
@@ -128,7 +128,7 @@ describe("createBuiltinSkills", () => {
 		expect(skills.map((s) => s.name)).toContain("security-review")
 		expect(skills.map((s) => s.name)).toContain("hyperplan")
 		expect(skills.map((s) => s.name)).toContain("visual-qa")
-		expect(skills.length).toBe(10)
+		expect(skills.length).toBe(11)
 	})
 
 	test("should exclude multiple skills when they are in disabledSkills", () => {
@@ -152,7 +152,7 @@ describe("createBuiltinSkills", () => {
 		expect(skills.map((s) => s.name)).toContain("security-review")
 		expect(skills.map((s) => s.name)).toContain("hyperplan")
 		expect(skills.map((s) => s.name)).toContain("visual-qa")
-		expect(skills.length).toBe(9)
+		expect(skills.length).toBe(10)
 	})
 
 	test("should return an empty array when all skills are disabled", () => {
@@ -181,7 +181,7 @@ describe("createBuiltinSkills", () => {
 		expect(skills.length).toBe(0)
 	})
 
-	test("should return all 11 skills when disabledSkills set is empty", () => {
+	test("should return all 12 skills when disabledSkills set is empty", () => {
 		// #given
 		const options = { disabledSkills: new Set<string>() }
 
@@ -189,7 +189,7 @@ describe("createBuiltinSkills", () => {
 		const skills = createBuiltinSkills(options)
 
 		// #then
-		expect(skills.length).toBe(11)
+		expect(skills.length).toBe(12)
 	})
 
 	test("customize-opencode skill documents opencode configuration scope", () => {
