@@ -26,6 +26,7 @@ import { shouldReuseCallerLeadSession } from "../resolve-caller-team-lead"
 import { sweepStaleTeamSessions } from "../team-layout-tmux/sweep-stale-team-sessions"
 import { registerTeamRunForSessionCleanup } from "./session-team-run-registry"
 import { assertNoUnresolvedTeamMembers, hasUnresolvedTeamMembers } from "./unresolved-team-members"
+import { getNativeTeamWorktrees } from "../../../v2/native-team-worktrees"
 
 type CreateTeamRunOptions = {
   callerAgentTypeId?: string
@@ -100,7 +101,9 @@ export async function createTeamRun(
 
   const baseDir = resolveBaseDir(config)
   await ensureBaseDirs(baseDir)
-  const reusesCallerLeadSession = shouldReuseCallerLeadSession(spec, options?.callerAgentTypeId)
+  const reusesCallerLeadSession =
+    shouldReuseCallerLeadSession(spec, options?.callerAgentTypeId) &&
+    !(getNativeTeamWorktrees(bgMgr) && spec.members.find((member) => member.name === spec.leadAgentId)?.worktreePath)
   let runtimeState = await createRuntimeState(spec, leadSessionId, await resolveSpecSource(spec, ctx, config), config)
   registerTeamRunForSessionCleanup(runtimeState.teamRunId)
   if (reusesCallerLeadSession && spec.leadAgentId) {
@@ -183,6 +186,7 @@ export async function createTeamRun(
               onResourceAcquired: (acquired) => {
                 if (acquired.taskId) resource.taskId = acquired.taskId
                 if (acquired.worktreePath) resource.worktreePath = acquired.worktreePath
+                if (acquired.nativeWorktree) resource.nativeWorktree = acquired.nativeWorktree
               },
               onRuntimeStateUpdated: (updated) => {
                 runtimeState = updated

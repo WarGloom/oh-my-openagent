@@ -29,6 +29,7 @@ import {
   getV2SessionEnvironment,
   isV2PluginInput,
 } from "./v2/create-plugin-input"
+import { bindNativeTeamWorktrees, getNativeTeamWorktrees } from "./v2/native-team-worktrees"
 
 type CreateManagersDeps = {
   BackgroundManagerClass: typeof BackgroundManager
@@ -217,6 +218,8 @@ export function createManagers(args: {
   })
 
   nativeLifecycle?.connect(backgroundManager)
+  const nativeWorktrees = getNativeTeamWorktrees(ctx.client)
+  if (nativeWorktrees) bindNativeTeamWorktrees(backgroundManager, nativeWorktrees)
   bindV2DashboardOwners(ctx, { backgroundManager, monitorManager, teamModeConfig: pluginConfig.team_mode })
 
   if (!isV2PluginInput(ctx) && pluginConfig.tui?.sidebar?.enabled !== false) {
