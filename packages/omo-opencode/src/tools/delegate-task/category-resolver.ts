@@ -1,4 +1,5 @@
 import type { ModelFallbackInfo } from "../../features/task-toast-manager/types"
+import { getNativeUnavailableModels } from "../../hooks/runtime-fallback/native-controller"
 import type { DelegateTaskArgs } from "./types"
 import type { ExecutorContext } from "./executor-types"
 import type { FallbackEntry } from "../../shared/model-requirements"
@@ -210,17 +211,20 @@ Available categories: ${allCategoryNames}`)
       (normalizedConfiguredFallbackModels?.length ?? 0) === 0
         ? categoryGateServedModels(categoryName, availableModels)
         : undefined
-    const resolution = resolveModelForDelegateTask({
-      userModel: explicitCategoryModel ?? overrideModel,
-      userFallbackModels: flattenToFallbackModelStrings(normalizedConfiguredFallbackModels),
-      categoryDefaultModel: categoryResolvedModel,
-      isUserConfiguredCategoryModel: hasCanonicalModels
-        ? configuredPrimaryModel !== undefined
-        : resolved.isUserConfiguredModel,
-      fallbackChain: requirement.fallbackChain,
-      availableModels: builtinOnlyModels ?? availableModels,
-      systemDefaultModel,
-    })
+    const resolution = resolveModelForDelegateTask(
+      {
+        userModel: explicitCategoryModel ?? overrideModel,
+        userFallbackModels: flattenToFallbackModelStrings(normalizedConfiguredFallbackModels),
+        categoryDefaultModel: categoryResolvedModel,
+        isUserConfiguredCategoryModel: hasCanonicalModels
+          ? configuredPrimaryModel !== undefined
+          : resolved.isUserConfiguredModel,
+        fallbackChain: requirement.fallbackChain,
+        availableModels: builtinOnlyModels ?? availableModels,
+        systemDefaultModel,
+      },
+      await getNativeUnavailableModels(client),
+    )
 
     if (resolution && "skipped" in resolution) {
       isModelResolutionSkipped = true

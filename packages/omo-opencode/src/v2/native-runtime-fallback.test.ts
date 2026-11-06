@@ -2,7 +2,11 @@ import { afterEach, describe, expect, test } from "bun:test"
 import type { Hooks } from "@opencode-ai/plugin"
 import { OhMyOpenCodeConfigSchema, type OhMyOpenCodeConfig } from "../config"
 import { createRuntimeFallbackHook } from "../hooks/runtime-fallback/hook"
-import { getNativeFallbackModel, hasNativeRuntimeFallback } from "../hooks/runtime-fallback/native-controller"
+import {
+  getNativeFallbackModel,
+  getNativeUnavailableModels,
+  hasNativeRuntimeFallback,
+} from "../hooks/runtime-fallback/native-controller"
 import { toBackgroundTaskSnapshots } from "../features/background-agent/task-snapshot"
 import { SessionCategoryRegistry } from "../shared/session-category-registry"
 import { tryFallbackRetry } from "../features/background-agent/fallback-retry-handler"
@@ -14,7 +18,14 @@ import { createFakePluginContext } from "./fake-plugin-context"
 import { bindNativeRuntimeFallback, installNativeRuntimeFallback } from "./native-runtime-fallback"
 import { createSessionTracker } from "./session-tracker"
 import { clearAllSessionPromptParams, getSessionPromptParams } from "../shared/session-prompt-params-state"
-import type { V2ModelInfo, V2ModelRef, V2RetryHookEvent, V2SessionMessage, V2StructuredError } from "./context-types"
+import type {
+  V2HttpResponseHookEvent,
+  V2ModelInfo,
+  V2ModelRef,
+  V2RetryHookEvent,
+  V2SessionMessage,
+  V2StructuredError,
+} from "./context-types"
 import { installRuntimeFallbackTestClock } from "../hooks/runtime-fallback/test-timeout-clock.test-support"
 
 const first = { providerID: "anthropic", id: "first" }
@@ -47,11 +58,19 @@ function fixture(
   model: V2ModelRef | null = first,
   models: readonly V2ModelInfo[] = [],
 ) {
+  let connection: string | undefined = "a"
+  let failConnection = false
   const fake = createFakePluginContext({
     sessionAgent: "sisyphus",
     sessionInfo: { model: model ?? undefined },
     sessionMessages: history,
     models,
+    providers: [{ id: "anthropic", name: "anthropic", activation: "enabled", integrationID: "custom-anthropic" }],
+    activeConnection: async (id) => {
+      if (id !== "custom-anthropic") return undefined
+      if (failConnection) throw new Error("connection unavailable")
+      return connection === undefined ? undefined : { type: "credential", id: connection }
+    },
   })
   const input = createPluginInput(fake.context, { tracker: createSessionTracker(), warn: () => {} })
   const runtime = createRuntimeFallbackHook(input, {
@@ -72,7 +91,18 @@ function fixture(
   })
   const hooks: Hooks = {}
   bindNativeRuntimeFallback(hooks, runtime)
-  return { fake, input, runtime, hooks }
+  return {
+    fake,
+    input,
+    runtime,
+    hooks,
+    setConnection: (id: string | undefined) => {
+      connection = id
+    },
+    setConnectionFailure: (value: boolean) => {
+      failConnection = value
+    },
+  }
 }
 
 function retry(error: V2StructuredError, overrides: Partial<V2RetryHookEvent> = {}): V2RetryHookEvent {
@@ -94,7 +124,275 @@ async function install(f: ReturnType<typeof fixture>) {
   return installed
 }
 
+async function triggerQuotaResponse(f: ReturnType<typeof fixture>, event: V2HttpResponseHookEvent) {
+  const request = await f.fake.triggerHttpRequest({
+    sessionID: event.sessionID,
+    agent: event.agent,
+    model: event.model,
+    kind: event.kind,
+    request: event.request,
+  })
+  return f.fake.triggerHttpResponse({ connectionKey: "credential:a", ...event, request: request.request })
+}
+
 describe("native runtime fallback", () => {
+  test("admits only one concurrent recovery after deferred connection lookups", async () => {
+    const f = fixture()
+    const controller = f.runtime.native
+    if (!controller) throw new Error("Native controller was not created")
+    const lookup = Promise.withResolvers<ReadonlyMap<string, string>>()
+    const applying = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    let applications = 0
+    controller.setCurrentConnections(() => lookup.promise)
+    const input = {
+      sessionID: "ses_concurrent",
+      agent: "sisyphus",
+      model: "anthropic/first",
+      error: { name: "QuotaExceededError", data: { message: "quota exhausted" } },
+    }
+    const apply = async () => {
+      applications++
+      applying.resolve()
+      await release.promise
+    }
+    const firstAttempt = controller.recover(input, apply)
+    const secondAttempt = controller.recover(input, apply)
+    lookup.resolve(new Map())
+    await applying.promise
+    release.resolve()
+    const outcomes = await Promise.all([firstAttempt, secondAttempt])
+    expect(applications).toBe(1)
+    expect(outcomes).toEqual([true, false])
+    controller.forget("ses_concurrent")
+  })
+
+  test("the existing response fixture filters by provider and disposes callbacks independently", async () => {
+    const f = fixture()
+    const seen: string[] = []
+    const openai = await f.fake.context.session.hook(
+      "http.response",
+      () => {
+        seen.push("openai")
+      },
+      { providerID: "openai" },
+    )
+    const anthropic = await f.fake.context.session.hook(
+      "http.response",
+      () => {
+        seen.push("anthropic")
+      },
+      { providerID: "anthropic" },
+    )
+    const event = {
+      sessionID: "ses_main",
+      agent: "sisyphus",
+      model: first,
+      kind: "primary" as const,
+      request: new Request("https://api.anthropic.com/v1/messages"),
+      response: new Response("ok"),
+    }
+    await f.fake.triggerHttpResponse(event)
+    await anthropic.dispose()
+    await f.fake.triggerHttpResponse(event)
+    expect(seen).toEqual(["anthropic"])
+    expect(f.fake.sessionHookCount()).toBe(1)
+    await openai.dispose()
+    expect(f.fake.sessionHookCount()).toBe(0)
+  })
+
+  test("observes a scoped response without consuming its stream and clears the bridge on disposal", async () => {
+    const clock = installRuntimeFallbackTestClock(Date.parse("2026-11-06T10:00:00Z"))
+    cleanups.push(clock.restore)
+    const f = fixture()
+    const other = fixture()
+    const installed = await install(f)
+    await install(other)
+    const response = new Response("stream content", {
+      headers: {
+        "anthropic-ratelimit-requests-remaining": "0",
+        "anthropic-ratelimit-requests-reset": "2026-11-06T11:00:00Z",
+      },
+    })
+    const event = {
+      sessionID: "ses_main",
+      agent: "sisyphus",
+      model: second,
+      kind: "primary" as const,
+      request: new Request("https://api.anthropic.com/v1/messages"),
+      response,
+    }
+    const result = await triggerQuotaResponse(f, event)
+    expect(result.response).toBe(response)
+    expect(await result.response.text()).toBe("stream content")
+    expect(await getNativeUnavailableModels(f.input.client)).toEqual(new Set(["anthropic/second"]))
+    expect(await getNativeUnavailableModels(other.input.client)).toEqual(new Set())
+    expect(f.fake.sessionCalls).toEqual([])
+    await installed.dispose()
+    expect(await getNativeUnavailableModels(f.input.client)).toBeUndefined()
+    expect(f.fake.sessionHookCount()).toBe(0)
+  })
+
+  test("retains quota by selected connection across a delayed response and switching back", async () => {
+    const clock = installRuntimeFallbackTestClock(Date.parse("2026-11-06T10:00:00Z"))
+    cleanups.push(clock.restore)
+    const f = fixture()
+    await install(f)
+    const event = {
+      sessionID: "ses_main",
+      agent: "sisyphus",
+      model: first,
+      kind: "primary" as const,
+      request: new Request("https://api.anthropic.com/v1/messages"),
+      response: new Response("old stream", {
+        headers: {
+          "anthropic-ratelimit-requests-remaining": "0",
+          "anthropic-ratelimit-requests-reset": "2026-11-06T11:00:00Z",
+        },
+      }),
+    }
+    f.setConnection("b")
+    const late = await f.fake.triggerHttpResponse({ ...event, connectionKey: "credential:a" })
+    expect(late.response).toBe(event.response)
+    expect(await late.response.text()).toBe("old stream")
+    expect(await getNativeUnavailableModels(f.input.client)).toEqual(new Set())
+    f.setConnection("a")
+    expect(await getNativeUnavailableModels(f.input.client)).toEqual(new Set(["anthropic/first"]))
+    f.setConnection("b")
+    await triggerQuotaResponse(f, {
+      ...event,
+      connectionKey: "credential:b",
+      model: second,
+      response: new Response("new stream", { headers: event.response.headers }),
+    })
+    expect(await getNativeUnavailableModels(f.input.client)).toEqual(new Set(["anthropic/second"]))
+    f.setConnection("a")
+    expect(await getNativeUnavailableModels(f.input.client)).toEqual(new Set(["anthropic/first"]))
+  })
+
+  test("ignores a missing response key and an unavailable active identity", async () => {
+    const clock = installRuntimeFallbackTestClock(Date.parse("2026-11-06T10:00:00Z"))
+    cleanups.push(clock.restore)
+    const f = fixture()
+    await install(f)
+    const event = {
+      sessionID: "ses_main",
+      agent: "sisyphus",
+      model: first,
+      kind: "primary" as const,
+      request: new Request("https://api.anthropic.com/v1/messages"),
+      response: new Response("ok", {
+        headers: {
+          "anthropic-ratelimit-requests-remaining": "0",
+          "anthropic-ratelimit-requests-reset": "2026-11-06T11:00:00Z",
+        },
+      }),
+    }
+    await f.fake.triggerHttpResponse(event)
+    expect(await getNativeUnavailableModels(f.input.client)).toEqual(new Set())
+    await triggerQuotaResponse(f, event)
+    f.setConnectionFailure(true)
+    expect(await getNativeUnavailableModels(f.input.client)).toEqual(new Set())
+    f.setConnectionFailure(false)
+    f.setConnection(undefined)
+    expect(await getNativeUnavailableModels(f.input.client)).toEqual(new Set())
+  })
+
+  test("skips a quota-blocked recovery candidate even when the host catalog is unknown", async () => {
+    const clock = installRuntimeFallbackTestClock(Date.parse("2026-11-06T10:00:00Z"))
+    cleanups.push(clock.restore)
+    const f = fixture({ agents: { sisyphus: { models: ["anthropic/first", "anthropic/second", "anthropic/third"] } } })
+    await install(f)
+    await triggerQuotaResponse(f, {
+      sessionID: "other",
+      agent: "sisyphus",
+      model: second,
+      kind: "primary",
+      request: new Request("https://api.anthropic.com/v1/messages"),
+      response: new Response("ok", {
+        headers: {
+          "anthropic-ratelimit-requests-remaining": "0",
+          "anthropic-ratelimit-requests-reset": "2026-11-06T11:00:00Z",
+        },
+      }),
+    })
+    await f.fake.triggerRetry(retry({ type: "provider.quota", message: "balance unavailable" }))
+    expect(f.fake.sessionCalls).toEqual([
+      {
+        kind: "switchModel",
+        sessionID: "ses_main",
+        model: { providerID: "anthropic", id: "third", variant: undefined },
+      },
+    ])
+  })
+
+  test("waits for the authoritative reset before restoring the primary model", async () => {
+    const clock = installRuntimeFallbackTestClock(Date.parse("2026-11-06T10:00:00Z"))
+    cleanups.push(clock.restore)
+    const f = fixture({
+      agents: { sisyphus: { models: ["anthropic/first", "anthropic/second"] } },
+      runtime_fallback: { cooldown_seconds: 0, restore_primary_after_cooldown: true },
+    })
+    await install(f)
+    await triggerQuotaResponse(f, {
+      sessionID: "ses_main",
+      agent: "sisyphus",
+      model: first,
+      kind: "primary",
+      request: new Request("https://api.anthropic.com/v1/messages"),
+      response: new Response("ok", {
+        headers: {
+          "anthropic-ratelimit-requests-remaining": "0",
+          "anthropic-ratelimit-requests-reset": "2026-11-06T11:00:00Z",
+        },
+      }),
+    })
+    await f.fake.triggerRetry(retry({ type: "provider.quota", message: "balance unavailable" }))
+    await f.fake.triggerPrompt({ sessionID: "ses_main", messageID: "msg_one", prompt: { text: "next" } })
+    expect(f.fake.sessionCalls).toEqual([
+      { kind: "switchModel", sessionID: "ses_main", model: { ...second, variant: undefined } },
+    ])
+    await clock.advanceBy(3_600_000)
+    await f.fake.triggerPrompt({ sessionID: "ses_main", messageID: "msg_two", prompt: { text: "next" } })
+    expect(f.fake.sessionCalls).toEqual([
+      { kind: "switchModel", sessionID: "ses_main", model: { ...second, variant: undefined } },
+      { kind: "switchModel", sessionID: "ses_main", model: { ...first, variant: undefined } },
+    ])
+  })
+
+  test("continues after the current chain entry when a new quota observation removes it", async () => {
+    const clock = installRuntimeFallbackTestClock(Date.parse("2026-11-06T10:00:00Z"))
+    cleanups.push(clock.restore)
+    const f = fixture({
+      agents: { sisyphus: { models: ["anthropic/first", "anthropic/second", "anthropic/third"] } },
+      runtime_fallback: { cooldown_seconds: 0 },
+    })
+    await install(f)
+    await f.fake.triggerRetry(retry({ type: "provider.quota", message: "balance unavailable" }))
+    await triggerQuotaResponse(f, {
+      sessionID: "ses_main",
+      agent: "sisyphus",
+      model: second,
+      kind: "primary",
+      request: new Request("https://api.anthropic.com/v1/messages"),
+      response: new Response("ok", {
+        headers: {
+          "anthropic-ratelimit-requests-remaining": "0",
+          "anthropic-ratelimit-requests-reset": "2026-11-06T11:00:00Z",
+        },
+      }),
+    })
+    await f.fake.triggerRetry(retry({ type: "provider.quota", message: "balance unavailable" }, { model: second }))
+    expect(f.fake.sessionCalls).toEqual([
+      { kind: "switchModel", sessionID: "ses_main", model: { ...second, variant: undefined } },
+      {
+        kind: "switchModel",
+        sessionID: "ses_main",
+        model: { providerID: "anthropic", id: "third", variant: undefined },
+      },
+    ])
+  })
+
   test("preserves the first same-model 503 retry at attempt 2 before switching once at attempt 3", async () => {
     // given
     const f = fixture()

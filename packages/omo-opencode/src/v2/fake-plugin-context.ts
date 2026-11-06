@@ -15,6 +15,8 @@ import type {
   V2PromptHookEvent,
   V2ContextHookEvent,
   V2ModelRequestHookEvent,
+  V2HttpRequestHookEvent,
+  V2HttpResponseHookEvent,
   V2CompactionHookEvent,
   V2CompactionContinueEvent,
   V2RetryHookEvent,
@@ -62,6 +64,7 @@ export type FakeContextOptions = {
   readonly permissionAssert?: (input: V2PermissionAssertInput) => Promise<void>
   /** Integration ids that have a connection; mirrors the host's provider availability rule. */
   readonly connectedIntegrations?: ReadonlyArray<string>
+  readonly activeConnection?: NonNullable<V2PluginContext["integration"]["connection"]>["active"]
 }
 
 export type FakeSessionCall =
@@ -116,6 +119,8 @@ export type FakePluginContext = {
   readonly triggerPrompt: (event: V2PromptHookEvent) => Promise<V2PromptHookEvent>
   readonly triggerContext: (event: V2ContextHookEvent) => Promise<V2ContextHookEvent>
   readonly triggerModelRequest: (event: V2ModelRequestHookEvent) => Promise<V2ModelRequestHookEvent>
+  readonly triggerHttpRequest: (event: V2HttpRequestHookEvent) => Promise<V2HttpRequestHookEvent>
+  readonly triggerHttpResponse: (event: V2HttpResponseHookEvent) => Promise<V2HttpResponseHookEvent>
   readonly triggerCompaction: (event: V2CompactionHookEvent) => Promise<V2CompactionHookEvent>
   readonly triggerCompactionContinue: (event: V2CompactionContinueEvent) => Promise<V2CompactionContinueEvent>
   readonly triggerRetry: (event: V2RetryHookEvent) => Promise<V2RetryHookEvent>
@@ -217,6 +222,14 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
   const promptHooks: Array<(event: V2PromptHookEvent) => Promise<void> | void> = []
   const contextHooks: Array<(event: V2ContextHookEvent) => Promise<void> | void> = []
   const modelRequestHooks: Array<(event: V2ModelRequestHookEvent) => Promise<void> | void> = []
+  const httpRequestHooks: Array<{
+    callback: (event: V2HttpRequestHookEvent) => Promise<void> | void
+    providerID?: string
+  }> = []
+  const httpResponseHooks: Array<{
+    callback: (event: V2HttpResponseHookEvent) => Promise<void> | void
+    providerID?: string
+  }> = []
   const compactionHooks: Array<(event: V2CompactionHookEvent) => Promise<void> | void> = []
   const compactionContinueHooks: Array<(event: V2CompactionContinueEvent) => Promise<void> | void> = []
   const retryHooks: Array<(event: V2RetryHookEvent) => Promise<void> | void> = []
@@ -506,7 +519,10 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
     },
     model: providers.model,
     provider: providers.provider,
-    integration: providers.integration,
+    integration: {
+      ...providers.integration,
+      connection: { active: options.activeConnection ?? (async () => undefined) },
+    },
     agent: {
       list: async () => ({ data: options.agents ?? [] }),
       transform: async (callback) => {
@@ -616,12 +632,41 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
           | "prompt"
           | "context"
           | "model.request"
+          | "http.request"
+          | "http.response"
           | "compaction"
           | "experimental.compaction.continue"
           | "retry"
           | "experimental.idle",
         callback: (event: never) => Promise<void> | void,
+        options?: { providerID?: string },
       ) => {
+        if (name === "http.request") {
+          const entry = {
+            callback: callback as (event: V2HttpRequestHookEvent) => Promise<void> | void,
+            providerID: options?.providerID,
+          }
+          httpRequestHooks.push(entry)
+          return Promise.resolve({
+            dispose: async () => {
+              const index = httpRequestHooks.indexOf(entry)
+              if (index >= 0) httpRequestHooks.splice(index, 1)
+            },
+          })
+        }
+        if (name === "http.response") {
+          const entry = {
+            callback: callback as (event: V2HttpResponseHookEvent) => Promise<void> | void,
+            providerID: options?.providerID,
+          }
+          httpResponseHooks.push(entry)
+          return Promise.resolve({
+            dispose: async () => {
+              const index = httpResponseHooks.indexOf(entry)
+              if (index >= 0) httpResponseHooks.splice(index, 1)
+            },
+          })
+        }
         const list = (
           name === "prompt"
             ? promptHooks
@@ -704,6 +749,16 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
       for (const hook of modelRequestHooks) await hook(event)
       return event
     },
+    triggerHttpRequest: async (event) => {
+      for (const hook of httpRequestHooks)
+        if (hook.providerID === undefined || hook.providerID === event.model.providerID) await hook.callback(event)
+      return event
+    },
+    triggerHttpResponse: async (event) => {
+      for (const hook of httpResponseHooks)
+        if (hook.providerID === undefined || hook.providerID === event.model.providerID) await hook.callback(event)
+      return event
+    },
     triggerCompaction: async (event) => {
       for (const hook of compactionHooks) await hook(event)
       return event
@@ -752,6 +807,8 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
       promptHooks.length +
       contextHooks.length +
       modelRequestHooks.length +
+      httpRequestHooks.length +
+      httpResponseHooks.length +
       compactionHooks.length +
       compactionContinueHooks.length +
       retryHooks.length +
