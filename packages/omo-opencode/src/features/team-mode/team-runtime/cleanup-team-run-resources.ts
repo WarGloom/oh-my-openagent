@@ -1,5 +1,3 @@
-import { rm } from "node:fs/promises"
-
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
 import type { BackgroundManager } from "../../background-agent/manager"
 import type { TmuxSessionManager } from "../../tmux-subagent/manager"
@@ -8,11 +6,10 @@ import { unregisterTeamSessionsByTeam } from "../team-session-registry"
 import { loadRuntimeState, transitionRuntimeState } from "../team-state-store/store"
 import type { TeamRunCreateError } from "./create"
 import { unregisterTeamRunForSessionCleanup } from "./session-team-run-registry"
+import { removeMemberWorktrees } from "./shutdown-helpers"
+import type { ProvisionedMemberResource } from "./provision-member"
 
-type SpawnedMemberResource = {
-  taskId?: string
-  worktreePath?: string
-}
+type SpawnedMemberResource = Pick<ProvisionedMemberResource, "taskId" | "worktreePath" | "nativeWorktree">
 
 function normalizeError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error))
@@ -64,10 +61,9 @@ export async function cleanupTeamRunResources(args: {
       }
     }
 
-    if (resource.worktreePath) {
+    if (resource.worktreePath || resource.nativeWorktree) {
       try {
-        await rm(resource.worktreePath, { recursive: true, force: true })
-        cleanupReport.removedWorktrees.push(resource.worktreePath)
+        cleanupReport.removedWorktrees.push(...await removeMemberWorktrees([resource], args.bgMgr))
       } catch (cleanupError) {
         cleanupReport.errors.push(`worktree ${resource.worktreePath}: ${normalizeError(cleanupError).message}`)
       }

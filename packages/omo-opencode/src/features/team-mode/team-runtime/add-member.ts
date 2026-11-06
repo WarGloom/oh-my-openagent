@@ -15,6 +15,7 @@ import { unregisterTeamSession } from "../team-session-registry"
 import type { Member, RuntimeState } from "../types"
 import { buildTeamRosterFromRuntime } from "./member-prompt"
 import { createMemberWorktree, provisionTeamMember, type ProvisionedMemberResource } from "./provision-member"
+import { removeMemberWorktrees } from "./shutdown-helpers"
 
 export class TeamAddMemberError extends Error {
   constructor(public readonly memberName: string, cause: Error) {
@@ -58,6 +59,10 @@ async function rollbackOwnedAddition(input: {
     throw new Error("addition rollback incomplete: acquired session has no task stop proof")
   }
 
+  if (input.resource.nativeWorktree) {
+    await removeMemberWorktrees([{ nativeWorktree: input.resource.nativeWorktree }], input.bgMgr)
+      .catch((error: unknown) => { errors.push(error) })
+  }
   for (const directory of [...input.createdDirectories].reverse()) {
     await rmdir(directory).catch((error: unknown) => {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") return
@@ -133,6 +138,7 @@ export async function addTeamMember(input: {
       onResourceAcquired: (acquired) => {
         if (acquired.taskId) resource.taskId = acquired.taskId
         if (acquired.worktreePath) resource.worktreePath = acquired.worktreePath
+        if (acquired.nativeWorktree) resource.nativeWorktree = acquired.nativeWorktree
         if (acquired.sessionId) resource.sessionId = acquired.sessionId
         if (acquired.createdDirectory) createdDirectories.push(acquired.createdDirectory)
       },

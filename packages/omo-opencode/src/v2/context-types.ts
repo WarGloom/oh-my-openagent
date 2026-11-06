@@ -1,6 +1,7 @@
 import type { V2ToastRpc } from "./toast-channel"
 import type { V2ExperimentalSkillDomain, V2SkillDomain, V2SubagentSkillsDomain } from "./native-skill-types"
 import type { NativeSubagentDomain } from "./native-subagent-types"
+import type { NativeWorktreeDomain } from "./native-team-worktrees"
 
 /**
  * Structural view of the OpenCode 2.x plugin context (`@opencode/plugin` `Plugin.Context`).
@@ -660,6 +661,7 @@ export type V2PluginContext = {
   readonly event: V2EventDomain
   readonly permission: V2PermissionDomain
   readonly storage?: V2StorageDomain
+  readonly worktree?: NativeWorktreeDomain
 }
 
 export type V2PluginDefinition = {

@@ -17,6 +17,7 @@ import { getInboxDir, resolveBaseDir } from "../team-registry/paths"
 import { loadRuntimeState, transitionRuntimeState } from "../team-state-store/store"
 import { clearTeamSessionRegistry, lookupTeamSession } from "../team-session-registry"
 import type { Member, TeamSpec } from "../types"
+import { bindNativeTeamWorktrees } from "../../../v2/native-team-worktrees"
 
 const resolveMemberMock = mock(async (member: TeamSpec["members"][number]) => ({
   agentToUse: `${member.name}-agent`,
@@ -170,7 +171,7 @@ describe("addTeamMember", () => {
 
   test("corrective: rollback retains ownership unless current task state proves cancellation stopped it", async () => {
     // given
-    for (const outcome of ["false-running", "throw-running", "false-terminal"] as const) {
+    for (const outcome of ["false-running", "throw-running", "false-terminal", "native-remove-reject"] as const) {
       const baseDir = await mkdtemp(path.join(tmpdir(), "team-add-stop-proof-"))
       temporaryDirectories.push(baseDir)
       const { manager } = createManager(baseDir, runningLaunch())
@@ -188,17 +189,21 @@ describe("addTeamMember", () => {
       }
       manager.cancelTask = async () => {
         if (outcome === "throw-running") throw new Error("abort failed")
-        if (outcome === "false-terminal") task.status = "completed"
+        if (outcome === "false-terminal" || outcome === "native-remove-reject") task.status = "completed"
         return false
       }
       const worktreePath = path.join(baseDir, "added-worktree")
+      if (outcome === "native-remove-reject") bindNativeTeamWorktrees(manager, {
+        create: async (directory) => ({ projectID: "native-project", directory }),
+        remove: async () => { throw new Error("native removal failed") },
+      })
       const input = { teamRunId: runtime.teamRunId, member: { ...inlineMember("new"), worktreePath }, leadSessionId: "lead-session", ctx: createContext(baseDir, manager), config, bgMgr: manager }
 
       // when / then
       await expect(addTeamMember(input)).rejects.toThrow(outcome === "false-terminal" ? "finalization failed" : "rollback incomplete")
       const added = (await loadRuntimeState(runtime.teamRunId, config)).members.find((member) => member.name === "new")
       const inbox = getInboxDir(resolveBaseDir(config), runtime.teamRunId, "new")
-      if (outcome === "false-terminal") {
+      if (outcome === "false-terminal" || outcome === "native-remove-reject") {
         expect(added).toBeUndefined()
         expect(lookupTeamSession(task.sessionId!)).toBeUndefined()
         await expect(access(worktreePath)).rejects.toThrow()
