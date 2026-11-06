@@ -1,5 +1,4 @@
 export * from "./types"
-export * from "./team-worktree"
 
 import { setTeamCoreLogger } from "@oh-my-opencode/team-core"
 

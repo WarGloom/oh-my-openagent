@@ -96,7 +96,6 @@ team-mode/
 ├── team-runtime/               # create/status/shutdown lifecycle
 ├── team-mailbox/               # adapter shim over team-core async messaging (send / poll / ack / inbox)
 ├── team-tasklist/              # adapter shim over team-core CRUD + claiming + dependencies
-├── team-worktree/              # adapter shim over team-core git worktree primitives
 ├── team-layout-tmux/           # adapter shim over team-core optional pane layout
 └── tools/                      # 12 team_* tool implementations + tests
 ```
@@ -153,7 +152,7 @@ team-mode/
 | Add new team tool | `tools/` + register in [`src/plugin/tool-registry.ts`](../../plugin/tool-registry.ts) `teamModeToolsRecord` |
 | Modify member eligibility | `types.ts` `AGENT_ELIGIBILITY_REGISTRY` |
 | Change storage format | `types.ts` Zod schemas |
-| Add worktree behavior | `team-worktree/manager.ts` |
+| Add native worktree behavior | `../../v2/native-team-worktrees.ts` and `team-runtime/provision-member.ts` |
 | Modify tmux layout | `team-layout-tmux/layout.ts` |
 | Task lifecycle changes | `team-tasklist/` |
 | Mailbox protocol changes | `team-mailbox/` |

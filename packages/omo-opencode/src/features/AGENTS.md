@@ -54,7 +54,7 @@ Parallel multi-agent coordination, OFF by default. Harness-neutral domain primit
 - `team-runtime/` — `team_create`, status, shutdown lifecycle
 - `team-mailbox/` — async messaging (send/poll/ack)
 - `team-tasklist/` — shared tasks with atomic claiming
-- `team-worktree/` — git worktree per member
+- `../v2/native-team-worktrees.ts` — host-native member worktrees; provisioning lives in `team-runtime/`
 - `team-layout-tmux/` — optional tmux pane visualization
 - `tools/` — 12 `team_*` tool implementations
 
