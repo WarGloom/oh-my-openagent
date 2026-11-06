@@ -1,4 +1,4 @@
-import { lstat, readdir, realpath, rm, rmdir } from "node:fs/promises"
+import { lstat, readdir, realpath, rm, rmdir, unlink } from "node:fs/promises"
 import path from "node:path"
 
 import type { RuntimeState } from "../types"
@@ -40,6 +40,16 @@ export async function removeProtectedRuntimeDirectory(
   runtimeDirectory: string,
   memberDirectories: readonly string[],
 ): Promise<void> {
+  const runtimeLeaf = path.join(await canonicalPath(path.dirname(runtimeDirectory)), path.basename(runtimeDirectory))
+  const leafInfo = await lstat(runtimeLeaf).catch((error: unknown) => {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined
+    throw error
+  })
+  if (!leafInfo) return
+  if (leafInfo.isSymbolicLink()) {
+    await unlink(runtimeLeaf)
+    return
+  }
   const protectedPaths = await Promise.all(memberDirectories.map(canonicalPath))
   const removeEntry = async (directory: string): Promise<void> => {
     const canonical = await canonicalPath(directory)
@@ -63,5 +73,5 @@ export async function removeProtectedRuntimeDirectory(
     }
     await rm(directory, { recursive: true, force: true })
   }
-  await removeEntry(await canonicalPath(runtimeDirectory))
+  await removeEntry(runtimeLeaf)
 }
