@@ -5,11 +5,13 @@ import { createTeamModeStatusInjector } from "../hooks/team-mode-status-injector
 import { createMessagesTransformHandler } from "../plugin/messages-transform"
 import { createFakePluginContext } from "./fake-plugin-context"
 import { installSessionHooks } from "./session-hooks"
+import { publishTeamRuntimeChange } from "@oh-my-opencode/team-core/team-state-store"
 
 it("#given a team prompt on V2 #when the team ends #then one entry replaces bridge injection and is removed", async () => {
   // given
   const fake = createFakePluginContext()
   const calls: Array<{ action: string; sessionID: string; key: string; value?: string }> = []
+  const removed = Promise.withResolvers<void>()
   const context = {
     ...fake.context,
     session: {
@@ -21,6 +23,7 @@ it("#given a team prompt on V2 #when the team ends #then one entry replaces brid
           },
           remove: async (input: { sessionID: string; key: string }) => {
             calls.push({ action: "remove", ...input })
+            removed.resolve()
           },
         },
       },
@@ -57,9 +60,11 @@ it("#given a team prompt on V2 #when the team ends #then one entry replaces brid
       result: {},
     }
     await fake.triggerToolAfter(deletion)
+    await fake.triggerToolAfter({ ...deletion, tool: "team_create" })
     expect(calls).toHaveLength(1)
     active = false
-    await fake.triggerToolAfter(deletion)
+    publishTeamRuntimeChange("run")
+    await removed.promise
 
     // then
     expect(event.messages).toHaveLength(1)

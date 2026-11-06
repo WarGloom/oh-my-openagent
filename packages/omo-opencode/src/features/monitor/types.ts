@@ -44,6 +44,7 @@ export interface MonitorRecord {
 }
 
 export interface MonitorManager {
+  onVisibleChange(listener: (sessionID: string) => void): () => void
   start(opts: MonitorStartOpts): Promise<MonitorRecord>
   stop(id: MonitorId): Promise<void>
   list(sessionId: string): MonitorRecord[]

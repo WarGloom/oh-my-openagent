@@ -22,6 +22,7 @@ import type { ModelFallbackControllerAccessor } from "./hooks/model-fallback"
 import { subscribeSkillDiagnostics } from "@oh-my-opencode/skills-loader-core/opencode-skill-loader"
 import { showSkillSecurityNotice } from "./plugin/skill-security-notice"
 import {
+  bindV2DashboardOwners,
   getV2BackgroundJobs,
   getV2BackgroundLifecycle,
   getV2SessionAgentLookup,
@@ -216,8 +217,9 @@ export function createManagers(args: {
   })
 
   nativeLifecycle?.connect(backgroundManager)
+  bindV2DashboardOwners(ctx, { backgroundManager, monitorManager, teamModeConfig: pluginConfig.team_mode })
 
-  if (pluginConfig.tui?.sidebar?.enabled !== false) {
+  if (!isV2PluginInput(ctx) && pluginConfig.tui?.sidebar?.enabled !== false) {
     tuiStateMirror = new deps.TuiStateMirrorClass({
       client: ctx.client,
       projectDir: ctx.directory,
