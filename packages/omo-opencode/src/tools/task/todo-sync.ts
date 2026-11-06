@@ -95,44 +95,57 @@ function extractTodos(response: unknown): TodoInfo[] {
   return [];
 }
 
+const sessionSyncs = new Map<string, Promise<void>>();
+
 export async function syncTaskTodoUpdate(
   ctx: PluginInput | undefined,
-  task: Task,
+  task: Task & { threadID?: string },
   sessionID: string,
   writer?: TodoWriter,
 ): Promise<void> {
   if (!ctx) return;
 
-  try {
-    const response = await ctx.client.session.todo({
-      path: { id: sessionID },
-    });
-    const currentTodos = extractTodos(response);
-    const taskTodo = syncTaskToTodo(task);
-    const nextTodos = currentTodos.filter((todo) => {
-      if (taskTodo) {
-        return !todosMatch(todo, taskTodo);
-      }
-      // Deleted task: match by id if present, otherwise by content
-      if (todo.id) {
-        return todo.id !== task.id;
-      }
-      return todo.content !== task.subject;
-    });
-    const todo = taskTodo;
+  const targetSessionID = task.threadID || sessionID;
+  const sync = async () => {
+    try {
+      const response = await ctx.client.session.todo({
+        path: { id: targetSessionID },
+      });
+      const currentTodos = extractTodos(response);
+      const taskTodo = syncTaskToTodo(task);
+      const nextTodos = currentTodos.filter((todo) => {
+        if (taskTodo) {
+          return !todosMatch(todo, taskTodo);
+        }
+        // Deleted task: match by id if present, otherwise by content
+        if (todo.id) {
+          return todo.id !== task.id;
+        }
+        return todo.content !== task.subject;
+      });
+      const todo = taskTodo;
 
-    if (todo) {
-      nextTodos.push(todo);
+      if (todo) {
+        nextTodos.push(todo);
+      }
+
+      const resolvedWriter = writer ?? getV2TodoWriter(ctx.client) ?? (await resolveTodoWriter());
+      if (!resolvedWriter) return;
+      await resolvedWriter({ sessionID: targetSessionID, todos: nextTodos });
+    } catch (err) {
+      log("[todo-sync] Failed to sync task todo", {
+        error: String(err),
+        sessionID: targetSessionID,
+      });
     }
-
-    const resolvedWriter = writer ?? getV2TodoWriter(ctx.client) ?? (await resolveTodoWriter());
-    if (!resolvedWriter) return;
-    await resolvedWriter({ sessionID, todos: nextTodos });
-  } catch (err) {
-    log("[todo-sync] Failed to sync task todo", {
-      error: String(err),
-      sessionID,
-    });
+  };
+  const previous = sessionSyncs.get(targetSessionID);
+  const current = previous ? previous.then(sync, sync) : sync();
+  sessionSyncs.set(targetSessionID, current);
+  try {
+    await current;
+  } finally {
+    if (sessionSyncs.get(targetSessionID) === current) sessionSyncs.delete(targetSessionID);
   }
 }
 

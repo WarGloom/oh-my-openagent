@@ -217,6 +217,37 @@ describe("syncTaskTodoUpdate", () => {
     } as unknown as MockTodoCtx;
   });
 
+  it("retains both tasks when syncs overlap for one session", async () => {
+    // given
+    let todos: TodoInfo[] = [];
+    let releaseFirst = () => {};
+    let firstEntered = () => {};
+    const gate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const entered = new Promise<void>((resolve) => { firstEntered = resolve; });
+    const ctx = {
+      client: { session: { todo: async () => ({ data: [...todos] }) } },
+    } as unknown as PluginInput;
+    const writer = async (input: { sessionID: string; todos: TodoInfo[] }) => {
+      if (input.todos.some((todo) => todo.id === "T-first")) {
+        firstEntered();
+        await gate;
+      }
+      todos = input.todos;
+    };
+    const first: Task & { threadID: string } = { id: "T-first", subject: "First", description: "", status: "pending", blocks: [], blockedBy: [], threadID: "concurrent-owner" };
+    const second: Task = { ...first, id: "T-second", subject: "Second" };
+
+    // when
+    const firstSync = syncTaskTodoUpdate(ctx, first, "concurrent-owner", writer);
+    await entered;
+    const secondSync = syncTaskTodoUpdate(ctx, second, "concurrent-owner", writer);
+    releaseFirst();
+    await Promise.all([firstSync, secondSync]);
+
+    // then
+    expect(todos.map((todo) => todo.id).sort()).toEqual(["T-first", "T-second"]);
+  });
+
   it("writes updated todo and preserves existing items", async () => {
     // given
     const task: Task = {
