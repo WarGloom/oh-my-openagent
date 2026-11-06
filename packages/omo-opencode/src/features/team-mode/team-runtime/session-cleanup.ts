@@ -1,8 +1,9 @@
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
 import { log } from "../../../shared/logger"
-import type { BackgroundManager } from "../../background-agent/manager"
 import type { TmuxSessionManager } from "../../tmux-subagent/manager"
 import { deleteTeam } from "./delete-team"
+import type { DeleteTeamBackgroundManager } from "./delete-team"
+import type { KeptMemberWorktree } from "./shutdown-helpers"
 import { getSessionCreatedTeamRunIds, unregisterTeamRunForSessionCleanup } from "./session-team-run-registry"
 
 export {
@@ -15,6 +16,7 @@ export {
 export type SessionTeamCleanupReport = {
   cleanedTeamRunIds: string[]
   removedLayoutTeamRunIds: string[]
+  keptWorktrees: KeptMemberWorktree[]
   errors: string[]
 }
 
@@ -35,19 +37,24 @@ function normalizeError(error: unknown): Error {
 export async function cleanupSessionTeamRuns(args: {
   config: TeamModeConfig
   tmuxMgr?: TmuxSessionManager
-  bgMgr?: BackgroundManager
+  bgMgr?: DeleteTeamBackgroundManager
   deps?: SessionTeamCleanupDeps
 }): Promise<SessionTeamCleanupReport> {
   const deps = args.deps ?? defaultSessionTeamCleanupDeps
   const report: SessionTeamCleanupReport = {
     cleanedTeamRunIds: [],
     removedLayoutTeamRunIds: [],
+    keptWorktrees: [],
     errors: [],
   }
 
   for (const teamRunId of getSessionCreatedTeamRunIds()) {
     try {
-      const result = await deps.deleteTeam(teamRunId, args.config, args.tmuxMgr, args.bgMgr, { force: true })
+      const result = await deps.deleteTeam(teamRunId, args.config, args.tmuxMgr, args.bgMgr, {
+        force: true,
+        worktreeCleanup: "preserve",
+      })
+      report.keptWorktrees.push(...(result.keptWorktrees ?? []))
       report.cleanedTeamRunIds.push(teamRunId)
       if (result.removedLayout) {
         report.removedLayoutTeamRunIds.push(teamRunId)

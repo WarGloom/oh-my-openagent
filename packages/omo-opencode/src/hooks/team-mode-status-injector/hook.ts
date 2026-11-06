@@ -108,7 +108,8 @@ export function teamModeStatusForPrompt(
 export function buildTeamModeStatusContent(): string {
   return `${TEAM_MODE_STATUS_MARKER}
 Team mode is ENABLED for this session. Presence of the team_* tools is authoritative proof; do not inspect config files to verify.
-Closure invariant: every team you open is yours to close. After each team_task_update that completes or fails a task, call team_task_list({ teamRunId }); if every task is terminal, run team_shutdown_request + team_approve_shutdown per active member, then team_delete in the same turn, without waiting for the user to ask. Lingering teams are a defect.
+Closure invariant: every team you open is yours to close. After each team_task_update that completes or fails a task, call team_task_list({ teamRunId }); once all member results are received and accepted, member work is integrated and no follow-up work remains, run team_shutdown_request + team_approve_shutdown per active member, then team_delete in the same turn, without waiting for the user to ask. Lingering teams are a defect. Only exception: if team_delete refuses because of kept worktrees, keep the team open and report kept worktrees, paths, SHAs and reasons to the user.
+Worktree invariant: members commit finished work there (detached HEAD is fine) and report the SHA. Before team_delete, the lead merges each member's commits into its own branch by SHA. Discarding member work requires explicit user approval; never force removal to satisfy team closure. Native team_delete refuses dirty or unintegrated work; force never discards it.
 Load the team-mode skill for the full Closure Contract and Closure Sequence.
 </team_mode_status>`
 }
