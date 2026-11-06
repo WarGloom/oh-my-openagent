@@ -8,8 +8,8 @@ repo=$ws/.omo/worktrees/omo-v2-dev
 host=$ws/opencode-wt/v2
 binary=$host/packages/cli/dist/cli-linux-x64/bin/opencode
 launcher=/home/nikita/.local/bin/opencode-v2-lab
-host_oid=ed13668705b8308addcdef41e734d4ed6b809d72
-host_hash=f36451f778e12132ccbc221c193c5d9fc2fc05ee3004131add9a849904223c56
+host_oid=01560bfab58a39588e43f07fdd59cb1e78075b9a
+host_hash=9fdd9f73de26fcafca97031c792b0ff2b468b4f11d1f55f275ae7f9b268fce3b
 paths=(dist packages/lsp-tools-mcp/dist packages/lsp-daemon/dist packages/git-bash-mcp/dist packages/shared-skills/skills)
 
 fail() {
@@ -72,7 +72,7 @@ TMPDIR="$work/tmp" unshare -r bwrap --ro-bind / / --dev /dev --unshare-pid --pro
 	--setenv CI true --setenv GIT_MASTER 1 --setenv GIT_TERMINAL_PROMPT 0 \
 	--setenv GIT_CONFIG_NOSYSTEM 1 --setenv GIT_CONFIG_GLOBAL /dev/null \
 	--setenv GIT_CONFIG_COUNT 1 --setenv GIT_CONFIG_KEY_0 safe.directory --setenv GIT_CONFIG_VALUE_0 '*' \
-	--chdir "$repo" bash -Eeuo pipefail -c "git read-tree \"\$1\"; bun run build" bash "$omo_oid" \
+	--chdir "$repo" bash -Eeuo pipefail -c "git read-tree \"\$1\"; bun install --frozen-lockfile --ignore-scripts; bun run build" bash "$omo_oid" \
 	2>&1 | tee "$evidence/build.log"
 
 for path in "${paths[@]}"; do
