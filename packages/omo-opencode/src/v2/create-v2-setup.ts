@@ -1,6 +1,6 @@
 import type { Hooks, Plugin } from "@opencode-ai/plugin"
 import type { V2Cleanup, V2PluginContext, V2Registration } from "./context-types"
-import { bindV2BackgroundJobs, createPluginInput } from "./create-plugin-input"
+import { bindV2BackgroundJobs, createPluginInput, getV2DashboardOwners } from "./create-plugin-input"
 import { startEventBridge } from "./event-bridge"
 import { installHooks } from "./install-hooks"
 import { createSessionTracker } from "./session-tracker"
@@ -16,6 +16,7 @@ import { restoreNativeSkills } from "./native-skill-restore"
 import { bindNativeIdleArbiter, NativeIdleArbiter } from "./native-idle-arbiter"
 import { isNativeRecoveryPending } from "./native-recovery-state"
 import { settleCompactionRestore } from "./compaction-continuation"
+import { registerNativeDashboard } from "./native-dashboard"
 
 export type V2SetupDeps = {
   readonly serverPlugin: Plugin
@@ -51,6 +52,7 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
     let skills: V2Registration | undefined
     let arbiter: NativeIdleArbiter | undefined
     let idleListener: V2Registration | undefined
+    let dashboard: V2Registration | undefined
     const background = new V2BackgroundLifecycle(context, context.storage)
     try {
       toast = await context.rpc.register(toastChannel, {})
@@ -108,6 +110,7 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
       fallback = await installNativeRuntimeFallback(context, hooks)
       bridge.setInterceptor(fallback?.beforeEvent)
       uninstall = await installHooks(context, hooks, { warn })
+      dashboard = await registerNativeDashboard(context, getV2DashboardOwners(context))
       if (fallback) {
         const installedFallback = fallback
         const uninstallHooks = uninstall
@@ -120,6 +123,7 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
       await background.start()
     } catch (error) {
       bridge.stop()
+      await dashboard?.dispose()
       await idleListener?.dispose()
       await arbiter?.dispose()
       await background.dispose()
@@ -136,6 +140,7 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
       if (disposed) return
       disposed = true
       bridge.stop()
+      await dashboard?.dispose()
       await idleListener?.dispose()
       await arbiter?.dispose()
       await background.dispose()

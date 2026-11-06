@@ -2,13 +2,17 @@
 
 import { afterEach, describe, expect, test } from "bun:test"
 import { randomUUID } from "node:crypto"
+import { existsSync, readFileSync } from "node:fs"
 import { mkdtemp, mkdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
 import { TeamModeConfigSchema } from "../config"
 import type { TeamModeConfig } from "../config"
+import { RuntimeStateSchema } from "../types"
 import type { ActiveTeamSummary, RuntimeState, TeamSpec } from "../types"
+import { subscribeTeamRuntimeChanges } from "./changes"
+import { removeRuntimeDirectory } from "./runtime-cleanup"
 import {
   InvalidTransitionError,
   RuntimeStateError,
@@ -18,6 +22,7 @@ import {
   loadRuntimeState,
   saveRuntimeState,
   transitionRuntimeState,
+  transitionRuntimeStateAsync,
 } from "./store"
 
 async function createTemporaryBaseDir(): Promise<string> {
@@ -305,3 +310,183 @@ describe("runtime state store", () => {
     expect(await runtimeDirectoryExists(baseDir, runtimeState.teamRunId)).toBe(false)
   })
 })
+
+type ObservedRuntimeChange = { readonly teamRunId: string; readonly status: RuntimeState["status"] | "absent" }
+
+type RuntimeChangeCase = {
+  readonly operation: string
+  readonly arrange: (config: TeamModeConfig) => Promise<() => Promise<string>>
+  readonly expectedStatus: ObservedRuntimeChange["status"] | undefined
+}
+
+async function createdRun(config: TeamModeConfig, status?: RuntimeState["status"]): Promise<RuntimeState> {
+  const runtimeState = await createRuntimeState(createSpec(), undefined, "user", config)
+  if (status === undefined) return runtimeState
+  const updatedState = { ...runtimeState, status }
+  await saveRuntimeState(updatedState, config)
+  return updatedState
+}
+
+const runtimeChangeCases: readonly RuntimeChangeCase[] = [
+  {
+    operation: "createRuntimeState",
+    arrange: async (config) => async () =>
+      (await createRuntimeState(createSpec(), undefined, "user", config)).teamRunId,
+    expectedStatus: "creating",
+  },
+  {
+    operation: "saveRuntimeState",
+    arrange: async (config) => {
+      const runtimeState = await createdRun(config)
+      return async () => {
+        await saveRuntimeState({ ...runtimeState, status: "active" }, config)
+        return runtimeState.teamRunId
+      }
+    },
+    expectedStatus: "active",
+  },
+  {
+    operation: "transitionRuntimeState",
+    arrange: async (config) => {
+      const { teamRunId } = await createdRun(config)
+      return async () =>
+        (await transitionRuntimeState(teamRunId, (state) => ({ ...state, status: "active" }), config)).teamRunId
+    },
+    expectedStatus: "active",
+  },
+  {
+    operation: "transitionRuntimeStateAsync",
+    arrange: async (config) => {
+      const { teamRunId } = await createdRun(config)
+      return async () =>
+        (await transitionRuntimeStateAsync(teamRunId, async (state) => ({ ...state, status: "failed" }), config))
+          .teamRunId
+    },
+    expectedStatus: "failed",
+  },
+  {
+    operation: "listActiveTeams removing a deleted runtime",
+    arrange: async (config) => {
+      const { teamRunId } = await createdRun(config, "deleted")
+      return async () => {
+        await listActiveTeams(config)
+        return teamRunId
+      }
+    },
+    expectedStatus: "absent",
+  },
+  {
+    operation: "removeRuntimeDirectory",
+    arrange: async (config) => {
+      const { teamRunId } = await createdRun(config)
+      return async () => {
+        await removeRuntimeDirectory(teamRunId, config)
+        return teamRunId
+      }
+    },
+    expectedStatus: "absent",
+  },
+  {
+    operation: "a rejected transition",
+    arrange: async (config) => {
+      const { teamRunId } = await createdRun(config, "deleted")
+      return async () => {
+        await expect(
+          transitionRuntimeState(teamRunId, (state) => ({ ...state, status: "active" }), config),
+        ).rejects.toBeInstanceOf(InvalidTransitionError)
+        return teamRunId
+      }
+    },
+    expectedStatus: undefined,
+  },
+]
+
+describe("runtime state change notifications", () => {
+  const temporaryDirectories: string[] = []
+  const unsubscribers: Array<() => void> = []
+
+  afterEach(async () => {
+    for (const unsubscribe of unsubscribers.splice(0)) unsubscribe()
+    await Promise.all(
+      temporaryDirectories.splice(0).map(async (directoryPath) => {
+        await rm(directoryPath, { recursive: true, force: true })
+      }),
+    )
+  })
+
+  test.each(runtimeChangeCases)(
+    "#given a subscriber #when $operation finishes #then it sees exactly the committed state",
+    async ({ arrange, expectedStatus }) => {
+      // given
+      const baseDir = await createTemporaryBaseDir()
+      temporaryDirectories.push(baseDir)
+      const config = createConfig(baseDir)
+      const act = await arrange(config)
+      const observed: ObservedRuntimeChange[] = []
+      unsubscribers.push(
+        subscribeTeamRuntimeChanges((teamRunId) => {
+          const statePath = path.join(baseDir, "runtime", teamRunId, "state.json")
+          const status = existsSync(statePath) ? readPersistedStatus(readFileSync(statePath, "utf8")) : "absent"
+          observed.push({ teamRunId, status })
+        }),
+      )
+
+      // when
+      const teamRunId = await act()
+
+      // then
+      expect(observed).toEqual(expectedStatus === undefined ? [] : [{ teamRunId, status: expectedStatus }])
+    },
+  )
+
+  test("#given listeners that unsubscribe during a notification #when later runtimes commit #then removed listeners are never called again", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    temporaryDirectories.push(baseDir)
+    const config = createConfig(baseDir)
+    const calls: string[] = []
+    let unsubscribeSecond: () => void = () => undefined
+    const unsubscribeFirst = subscribeTeamRuntimeChanges(() => {
+      calls.push("first")
+      unsubscribeFirst()
+      unsubscribeSecond()
+    })
+    unsubscribeSecond = subscribeTeamRuntimeChanges(() => {
+      calls.push("second")
+    })
+    unsubscribers.push(unsubscribeFirst, unsubscribeSecond)
+
+    // when
+    await createRuntimeState(createSpec(), undefined, "user", config)
+    await createRuntimeState(createSpec(), undefined, "user", config)
+
+    // then
+    expect(calls).toEqual(["first"])
+  })
+
+  test("#given a throwing listener #when a runtime commits #then the commit resolves and later listeners still run", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    temporaryDirectories.push(baseDir)
+    const config = createConfig(baseDir)
+    const notified: string[] = []
+    unsubscribers.push(
+      subscribeTeamRuntimeChanges(() => {
+        throw new Error("listener failure")
+      }),
+      subscribeTeamRuntimeChanges((teamRunId) => {
+        notified.push(teamRunId)
+      }),
+    )
+
+    // when
+    const runtimeState = await createRuntimeState(createSpec(), undefined, "user", config)
+
+    // then
+    expect(notified).toEqual([runtimeState.teamRunId])
+  })
+})
+
+function readPersistedStatus(stateContent: string): RuntimeState["status"] {
+  return RuntimeStateSchema.parse(JSON.parse(stateContent)).status
+}

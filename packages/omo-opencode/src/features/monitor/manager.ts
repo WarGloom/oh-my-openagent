@@ -46,6 +46,7 @@ export class MonitorCapacityError extends Error {
 
 export class MonitorManager implements MonitorManagerContract {
   private readonly monitors = new Map<MonitorId, InternalMonitorState>()
+  private readonly visibleChangeListeners = new Set<(sessionID: string) => void>()
   private readonly monitorsByParentSession = new Map<string, Set<MonitorId>>()
   private readonly scheduledFlushTimers = new Map<MonitorId, TimerHandle>()
   private readonly config: typeof DEFAULT_MONITOR_CONFIG
@@ -121,6 +122,29 @@ export class MonitorManager implements MonitorManagerContract {
     this.addMonitor(state)
     observeProcessExit(state, this.logger, (parentSessionId) => this.enforceTerminalRetention(parentSessionId))
     return { ...record }
+  }
+
+  onVisibleChange(listener: (sessionID: string) => void): () => void {
+    const subscription = (sessionID: string) => listener(sessionID)
+    this.visibleChangeListeners.add(subscription)
+    return () => {
+      this.visibleChangeListeners.delete(subscription)
+    }
+  }
+
+  private notifyVisibleChange(sessionID: string): void {
+    if (this.visibleChangeListeners.size === 0) return
+    const listeners = [...this.visibleChangeListeners]
+    queueMicrotask(() => {
+      for (const listener of listeners) {
+        if (!this.visibleChangeListeners.has(listener)) continue
+        try {
+          listener(sessionID)
+        } catch (error) {
+          this.logger("[monitor] Visible change listener failed", { sessionID, error })
+        }
+      }
+    })
   }
 
   async stop(id: MonitorId): Promise<void> {
@@ -235,8 +259,10 @@ export class MonitorManager implements MonitorManagerContract {
 
     const states = [...this.monitors.values()]
     await Promise.all(states.map((state) => this.stop(state.record.id)))
+    const parentSessionIDs = [...this.monitorsByParentSession.keys()]
     this.monitors.clear()
     this.monitorsByParentSession.clear()
+    for (const sessionID of parentSessionIDs) this.notifyVisibleChange(sessionID)
     this.unregisterCleanup(this)
   }
 
@@ -270,6 +296,7 @@ export class MonitorManager implements MonitorManagerContract {
     const ids = this.monitorsByParentSession.get(state.record.parentSessionId) ?? new Set<MonitorId>()
     ids.add(state.record.id)
     this.monitorsByParentSession.set(state.record.parentSessionId, ids)
+    this.notifyVisibleChange(state.record.parentSessionId)
   }
 
   private assertSessionCapacity(sessionId: string): void {
@@ -300,6 +327,7 @@ export class MonitorManager implements MonitorManagerContract {
       return
     }
     const ids = this.monitorsByParentSession.get(state.record.parentSessionId)
+    this.notifyVisibleChange(state.record.parentSessionId)
     if (!ids) {
       return
     }
@@ -326,6 +354,7 @@ export class MonitorManager implements MonitorManagerContract {
         this.removeMonitor(oldest)
       }
     }
+    this.notifyVisibleChange(sessionId)
   }
 
   private flushSessionMonitors(sessionId: string): void {

@@ -7,6 +7,7 @@ import type { TeamModeConfig } from "../config"
 import { log } from "../logger"
 import { type ActiveTeamSummary, type RuntimeState, RuntimeStateSchema, type TeamSpec } from "../types"
 import { getRuntimeStateDir, resolveBaseDir } from "../team-registry/paths"
+import { publishTeamRuntimeChange } from "./changes"
 import { atomicWrite, withLock } from "./locks"
 import { assertRosterWithinCapacity } from "./member-admission"
 
@@ -51,6 +52,7 @@ async function removeRuntimeDirectoryBestEffort(
 ): Promise<void> {
   try {
     await rm(getRuntimeStateDir(baseDir, teamRunId), { recursive: true, force: true })
+    publishTeamRuntimeChange(teamRunId)
   } catch (error) {
     log("team runtime cleanup failed", {
       event: "team-runtime-cleanup-failed",
@@ -162,6 +164,7 @@ export async function createRuntimeState(
 
   await mkdir(runtimeDirectoryPath, { recursive: true })
   await atomicWrite(getStatePath(baseDir, teamRunId), serializeRuntimeState(runtimeState))
+  publishTeamRuntimeChange(teamRunId)
   return runtimeState
 }
 
@@ -183,6 +186,7 @@ export async function loadRuntimeState(teamRunId: string, config: TeamModeConfig
 export async function saveRuntimeState(runtimeState: RuntimeState, config: TeamModeConfig): Promise<void> {
   const baseDir = resolveBaseDir(config)
   await atomicWrite(getStatePath(baseDir, runtimeState.teamRunId), serializeRuntimeState(runtimeState))
+  publishTeamRuntimeChange(runtimeState.teamRunId)
 }
 
 export async function transitionRuntimeState(

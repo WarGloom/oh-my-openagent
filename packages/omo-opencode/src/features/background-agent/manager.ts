@@ -70,6 +70,7 @@ import {
   resolvePromptContextFromSessionMessages,
 } from "./compaction-aware-message-resolver"
 import { ConcurrencyManager } from "./concurrency"
+import { TaskVisibleChanges } from "./task-visible-changes"
 import { POLLING_INTERVAL_MS, type QueueItem, TASK_CLEANUP_DELAY_MS, TASK_TTL_MS } from "./constants"
 import { formatDuration } from "./duration-formatter"
 import {
@@ -430,6 +431,7 @@ export interface BackgroundManagerConfig {
 
 export class BackgroundManager {
   private tasks: Map<string, BackgroundTask>
+  private readonly visibleChanges: TaskVisibleChanges
   private tasksByParentSession: Map<string, Set<string>>
   private notifications: Map<string, BackgroundTask[]>
   private pendingNotifications: Map<string, string[]>
@@ -508,6 +510,7 @@ export class BackgroundManager {
     this.enableParentSessionNotifications = options?.enableParentSessionNotifications ?? true
     this.modelFallbackControllerAccessor = options?.modelFallbackControllerAccessor
     this.logger = options?.log ?? log
+    this.visibleChanges = new TaskVisibleChanges(this.tasks, this.logger)
     this.parentWakeNotifier = new ParentWakeNotifier(
       {
         client: this.client,
@@ -659,9 +662,16 @@ export class BackgroundManager {
   }
 
   private addTask(task: BackgroundTask): void {
+    const previous = this.tasks.get(task.id)
+    this.visibleChanges.observe(task)
     this.completedTaskArchive.delete(task.id)
     this.tasks.set(task.id, task)
     rememberBackgroundTask(task)
+    if (previous !== task) {
+      if (previous && previous.parentSessionId !== task.parentSessionId)
+        this.visibleChanges.notify(previous.parentSessionId)
+      this.visibleChanges.notify(task.parentSessionId)
+    }
     if (!task.parentSessionId) {
       return
     }
@@ -675,8 +685,13 @@ export class BackgroundManager {
     this.clearFallbackRetryResultsForTask(task)
     this.archiveCompletedTask(task)
     archiveBackgroundTask(task)
-    this.tasks.delete(task.id)
+    const removed = this.tasks.delete(task.id)
     this.removeTaskFromParentIndex(task.id, task.parentSessionId)
+    if (removed) this.visibleChanges.notify(task.parentSessionId)
+  }
+
+  onVisibleChange(listener: (sessionID: string) => void): () => void {
+    return this.visibleChanges.subscribe(listener)
   }
 
   private archiveCompletedTask(task: BackgroundTask): void {
@@ -776,7 +791,7 @@ export class BackgroundManager {
     task.completedAt = snapshot.completedAt
     task.error = snapshot.error
     task.startedAt = snapshot.startedAt
-    task.progress = snapshot.progress
+    this.visibleChanges.updateProgress(task, snapshot.progress)
     task.parentMessageId = snapshot.parentMessageId
     task.parentModel = snapshot.parentModel
     task.parentAgent = snapshot.parentAgent
@@ -1192,10 +1207,10 @@ export class BackgroundManager {
       return
     }
 
-    task.progress = {
+    this.visibleChanges.updateProgress(task, {
       toolCalls: 0,
       lastUpdate: new Date(),
-    }
+    })
     task.concurrencyKey = task.nativeInheritedPermit ? undefined : concurrencyKey
     task.concurrencyGroup = concurrencyKey
 
@@ -2697,6 +2712,7 @@ export class BackgroundManager {
           toolCalls: 0,
           lastUpdate: partInfo?.activityTime ?? new Date(),
         }
+        this.visibleChanges.notify(task.parentSessionId)
       }
       task.progress.lastUpdate = partInfo?.activityTime ?? new Date()
 
@@ -2716,6 +2732,7 @@ export class BackgroundManager {
 
         task.progress.toolCalls += 1
         task.progress.lastTool = partInfo.tool
+        this.visibleChanges.notify(task.parentSessionId)
         const circuitBreaker = this.cachedCircuitBreakerSettings ?? resolveCircuitBreakerSettings(this.config)
         this.cachedCircuitBreakerSettings = circuitBreaker
         if (partInfo.tool) {
@@ -4254,6 +4271,7 @@ export class BackgroundManager {
       sessionStatuses: allStatuses,
       hasPendingRemovalTimer: (taskId) => this.completionTimers.has(taskId),
       hasAttachedSyncSession: (sessionID) => this.syncAttachedSessions.has(sessionID),
+      onTaskRemoved: (task) => this.visibleChanges.notify(task.parentSessionId),
       onTaskPruned: (taskId, task, errorMessage) => {
         const wasPending = task.status === "pending"
         log("[background-agent] Pruning stale task:", {
@@ -4734,8 +4752,10 @@ export class BackgroundManager {
     }
 
     this.concurrencyManager.clear()
+    const visibleParentSessionIDs = new Set([...this.tasks.values()].map((task) => task.parentSessionId))
     this.tasks.clear()
     this.tasksByParentSession.clear()
+    for (const sessionID of visibleParentSessionIDs) this.visibleChanges.notify(sessionID)
     this.notifications.clear()
     this.pendingNotifications.clear()
     this.pendingByParent.clear()

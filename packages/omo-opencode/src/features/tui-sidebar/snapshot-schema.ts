@@ -5,7 +5,7 @@ import type { AgentStatus, LoopLive, TeamMemberStatus, TeamRow } from "./state-t
 
 const AGENT_STATUS_VALUES = ["busy", "idle", "error", "running", "retry"] as const satisfies readonly AgentStatus[]
 
-const AgentRowSchema = z.object({
+export const AgentRowSchema = z.object({
   name: z.string(),
   status: z.enum(AGENT_STATUS_VALUES),
 })
@@ -32,7 +32,7 @@ const TeamRowSchema = z.object({
   members: z.array(TeamMemberRowSchema),
 })
 
-const LoopLiveSchema = z.object({
+export const LoopLiveSchema = z.object({
   kind: z.literal("live"),
   goalsDone: z.number().int().nonnegative(),
   goalsTotal: z.number().int().nonnegative(),

@@ -3463,6 +3463,179 @@ describe("BackgroundManager.trackTask", () => {
     manager.shutdown()
   })
 
+  test("visible changes publish insertion and real cancellation after the mutation", async () => {
+    // given
+    const changes: Array<{ sessionID: string; status: string | undefined }> = []
+    manager.onVisibleChange((sessionID) => changes.push({ sessionID, status: manager.getTask("visible")?.status }))
+
+    // when
+    const pending = manager.trackTask({
+      taskId: "visible",
+      sessionId: "child",
+      parentSessionId: "parent",
+      description: "visible task",
+    })
+    expect(changes).toEqual([])
+    await pending
+    await manager.cancelTask("visible", { abortSession: false, skipNotification: true })
+
+    // then
+    expect(changes).toEqual([
+      { sessionID: "parent", status: "running" },
+      { sessionID: "parent", status: "cancelled" },
+    ])
+  })
+
+  test("visible changes invalidate both parents after a tracked task moves", async () => {
+    // given
+    const input = { taskId: "visible", sessionId: "child", parentSessionId: "old-parent", description: "visible task" }
+    await manager.trackTask(input)
+    const changes: Array<{ sessionID: string; tasks: string[] }> = []
+    manager.onVisibleChange((sessionID) =>
+      changes.push({ sessionID, tasks: manager.getTasksByParentSession(sessionID).map((task) => task.id) }),
+    )
+
+    // when
+    await manager.trackTask({ ...input, parentSessionId: "new-parent" })
+    await manager.trackTask({ ...input, parentSessionId: "new-parent" })
+
+    // then
+    expect(changes).toEqual([
+      { sessionID: "old-parent", tasks: [] },
+      { sessionID: "new-parent", tasks: ["visible"] },
+    ])
+  })
+
+  test("visible changes ignore equal values and preserve plain task serialization", async () => {
+    // given
+    const input = { taskId: "visible", sessionId: "child", parentSessionId: "parent", description: "visible task" }
+    const task = await manager.trackTask(input)
+    await manager.trackTask(input)
+    const changes: string[] = []
+    const unsubscribe = manager.onVisibleChange((sessionID) => changes.push(sessionID))
+
+    // when
+    task.status = "running"
+    task.sessionId = "child"
+    task.parentSessionId = "parent"
+    await Promise.resolve()
+    expect(changes).toEqual([])
+    task.sessionId = "replacement-child"
+    await Promise.resolve()
+    const spread = { ...task }
+    const cloned = structuredClone(task)
+    const json = JSON.parse(JSON.stringify(task))
+    task.status = "error"
+    unsubscribe()
+    unsubscribe()
+    await Promise.resolve()
+    task.status = "completed"
+    await Promise.resolve()
+
+    // then
+    expect(changes).toEqual(["parent"])
+    expect(spread.sessionId).toBe("replacement-child")
+    expect(cloned).toEqual(spread)
+    expect(json).toMatchObject({ status: "running", sessionId: "replacement-child", parentSessionId: "parent" })
+    expect(Object.values(cloned).some((value) => typeof value === "function")).toBe(false)
+  })
+
+  test("visible changes publish tool progress once for a repeated running part", async () => {
+    // given
+    await manager.trackTask({
+      taskId: "visible",
+      sessionId: "child",
+      parentSessionId: "parent",
+      description: "visible task",
+    })
+    const changes: Array<{ sessionID: string; toolCalls: number | undefined; lastTool: string | undefined }> = []
+    manager.onVisibleChange((sessionID) => {
+      const progress = manager.getTask("visible")?.progress
+      changes.push({ sessionID, toolCalls: progress?.toolCalls, lastTool: progress?.lastTool })
+    })
+    const event = {
+      type: "message.part.updated",
+      properties: {
+        part: { id: "tool-1", sessionID: "child", type: "tool", tool: "read", state: { status: "running" } },
+      },
+    }
+
+    // when
+    manager.handleEvent(event)
+    manager.handleEvent(event)
+    await Promise.resolve()
+
+    // then
+    expect(changes).toEqual([{ sessionID: "parent", toolCalls: 1, lastTool: "read" }])
+  })
+
+  test("visible changes publish terminal TTL removal without removing a same-age live task", async () => {
+    // given
+    const now = Date.UTC(2026, 10, 6, 12)
+    const clock = spyOn(Date, "now").mockReturnValue(now)
+    try {
+      const finished = await manager.trackTask({
+        taskId: "expired",
+        sessionId: "finished-child",
+        parentSessionId: "finished-parent",
+        description: "finished task",
+      })
+      const live = await manager.trackTask({
+        taskId: "live",
+        sessionId: "live-child",
+        parentSessionId: "live-parent",
+        description: "live task",
+      })
+      const old = new Date(now - 31 * 60 * 1000)
+      finished.status = "completed"
+      finished.startedAt = old
+      finished.completedAt = old
+      live.startedAt = old
+      live.progress = { toolCalls: 0, lastUpdate: new Date(now) }
+      await Promise.resolve()
+      const changes: Array<{ sessionID: string; tasks: string[] }> = []
+      const unsubscribe = manager.onVisibleChange((sessionID) =>
+        changes.push({ sessionID, tasks: manager.getTasksByParentSession(sessionID).map((task) => task.id) }),
+      )
+
+      // when
+      pruneStaleTasksAndNotificationsForTest(manager)
+      await Promise.resolve()
+      unsubscribe()
+
+      // then
+      expect(manager.getTasksByParentSession("finished-parent")).toEqual([])
+      expect(manager.getTasksByParentSession("live-parent")).toEqual([live])
+      expect(live.status).toBe("running")
+      expect(changes).toEqual([{ sessionID: "finished-parent", tasks: [] }])
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
+  test("visible changes publish removal on shutdown and ignore detached task writes", async () => {
+    // given
+    const task = await manager.trackTask({
+      taskId: "visible",
+      sessionId: "child",
+      parentSessionId: "parent",
+      description: "visible task",
+    })
+    task.status = "completed"
+    await Promise.resolve()
+    const changes: string[] = []
+    manager.onVisibleChange((sessionID) => changes.push(sessionID))
+
+    // when
+    await manager.shutdown()
+    task.status = "error"
+    await Promise.resolve()
+
+    // then
+    expect(changes).toEqual(["parent"])
+    expect(manager.getTasksSnapshot()).toEqual([])
+  })
+
   test("should not double acquire on duplicate registration", async () => {
     // given
     const input = {
