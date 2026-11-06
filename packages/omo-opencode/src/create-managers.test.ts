@@ -8,6 +8,12 @@ import { createManagers } from "./create-managers"
 import * as openclawRuntimeDispatch from "./openclaw/runtime-dispatch"
 import * as sessionCleanup from "./features/team-mode/team-runtime/session-cleanup"
 import { createModelCacheState } from "./plugin-state"
+import { V2BackgroundLifecycle } from "./v2/background-lifecycle"
+import { bindV2BackgroundJobs, createPluginInput } from "./v2/create-plugin-input"
+import { createFakePluginContext } from "./v2/fake-plugin-context"
+import { createSessionTracker } from "./v2/session-tracker"
+import type { NativeBackgroundJobs } from "./features/background-agent/native-lifecycle"
+import type { SessionAgentResolver } from "./features/tui-sidebar/snapshot-builder"
 
 type CleanupRegistration = {
   shutdown: () => void | Promise<void>
@@ -95,6 +101,28 @@ function createDeps(): NonNullable<Parameters<typeof createManagers>[0]["deps"]>
     createConfigHandlerFn: createConfigHandler,
     markServerRunningInProcessFn: markServerRunningInProcess,
   }
+}
+
+const unusedNativeJobs: NativeBackgroundJobs = {
+  prepare: async () => {
+    throw new Error("native jobs are not exercised by this test")
+  },
+  start: async () => {
+    throw new Error("native jobs are not exercised by this test")
+  },
+  cancel: async () => {
+    throw new Error("native jobs are not exercised by this test")
+  },
+  revokeProvisioning: async () => {
+    throw new Error("native jobs are not exercised by this test")
+  },
+  wait: async () => {
+    throw new Error("native jobs are not exercised by this test")
+  },
+  restore: async () => {
+    throw new Error("native jobs are not exercised by this test")
+  },
+  stop: () => {},
 }
 
 function createTmuxConfig(enabled: boolean) {
@@ -385,5 +413,49 @@ describe("createManagers", () => {
     expect(managers.tuiStateMirror).toBeUndefined()
     expect(tuiMirrorConstructedInputs).toHaveLength(0)
     expect(tuiMirrorStartCount).toBe(0)
+  })
+
+  it("#given a V2 plugin input #when managers are created #then the sidebar mirror resolves agent labels from native session metadata without reading session history", async () => {
+    // given
+    const fake = createFakePluginContext({ sessionAgent: "sisyphus" })
+    if (!fake.context.storage) throw new Error("fake context storage is required")
+    let contextCalls = 0
+    const context = {
+      ...fake.context,
+      session: {
+        ...fake.context.session,
+        get: async ({ sessionID }: { readonly sessionID: string }) => {
+          if (sessionID === "ses_missing") throw new Error("SessionNotFoundError")
+          return fake.context.session.get({ sessionID })
+        },
+        context: async (input: { readonly sessionID: string }) => {
+          contextCalls += 1
+          return fake.context.session.context(input)
+        },
+      },
+    }
+    const lifecycle = new V2BackgroundLifecycle(context, context.storage)
+    const input = createPluginInput(context, { tracker: createSessionTracker(), warn: () => {} }, lifecycle)
+    bindV2BackgroundJobs(input, unusedNativeJobs)
+    const args = {
+      ctx: input,
+      pluginConfig: OhMyOpenCodeConfigSchema.parse({}),
+      tmuxConfig: createTmuxConfig(false),
+      modelCacheState: createModelCacheState(),
+      backgroundNotificationHookEnabled: false,
+      deps: createDeps(),
+    }
+
+    // when
+    createManagers(args)
+    const mirrorInput = tuiMirrorConstructedInputs.at(-1) as
+      { readonly sessionAgentResolver?: SessionAgentResolver } | undefined
+    const resolver = mirrorInput?.sessionAgentResolver
+
+    // then
+    expect(resolver).toBeDefined()
+    expect(await resolver?.("ses_1", input.client)).toBe("sisyphus")
+    expect(await resolver?.("ses_missing", input.client)).toBeNull()
+    expect(contextCalls).toBe(0)
   })
 })
