@@ -12,9 +12,8 @@ import { deleteTeam } from "./delete-team"
 const { fixture, cleanup } = createRemovalTestContext()
 afterEach(cleanup)
 
-test.each([false, true])(
-  "retains archived resources until explicit whole-team deletion with shared worktree=%s",
-  async (shared) => {
+for (const shared of [false, true])
+  test(`reports archived legacy worktrees without deleting their work with shared worktree=${shared}`, async () => {
     // given
     const input = await fixture()
     const directory = input.config.base_dir ?? ""
@@ -79,12 +78,17 @@ test.each([false, true])(
         },
       )
       // then
-      expect(result.removedWorktrees).toEqual([worktree])
+      expect(result.removedWorktrees).toEqual([])
+      expect(result.keptWorktrees?.map((entry) => entry.member).sort()).toEqual(
+        shared ? ["lead", "worker"] : ["worker"],
+      )
+      expect(
+        result.keptWorktrees?.every((entry) => entry.reason === "legacy-directory" && entry.directory === worktree),
+      ).toBe(true)
       expect(cleanedPanes).toEqual(["%4"])
-      await expect(access(worktree)).rejects.toThrow()
+      expect(await readFile(path.join(worktree, "kept"), "utf8")).toBe("partial work")
       await expect(access(pane)).rejects.toThrow()
     } finally {
       await manager.cleanup()
     }
-  },
-)
+  })
