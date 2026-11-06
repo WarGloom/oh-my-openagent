@@ -59,7 +59,13 @@ export async function createTeam(
 
   const now = deps.now ?? Date.now
   const config = toTeamCoreConfig(deps.taskSettings, teamStorageBaseDir(deps.stateDir))
-  const runtimeState = await createRuntimeState(spec, deps.leadSessionId, toTeamCoreSpecSource(source), config)
+  const runtimeState = await createRuntimeState(
+    spec,
+    deps.leadSessionId,
+    toTeamCoreSpecSource(source),
+    config,
+    process.cwd(),
+  )
   const teamRunId = runtimeState.teamRunId
   await ensureTeamRuntimeDirs(
     deps.stateDir,

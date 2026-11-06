@@ -3,7 +3,19 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { randomUUID } from "node:crypto"
 import { existsSync, readFileSync } from "node:fs"
-import { mkdtemp, mkdir, readFile, realpath, rm, stat, symlink, utimes, writeFile } from "node:fs/promises"
+import {
+  lstat,
+  mkdtemp,
+  mkdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  stat,
+  symlink,
+  utimes,
+  writeFile,
+} from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
@@ -97,6 +109,29 @@ describe("runtime state store", () => {
         await rm(directoryPath, { recursive: true, force: true })
       }),
     )
+  })
+
+  test("runtime cleanup unlinks a symlinked runtime leaf without deleting its target", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    temporaryDirectories.push(baseDir)
+    const config = createConfig(baseDir)
+    const state = await createRuntimeState(createSpec(), "lead-session", "project", config)
+    const runtimeDirectory = path.join(baseDir, "runtime", state.teamRunId)
+    const target = path.join(baseDir, "external-target")
+    await writeFile(path.join(runtimeDirectory, "keep.txt"), "external work")
+    const before = await readFile(path.join(runtimeDirectory, "state.json"), "utf8")
+    await rename(runtimeDirectory, target)
+    await symlink(target, runtimeDirectory, "dir")
+
+    // when
+    const removed = await removeRuntimeDirectory(state.teamRunId, config)
+
+    // then
+    expect(removed).toBe(true)
+    await expect(lstat(runtimeDirectory)).rejects.toThrow()
+    expect(await readFile(path.join(target, "state.json"), "utf8")).toBe(before)
+    expect(await readFile(path.join(target, "keep.txt"), "utf8")).toBe("external work")
   })
 
   for (const status of ["failed", "deleted", "deleting"] as const)
