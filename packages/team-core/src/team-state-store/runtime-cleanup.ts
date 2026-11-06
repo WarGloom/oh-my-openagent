@@ -1,9 +1,10 @@
-import { rm, stat } from "node:fs/promises"
+import { stat } from "node:fs/promises"
 
 import type { TeamModeConfig } from "../config"
 import { getRuntimeStateDir, resolveBaseDir } from "../team-registry/paths"
-import type { RuntimeState } from "../types"
 import { publishTeamRuntimeChange } from "./changes"
+import { loadRuntimeState } from "./store"
+import { getRuntimeWorktreePaths, removeProtectedRuntimeDirectory } from "./runtime-directory-removal"
 
 function isEnoentError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT"
@@ -19,18 +20,21 @@ async function runtimeDirectoryExists(teamRunId: string, config: TeamModeConfig)
   }
 }
 
-export async function removeRuntimeDirectory(teamRunId: string, config: TeamModeConfig): Promise<boolean> {
+export async function removeRuntimeDirectory(
+  teamRunId: string,
+  config: TeamModeConfig,
+  projectDirectory?: string,
+): Promise<boolean> {
   if (!(await runtimeDirectoryExists(teamRunId, config))) return false
-  await rm(getRuntimeStateDir(resolveBaseDir(config), teamRunId), { recursive: true, force: true })
+  const runtimeState = await loadRuntimeState(teamRunId, config).catch((error: unknown) => {
+    if (isEnoentError(error)) return undefined
+    throw error
+  })
+  if (!runtimeState) return false
+  await removeProtectedRuntimeDirectory(
+    getRuntimeStateDir(resolveBaseDir(config), teamRunId),
+    getRuntimeWorktreePaths(runtimeState, runtimeState.projectDirectory ?? projectDirectory),
+  )
   publishTeamRuntimeChange(teamRunId)
   return true
-}
-
-export async function cleanupMemberWorktrees(runtimeState: RuntimeState): Promise<void> {
-  await Promise.all(
-    runtimeState.members.map(async (member) => {
-      if (!member.worktreePath || member.nativeWorktree) return
-      await rm(member.worktreePath, { recursive: true, force: true })
-    }),
-  )
 }

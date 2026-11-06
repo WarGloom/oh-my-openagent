@@ -36,6 +36,7 @@ export async function cleanupTeamRunResources(args: {
   bgMgr: BackgroundManager
   tmuxMgr?: TmuxSessionManager
   createdLayout: boolean
+  projectDirectory?: string
 }): Promise<TeamRunCreateError["cleanupReport"]> {
   const cleanupReport: TeamRunCreateError["cleanupReport"] = {
     cancelledTaskIds: [],
@@ -62,7 +63,7 @@ export async function cleanupTeamRunResources(args: {
 
     if (resource.worktreePath || resource.nativeWorktree) {
       try {
-        const result = await removeMemberWorktrees([resource], args.bgMgr)
+        const result = await removeMemberWorktrees([resource], args.bgMgr, args.projectDirectory)
         cleanupReport.removedWorktrees.push(...result.removedWorktrees)
         cleanupReport.keptWorktrees?.push(...result.keptWorktrees)
       } catch (cleanupError) {

@@ -1,4 +1,4 @@
-import { rmdir } from "node:fs/promises"
+import { mkdir, rmdir } from "node:fs/promises"
 import { randomUUID } from "node:crypto"
 
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
@@ -14,8 +14,9 @@ import {
 import { unregisterTeamSession } from "../team-session-registry"
 import type { Member, RuntimeState } from "../types"
 import { buildTeamRosterFromRuntime } from "./member-prompt"
-import { createMemberWorktree, provisionTeamMember, type ProvisionedMemberResource } from "./provision-member"
+import { provisionTeamMember, type ProvisionedMemberResource } from "./provision-member"
 import { removeMemberWorktrees } from "./shutdown-helpers"
+import { requireNativeTeamWorktrees } from "../../../v2/native-team-worktrees"
 
 export class TeamAddMemberError extends Error {
   constructor(
@@ -44,7 +45,7 @@ async function rollbackOwnedAddition(input: {
   resource: ProvisionedMemberResource
   bgMgr: BackgroundManager
   config: TeamModeConfig
-  createdDirectories: string[]
+  createdInbox?: string
 }): Promise<void> {
   const errors: unknown[] = []
   if (input.resource.taskId) {
@@ -77,16 +78,15 @@ async function rollbackOwnedAddition(input: {
     throw new Error("addition rollback incomplete: acquired session has no task stop proof")
   }
 
-  if (input.resource.nativeWorktree) {
-    await removeMemberWorktrees(
-      [{ name: input.claim.memberName, nativeWorktree: input.resource.nativeWorktree }],
-      input.bgMgr,
-    ).catch((error: unknown) => {
-      errors.push(error)
-    })
+  if (input.resource.nativeWorktree || input.resource.worktreePath) {
+    await removeMemberWorktrees([{ name: input.claim.memberName, ...input.resource }], input.bgMgr).catch(
+      (error: unknown) => {
+        errors.push(error)
+      },
+    )
   }
-  for (const directory of [...input.createdDirectories].reverse()) {
-    await rmdir(directory).catch((error: unknown) => {
+  if (input.createdInbox) {
+    await rmdir(input.createdInbox).catch((error: unknown) => {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") return
       errors.push(error)
     })
@@ -129,6 +129,7 @@ export async function addTeamMember(input: {
   parentMessageId?: string
 }): Promise<AddTeamMemberResult> {
   const { teamRunId, member, config, bgMgr } = input
+  if (member.worktreePath) requireNativeTeamWorktrees(bgMgr)
   const claimId = randomUUID()
   const baseDir = resolveBaseDir(config)
 
@@ -146,13 +147,12 @@ export async function addTeamMember(input: {
 
   // 2. Provision outside the lock.
   const resource: ProvisionedMemberResource = {}
-  const createdDirectories: string[] = []
+  let createdInbox: string | undefined
   let finalMember: RuntimeState["members"][number] | undefined
 
   try {
-    await createMemberWorktree(getInboxDir(baseDir, teamRunId, member.name), input.ctx.directory, (directory) =>
-      createdDirectories.push(directory),
-    )
+    const inbox = getInboxDir(baseDir, teamRunId, member.name)
+    if (await mkdir(inbox, { recursive: true })) createdInbox = inbox
     await provisionTeamMember({
       teamName: claimedState.teamName,
       leadAgentName: claimedState.members.find((candidate) => candidate.agentType === "leader")?.name,
@@ -172,7 +172,6 @@ export async function addTeamMember(input: {
         if (acquired.worktreePath) resource.worktreePath = acquired.worktreePath
         if (acquired.nativeWorktree) resource.nativeWorktree = acquired.nativeWorktree
         if (acquired.sessionId) resource.sessionId = acquired.sessionId
-        if (acquired.createdDirectory) createdDirectories.push(acquired.createdDirectory)
       },
       onRuntimeStateUpdated: (state) => {
         finalMember = state.members.find((candidate) => candidate.name === member.name)
@@ -183,7 +182,7 @@ export async function addTeamMember(input: {
     return { teamRunId, memberName: member.name, sessionId: finalMember.sessionId, status: finalMember.status }
   } catch (error) {
     try {
-      await rollbackOwnedAddition({ teamRunId, claim, resource, bgMgr, config, createdDirectories })
+      await rollbackOwnedAddition({ teamRunId, claim, resource, bgMgr, config, createdInbox })
     } catch (rollbackError) {
       throw new TeamAddMemberError(
         member.name,

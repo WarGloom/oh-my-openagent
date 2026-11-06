@@ -1,4 +1,3 @@
-import { mkdir, stat } from "node:fs/promises"
 import path from "node:path"
 
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
@@ -9,7 +8,11 @@ import type { BackgroundManager } from "../../background-agent/manager"
 import type { BackgroundTask } from "../../background-agent/types"
 import { registerTeamSession } from "../team-session-registry"
 import { loadRuntimeState, transitionRuntimeState } from "../team-state-store/store"
-import { getNativeTeamWorktrees, type NativeTeamWorktree } from "../../../v2/native-team-worktrees"
+import {
+  getNativeTeamWorktrees,
+  requireNativeTeamWorktrees,
+  type NativeTeamWorktree,
+} from "../../../v2/native-team-worktrees"
 import type { Member, RuntimeState } from "../types"
 import { buildMemberPrompt, type MemberPromptRosterEntry } from "./member-prompt"
 import { resolveMember } from "./resolve-member"
@@ -31,29 +34,6 @@ export type ProvisionedMemberResource = {
   worktreePath?: string
   nativeWorktree?: NativeTeamWorktree
   sessionId?: string
-  createdDirectory?: string
-}
-
-export async function createMemberWorktree(
-  memberWorktreePath: string,
-  projectRoot: string,
-  onCreated?: (directory: string) => void,
-): Promise<string> {
-  const absolutePath = path.isAbsolute(memberWorktreePath)
-    ? memberWorktreePath
-    : path.resolve(projectRoot, memberWorktreePath)
-  try {
-    await mkdir(absolutePath)
-    onCreated?.(absolutePath)
-  } catch (error) {
-    if (!(error instanceof Error) || !("code" in error)) throw error
-    if (error.code === "ENOENT") {
-      await createMemberWorktree(path.dirname(absolutePath), projectRoot, onCreated)
-      return createMemberWorktree(absolutePath, projectRoot, onCreated)
-    }
-    if (error.code !== "EEXIST" || !(await stat(absolutePath)).isDirectory()) throw error
-  }
-  return absolutePath
 }
 
 export function toPersistedMemberModel(
@@ -152,7 +132,9 @@ export async function provisionTeamMember(input: ProvisionTeamMemberInput): Prom
     throw new MemberProvisionClaimLostError(input.member.name, input.teamRunId)
   }
 
-  const nativeWorktrees = getNativeTeamWorktrees(input.bgMgr)
+  const nativeWorktrees = input.member.worktreePath
+    ? requireNativeTeamWorktrees(input.bgMgr)
+    : getNativeTeamWorktrees(input.bgMgr)
   const existingWorktree = nativeWorktrees
     ? (await loadRuntimeState(input.teamRunId, input.config)).members.find(
         (member) => member.name === input.member.name,
@@ -164,13 +146,7 @@ export async function provisionTeamMember(input: ProvisionTeamMemberInput): Prom
       ? await nativeWorktrees.create(path.resolve(input.ctx.directory, input.member.worktreePath))
       : undefined)
   if (nativeWorktree && !existingWorktree) input.onResourceAcquired?.({ nativeWorktree })
-  const worktreePath =
-    nativeWorktree?.directory ??
-    (input.member.worktreePath
-      ? await createMemberWorktree(input.member.worktreePath, input.ctx.directory, (createdDirectory) =>
-          input.onResourceAcquired?.({ createdDirectory }),
-        )
-      : undefined)
+  const worktreePath = nativeWorktree?.directory
   if (worktreePath) input.onResourceAcquired?.({ worktreePath })
   if (nativeWorktree) {
     await transitionRuntimeState(

@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto"
-import { readdir, rm } from "node:fs/promises"
-import path from "node:path"
+import { stat } from "node:fs/promises"
+import {
+  RelativeMemberWorktreePathError,
+  resolveMemberWorktreePath,
+} from "@oh-my-opencode/team-core/team-state-store/runtime-directory-removal"
 
 import type { Message, RuntimeState } from "../types"
 import { getNativeTeamWorktrees, type NativeTeamWorktree } from "../../../v2/native-team-worktrees"
@@ -18,11 +21,38 @@ export type MemberWorktreeCleanupReport = { removedWorktrees: string[]; keptWork
 export async function inspectMemberWorktrees(
   members: readonly WorktreeMember[],
   owner?: object,
+  projectDirectory?: string,
 ): Promise<KeptMemberWorktree[]> {
   const kept: KeptMemberWorktree[] = []
+  const worktrees = getNativeTeamWorktrees(owner)
   for (const member of members) {
-    if (!member.nativeWorktree) continue
-    const worktrees = getNativeTeamWorktrees(owner)
+    if (!member.nativeWorktree) {
+      if (!member.worktreePath) continue
+      try {
+        const directory = resolveMemberWorktreePath(
+          member.worktreePath,
+          projectDirectory ?? worktrees?.projectDirectory,
+        )
+        const exists = await stat(directory).then(
+          (info) => info.isDirectory(),
+          (error: unknown) => {
+            if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR"))
+              return false
+            throw error
+          },
+        )
+        if (exists) kept.push({ directory, member: member.name ?? "unknown", exists: true, reason: "legacy-directory" })
+      } catch (error) {
+        if (!(error instanceof RelativeMemberWorktreePathError)) throw error
+        kept.push({
+          directory: member.worktreePath,
+          member: member.name ?? "unknown",
+          exists: true,
+          reason: error.message,
+        })
+      }
+      continue
+    }
     const status = worktrees
       ? await worktrees.inspect(member.nativeWorktree)
       : {
@@ -114,72 +144,29 @@ export function findLatestShutdownRequestIndex(
   return -1
 }
 
-export async function removeWorktrees(
-  memberPaths: Array<string | undefined>,
-  preservedDirectories: readonly string[] = [],
-): Promise<string[]> {
-  const removedWorktrees: string[] = []
-
-  for (const memberPath of new Set(memberPaths)) {
-    if (!memberPath) continue
-    if (
-      preservedDirectories.some(
-        (directory) =>
-          path.resolve(directory) === path.resolve(memberPath) ||
-          path.resolve(memberPath).startsWith(`${path.resolve(directory)}${path.sep}`),
-      )
-    )
-      continue
-    if (
-      preservedDirectories.some((directory) => {
-        const relative = path.relative(memberPath, directory)
-        return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
-      })
-    ) {
-      const entries = await readdir(memberPath)
-      await removeWorktrees(
-        entries.map((entry) => path.join(memberPath, entry)),
-        preservedDirectories,
-      )
-      continue
-    }
-    await rm(memberPath, { recursive: true, force: true })
-    removedWorktrees.push(memberPath)
-  }
-
-  return removedWorktrees
-}
-
 export async function removeMemberWorktrees(
   members: readonly WorktreeMember[],
   owner?: object,
+  projectDirectory?: string,
 ): Promise<MemberWorktreeCleanupReport> {
   const removed: string[] = []
-  const kept = await inspectMemberWorktrees(members, owner)
+  const kept = await inspectMemberWorktrees(members, owner, projectDirectory)
   for (const member of members) {
-    const directory = member.nativeWorktree?.directory ?? member.worktreePath
+    if (!member.nativeWorktree) continue
+    const directory = member.nativeWorktree.directory
     if (!directory || removed.includes(directory)) continue
     if (kept.some((entry) => entry.directory === directory)) continue
-    if (member.nativeWorktree) {
-      const worktrees = getNativeTeamWorktrees(owner)
-      if (!worktrees) throw new Error("Native team worktree cleanup requires its host worktree domain")
-      try {
-        await worktrees.remove(member.nativeWorktree)
-      } catch (error) {
-        if (!(error instanceof NativeWorktreeKeptError)) throw error
-        kept.push({ ...error.worktree, member: member.name ?? "unknown" })
-        continue
-      }
-    } else {
-      const removedLegacy = await removeWorktrees(
-        [directory],
-        kept.map((entry) => entry.directory),
-      )
-      removed.push(...removedLegacy)
+    const worktrees = getNativeTeamWorktrees(owner)
+    if (!worktrees) throw new Error("Native team worktree cleanup requires its host worktree domain")
+    try {
+      await worktrees.remove(member.nativeWorktree)
+    } catch (error) {
+      if (!(error instanceof NativeWorktreeKeptError)) throw error
+      kept.push({ ...error.worktree, member: member.name ?? "unknown" })
       continue
     }
     removed.push(directory)
   }
-  for (const worktree of kept) log("team native worktree kept", worktree)
+  for (const worktree of kept) log("team member worktree kept", worktree)
   return { removedWorktrees: removed, keptWorktrees: kept }
 }

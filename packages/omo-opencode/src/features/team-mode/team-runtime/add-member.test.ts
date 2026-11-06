@@ -121,7 +121,50 @@ describe("addTeamMember", () => {
     )
   })
 
-  test("corrective: rollback preserves a pre-existing worktree and releases an inbox acquisition failure", async () => {
+  for (const withWorktree of [true, false])
+    test(`native-only addition without a host domain (${withWorktree ? "worktree refuses before writes or launch" : "no worktree still works"})`, async () => {
+      // given
+      const baseDir = await mkdtemp(path.join(tmpdir(), "team-add-native-only-"))
+      temporaryDirectories.push(baseDir)
+      const { manager, launchMock } = createManager(baseDir, runningLaunch())
+      const config = createConfig(baseDir)
+      const runtime = await createTeamRun(
+        createSpec(["lead"]),
+        "lead-session",
+        createContext(baseDir, manager),
+        config,
+        manager,
+      )
+      launchMock.mockClear()
+      const statePath = path.join(baseDir, "runtime", runtime.teamRunId, "state.json")
+      const before = await readFile(statePath, "utf8")
+      const worktreePath = path.join(baseDir, "member-worktree")
+
+      // when
+      const addition = addTeamMember({
+        teamRunId: runtime.teamRunId,
+        member: { ...inlineMember("new"), ...(withWorktree ? { worktreePath } : {}) },
+        leadSessionId: "lead-session",
+        ctx: createContext(baseDir, manager),
+        config,
+        bgMgr: manager,
+      })
+
+      // then
+      if (withWorktree) {
+        await expect(addition).rejects.toThrow("native V2 host worktree domain")
+        expect(launchMock).not.toHaveBeenCalled()
+        expect(await readFile(statePath, "utf8")).toBe(before)
+        await expect(access(worktreePath)).rejects.toThrow()
+        await expect(access(getInboxDir(baseDir, runtime.teamRunId, "new"))).rejects.toThrow()
+      } else {
+        expect((await addition).memberName).toBe("new")
+        expect(launchMock).toHaveBeenCalledTimes(1)
+        expect(launchMock.mock.calls[0]?.[0].cwd).toBeUndefined()
+      }
+    })
+
+  test("native-only admission preserves a pre-existing directory and releases an inbox acquisition failure", async () => {
     // given
     const baseDir = await mkdtemp(path.join(tmpdir(), "team-add-owned-"))
     temporaryDirectories.push(baseDir)
@@ -149,7 +192,7 @@ describe("addTeamMember", () => {
       bgMgr: manager,
     }
     // when / then
-    await expect(addTeamMember(input)).rejects.toThrow("spawn failed")
+    await expect(addTeamMember(input)).rejects.toThrow("native V2 host worktree domain")
     expect(await readFile(path.join(worktreePath, "keep"), "utf8")).toBe("original")
     const inbox = getInboxDir(resolveBaseDir(config), runtime.teamRunId, "blocked")
     await mkdir(path.dirname(inbox), { recursive: true })
@@ -240,7 +283,13 @@ describe("addTeamMember", () => {
 
   test("corrective: rollback retains ownership unless current task state proves cancellation stopped it", async () => {
     // given
-    for (const outcome of ["false-running", "throw-running", "false-terminal", "native-remove-reject"] as const) {
+    for (const outcome of [
+      "false-running",
+      "throw-running",
+      "false-terminal",
+      "native-remove-reject",
+      "native-kept",
+    ] as const) {
       const baseDir = await mkdtemp(path.join(tmpdir(), "team-add-stop-proof-"))
       temporaryDirectories.push(baseDir)
       const { manager } = createManager(baseDir, runningLaunch())
@@ -264,21 +313,33 @@ describe("addTeamMember", () => {
       }
       manager.cancelTask = async () => {
         if (outcome === "throw-running") throw new Error("abort failed")
-        if (outcome === "false-terminal" || outcome === "native-remove-reject") task.status = "completed"
+        if (outcome === "false-terminal" || outcome === "native-remove-reject" || outcome === "native-kept")
+          task.status = "completed"
         return false
       }
       const worktreePath = path.join(baseDir, "added-worktree")
-      if (outcome === "native-remove-reject")
+      if (outcome === "native-remove-reject" || outcome === "native-kept")
         bindNativeTeamWorktrees(manager, {
-          create: async (directory) => ({ projectID: "native-project", directory }),
-          inspect: async (identity) => ({ directory: identity.directory, exists: true }),
+          create: async (directory) => {
+            await mkdir(directory)
+            await writeFile(path.join(directory, "work.txt"), "member work")
+            return { projectID: "native-project", directory }
+          },
+          inspect: async (identity) => ({
+            directory: identity.directory,
+            exists: true,
+            ...(outcome === "native-kept" ? { reason: "dirty", dirty: true } : {}),
+          }),
           remove: async () => {
             throw new Error("native removal failed")
           },
         })
       const input = {
         teamRunId: runtime.teamRunId,
-        member: { ...inlineMember("new"), worktreePath },
+        member: {
+          ...inlineMember("new"),
+          ...(outcome === "native-remove-reject" || outcome === "native-kept" ? { worktreePath } : {}),
+        },
         leadSessionId: "lead-session",
         ctx: createContext(baseDir, manager),
         config,
@@ -287,19 +348,20 @@ describe("addTeamMember", () => {
 
       // when / then
       await expect(addTeamMember(input)).rejects.toThrow(
-        outcome === "false-terminal" ? "finalization failed" : "rollback incomplete",
+        outcome === "false-terminal" || outcome === "native-kept" ? "finalization failed" : "rollback incomplete",
       )
       const added = (await loadRuntimeState(runtime.teamRunId, config)).members.find((member) => member.name === "new")
       const inbox = getInboxDir(resolveBaseDir(config), runtime.teamRunId, "new")
-      if (outcome === "false-terminal" || outcome === "native-remove-reject") {
+      if (outcome === "false-terminal" || outcome === "native-remove-reject" || outcome === "native-kept") {
         expect(added).toBeUndefined()
         expect(lookupTeamSession(task.sessionId!)).toBeUndefined()
-        await expect(access(worktreePath)).rejects.toThrow()
+        if (outcome === "false-terminal") await expect(access(worktreePath)).rejects.toThrow()
+        else expect(await readFile(path.join(worktreePath, "work.txt"), "utf8")).toBe("member work")
         await expect(access(inbox)).rejects.toThrow()
       } else {
         expect(added?.provisioningClaimId).toBeDefined()
         expect(lookupTeamSession(task.sessionId!)).toMatchObject({ memberName: "new" })
-        await access(worktreePath)
+        await expect(access(worktreePath)).rejects.toThrow()
         await access(inbox)
         await expect(addTeamMember({ ...input, member: inlineMember("other") })).rejects.toThrow(/at capacity/)
       }

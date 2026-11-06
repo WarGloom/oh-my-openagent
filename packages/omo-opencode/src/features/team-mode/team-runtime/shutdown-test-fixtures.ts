@@ -171,6 +171,7 @@ export async function createNativeFixture() {
     },
   })
   const owner = {}
+  if (!worktrees) throw new Error("native fixture requires a host worktree domain")
   bindNativeTeamWorktrees(owner, worktrees)
   const identities = await Promise.all(fixture.worktreePaths.map((target) => worktrees.create(target)))
   await transitionRuntimeState(

@@ -9,7 +9,7 @@ import path from "node:path"
 import { TeamModeConfigSchema } from "../config"
 import type { TeamModeConfig } from "../config"
 import type { TeamSessionContext } from "../session-client"
-import { getInboxDir, resolveBaseDir } from "../team-registry/paths"
+import { getInboxDir, getRuntimeStateDir, resolveBaseDir } from "../team-registry/paths"
 import type { TeamSpec } from "../types"
 import { resumeAllTeams } from "./resume"
 import { createRuntimeState, loadRuntimeState, saveRuntimeState, transitionRuntimeState } from "./store"
@@ -174,17 +174,7 @@ describe("resumeAllTeams", () => {
         cleaned: 0,
         errors: [],
       })
-      if (native) {
-        expect(await readFile(path.join(worktreePath, "member-work.txt"), "utf8")).toBe("keep native member work")
-        return
-      }
-      let statError: NodeJS.ErrnoException | null = null
-      try {
-        await stat(worktreePath)
-      } catch (error) {
-        statError = error as NodeJS.ErrnoException
-      }
-      expect(statError?.code).toBe("ENOENT")
+      expect(await readFile(path.join(worktreePath, "member-work.txt"), "utf8")).toBe("keep native member work")
     })
 
   test("leaves fresh creating teams pending during reload recovery", async () => {
@@ -596,65 +586,63 @@ describe("resumeAllTeams", () => {
     expect(report.marked_orphaned).toBe(1)
   })
 
-  test("finishes deleting teams and removes the runtime directory", async () => {
-    // given
-    const baseDir = await createTemporaryBaseDir()
-    temporaryDirectories.push(baseDir)
-    const config = createConfig(baseDir)
-    const runtimeState = await createRuntimeState(createSpec(), "ses_lead", "user", config)
-    await transitionRuntimeState(
-      runtimeState.teamRunId,
-      (currentRuntimeState) => ({
-        ...currentRuntimeState,
-        status: "active",
-      }),
-      config,
-    )
-    await transitionRuntimeState(
-      runtimeState.teamRunId,
-      (currentRuntimeState) => ({
-        ...currentRuntimeState,
-        status: "deleting",
-      }),
-      config,
-    )
-    const worktreePath = path.join(baseDir, "worktrees", runtimeState.teamRunId, "worker")
-    await mkdir(worktreePath, { recursive: true })
-    await saveRuntimeState(
-      {
-        ...(await loadRuntimeState(runtimeState.teamRunId, config)),
-        members: runtimeState.members.map((member) =>
-          member.name === "worker" ? { ...member, worktreePath } : member,
-        ),
-      },
-      config,
-    )
+  for (const nested of [false, true])
+    test(`finishes deleting teams but retains legacy member work (nested=${nested})`, async () => {
+      // given
+      const baseDir = await createTemporaryBaseDir()
+      temporaryDirectories.push(baseDir)
+      const config = createConfig(baseDir)
+      const runtimeState = await createRuntimeState(createSpec(), "ses_lead", "user", config)
+      await transitionRuntimeState(
+        runtimeState.teamRunId,
+        (currentRuntimeState) => ({
+          ...currentRuntimeState,
+          status: "active",
+        }),
+        config,
+      )
+      await transitionRuntimeState(
+        runtimeState.teamRunId,
+        (currentRuntimeState) => ({
+          ...currentRuntimeState,
+          status: "deleting",
+        }),
+        config,
+      )
+      const worktreePath = nested
+        ? path.join(getRuntimeStateDir(baseDir, runtimeState.teamRunId), "legacy-member")
+        : path.join(baseDir, "worktrees", runtimeState.teamRunId, "worker")
+      await mkdir(worktreePath, { recursive: true })
+      await writeFile(path.join(worktreePath, "work.txt"), "legacy member work")
+      await saveRuntimeState(
+        {
+          ...(await loadRuntimeState(runtimeState.teamRunId, config)),
+          members: runtimeState.members.map((member) =>
+            member.name === "worker" ? { ...member, worktreePath } : member,
+          ),
+        },
+        config,
+      )
 
-    // when
-    const report = await resumeAllTeams(createTeamSessionContext(baseDir), config)
+      // when
+      const report = await resumeAllTeams(createTeamSessionContext(baseDir), config)
 
-    // then
-    expect(report).toEqual({
-      resumed: 0,
-      marked_failed: 0,
-      marked_orphaned: 0,
-      cleaned: 1,
-      errors: [],
+      // then
+      expect(report).toEqual({
+        resumed: 0,
+        marked_failed: 0,
+        marked_orphaned: 0,
+        cleaned: 1,
+        errors: [],
+      })
+      let runtimeStatErrorCode: string | undefined
+      try {
+        await loadRuntimeState(runtimeState.teamRunId, config)
+      } catch (error) {
+        runtimeStatErrorCode = getErrorCode(error)
+      }
+      expect(runtimeStatErrorCode).toBe("ENOENT")
+
+      expect(await readFile(path.join(worktreePath, "work.txt"), "utf8")).toBe("legacy member work")
     })
-    let runtimeStatErrorCode: string | undefined
-    try {
-      await loadRuntimeState(runtimeState.teamRunId, config)
-    } catch (error) {
-      runtimeStatErrorCode = getErrorCode(error)
-    }
-    expect(runtimeStatErrorCode).toBe("ENOENT")
-
-    let worktreeStatErrorCode: string | undefined
-    try {
-      await stat(worktreePath)
-    } catch (error) {
-      worktreeStatErrorCode = getErrorCode(error)
-    }
-    expect(worktreeStatErrorCode).toBe("ENOENT")
-  })
 })
