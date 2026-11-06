@@ -179,6 +179,10 @@ const RuntimeStateMemberSchema = z
     color: z.string().optional(),
     worktreePath: z.string().optional(),
     lastInjectedTurnMarker: z.string().optional(),
+    nativeWorktree: z
+      .object({ projectID: z.string().min(1), directory: z.string().min(1) })
+      .strict()
+      .optional(),
     pendingInjectedMessageIds: z.array(z.string()).default([]),
     provisioningClaimId: z.string().optional(),
     removal: MemberRemovalSchema.optional(),

@@ -8,7 +8,8 @@ import type { ExecutorContext } from "../../../tools/delegate-task/executor-type
 import type { BackgroundManager } from "../../background-agent/manager"
 import type { BackgroundTask } from "../../background-agent/types"
 import { registerTeamSession } from "../team-session-registry"
-import { transitionRuntimeState } from "../team-state-store/store"
+import { loadRuntimeState, transitionRuntimeState } from "../team-state-store/store"
+import { getNativeTeamWorktrees, type NativeTeamWorktree } from "../../../v2/native-team-worktrees"
 import type { Member, RuntimeState } from "../types"
 import { buildMemberPrompt, type MemberPromptRosterEntry } from "./member-prompt"
 import { resolveMember } from "./resolve-member"
@@ -28,6 +29,7 @@ export class MemberProvisionClaimLostError extends Error {
 export type ProvisionedMemberResource = {
   taskId?: string
   worktreePath?: string
+  nativeWorktree?: NativeTeamWorktree
   sessionId?: string
   createdDirectory?: string
 }
@@ -150,12 +152,41 @@ export async function provisionTeamMember(input: ProvisionTeamMemberInput): Prom
     throw new MemberProvisionClaimLostError(input.member.name, input.teamRunId)
   }
 
-  const worktreePath = input.member.worktreePath
-    ? await createMemberWorktree(input.member.worktreePath, input.ctx.directory, (createdDirectory) =>
-        input.onResourceAcquired?.({ createdDirectory }),
-      )
+  const nativeWorktrees = getNativeTeamWorktrees(input.bgMgr)
+  const existingWorktree = nativeWorktrees
+    ? (await loadRuntimeState(input.teamRunId, input.config)).members.find(
+        (member) => member.name === input.member.name,
+      )?.nativeWorktree
     : undefined
+  const nativeWorktree =
+    existingWorktree ??
+    (input.member.worktreePath && nativeWorktrees
+      ? await nativeWorktrees.create(path.resolve(input.ctx.directory, input.member.worktreePath))
+      : undefined)
+  if (nativeWorktree && !existingWorktree) input.onResourceAcquired?.({ nativeWorktree })
+  const worktreePath =
+    nativeWorktree?.directory ??
+    (input.member.worktreePath
+      ? await createMemberWorktree(input.member.worktreePath, input.ctx.directory, (createdDirectory) =>
+          input.onResourceAcquired?.({ createdDirectory }),
+        )
+      : undefined)
   if (worktreePath) input.onResourceAcquired?.({ worktreePath })
+  if (nativeWorktree) {
+    await transitionRuntimeState(
+      input.teamRunId,
+      (state) => {
+        assertPublicationOwned(state)
+        return {
+          ...state,
+          members: state.members.map((member) =>
+            member.name === input.member.name ? { ...member, nativeWorktree, worktreePath } : member,
+          ),
+        }
+      },
+      input.config,
+    )
+  }
 
   const resolvedMember = await resolveMember(input.member, input.ctx, input.categoryExamples, input.leadAgentName)
   const memberGoal = input.member.prompt?.replace(/\s+/g, " ").trim()

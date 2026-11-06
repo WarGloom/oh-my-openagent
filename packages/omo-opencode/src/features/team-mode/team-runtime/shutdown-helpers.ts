@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import { rm } from "node:fs/promises"
 
 import type { Message, RuntimeState } from "../types"
+import { getNativeTeamWorktrees, type NativeTeamWorktree } from "../../../v2/native-team-worktrees"
 
 export const DELETABLE_MEMBER_STATUSES = new Set<RuntimeState["members"][number]["status"]>([
   "completed",
@@ -76,4 +77,24 @@ export async function removeWorktrees(memberPaths: Array<string | undefined>): P
   }
 
   return removedWorktrees
+}
+
+export async function removeMemberWorktrees(
+  members: readonly { readonly worktreePath?: string; readonly nativeWorktree?: NativeTeamWorktree }[],
+  owner?: object,
+): Promise<string[]> {
+  const removed: string[] = []
+  for (const member of members) {
+    const directory = member.nativeWorktree?.directory ?? member.worktreePath
+    if (!directory || removed.includes(directory)) continue
+    if (member.nativeWorktree) {
+      const worktrees = getNativeTeamWorktrees(owner)
+      if (!worktrees) throw new Error("Native team worktree cleanup requires its host worktree domain")
+      await worktrees.remove(member.nativeWorktree)
+    } else {
+      await removeWorktrees([directory])
+    }
+    removed.push(directory)
+  }
+  return removed
 }
