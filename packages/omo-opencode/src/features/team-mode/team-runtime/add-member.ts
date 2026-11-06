@@ -60,7 +60,7 @@ async function rollbackOwnedAddition(input: {
   }
 
   if (input.resource.nativeWorktree) {
-    await removeMemberWorktrees([{ nativeWorktree: input.resource.nativeWorktree }], input.bgMgr)
+    await removeMemberWorktrees([{ name: input.claim.memberName, nativeWorktree: input.resource.nativeWorktree }], input.bgMgr)
       .catch((error: unknown) => { errors.push(error) })
   }
   for (const directory of [...input.createdDirectories].reverse()) {

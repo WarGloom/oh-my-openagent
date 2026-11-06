@@ -16,6 +16,9 @@ import {
 import type { RuntimeState } from "../../features/team-mode/types"
 import { loadRuntimeState, saveRuntimeState } from "../../features/team-mode/team-state-store/store"
 import { createTeamLeadOrphanHandler } from "./team-lead-orphan-handler"
+import { createNativeFixture } from "../../features/team-mode/team-runtime/shutdown-test-fixtures"
+import { bindNativeTeamWorktrees } from "../../v2/native-team-worktrees"
+import * as logger from "../../shared/logger"
 
 const temporaryDirectories: string[] = []
 
@@ -72,6 +75,29 @@ afterEach(async () => {
 })
 
 describe("createTeamLeadOrphanHandler", () => {
+  test("orphan cleanup keeps unintegrated native worktrees and reports their paths", async () => {
+    // given
+    const fixture = await createNativeFixture()
+    temporaryDirectories.push(fixture.baseDir)
+    const directory = fixture.worktreePaths[0]
+    if (!directory) throw new Error("missing member worktree")
+    await fixture.git(directory, "switch", "--detach", fixture.next)
+    const manager = { getTasksByParentSession: () => [], cancelTask: mock(async () => true) }
+    bindNativeTeamWorktrees(manager, fixture.worktrees)
+    const logged = spyOn(logger, "log")
+    const handler = createTeamLeadOrphanHandler(fixture.config, undefined, manager)
+
+    // when
+    await handler({ event: { type: "session.deleted", properties: { info: { id: "lead-session" } } } })
+
+    // then
+    await expect(loadRuntimeState(fixture.teamRunId, fixture.config)).rejects.toThrow()
+    expect(await fixture.git(directory, "rev-parse", "HEAD")).toBe(fixture.next)
+    expect(logged.mock.calls).toContainEqual(["team lead orphan cleanup completed", expect.objectContaining({
+      keptWorktrees: [expect.objectContaining({ directory, member: "member-a", reason: expect.stringContaining("unintegrated") })],
+    })])
+  })
+
   test("#given the deleted session matches the lead #when the orphan handler runs #then it marks the team orphaned and force-deletes the team", async () => {
     // given
     const baseDir = await createTemporaryBaseDir()
@@ -94,7 +120,7 @@ describe("createTeamLeadOrphanHandler", () => {
     const runtimeState = await loadRuntimeState(teamRunId, config)
     expect(runtimeState.status).toBe("orphaned")
     expect(deleteTeamSpy).toHaveBeenCalledTimes(1)
-    expect(deleteTeamSpy).toHaveBeenCalledWith(teamRunId, config, undefined, undefined, { force: true })
+    expect(deleteTeamSpy).toHaveBeenCalledWith(teamRunId, config, undefined, undefined, { force: true, worktreeCleanup: "preserve" })
   })
 
   test("#given the registry tracks a fresh lead session before disk state persists it #when the orphan handler runs #then it still marks the team orphaned and force-deletes it", async () => {
@@ -127,7 +153,7 @@ describe("createTeamLeadOrphanHandler", () => {
     const runtimeState = await loadRuntimeState(teamRunId, config)
     expect(runtimeState.status).toBe("orphaned")
     expect(deleteTeamSpy).toHaveBeenCalledTimes(1)
-    expect(deleteTeamSpy).toHaveBeenCalledWith(teamRunId, config, undefined, undefined, { force: true })
+    expect(deleteTeamSpy).toHaveBeenCalledWith(teamRunId, config, undefined, undefined, { force: true, worktreeCleanup: "preserve" })
   })
 
   test("#given the registry points the lead session at the wrong teamRunId #when the orphan handler runs #then it falls back to disk lookup, orphans the correct team, and force-deletes it", async () => {
@@ -164,6 +190,6 @@ describe("createTeamLeadOrphanHandler", () => {
     expect(correctRuntimeState.status).toBe("orphaned")
     expect(wrongRuntimeState.status).toBe("active")
     expect(deleteTeamSpy).toHaveBeenCalledTimes(1)
-    expect(deleteTeamSpy).toHaveBeenCalledWith(correctTeamRunId, config, undefined, undefined, { force: true })
+    expect(deleteTeamSpy).toHaveBeenCalledWith(correctTeamRunId, config, undefined, undefined, { force: true, worktreeCleanup: "preserve" })
   })
 })

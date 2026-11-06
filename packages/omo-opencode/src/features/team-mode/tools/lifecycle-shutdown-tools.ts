@@ -44,7 +44,7 @@ export function createTeamDeleteTool(
   void client
 
   return tool({
-    description: "Delete a completed or shutdown-approved team run and clean its runtime state. Use force=true only after confirming active members are safe to tear down.",
+    description: "Delete a completed or shutdown-approved team run and clean its runtime state. Members commit finished work in their worktree (detached HEAD is fine) and report the SHA. First merge each member's commits into the lead's branch by SHA. Native team_delete refuses dirty or unintegrated work. Report kept worktrees, paths, SHAs and reasons to the user. Discarding member work requires explicit user approval; never force removal to close the team. force=true only permits stopping active members; it never discards work.",
     args: { teamRunId: tool.schema.string(), force: tool.schema.boolean().optional() },
     async execute(rawArgs, toolContext) {
       const args = TeamDeleteArgsSchema.parse(rawArgs)

@@ -8,7 +8,7 @@ import { getRuntimeStateDir, resolveBaseDir } from "../team-registry/paths"
 import { unregisterTeamSessionsByTeam } from "../team-session-registry"
 import { listActiveTeams, loadRuntimeState, saveRuntimeState, transitionRuntimeState } from "../team-state-store/store"
 import type { RuntimeState } from "../types"
-import { DELETABLE_MEMBER_STATUSES, removeMemberWorktrees, removeWorktrees } from "./shutdown-helpers"
+import { DELETABLE_MEMBER_STATUSES, inspectMemberWorktrees, removeMemberWorktrees, removeWorktrees, TeamWorktreesKeptError, type KeptMemberWorktree } from "./shutdown-helpers"
 import { unregisterTeamRunForSessionCleanup } from "./session-team-run-registry"
 
 export type DeleteTeamDeps = {
@@ -18,6 +18,8 @@ export type DeleteTeamDeps = {
 }
 
 export type DeleteTeamBackgroundManager = Pick<BackgroundManager, "getTasksByParentSession" | "cancelTask">
+type DeleteTeamOptions = { force?: boolean; worktreeCleanup?: "preserve" }
+export type DeleteTeamReport = { removedWorktrees: string[]; removedLayout: boolean; keptWorktrees?: KeptMemberWorktree[] }
 
 const defaultDeleteTeamDeps: DeleteTeamDeps = {
   canVisualize,
@@ -67,10 +69,14 @@ export async function deleteTeam(
   config: TeamModeConfig,
   tmuxMgr?: TmuxSessionManager,
   bgMgr?: DeleteTeamBackgroundManager,
-  options?: { force?: boolean },
+  options?: DeleteTeamOptions,
   deps: DeleteTeamDeps = defaultDeleteTeamDeps,
-): Promise<{ removedWorktrees: string[]; removedLayout: boolean }> {
+): Promise<DeleteTeamReport> {
   const runtimeState = await loadRuntimeState(teamRunId, config)
+  if (options?.worktreeCleanup !== "preserve") {
+    const kept = await inspectMemberWorktrees([...runtimeState.members, ...(runtimeState.removedMembers ?? []).map((record) => record.member)], bgMgr)
+    if (kept.length) throw new TeamWorktreesKeptError(kept)
+  }
   if (runtimeState.members.some(member => member.removal)) throw new Error("member removal pending")
   const nonLeadMembers = runtimeState.members.filter((member) => member.agentType !== "leader")
 
@@ -120,10 +126,10 @@ async function deleteTeamResources(
   config: TeamModeConfig,
   runtimeState: RuntimeState,
   tmuxMgr?: TmuxSessionManager,
-  options?: { force?: boolean },
+  options?: DeleteTeamOptions,
   deps: DeleteTeamDeps = defaultDeleteTeamDeps,
   bgMgr?: DeleteTeamBackgroundManager,
-): Promise<{ removedWorktrees: string[]; removedLayout: boolean }> {
+): Promise<DeleteTeamReport> {
 
   if (!FORCE_BYPASS_DELETING_STATUSES.has(runtimeState.status) && runtimeState.status !== "deleted") {
     await transitionRuntimeState(teamRunId, current => {
@@ -196,7 +202,7 @@ async function deleteTeamResources(
     }
   }
 
-  const removedWorktrees = await removeMemberWorktrees(resourceMembers, bgMgr)
+  const { removedWorktrees, keptWorktrees } = await removeMemberWorktrees(resourceMembers, bgMgr)
 
   if (runtimeState.status !== "deleted") {
     await transitionRuntimeState(teamRunId, (currentRuntimeState) => (
@@ -206,7 +212,7 @@ async function deleteTeamResources(
     ), config)
   }
 
-  await removeWorktrees([getRuntimeStateDir(resolveBaseDir(config), teamRunId)])
+  await removeWorktrees([getRuntimeStateDir(resolveBaseDir(config), teamRunId)], keptWorktrees.map((entry) => entry.directory))
 
   unregisterTeamSessionsByTeam(teamRunId)
   unregisterTeamRunForSessionCleanup(teamRunId)
@@ -214,5 +220,5 @@ async function deleteTeamResources(
   const activeTeams = await listActiveTeams(config)
   sweepStaleTeamSessions(new Set(activeTeams.map((team) => team.teamRunId))).catch(ignoreStaleTeamSessionSweepFailure)
 
-  return { removedWorktrees, removedLayout }
+  return { removedWorktrees, removedLayout, keptWorktrees }
 }

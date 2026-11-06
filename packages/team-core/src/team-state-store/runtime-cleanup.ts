@@ -31,7 +31,7 @@ export async function removeRuntimeDirectory(teamRunId: string, config: TeamMode
 
 export async function cleanupMemberWorktrees(runtimeState: RuntimeState): Promise<void> {
   await Promise.all(runtimeState.members.map(async (member) => {
-    if (!member.worktreePath) return
+    if (!member.worktreePath || member.nativeWorktree) return
     await rm(member.worktreePath, { recursive: true, force: true })
   }))
 }

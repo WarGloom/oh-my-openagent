@@ -72,7 +72,7 @@ export function buildMemberPrompt(input: {
     `TeamRunId: ${input.teamRunId}`,
     `Member: ${input.member.name}`,
   ]
-  if (input.worktreePath) promptLines.push(`Worktree: ${input.worktreePath}`)
+  if (input.worktreePath) promptLines.push(`Worktree: ${input.worktreePath}`, "Commit finished work in this worktree (detached HEAD is fine) and report the commit SHA to the lead. Before team_delete, the lead merges your commits into its own branch by SHA. Native team_delete refuses dirty or unintegrated work. Report kept worktrees, paths, SHAs and reasons to the user. Discarding member work requires explicit user approval; never force removal to close the team.")
 
   const rosterSection = buildRosterSection(input.roster, input.member.name)
   if (rosterSection) promptLines.push(rosterSection)
