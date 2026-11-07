@@ -15,7 +15,9 @@ import type { BackgroundTask, LaunchInput } from "../../background-agent/types"
 import { BackgroundManager } from "../../background-agent/manager"
 import { loadRuntimeState, transitionRuntimeState } from "../team-state-store/store"
 import { clearTeamSessionRegistry, lookupTeamSession } from "../team-session-registry"
-import type { TeamSpec } from "../types"
+import { AGENT_ELIGIBILITY_REGISTRY, RuntimeStateSchema, type TeamSpec } from "../types"
+import { createTeamCreateTool } from "../tools/lifecycle-create-tool"
+import { createToolContext } from "../tools/lifecycle-test-fixture"
 import { clearSessionTeamRunCleanupRegistry, getSessionCreatedTeamRunIds } from "./session-cleanup"
 import { createLaunchConcurrencyProbe } from "../test-support/async-test-helpers"
 import { bindNativeTeamWorktrees, getNativeTeamWorktrees } from "../../../v2/native-team-worktrees"
@@ -126,38 +128,89 @@ describe("createTeamRun", () => {
     )
   })
 
-  test("reuses a validated custom primary identity without provisioning it as a member", async () => {
-    const baseDir = await mkdtemp(path.join(tmpdir(), "team-current-primary-"))
+  test.each(["daybreak", "mythos", "sisyphus", "atlas", "sisyphus-junior", "hephaestus"])(
+    "team_create reuses caller %s as lead without an explicit lead",
+    async (agent) => {
+      // given
+      const baseDir = await mkdtemp(path.join(tmpdir(), "team-current-primary-"))
+      temporaryDirectories.push(baseDir)
+      const { manager, launchMock } = createManager(baseDir, async () => ({
+        id: "worker-task",
+        sessionId: "worker-session",
+        status: "running",
+        parentSessionId: "caller-session",
+        parentMessageId: "create",
+        description: "worker",
+        prompt: "work",
+        agent: "sisyphus-junior",
+      }))
+      const tool = createTeamCreateTool(createConfig(baseDir), createContext(baseDir, manager).client, manager)
+
+      // when
+      const result = await tool.execute(
+        {
+          inline_spec: {
+            name: "caller-team",
+            members: [{ name: "worker", category: "quick", prompt: "Inspect task" }],
+          },
+        },
+        { ...createToolContext("caller-session"), agent, directory: baseDir, worktree: baseDir },
+      )
+
+      // then
+      const state = RuntimeStateSchema.parse(
+        JSON.parse(typeof result === "string" ? result : result.output).runtimeState,
+      )
+      expect(state.status).toBe("active")
+      expect(
+        state.members.map((member) => ({
+          name: member.name,
+          sessionId: member.sessionId,
+          agentType: member.agentType,
+        })),
+      ).toEqual([
+        { name: "lead", sessionId: "caller-session", agentType: "leader" },
+        { name: "worker", sessionId: "worker-session", agentType: "general-purpose" },
+      ])
+      expect(state.members[0]?.subagent_type).toBe(agent)
+      expect(lookupTeamSession("caller-session")).toEqual({
+        teamRunId: state.teamRunId,
+        memberName: "lead",
+        role: "lead",
+      })
+      expect(launchMock).toHaveBeenCalledTimes(1)
+      expect(resolveMemberMock.mock.calls.map(([member]) => member.name)).toEqual(["worker"])
+    },
+  )
+
+  test.each(
+    Object.entries(AGENT_ELIGIBILITY_REGISTRY)
+      .filter(([, eligibility]) => eligibility.verdict === "hard-reject")
+      .map(([agent]) => agent),
+  )("team_create rejects hard-reject caller %s before provisioning", async (agent) => {
+    // given
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-hard-reject-caller-"))
     temporaryDirectories.push(baseDir)
-    const { manager, launchMock } = createManager(
-      baseDir,
-      async () => ({ id: "worker-task", sessionId: "worker-session", status: "running" }) as BackgroundTask,
-    )
-    const spec = createSpec(2)
-    spec.members[0] = {
-      name: "member-1",
-      kind: "subagent_type",
-      subagent_type: "orchestrator",
-      backendType: "in-process",
-      isActive: true,
-    }
-    const state = await createTeamRun(
-      spec,
-      "current-primary-session",
-      createContext(baseDir, manager),
-      createConfig(baseDir),
-      manager,
-      undefined,
-      { callerAgentTypeId: "orchestrator" },
-    )
-    expect(state.status).toBe("active")
-    expect(state.members[0]).toMatchObject({
-      sessionId: "current-primary-session",
-      subagent_type: "orchestrator",
-      agentType: "leader",
+    const { manager, launchMock } = createManager(baseDir, async () => {
+      throw new Error("unexpected member launch")
     })
-    expect(launchMock).toHaveBeenCalledTimes(1)
-    expect(resolveMemberMock.mock.calls.map(([member]) => member.name)).toEqual(["member-2"])
+    const tool = createTeamCreateTool(createConfig(baseDir), createContext(baseDir, manager).client, manager)
+
+    // when
+    const result = tool.execute(
+      {
+        inline_spec: {
+          name: "rejected-caller-team",
+          members: [{ name: "worker", category: "quick", prompt: "Inspect task" }],
+        },
+      },
+      { ...createToolContext("caller-session"), agent, directory: baseDir, worktree: baseDir },
+    )
+
+    // then
+    await expect(result).rejects.toThrow("hard-reject")
+    expect(launchMock).not.toHaveBeenCalled()
+    expect(lookupTeamSession("caller-session")).toBeUndefined()
   })
 
   test("spawns 3 members through BackgroundManager.launch without direct session creation", async () => {

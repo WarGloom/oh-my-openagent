@@ -18,7 +18,7 @@ import {
 } from "./lifecycle-test-fixture"
 
 describe("inline project agent validation", () => {
-  test("uses only the trusted current primary caller as a custom lead", async () => {
+  test("uses the current custom caller as lead but rejects another custom lead", async () => {
     resetLifecycleTestState()
     replaceProjectAgentProvenance("/project", ["orchestrator", "other-primary"])
     const client = {
@@ -71,7 +71,8 @@ describe("inline project agent validation", () => {
     expect(createTeamRunMock).toHaveBeenCalledTimes(1)
   })
 
-  test("nonqualifying custom caller can still launch an explicit builtin lead but cannot implicitly lead", async () => {
+  test("custom caller can create a team with an implicit lead", async () => {
+    // given
     resetLifecycleTestState()
     const tool = createTeamCreateTool(config, mockClient, backgroundManager, undefined, undefined, {
       createTeamRun: createTeamRunMock,
@@ -81,14 +82,15 @@ describe("inline project agent validation", () => {
     })
     const context = { ...createToolContext("launcher-session"), agent: "unregistered-launcher" }
     const members = [{ name: "worker", category: "quick", prompt: "Inspect task" }]
-    await tool.execute(
-      { inline_spec: { name: "launcher-team", lead: { name: "lead", subagent_type: "sisyphus" }, members } },
-      context,
-    )
-    expect(createTeamRunMock).toHaveBeenCalledTimes(1)
-    await expect(tool.execute({ inline_spec: { name: "implicit-launcher-team", members } }, context)).rejects.toThrow(
-      "not eligible as team lead",
-    )
+
+    // when
+    await tool.execute({ inline_spec: { name: "implicit-launcher-team", members } }, context)
+
+    // then
+    expect(createTeamRunMock.mock.calls[0]?.[0].members[0]).toMatchObject({
+      name: "lead",
+      subagent_type: "unregistered-launcher",
+    })
     expect(createTeamRunMock).toHaveBeenCalledTimes(1)
   })
 
