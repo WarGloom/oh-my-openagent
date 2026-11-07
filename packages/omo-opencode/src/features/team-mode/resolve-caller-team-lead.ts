@@ -31,7 +31,7 @@ export function resolveCallerTeamLead(rawAgentName: string | undefined): CallerT
       ? canonicalDisplayName
       : strippedDisplayName
   const eligibility = AGENT_ELIGIBILITY_REGISTRY[agentTypeId]
-  if (!eligibility || eligibility.verdict === "hard-reject") {
+  if (eligibility?.verdict === "hard-reject") {
     return {
       displayName,
       isEligibleForTeamLead: false,
