@@ -3,10 +3,75 @@ import { BackgroundManager } from "../features/background-agent/manager"
 import type { NativeDelegationSkills } from "./native-subagent-jobs"
 import { backgroundTaskRecord } from "./background-task-record"
 import { cleanupNativeFixtures, cleanups, fixture } from "./native-subagent-jobs-test-fixture"
+import { V2NativeSubagentJobs } from "./native-subagent-jobs"
 
 afterEach(cleanupNativeFixtures)
 
 describe("native subagent consumer", () => {
+  it.each(["ready", "skills", "missing"] as const)(
+    "isolates a recovered %s failure and releases its permit while restoring peers",
+    async (failure) => {
+      // given two persisted native runs, one of which cannot be restored
+      const f = await fixture()
+      const started = f.nextStart()
+      const first = await f.manager.launch(f.launch("poison"))
+      await started
+      const peerStarted = f.nextStart()
+      const peer = await f.manager.launch({ ...f.launch("peer"), nativeInheritedPermit: true })
+      await peerStarted
+      const stored = [first, peer].map((task) => backgroundTaskRecord.parse(f.stored.get(task.id)))
+      await f.manager.shutdown()
+      const jobs = new V2NativeSubagentJobs(
+        f.context,
+        {
+          ...f.domain,
+          reconcile: async () =>
+            failure === "missing"
+              ? [...f.rows.values()].filter((row) => row.admissionID !== first.nativeAdmissionID)
+              : [...f.rows.values()],
+          get: async (target) =>
+            failure === "missing" && "admissionID" in target && target.admissionID === first.nativeAdmissionID
+              ? undefined
+              : f.domain.get(target),
+          ready: async (input) => {
+            if (failure === "ready" && input.run.childSessionID === first.sessionId)
+              throw new Error("Permission denied: skill")
+            return f.domain.ready(input)
+          },
+        },
+        {
+          activateSkills: async () => ({ text: "", activationIDs: [], selections: [] }),
+          restoreSkills: async (task) => {
+            if (failure === "skills" && task.id === first.id) throw new Error("Accepted skill activation unavailable")
+            return { text: "accepted skill content" }
+          },
+          save: async () => {},
+          notifyRecovery: async () => {},
+        },
+      )
+      const manager = new BackgroundManager({
+        pluginContext: f.input,
+        config: { defaultConcurrency: 1 },
+        nativeJobs: jobs,
+        nativeLifecycle: { save: async () => {}, notify: async () => {} },
+        preserveSessionsOnShutdown: true,
+      })
+      cleanups.push(() => manager.shutdown())
+      for (const task of stored) manager.adoptRetainedTask(task)
+      // when recovery encounters the poison run
+      await manager.restoreNativeJobs()
+      const failed = await manager.waitForNativeTask(first.id, new AbortController().signal)
+      // then it ends only that task and restores the healthy peer
+      expect(failed.status).toBe("error")
+      expect(failed.error).toMatch(/Permission denied|activation unavailable|admission missing/)
+      expect(f.ready).toEqual(["2"])
+      const nextStarted = f.nextStart()
+      await manager.launch(f.launch("next"))
+      await nextStarted
+      expect(f.starts).toEqual([first.sessionId, peer.sessionId, "child-3"])
+    },
+  )
+
   it.each([false, true])("preserves native permit lifetime with inherited nested permit=%s", async (inherited) => {
     const f = await fixture()
     const firstStarted = f.nextStart()

@@ -18,6 +18,7 @@ import {
   cleanups as nativeCleanups,
   cleanupNativeFixtures,
 } from "./native-subagent-jobs-test-fixture"
+import { V2BackgroundLifecycle } from "./background-lifecycle"
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => {
@@ -27,6 +28,12 @@ afterEach(async () => {
 })
 
 async function fixture() {
+  const start = V2BackgroundLifecycle.prototype.start
+  let recovery: Promise<void> | undefined
+  const starting = spyOn(V2BackgroundLifecycle.prototype, "start").mockImplementation(function (signal) {
+    recovery = start.call(this, signal)
+    return recovery
+  })
   const directory = mkdtempSync(join(tmpdir(), "omo-v2-native-"))
   const oldDataHome = process.env.XDG_DATA_HOME
   process.env.XDG_DATA_HOME = join(directory, "data")
@@ -107,6 +114,7 @@ async function fixture() {
   })
   const context = { ...fake.context, storage }
   let dispose = await setup(context)
+  await recovery
   const manager = () => {
     const current = generations.at(-1)?.backgroundManager
     if (!current) throw new Error("background manager missing")
@@ -114,6 +122,7 @@ async function fixture() {
   }
   cleanups.push(async () => {
     await dispose()
+    starting.mockRestore()
     for (const cleanup of cleanupManagers) await cleanup.shutdown()
     synthetic.mockRestore()
     get.mockRestore()
@@ -153,10 +162,12 @@ async function fixture() {
         for (const [key, value] of persisted) disk.set(key, value)
       }
       dispose = await setup(context)
+      await recovery
     },
     reloadOverlapping: async () => {
       const oldDispose = dispose
       dispose = await setup(context)
+      await recovery
       await oldDispose()
     },
     parentNotices: () => [...notices.values()].filter((notice) => notice.sessionID === "parent"),
