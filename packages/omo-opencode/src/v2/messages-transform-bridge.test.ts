@@ -233,7 +233,7 @@ describe("messages transform bridge", () => {
     for (const [index, original] of originals.entries()) expect(event.messages[index]).toBe(original)
   })
 
-  it("#given delegation followed by a host system update #when the V1 handler runs #then recovery follows the result and update", async () => {
+  it("#given delegation followed by a host system update #when the V1 handler runs #then the result and update end the request without a recovery turn", async () => {
     // given
     const messages = signedConversation()
     const update = {
@@ -248,10 +248,9 @@ describe("messages transform bridge", () => {
     const event = await runWith(messages, createMessagesTransformHandler({ hooks: {} }))
 
     // then
-    expect(event.messages.map((message) => message.role)).toEqual(["user", "assistant", "tool", "system", "user"])
+    expect(event.messages.map((message) => message.role)).toEqual(["user", "assistant", "tool", "system"])
     expect(event.messages[2]?.content).toEqual(signedConversation()[2]?.content)
     expect(event.messages[3]).toBe(update)
-    expect(event.messages[4]?.id).toBe("a1_prefill_recovery")
   })
 
   describe("#given provider fields and a settled tool result", () => {

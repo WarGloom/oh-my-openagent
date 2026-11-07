@@ -204,7 +204,7 @@ function createAssistantPrefillRecoveryMessage(
 
 function ensureUserTurnAfterAssistantTail(output: MessagesTransformOutput): void {
   const lastMessage = output.messages.at(-1)
-  if (!lastMessage || lastMessage.info.role !== "assistant") {
+  if (!lastMessage || lastMessage.info.role !== "assistant" || endsWithSettledToolCall(lastMessage)) {
     return
   }
 
@@ -217,6 +217,14 @@ function ensureUserTurnAfterAssistantTail(output: MessagesTransformOutput): void
   }
 
   output.messages.push(createAssistantPrefillRecoveryMessage(lastMessage, output.messages))
+}
+
+// A settled tool call is followed by its tool result in the provider request, so the request already ends
+// with a user turn. A recovery turn there is never kept in history, so it would change every step's
+// prompt tail and defeat prompt caching.
+function endsWithSettledToolCall(message: MessageWithParts): boolean {
+  const last = message.parts.at(-1)
+  return last?.type === "tool" && (last.state.status === "completed" || last.state.status === "error")
 }
 
 async function runMessagesTransformHookSafely<I, O>(
