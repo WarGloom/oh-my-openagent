@@ -404,6 +404,32 @@ describe("createMessagesTransformHandler", () => {
     })
   })
 
+  it("#given a Copilot Opus 4.8 tool loop ends with a settled tool call #when messages transform runs #then it adds no recovery turn because the tool result ends the request", async () => {
+    for (const status of ["completed", "error"]) {
+      //#given
+      const messages: TestMessage[] = [
+        {
+          info: { role: "user", model: { providerID: "github-copilot", modelID: "claude-opus-4.8" } },
+          parts: [{ type: "text", text: "inspect the fixtures" }],
+        },
+        {
+          info: { role: "assistant", providerID: "github-copilot", modelID: "claude-opus-4.8" },
+          parts: [
+            { type: "reasoning", text: "look first" },
+            { type: "tool", callID: "call_glob", tool: "glob", state: { status, input: { pattern: "*.fixture" } } },
+          ],
+        },
+      ]
+
+      //#when
+      await runHandler(makeHooks({}), messages)
+
+      //#then
+      expect(messages, status).toHaveLength(2)
+      expect(messages.at(-1)?.info.role, status).toBe("assistant")
+    }
+  })
+
   it("#given rejecting model metadata is only on the assistant tail #when messages transform runs #then it appends a synthetic user recovery turn", async () => {
     //#given
     const messages: TestMessage[] = [
