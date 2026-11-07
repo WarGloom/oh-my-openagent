@@ -13,7 +13,9 @@ describe("V2 toast delivery", () => {
     const shown: V2Toast[] = []
     const context = {
       location: { directory: process.cwd() },
+      client: { rpc: () => ({ events: { on: () => () => {} }, get: async () => null }) },
       data: {
+        session: { get: () => ({ location: { directory: process.cwd() } }) },
         on: (type: string, callback: (event: { data: unknown }) => void) => {
           handlers.set(type, callback)
           return () => {
@@ -21,6 +23,7 @@ describe("V2 toast delivery", () => {
           }
         },
       },
+      keymap: { layer: () => {} },
       ui: {
         toast: {
           show: (toast: V2Toast) => {
@@ -28,6 +31,12 @@ describe("V2 toast delivery", () => {
           },
         },
         slot: () => () => {},
+        router: {
+          current: () => ({ type: "session", sessionID: "lead" }),
+          register: () => () => {},
+          navigate: () => {},
+        },
+        dialog: { clear: () => {} },
       },
     }
     return { context, shown, handlers }
