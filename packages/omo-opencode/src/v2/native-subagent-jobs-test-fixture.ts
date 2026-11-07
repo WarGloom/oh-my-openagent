@@ -11,6 +11,7 @@ import { V2NativeSubagentJobs, type NativeDelegationSkills } from "./native-suba
 import type { NativeSubagentDomain, NativeSubagentReceipt } from "./native-subagent-types"
 import type { NativeSubagentPrompt } from "./native-subagent-types"
 import { encodeBackgroundTask } from "./background-task-record"
+import { createNativeRecoveryNotifier } from "./native-recovery-notice"
 
 export const cleanups: Array<() => void | Promise<void>> = []
 // Each importing test file registers this in its own afterEach: a hook registered at module import
@@ -135,6 +136,7 @@ export async function fixture(
       },
     },
   }
+  const input = createPluginInput(context, { tracker: createSessionTracker(), warn: () => {} })
   const createJobs = () =>
     new V2NativeSubagentJobs(context, domain, {
       activateSkills: async () =>
@@ -145,8 +147,8 @@ export async function fixture(
       save: async (task) => {
         stored.set(task.id, encodeBackgroundTask(task))
       },
+      notifyRecovery: createNativeRecoveryNotifier(context, input, () => true),
     })
-  const input = createPluginInput(context, { tracker: createSessionTracker(), warn: () => {} })
   const manager = new BackgroundManager({
     pluginContext: input,
     config: { defaultConcurrency: 1 },
@@ -183,6 +185,8 @@ export async function fixture(
   return {
     manager,
     createJobs,
+    domain,
+    context,
     input,
     fake,
     starts,

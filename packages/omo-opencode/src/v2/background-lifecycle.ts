@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { setTimeout as delay } from "node:timers/promises"
 import type { BackgroundManager } from "../features/background-agent/manager"
 import type { NativeBackgroundLifecycle } from "../features/background-agent/native-lifecycle"
 import type { BackgroundTask } from "../features/background-agent/types"
@@ -8,6 +9,7 @@ import type { V2IdleHookEvent, V2PluginContext, V2StorageDomain } from "./contex
 import { backgroundTaskRecord, encodeBackgroundTask } from "./background-task-record"
 import { bindNativeTeamJobs } from "./native-team-jobs"
 import { bindNativeCommandJobs } from "./config-bridge/command-subtasks"
+import { log } from "../shared/logger"
 
 function messageID(task: BackgroundTask, kind: string): string {
   return `msg_${createHash("sha256")
@@ -133,13 +135,61 @@ export class V2BackgroundLifecycle implements NativeBackgroundLifecycle {
     return !this.manager || this.manager.hasActiveChildTasks(sessionID) || this.manager.hasPendingParentWake(sessionID)
   }
 
-  async start(): Promise<void> {
+  private async waitForRecoveryAgents(signal?: AbortSignal): Promise<void> {
+    const agents = new Set<string>()
+    for (const task of this.restored) {
+      try {
+        if (!task.nativeAdmissionID || (task.status !== "running" && task.status !== "pending")) continue
+        agents.add(task.agent)
+        if (task.nativeInvocation?.agent) agents.add(task.nativeInvocation.agent)
+      } catch (error) {
+        log("[v2] Recovery task agent lookup failed", { error: String(error) })
+      }
+    }
+    const deadline = Date.now() + 10_000
+    let readError: unknown
+    while (!this.stopped && !signal?.aborted) {
+      const available = new Set(
+        await this.context.agent
+          .list()
+          .then(({ data }) => data.map((agent) => agent.id))
+          .catch((error: unknown) => {
+            readError = error
+            return []
+          }),
+      )
+      if ([...agents].every((id) => available.has(id))) break
+      if (Date.now() >= deadline) {
+        log("[v2] Recovery agent visibility timed out", {
+          missing: [...agents].filter((id) => !available.has(id)),
+          ...(readError === undefined ? {} : { error: String(readError) }),
+        })
+        break
+      }
+      try {
+        await delay(50, undefined, { signal })
+      } catch (error) {
+        if (signal?.aborted) return
+        throw error
+      }
+    }
+  }
+
+  async start(signal?: AbortSignal): Promise<void> {
+    try {
+      await this.waitForRecoveryAgents(signal)
+    } catch (error) {
+      log("[v2] Recovery agent visibility failed", { severity: "error", error: String(error) })
+    }
+    if (this.stopped || signal?.aborted) return
     await this.manager?.restoreNativeJobs()
+    if (this.stopped) return
     for (const task of this.migrated) await this.save(task)
     for (const event of this.idle.values()) {
       if (event.background.length === 0) await this.manager?.completeNativeTask(event.sessionID)
     }
     for (const task of this.restored) {
+      if (this.stopped) return
       if (task.nativeAdmissionID) continue
       if (task.status === "pending" && !task.sessionId) {
         this.manager?.adoptRetainedTask(task)
@@ -151,6 +201,7 @@ export class V2BackgroundLifecycle implements NativeBackgroundLifecycle {
       }
       if ((!this.recovered.has(task.id) && !this.idleBeforeSetup.has(task.id)) || !task.sessionId) continue
       const messages = await this.context.session.context({ sessionID: task.sessionId })
+      if (this.stopped) return
       const idleID = messages.findLast((message) => message.type === "idle")?.id ?? "initial"
       // Re-admission wakes recovered notices too, even when this ID was already delivered.
       // Retained identities suppress recovery messages for children still running on this host.

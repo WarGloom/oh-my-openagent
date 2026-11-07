@@ -17,6 +17,7 @@ import { bindNativeIdleArbiter, NativeIdleArbiter } from "./native-idle-arbiter"
 import { isNativeRecoveryPending } from "./native-recovery-state"
 import { settleCompactionRestore } from "./compaction-continuation"
 import { registerNativeDashboard } from "./native-dashboard"
+import { createNativeRecoveryNotifier } from "./native-recovery-notice"
 
 export type V2SetupDeps = {
   readonly serverPlugin: Plugin
@@ -53,6 +54,10 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
     let arbiter: NativeIdleArbiter | undefined
     let idleListener: V2Registration | undefined
     let dashboard: V2Registration | undefined
+    let jobs: V2NativeSubagentJobs | undefined
+    let stopping = false
+    const recoveryAbort = new AbortController()
+    let backgroundStart: Promise<void> | undefined
     const background = new V2BackgroundLifecycle(context, context.storage)
     try {
       toast = await context.rpc.register(toastChannel, {})
@@ -73,8 +78,9 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
         { tracker, warn, emitToast: (body) => toastEvents.emit("toast", body) },
         background,
       )
-      const jobs = new V2NativeSubagentJobs(context, context.experimental.subagent, {
+      jobs = new V2NativeSubagentJobs(context, context.experimental.subagent, {
         save: (task) => background.save(task),
+        notifyRecovery: createNativeRecoveryNotifier(context, input, () => !stopping),
         activateSkills: (task) => {
           if (!task.nativeAdmissionID || !task.nativePromptID || !task.sessionId)
             throw new Error("Native skill acceptance requires a prepared task")
@@ -120,7 +126,12 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
         }
       }
       bridge.setHandler(hooks.event)
-      await background.start()
+      backgroundStart = background.start(recoveryAbort.signal).catch((error: unknown) => {
+        log("[v2] Background recovery failed", {
+          severity: "error",
+          error: error instanceof Error ? error.message : String(error),
+        })
+      })
     } catch (error) {
       bridge.stop()
       await dashboard?.dispose()
@@ -139,11 +150,15 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
     return async () => {
       if (disposed) return
       disposed = true
+      stopping = true
+      recoveryAbort.abort()
       bridge.stop()
+      jobs?.stop()
+      await background.dispose()
+      await backgroundStart
       await dashboard?.dispose()
       await idleListener?.dispose()
       await arbiter?.dispose()
-      await background.dispose()
       await uninstall?.()
       await skills?.dispose()
       await sessionSystem?.dispose()

@@ -4,6 +4,8 @@ import type { V2PluginContext } from "./context-types"
 import { createV2Setup } from "./create-v2-setup"
 import { createFakePluginContext } from "./fake-plugin-context"
 import { V2UnsupportedOperationError } from "./unsupported-operation-error"
+import { BackgroundManager } from "../features/background-agent/manager"
+import { getV2BackgroundJobs, getV2BackgroundLifecycle } from "./create-plugin-input"
 
 function createContext(overrides: Partial<V2PluginContext> = {}): V2PluginContext {
   return {
@@ -14,6 +16,71 @@ function createContext(overrides: Partial<V2PluginContext> = {}): V2PluginContex
 }
 
 describe("createV2Setup", () => {
+  it("restores each activation after reading its agents even when reload emits no plugin.updated", async () => {
+    // given the host registry read is the visibility barrier, even for an identical inventory
+    const fake = createFakePluginContext()
+    let restored = Promise.withResolvers<void>()
+    let activated = false
+    let visible = Promise.withResolvers<void>()
+    let reading = Promise.withResolvers<void>()
+    let earlyRecovery = false
+    const setup = createV2Setup({
+      serverPlugin: async (input) => {
+        const lifecycle = getV2BackgroundLifecycle(input)
+        const manager = new BackgroundManager({
+          pluginContext: input,
+          nativeJobs: getV2BackgroundJobs(input),
+          nativeLifecycle: lifecycle,
+        })
+        lifecycle?.connect(manager)
+        return { dispose: () => manager.shutdown() }
+      },
+    })
+    const context = {
+      ...fake.context,
+      agent: {
+        ...fake.context.agent,
+        list: async () => {
+          reading.resolve()
+          await visible.promise
+          activated = true
+          return fake.context.agent.list()
+        },
+      },
+      experimental: {
+        ...fake.context.experimental,
+        subagent: {
+          ...fake.context.experimental.subagent,
+          reconcile: async () => {
+            earlyRecovery = !activated
+            restored.resolve()
+            return []
+          },
+        },
+      },
+    }
+    for (let activation = 0; activation < 2; activation++) {
+      activated = false
+      visible = Promise.withResolvers<void>()
+      reading = Promise.withResolvers<void>()
+      restored = Promise.withResolvers<void>()
+      const settingUp = setup(context)
+      await reading.promise
+      expect(earlyRecovery).toBe(false)
+      visible.resolve()
+      const cleanup = await settingUp
+      try {
+        // when each activation exposes its registry without publishing an event
+        expect(earlyRecovery).toBe(false)
+        await restored.promise
+        // then both the initial setup and same-content reload restore published registrations
+        expect(earlyRecovery).toBe(false)
+      } finally {
+        await cleanup()
+      }
+    }
+  })
+
   it("#given paged native sessions from before reload #when setup starts #then its client already reports the running child", async () => {
     // given
     const fake = createFakePluginContext()
