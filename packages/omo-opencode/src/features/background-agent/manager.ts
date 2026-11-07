@@ -1909,46 +1909,60 @@ export class BackgroundManager {
 
   async restoreNativeJobs(): Promise<void> {
     if (!this.nativeJobs) return
-    await this.nativeJobs.restore([...this.tasks.values()], async (states) => {
-      const occupied = new Set<string>()
-      for (const [key, queue] of this.queuesByKey)
-        this.queuesByKey.set(
-          key,
-          queue.filter((item) => !item.task.nativeAdmissionID),
-        )
-      for (const { task, receipt } of states) {
-        task.concurrencyKey = undefined
-        if (receipt.run && (receipt.status === "running" || receipt.status === "accepted")) {
-          const runKey = `${receipt.run.childSessionID}:${receipt.run.generation}`
-          if (occupied.has(runKey)) continue
-          occupied.add(runKey)
-          const key = this.getRawConcurrencyKeyFromTask(task)
-          if (!task.nativeInheritedPermit) {
-            this.concurrencyManager.restore(key)
-            task.concurrencyKey = this.concurrencyManager.getConcurrencyKey(key)
+    try {
+      await this.nativeJobs.restore([...this.tasks.values()], async (states) => {
+        const occupied = new Set<string>()
+        for (const [key, queue] of this.queuesByKey)
+          this.queuesByKey.set(
+            key,
+            queue.filter((item) => !item.task.nativeAdmissionID),
+          )
+        for (const { task, receipt } of states) {
+          task.concurrencyKey = undefined
+          if (receipt.run && (receipt.status === "running" || receipt.status === "accepted")) {
+            const runKey = `${receipt.run.childSessionID}:${receipt.run.generation}`
+            if (occupied.has(runKey)) continue
+            occupied.add(runKey)
+            const key = this.getRawConcurrencyKeyFromTask(task)
+            if (!task.nativeInheritedPermit) {
+              this.concurrencyManager.restore(key)
+              task.concurrencyKey = this.concurrencyManager.getConcurrencyKey(key)
+            }
           }
+          if (!receipt.run && task.status === "error") {
+            if (task.currentAttemptID) finalizeAttempt(task, task.currentAttemptID, "error", task.error)
+            this.cleanupPendingByParent(task)
+            this.updateBackgroundTaskMarker(task.parentSessionId)
+            await this.nativeLifecycle?.save(task).catch((error: unknown) => {
+              this.logger("[background-agent] Failed to persist native recovery outcome", { taskID: task.id, error })
+            })
+          }
+          if (task.status !== "pending") continue
+          const input: LaunchInput = { ...task, onSessionCreated: undefined, suppressTmuxSpawn: true }
+          const rawConcurrencyKey = this.getRawConcurrencyKeyFromInput(input)
+          const key = this.getTaskQueueKey(task, rawConcurrencyKey)
+          const queue = this.queuesByKey.get(key) ?? []
+          queue.push({ task, input, attemptID: ensureCurrentAttempt(task, task.model).attemptId, rawConcurrencyKey })
+          this.queuesByKey.set(key, queue)
+          this.markPreStartDescendantReservation(task)
         }
-        if (!receipt.run && task.status === "error") {
-          if (task.currentAttemptID) finalizeAttempt(task, task.currentAttemptID, "error", task.error)
-          this.cleanupPendingByParent(task)
-          this.updateBackgroundTaskMarker(task.parentSessionId)
-          await this.nativeLifecycle?.save(task)
-        }
-        if (task.status !== "pending") continue
-        const input: LaunchInput = { ...task, onSessionCreated: undefined, suppressTmuxSpawn: true }
-        const rawConcurrencyKey = this.getRawConcurrencyKeyFromInput(input)
-        const key = this.getTaskQueueKey(task, rawConcurrencyKey)
-        const queue = this.queuesByKey.get(key) ?? []
-        queue.push({ task, input, attemptID: ensureCurrentAttempt(task, task.model).attemptId, rawConcurrencyKey })
-        this.queuesByKey.set(key, queue)
-        this.markPreStartDescendantReservation(task)
+      })
+      for (const task of this.tasks.values()) {
+        if (task.nativeRun && task.status === "running") this.observeNativeTask(task)
       }
-    })
-    for (const task of this.tasks.values()) {
-      if (task.nativeRun && task.status === "running") this.observeNativeTask(task)
+    } finally {
+      this.nativeRestoring = false
+      if (
+        !this.shutdownTriggered &&
+        !(
+          "isStopped" in this.nativeJobs &&
+          typeof this.nativeJobs.isStopped === "function" &&
+          this.nativeJobs.isStopped()
+        )
+      ) {
+        for (const key of this.queuesByKey.keys()) void this.processKey(key)
+      }
     }
-    this.nativeRestoring = false
-    for (const key of this.queuesByKey.keys()) void this.processKey(key)
   }
 
   async waitForNativeTask(taskID: string, signal: AbortSignal): Promise<BackgroundTask> {

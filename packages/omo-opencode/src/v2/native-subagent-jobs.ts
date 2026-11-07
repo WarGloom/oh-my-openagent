@@ -4,6 +4,7 @@ import type { NativeBackgroundJobs, NativeRestoredTask } from "../features/backg
 import type { TaskPromptBody } from "../features/background-agent/spawner/task-prompt-body"
 import { applySessionPromptParams } from "../shared/session-prompt-params-helpers"
 import { setSessionTools } from "../shared/session-tools-store"
+import { log } from "../shared/logger"
 import { registerDelegatedChildSessionBootstrap } from "../shared/delegated-child-session-bootstrap"
 import { normalizeAction } from "./config-bridge/migrate-agent"
 import { lowerReasoningForModel } from "../shared/agent-variant"
@@ -20,10 +21,12 @@ export type NativeSubagentJobsDeps = {
   readonly activateSkills: (task: BackgroundTask) => Promise<NativeDelegationSkills>
   readonly restoreSkills: (task: BackgroundTask) => Promise<{ readonly text: string }>
   readonly save: (task: BackgroundTask) => Promise<void>
+  readonly notifyRecovery: (task: BackgroundTask, error: string) => Promise<void>
 }
 
 export class V2NativeSubagentJobs implements NativeBackgroundJobs {
   private stopped = false
+  private readonly recoveryFailures = new Map<string, NativeSubagentReceipt>()
   constructor(
     private readonly context: V2PluginContext,
     private readonly domain: NativeSubagentDomain,
@@ -168,6 +171,8 @@ export class V2NativeSubagentJobs implements NativeBackgroundJobs {
   }
 
   async wait(task: BackgroundTask): Promise<NativeSubagentReceipt> {
+    const failed = task.nativeAdmissionID && this.recoveryFailures.get(task.nativeAdmissionID)
+    if (failed) return failed
     if (!task.nativeRun) throw new Error("Native task has no execution generation")
     const result = await this.domain.wait({ run: task.nativeRun })
     if (result.timedOut) throw new Error("Native wait ended without a terminal receipt")
@@ -178,14 +183,27 @@ export class V2NativeSubagentJobs implements NativeBackgroundJobs {
     tasks: readonly BackgroundTask[],
     reconciled: (states: readonly NativeRestoredTask[]) => Promise<void>,
   ): Promise<void> {
-    const receipts = await this.domain.reconcile()
+    if (this.stopped) return
+    const receipts = await this.domain.reconcile().catch((error: unknown) => {
+      log("[v2] Native subagent reconciliation failed", { severity: "error", error: String(error) })
+      return []
+    })
     const states: NativeRestoredTask[] = []
     for (const task of tasks) {
-      if (!task.nativeAdmissionID) continue
-      const receipt =
-        receipts.find((entry) => entry.admissionID === task.nativeAdmissionID) ??
-        (await this.domain.get({ admissionID: task.nativeAdmissionID }))
-      if (!receipt) throw new Error(`Native admission missing during restoration: ${task.nativeAdmissionID}`)
+      if (this.stopped) return
+      const admissionID = task.nativeAdmissionID
+      if (!admissionID) continue
+      const receipt = await (async () => {
+        try {
+          const found =
+            receipts.find((entry) => entry.admissionID === admissionID) ?? (await this.domain.get({ admissionID }))
+          if (!found) throw new Error(`Native admission missing during restoration: ${task.nativeAdmissionID}`)
+          return found
+        } catch (error) {
+          return this.failRecovery(task, error)
+        }
+      })()
+      if (!receipt) continue
       states.push({ task, receipt })
       task.nativeRun = receipt.run
       if (receipt.run && (receipt.status === "running" || receipt.status === "accepted")) task.status = "running"
@@ -194,19 +212,88 @@ export class V2NativeSubagentJobs implements NativeBackgroundJobs {
         if (task.status === "error") task.error = receipt.error ?? "Native authorization did not finish before restart"
       }
     }
+    if (this.stopped) return
     await reconciled(states)
     for (const { task, receipt } of states) {
+      if (this.stopped) return
       if (!receipt.run) continue
-      await this.deps.restoreSkills(task)
-      const system = task.skillContent
-      if (system && task.sessionId)
-        await this.context.session.instructions.entry.put({
-          sessionID: task.sessionId,
-          key: "omo-delegation",
-          value: system,
-        })
-      await this.domain.ready({ run: receipt.run })
+      if (this.recoveryFailures.has(receipt.admissionID)) continue
+      try {
+        await this.deps.restoreSkills(task)
+        if (this.stopped) return
+        const system = task.skillContent
+        if (system && task.sessionId)
+          await this.context.session.instructions.entry.put({
+            sessionID: task.sessionId,
+            key: "omo-delegation",
+            value: system,
+          })
+        if (this.stopped) return
+        await this.domain.ready({ run: receipt.run })
+      } catch (error) {
+        await this.failRecovery(task, error)
+      }
     }
+  }
+
+  private async failRecovery(task: BackgroundTask, error: unknown): Promise<NativeSubagentReceipt | undefined> {
+    if (this.stopped) return
+    const previous = task.nativeAdmissionID && this.recoveryFailures.get(task.nativeAdmissionID)
+    if (previous) return previous
+    const message = error instanceof Error ? error.message : String(error)
+    log("[v2] Native subagent recovery failed", {
+      taskID: task.id,
+      admissionID: task.nativeAdmissionID,
+      error: message,
+    })
+    if (!task.nativeAdmissionID || !task.sessionId) {
+      task.status = "error"
+      task.error = message
+      await this.deps.save(task).catch((saveError: unknown) => {
+        log("[v2] Failed to persist native recovery outcome", { taskID: task.id, error: String(saveError) })
+      })
+      await this.notifyRecovery(task, message)
+      return
+    }
+    const failed: NativeSubagentReceipt = {
+      admissionID: task.nativeAdmissionID,
+      parentSessionID: task.parentSessionId,
+      childSessionID: task.sessionId,
+      status: "error",
+      run: task.nativeRun,
+      error: message,
+    }
+    this.recoveryFailures.set(task.nativeAdmissionID, failed)
+    try {
+      await this.domain.cancel({ admissionID: task.nativeAdmissionID })
+    } catch (cancelError) {
+      log("[v2] Failed to cancel unrecoverable native subagent", {
+        admissionID: task.nativeAdmissionID,
+        error: cancelError instanceof Error ? cancelError.message : String(cancelError),
+      })
+    }
+    if (!task.nativeRun) {
+      task.status = "error"
+      task.error = message
+      await this.deps.save(task).catch((saveError: unknown) => {
+        log("[v2] Failed to persist native recovery outcome", { taskID: task.id, error: String(saveError) })
+      })
+    }
+    await this.notifyRecovery(task, message)
+    return failed
+  }
+
+  private async notifyRecovery(task: BackgroundTask, message: string): Promise<void> {
+    if (this.stopped) return
+    try {
+      await this.deps.notifyRecovery(task, message)
+    } catch (error) {
+      log("[v2] Failed to notify parent of native recovery failure", { taskID: task.id, error: String(error) })
+    }
+  }
+
+  isStopped(): boolean {
+    return this.stopped
   }
 
   stop(): void {
