@@ -99,7 +99,7 @@ describe("team lifecycle tools", () => {
       config,
       backgroundManager,
       undefined,
-      { callerAgentTypeId: undefined, parentMessageID: expect.any(String) },
+      { callerAgentTypeId: "test-agent", parentMessageID: expect.any(String) },
     )
   })
 
@@ -165,7 +165,7 @@ describe("team lifecycle tools", () => {
       config,
       expect.anything(),
       undefined,
-      { callerAgentTypeId: undefined, parentMessageID: expect.any(String) },
+      { callerAgentTypeId: "test-agent", parentMessageID: expect.any(String) },
     )
     expect(result.runtimeState.members).toHaveLength(2)
     expect(result.runtimeState.members[0]).toMatchObject({ name: "lead", agentType: "leader" })
@@ -189,7 +189,7 @@ describe("team lifecycle tools", () => {
       config,
       expect.anything(),
       undefined,
-      { callerAgentTypeId: undefined, parentMessageID: expect.any(String) },
+      { callerAgentTypeId: "test-agent", parentMessageID: expect.any(String) },
     )
   })
 
@@ -227,7 +227,7 @@ describe("team lifecycle tools", () => {
       config,
       backgroundManager,
       undefined,
-      { callerAgentTypeId: undefined, parentMessageID: expect.any(String) },
+      { callerAgentTypeId: "test-agent", parentMessageID: expect.any(String) },
     )
   })
 
@@ -250,7 +250,7 @@ describe("team lifecycle tools", () => {
       config,
       backgroundManager,
       undefined,
-      { callerAgentTypeId: undefined, parentMessageID: expect.any(String) },
+      { callerAgentTypeId: "test-agent", parentMessageID: expect.any(String) },
     )
   })
 
