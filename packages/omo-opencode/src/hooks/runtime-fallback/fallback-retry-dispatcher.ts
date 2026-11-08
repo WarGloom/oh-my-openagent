@@ -78,8 +78,6 @@ export async function dispatchFallbackRetry(
     deps.sessionAwaitingFallbackResult.delete(options.sessionID)
     deps.sessionRetryInFlight.delete(options.sessionID)
     helpers.clearSessionFallbackTimeout(options.sessionID)
-    options.state.pendingFallbackModel = undefined
-    options.state.pendingFallbackPromptMayHaveBeenAccepted = false
   }
   if (suppressUnsafeAutoReplay(deps, helpers, options)) return
 
@@ -127,6 +125,8 @@ export async function dispatchFallbackRetry(
   }
 
   releaseRecovery()
+  options.state.pendingFallbackModel = undefined
+  options.state.pendingFallbackPromptMayHaveBeenAccepted = false
   if (result.maxAttemptsReached) {
     deps.sessionRetryInFlight.delete(options.sessionID)
     deps.sessionAwaitingFallbackResult.delete(options.sessionID)
