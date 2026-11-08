@@ -9,6 +9,7 @@ import type { OpencodeClient } from "./types"
 import { getAgentConfigKey } from "../../shared/agent-display-names"
 
 const JEV_URL = "https://opencode.ai/zen/v1/systemone"
+const TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone"
 const JEV_MODEL = "jev-1.13-free"
 const MAX_BRIEF_BYTES = 8192
 const MAX_REQUEST_BYTES = 16384
@@ -189,6 +190,8 @@ export async function selectCandidateWithJev(input: SelectorInput): Promise<stri
   signal?.throwIfAborted()
   const started = performance.now()
   const ladder = candidates.map((candidate) => candidate.name)
+  const apiKey = process.env[config.api_key_env]
+  const backend = apiKey ? "typesafe" : "zen"
   let status = "disabled"
   let scores: Record<string, number> = {}
   let choice: string = fallback
@@ -214,16 +217,16 @@ export async function selectCandidateWithJev(input: SelectorInput): Promise<stri
         ]
       }),
     )
-    const body = JSON.stringify({ model: JEV_MODEL, state: brief, questions })
+    const body = JSON.stringify({ model: apiKey ? config.model : JEV_MODEL, state: brief, questions })
     if (new TextEncoder().encode(body).length > MAX_REQUEST_BYTES) {
       status = "oversized_request"
       return fallback
     }
     const timeout = AbortSignal.timeout(config.timeout_ms)
-    const response = await fetch(JEV_URL, {
+    const response = await fetch(apiKey ? TYPESAFE_URL : JEV_URL, {
       method: "POST",
       redirect: "error",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
       body,
       signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     })
@@ -283,6 +286,7 @@ export async function selectCandidateWithJev(input: SelectorInput): Promise<stri
   } finally {
     log(`[jev-routing] ${kind} decision`, {
       status,
+      backend,
       candidates: ladder,
       scores,
       ...(kind === "tier" ? { chosenCategory: choice } : { chosenAgent: choice }),

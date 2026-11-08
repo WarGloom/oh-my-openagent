@@ -6,6 +6,7 @@ import { OhMyOpenCodeConfigSchema } from "../../config/schema"
 import { JevRoutingConfigSchema } from "../../config/schema/jev-routing"
 import { loadOmoOpenCodeConfigChain } from "../../plugin-config/omo-config-chain"
 import * as providerCache from "../../shared/connected-providers-cache"
+import * as logger from "../../shared/logger"
 import { resolveMember } from "../../features/team-mode/team-runtime/resolve-member"
 import { unsafeTestValue } from "../../../../../test-support/unsafe-test-value"
 import { resolveCategoryExecution } from "./category-resolver"
@@ -45,11 +46,17 @@ function reply(scores: readonly number[], overrides: Record<string, unknown> = {
 
 describe("Jev auto tier routing", () => {
   let fetchSpy: ReturnType<typeof spyOn>
+  const originalKey = process.env.TYPESAFE_API_KEY
 
   beforeEach(() => {
-    fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(reply([0.7, 0.9]))
+    delete process.env.TYPESAFE_API_KEY
+    fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async () => reply([0.7, 0.9]))
   })
-  afterEach(() => fetchSpy.mockRestore())
+  afterEach(() => {
+    fetchSpy.mockRestore()
+    if (originalKey === undefined) delete process.env.TYPESAFE_API_KEY
+    else process.env.TYPESAFE_API_KEY = originalKey
+  })
 
   test("chooses the cheapest qualifying tier without sending model IDs or credentials", async () => {
     // given: two ordered tiers with descriptions and private model chains
@@ -59,6 +66,7 @@ describe("Jev auto tier routing", () => {
     const [url, init] = fetchSpy.mock.calls[0] ?? []
     expect(url).toBe("https://opencode.ai/zen/v1/systemone")
     expect(init).toMatchObject({ method: "POST", redirect: "error", headers: { "content-type": "application/json" } })
+    expect(new Headers(init.headers).has("authorization")).toBe(false)
     const body = JSON.parse(init.body)
     expect(body.model).toBe("jev-1.13-free")
     expect(body.state).toBe(input().brief)
@@ -68,6 +76,50 @@ describe("Jev auto tier routing", () => {
     expect(body.questions.tier_1.instructions).toContain("Complex decisions")
     expect(init.body).not.toContain("example/low")
     expect(init.body).not.toContain("other/backup")
+  })
+
+  test("uses the configured TypeSafe credentials and model without logging the key", async () => {
+    const key = "test-secret-not-a-real-key"
+    const logSpy = spyOn(logger, "log")
+    process.env.TYPESAFE_API_KEY = key
+    try {
+      expect(await selectCategoryTierWithJev(input())).toBe("cheap")
+      expect(await selectCategoryTierWithJev(input({ config: { ...config, model: "jev-1.14.0" } }))).toBe("cheap")
+      for (const [index, model] of ["jev-latest", "jev-1.14.0"].entries()) {
+        const [url, init] = fetchSpy.mock.calls[index] ?? []
+        expect(url).toBe("https://api.typesafe.ai/v1/systemone")
+        expect(new Headers(init.headers).get("authorization")).toBe(`Bearer ${key}`)
+        expect(JSON.parse(init.body).model).toBe(model)
+      }
+      expect(logSpy).toHaveBeenCalledWith(
+        "[jev-routing] tier decision",
+        expect.objectContaining({ backend: "typesafe" }),
+      )
+      expect(JSON.stringify(logSpy.mock.calls)).not.toContain(key)
+    } finally {
+      logSpy.mockRestore()
+    }
+  })
+
+  test("uses the configured key environment variable and falls back to Zen when empty", async () => {
+    const envName = "JEV_TEST_TYPESAFE_KEY"
+    const previous = process.env[envName]
+    const logSpy = spyOn(logger, "log")
+    try {
+      process.env[envName] = "test-key"
+      const custom = { ...config, api_key_env: envName }
+      await selectCategoryTierWithJev(input({ config: custom }))
+      process.env[envName] = ""
+      await selectCategoryTierWithJev(input({ config: custom }))
+      expect(fetchSpy.mock.calls[0]?.[0]).toBe("https://api.typesafe.ai/v1/systemone")
+      expect(fetchSpy.mock.calls[1]?.[0]).toBe("https://opencode.ai/zen/v1/systemone")
+      expect(new Headers(fetchSpy.mock.calls[1]?.[1]?.headers).has("authorization")).toBe(false)
+      expect(logSpy).toHaveBeenCalledWith("[jev-routing] tier decision", expect.objectContaining({ backend: "zen" }))
+    } finally {
+      if (previous === undefined) delete process.env[envName]
+      else process.env[envName] = previous
+      logSpy.mockRestore()
+    }
   })
 
   test("uses builtin tier descriptions unless a category config overrides them", async () => {
@@ -223,6 +275,8 @@ test("Jev schema validates bounds and rejects the former per-model configuration
     mode: "off",
     timeout_ms: 2000,
     min_suitability: 0.6,
+    model: "jev-latest",
+    api_key_env: "TYPESAFE_API_KEY",
   })
   for (const invalid of [
     { ladder: ["quick"], default: "quick" },
