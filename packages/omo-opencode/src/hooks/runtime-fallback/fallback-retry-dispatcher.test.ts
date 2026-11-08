@@ -131,6 +131,7 @@ describe("dispatchFallbackRetry", () => {
     // given
     const deps = createDeps([])
     const sessionID = "session-competing"
+    deps.config.max_fallback_attempts = 5
     const state = createFallbackState("openai/gpt-5.4")
     state.currentModel = "openai/gpt-5.5"
     state.pendingFallbackModel = "openai/gpt-5.5"
@@ -180,6 +181,7 @@ describe("dispatchFallbackRetry", () => {
     test(`timeout ${refusal ? "keeps recovery ownership and re-arms after a refused dispatch below the cap" : "releases recovery ownership after model exhaustion"}`, async () => {
       const deps = createDeps([])
       const sessionID = "session-timeout-release"
+      deps.config.max_fallback_attempts = 5
       const state = createFallbackState("openai/gpt-5.4")
       deps.sessionStates.set(sessionID, state)
       deps.sessionAwaitingFallbackResult.add(sessionID)
