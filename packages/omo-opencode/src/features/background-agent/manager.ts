@@ -2258,6 +2258,7 @@ export class BackgroundManager {
     try {
       const prepared: BackgroundTask = {
         ...task,
+        nativeContinued: true,
         prompt: input.prompt,
         skillContent: input.system ?? task.skillContent,
         nativePrompt: input.nativePrompt,

@@ -45,6 +45,7 @@ export interface BackgroundTaskAttempt {
 }
 
 export interface BackgroundTask {
+  nativeContinued?: boolean
   nativeAdmissionID?: string
   nativeProvisioningAdmissionID?: string
   nativeSkillActivationIDs?: readonly string[]

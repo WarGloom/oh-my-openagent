@@ -11,6 +11,7 @@ import {
   type DashboardOwners,
 } from "./dashboard-projection"
 import { projectDashboardActivity } from "./dashboard-activity"
+import { createDashboardActions, DashboardRetryUnavailableError } from "./native-dashboard-actions"
 
 const sessionEvent = z.object({ sessionID: z.string() })
 const activityEvents = new Set([
@@ -72,7 +73,19 @@ export async function registerNativeDashboard(context: V2PluginContext, owners?:
     if (disposed || !interest.has(sessionID)) return null
     return { revision: observedRevision, sessionID, ...snapshot, activity }
   }
-  const registration = await context.rpc.register(dashboardChannel, { get })
+  const actions = createDashboardActions(owners, authorized)
+  const registration = await context.rpc.register(dashboardChannel, {
+    get,
+    ...actions,
+    retryTask: async (input, call) => {
+      try {
+        return await actions.retryTask(input)
+      } catch (error) {
+        if (error instanceof DashboardRetryUnavailableError) return call.error("unavailable", error.message)
+        throw error
+      }
+    },
+  })
   const flush = async (): Promise<void> => {
     const sessions = new Set(dirtySessions)
     const runs = [...dirtyTeams]
@@ -190,5 +203,5 @@ export async function registerNativeDashboard(context: V2PluginContext, owners?:
     await dispose()
     throw error
   }
-  return { get, dispose }
+  return { get, ...actions, dispose }
 }

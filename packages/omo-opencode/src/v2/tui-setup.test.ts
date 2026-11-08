@@ -42,6 +42,16 @@ function fixture(enabled = true) {
   const color = "#eeeeee"
   const action = { base: color, hovered: color, focused: color, pressed: color }
   const calls: string[] = []
+  const actions: { method: string; input: unknown }[] = []
+  const confirmations: Parameters<Plugin.Context["ui"]["dialog"]["confirm"]>[0][] = []
+  let confirmation = Promise.withResolvers<boolean | undefined>()
+  const toasts: Parameters<Plugin.Context["ui"]["toast"]["show"]>[0][] = []
+  const failures = { action: false }
+  const act = async (method: string, input: unknown) => {
+    actions.push({ method, input })
+    if (failures.action) throw new Error("Action rejected")
+    return { taskID: "new-task" }
+  }
   const snapshot: DashboardSnapshot = {
     revision: 1,
     sessionID: "lead",
@@ -96,6 +106,9 @@ function fixture(enabled = true) {
           calls.push(sessionID)
           return { ...snapshot, sessionID }
         },
+        cancelTask: (input: unknown) => act("cancelTask", input),
+        retryTask: (input: unknown) => act("retryTask", input),
+        stopMonitor: (input: unknown) => act("stopMonitor", input),
       }),
     },
     data: { on, session: { get: () => ({ location: { directory: "/actual-session" } }) } },
@@ -121,8 +134,18 @@ function fixture(enabled = true) {
           return () => remove(pages, page)
         },
       },
-      dialog: { clear: () => {} },
-      toast: { show: () => {} },
+      dialog: {
+        clear: () => {},
+        confirm: (options: Parameters<Plugin.Context["ui"]["dialog"]["confirm"]>[0]) => {
+          confirmations.push(options)
+          return confirmation.promise
+        },
+      },
+      toast: {
+        show: (toast: Parameters<Plugin.Context["ui"]["toast"]["show"]>[0]) => {
+          toasts.push(toast)
+        },
+      },
     },
   }
   const emit = (name: string, global = false) => {
@@ -149,6 +172,15 @@ function fixture(enabled = true) {
     render,
     emit,
     preference,
+    actions,
+    confirmations,
+    toasts,
+    failures,
+    answer: (value: boolean) => {
+      const pending = confirmation
+      confirmation = Promise.withResolvers()
+      pending.resolve(value)
+    },
     restore: () => {
       config.mockRestore()
       resolveRoster.mockRestore()
@@ -157,6 +189,89 @@ function fixture(enabled = true) {
 }
 
 describe("OpenCode 2.x native dashboard setup", () => {
+  it.each(["Cancel", "Retry"] as const)(
+    "gates %s behind confirmation and collapses double activation",
+    async (label) => {
+      const f = fixture()
+      const row = f.snapshot.tasks.rows[0]
+      row.status = label === "Cancel" ? "running" : "error"
+      row.model = "mock/failure (high)"
+      const cleanup: () => void = await Reflect.apply(setupV2Tui, undefined, [f.context])
+      const app = await testRender(f.render, { width: 80, height: 50 })
+      try {
+        await app.waitForFrame((text) => text.includes("History:"))
+        const page = f.pages[0]
+        if (!page) throw new Error("Dashboard missing")
+        const full = await testRender(() => page.render({}), { width: 80, height: 60 })
+        try {
+          await full.renderOnce()
+          const y = full
+            .captureCharFrame()
+            .split("\n")
+            .findIndex((line) => line.slice(0, -1).trim() === label)
+          if (y < 0) throw new Error(`Missing ${label}:\n${full.captureCharFrame()}`)
+          await full.mockMouse.click(2, y)
+          full.mockInput.pressKey("RETURN")
+          expect(f.confirmations).toHaveLength(1)
+          expect(f.actions).toEqual([])
+          if (label === "Retry") {
+            expect(f.confirmations[0]?.message).toContain("worker")
+            expect(f.confirmations[0]?.message).toContain("mock/failure (high)")
+            expect(f.confirmations[0]?.message).toContain("quota")
+          }
+          f.answer(false)
+          await full.renderOnce()
+          expect(f.actions).toEqual([])
+          await full.mockMouse.click(2, y)
+          f.answer(true)
+          await full.renderOnce()
+          expect(f.actions).toEqual([
+            { method: label === "Cancel" ? "cancelTask" : "retryTask", input: { sessionID: "lead", taskID: "task" } },
+          ])
+          expect(f.calls).toEqual(["lead"])
+        } finally {
+          full.renderer.destroy()
+        }
+      } finally {
+        app.renderer.destroy()
+        cleanup()
+        f.restore()
+      }
+    },
+  )
+
+  it("stops a monitor without confirmation and shows action failures as a toast", async () => {
+    const f = fixture()
+    f.snapshot.monitors.rows[0].status = "running"
+    f.failures.action = true
+    const cleanup: () => void = await Reflect.apply(setupV2Tui, undefined, [f.context])
+    const app = await testRender(f.render, { width: 80, height: 50 })
+    try {
+      await app.waitForFrame((text) => text.includes("Child task"))
+      const page = f.pages[0]
+      if (!page) throw new Error("Dashboard missing")
+      const full = await testRender(() => page.render({}), { width: 80, height: 60 })
+      try {
+        await full.renderOnce()
+        const y = full
+          .captureCharFrame()
+          .split("\n")
+          .findIndex((line) => line.slice(0, -1).trim() === "Stop")
+        if (y < 0) throw new Error(`Missing Stop:\n${full.captureCharFrame()}`)
+        await full.mockMouse.click(2, y)
+        await full.renderOnce()
+        expect(f.actions).toEqual([{ method: "stopMonitor", input: { sessionID: "lead", monitorID: "monitor" } }])
+        expect(f.confirmations).toEqual([])
+        expect(f.toasts).toMatchObject([{ variant: "error", message: "Action rejected" }])
+      } finally {
+        full.renderer.destroy()
+      }
+    } finally {
+      app.renderer.destroy()
+      cleanup()
+      f.restore()
+    }
+  })
   it("preserves both TUI loader entrypoints", () => {
     expect(typeof tuiModule.tui).toBe("function")
     expect(tuiModule.setup).toBe(setupV2Tui)

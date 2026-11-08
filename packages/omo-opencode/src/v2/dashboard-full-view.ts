@@ -8,12 +8,19 @@ import {
   type DashboardTheme,
   type DashboardViewState,
 } from "./dashboard-view"
+import type { DashboardSnapshot } from "./dashboard-channel"
+
+export type DashboardActions = {
+  readonly onCancelTask?: (row: DashboardSnapshot["tasks"]["rows"][number]) => void
+  readonly onRetryTask?: (row: DashboardSnapshot["tasks"]["rows"][number]) => void
+  readonly onStopMonitor?: (row: DashboardSnapshot["monitors"]["rows"][number]) => void
+}
 
 /** Content for a host-owned scrollbox or dialog; the host also owns Escape and focus traversal. */
 export function buildDashboardFullViewNodes(
   state: DashboardViewState | null,
   theme: DashboardTheme,
-  navigation: Pick<DashboardNavigation, "onNavigateSession">,
+  navigation: Pick<DashboardNavigation, "onNavigateSession"> & DashboardActions,
 ): ViewNode[] {
   const title = text({ fg: theme.text.base, attributes: 1 }, "Dashboard")
   if (state === null || state.kind !== "ready") return [title, ...dashboardStateNodes(state, theme)]
@@ -41,6 +48,18 @@ export function buildDashboardFullViewNodes(
             ...(sessionID
               ? [dashboardAction({ label: row.description, run: () => navigation.onNavigateSession(sessionID) }, theme)]
               : [text({ fg: theme.text.base, wrapMode: "word" }, dashboardLabel(row.description))]),
+            ...((row.status === "pending" || row.status === "running") && navigation.onCancelTask
+              ? [dashboardAction({ label: "Cancel", run: () => navigation.onCancelTask?.(row) }, theme)]
+              : []),
+            ...((row.status === "error" || row.status === "cancelled" || row.status === "interrupt") &&
+            !row.teamMember &&
+            row.retryable !== false &&
+            navigation.onRetryTask
+              ? [dashboardAction({ label: "Retry", run: () => navigation.onRetryTask?.(row) }, theme)]
+              : []),
+            ...(row.error === undefined
+              ? []
+              : [text({ fg: theme.text.feedback.error.base, wrapMode: "word" }, dashboardLabel(row.error))]),
             ...(row.toolCalls !== undefined ? [text({ fg: theme.text.muted }, `${row.toolCalls} tool calls`)] : []),
             ...(row.lastTool !== undefined
               ? [text({ fg: theme.text.muted, wrapMode: "word" }, `Last tool: ${dashboardLabel(row.lastTool)}`)]
@@ -66,6 +85,9 @@ export function buildDashboardFullViewNodes(
               `${row.status}${row.exitCode === undefined ? "" : ` / exit ${row.exitCode}`}`,
             ),
             text({ fg: theme.text.base, wrapMode: "word" }, dashboardLabel(row.label)),
+            ...((row.status === "starting" || row.status === "running") && navigation.onStopMonitor
+              ? [dashboardAction({ label: "Stop", run: () => navigation.onStopMonitor?.(row) }, theme)]
+              : []),
           ]),
         ),
         ...(monitors.rows.length === 0 ? [text({ fg: theme.text.muted }, "No monitors in this session.")] : []),

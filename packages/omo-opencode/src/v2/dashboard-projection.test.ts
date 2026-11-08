@@ -94,6 +94,7 @@ test("snapshot scopes direct children and team membership and excludes private o
             agent: "explore",
             description: "inspect",
             status: "interrupt",
+            error: "private error",
             sessionId: "child",
             startedAt: 12,
             completedAt: 34,
@@ -125,4 +126,66 @@ test("snapshot scopes direct children and team membership and excludes private o
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+})
+
+test("task failure reasons are terminal-clean, secret-redacted and bounded before RPC serialization", async () => {
+  const task: BackgroundTask = {
+    id: "failed",
+    parentSessionId: "lead",
+    parentMessageId: "m",
+    agent: "explore",
+    description: "inspect",
+    prompt: "private",
+    status: "error",
+    model: { providerID: "mock", modelID: "failure", variant: "high" },
+    teamRunId: "team",
+    error: `model failed\napi_key=secret-value\u009b ${"x".repeat(900)}`,
+  }
+  const snapshot = await projectDashboard(
+    "lead",
+    {
+      backgroundManager: {
+        getTasksByParentSession: () => [task],
+        onVisibleChange: () => () => {},
+      },
+    },
+    () => {},
+  )
+  expect(snapshot.tasks.rows[0]).toMatchObject({ model: "mock/failure (high)", teamMember: true })
+  const error = snapshot.tasks.rows[0]?.error
+  expect(error).toContain("model failed")
+  expect(error).not.toContain("secret-value")
+  expect(error).not.toMatch(/[\x00-\x1f\x7f-\x9f]/)
+  expect(error?.length).toBeLessThanOrEqual(300)
+})
+
+test("serialized task rows hide retry for command provenance without exposing the invocation", async () => {
+  const task: BackgroundTask = {
+    id: "command",
+    parentSessionId: "lead",
+    parentMessageId: "m",
+    agent: "worker",
+    description: "command failure",
+    prompt: "private",
+    status: "error",
+    nativeInvocation: { kind: "command", agent: "sisyphus", command: "review", invocationID: "private-invocation" },
+  }
+  const projected = await projectDashboard(
+    "lead",
+    {
+      backgroundManager: {
+        getTasksByParentSession: () => [task],
+        onVisibleChange: () => () => {},
+      },
+    },
+    () => {},
+  )
+  const snapshot = dashboardSnapshotSchema.parse({
+    revision: 1,
+    sessionID: "lead",
+    ...projected,
+    activity: { agents: [], loop: null },
+  })
+  expect(snapshot.tasks.rows[0]).toMatchObject({ retryable: false })
+  expect(JSON.stringify(snapshot)).not.toContain("private-invocation")
 })
