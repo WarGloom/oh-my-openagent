@@ -89,6 +89,106 @@ const navigation = { onOpenFullView: () => {}, onNavigateSession: (_id: string) 
 const solid = { createElement, insert, setProp }
 
 describe("native dashboard rendering", () => {
+  it.each([
+    {
+      row: { status: "completed", startedAt: 0, completedAt: 22_000 },
+      expected: "started 1970-01-01 00:00:00 · ended 1970-01-01 00:00:22 (22s)",
+      timeZone: "UTC",
+    },
+    {
+      row: { status: "error", startedAt: 0, completedAt: 192_999 },
+      expected: "started 1970-01-01 00:00:00 · ended 1970-01-01 00:03:12 (3m12s)",
+      timeZone: "UTC",
+    },
+    {
+      row: { status: "cancelled", startedAt: 0, completedAt: 3_660_000 },
+      expected: "started 1970-01-01 00:00:00 · ended 1970-01-01 01:01:00 (1h1m)",
+      timeZone: "UTC",
+    },
+    {
+      row: { status: "interrupt", startedAt: 0, completedAt: 0 },
+      expected: "started 1970-01-01 00:00:00 · ended 1970-01-01 00:00:00 (0s)",
+      timeZone: "UTC",
+    },
+    {
+      row: { status: "completed", startedAt: 0, completedAt: 60_000 },
+      expected: "started 1970-01-01 00:00:00 · ended 1970-01-01 00:01:00 (1m0s)",
+      timeZone: "UTC",
+    },
+    {
+      row: { status: "running", startedAt: Date.parse("2026-11-08T14:06:04Z") },
+      expected: "started 14:06:04",
+      timeZone: "UTC",
+    },
+    {
+      row: { status: "pending", queuedAt: Date.parse("2026-11-08T14:06:04Z") },
+      expected: "queued 14:06:04",
+      timeZone: "UTC",
+    },
+    { row: { status: "pending" }, expected: undefined, timeZone: "UTC" },
+    {
+      row: { status: "error", completedAt: Date.parse("2026-11-08T14:06:26Z") },
+      expected: "ended 14:06:26",
+      timeZone: "UTC",
+    },
+    {
+      row: {
+        status: "completed",
+        startedAt: Date.parse("2026-11-07T23:59:59Z"),
+        completedAt: Date.parse("2026-11-08T00:00:01Z"),
+      },
+      expected: "started 2026-11-07 23:59:59 · ended 00:00:01 (2s)",
+      timeZone: "UTC",
+    },
+    {
+      row: { status: "running", startedAt: Date.parse("2026-11-08T02:06:04Z") },
+      expected: "started 2026-11-07 18:06:04",
+      timeZone: "America/Los_Angeles",
+    },
+    {
+      row: { status: "running", startedAt: Date.parse("2026-11-09T02:06:04Z") },
+      expected: "started 18:06:04",
+      timeZone: "America/Los_Angeles",
+    },
+  ] as const)("renders task timing $expected in $timeZone", async ({ row, expected, timeZone }) => {
+    // given
+    const data: DashboardData = {
+      ...snapshot,
+      tasks: { ...snapshot.tasks, rows: [{ id: "timed", agent: "worker", description: "Timed work", ...row }] },
+      monitors: { ...snapshot.monitors, rows: [] },
+      teams: [],
+    }
+    const setup = await testRender(
+      () =>
+        materializeReactive(
+          () =>
+            buildDashboardFullViewNodes({ kind: "ready", snapshot: data }, theme, navigation, {
+              now: Date.parse("2026-11-08T14:08:00Z"),
+              timeZone,
+            }),
+          solid,
+        ),
+      { width: 100, height: 25 },
+    )
+    try {
+      // when
+      await setup.renderOnce()
+      // then
+      const lines = setup
+        .captureCharFrame()
+        .split("\n")
+        .map((line) => line.trim())
+      const status = row.status === "interrupt" ? "interrupted" : row.status
+      const index = lines.indexOf(`${status} / worker`)
+      expect(index).toBeGreaterThanOrEqual(0)
+      expect(lines.slice(index + 1, index + (expected === undefined ? 2 : 3))).toEqual(
+        expected === undefined ? ["Timed work"] : [expected, "Timed work"],
+      )
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
   it("shows only eligible row actions and the failure reason and supports mouse and keyboard", async () => {
     const actions: string[] = []
     const setup = await testRender(
@@ -368,11 +468,24 @@ describe("native dashboard rendering", () => {
                 kind: "ready",
                 snapshot: {
                   ...snapshot,
-                  tasks: { ...snapshot.tasks, rows: [{ id: "wide", agent: long, description: long, status: "error" }] },
+                  tasks: {
+                    ...snapshot.tasks,
+                    rows: [
+                      {
+                        id: "wide",
+                        agent: long,
+                        description: long,
+                        status: "error",
+                        startedAt: 0,
+                        completedAt: 22_000,
+                      },
+                    ],
+                  },
                 },
               },
               theme,
               navigation,
+              { now: 0, timeZone: "UTC" },
             ),
           solid,
         ),
@@ -382,6 +495,7 @@ describe("native dashboard rendering", () => {
       await setup.renderOnce()
       const frame = setup.captureCharFrame()
       expect(frame).toContain("error /")
+      expect(frame.replace(/\s+/g, " ")).toContain("started 00:00:00 · ended 00:00:22 (22s)")
       expect(
         frame
           .split("\n")

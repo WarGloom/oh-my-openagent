@@ -25,6 +25,7 @@ test("snapshot scopes direct children and team membership and excludes private o
     result: "private result",
     error: "private error",
     status: "interrupt",
+    queuedAt: new Date(0),
     startedAt: new Date(12),
     completedAt: new Date(34),
     progress: { toolCalls: 2, lastTool: "read", lastUpdate: new Date(34), lastMessage: "private message" },
@@ -96,6 +97,7 @@ test("snapshot scopes direct children and team membership and excludes private o
             status: "interrupt",
             error: "private error",
             sessionId: "child",
+            queuedAt: 0,
             startedAt: 12,
             completedAt: 34,
             toolCalls: 2,
@@ -117,7 +119,14 @@ test("snapshot scopes direct children and team membership and excludes private o
         },
       ],
     })
-    dashboardSnapshotSchema.parse({ revision: 0, sessionID: "lead", ...snapshot, activity: { agents: [], loop: null } })
+    expect(
+      dashboardSnapshotSchema.parse({
+        revision: 0,
+        sessionID: "lead",
+        ...snapshot,
+        activity: { agents: [], loop: null },
+      }).tasks,
+    ).toEqual(snapshot.tasks)
     expect(remembered.get(state.teamRunId)).toEqual(["lead", "member"])
     expect((await projectDashboard("member", owners, () => {})).teams.map((team) => team.teamName)).toEqual(["visible"])
     const child = await projectDashboard("child", owners, () => {})
