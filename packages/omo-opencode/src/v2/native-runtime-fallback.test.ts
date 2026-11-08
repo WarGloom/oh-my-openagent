@@ -669,6 +669,63 @@ describe("native runtime fallback", () => {
     expect(f.fake.sessionCalls.filter((call) => call.kind === "switchModel")).toHaveLength(1)
   })
 
+  test("wraps between expired chain models only up to the native fallback budget", async () => {
+    const f = fixture({
+      agents: { sisyphus: { models: ["anthropic/first", "anthropic/second"] } },
+      runtime_fallback: { cooldown_seconds: 0, max_fallback_attempts: 5 },
+    })
+    await install(f)
+    const decisions = []
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const model = (await f.fake.context.session.get({ sessionID: "ses_main" })).model
+      if (!model) throw new Error("Session model missing")
+      const result = await f.fake.triggerRetry(
+        retry({ type: "provider.quota", message: "quota exceeded" }, { model, attempt: 2 }),
+      )
+      decisions.push(result.decision)
+    }
+    expect(f.fake.sessionCalls.filter((call) => call.kind === "switchModel").map((call) => call.model.id)).toEqual([
+      "second",
+      "first",
+      "second",
+      "first",
+      "second",
+    ])
+    expect(decisions).toEqual([...Array.from({ length: 5 }, () => ({ retry: true, delay: 0 })), { retry: false }])
+  })
+
+  test.each([
+    { response: { body: '{"type":"error","error":{"type":"rate_limit_error","retry_after":86400}}' } },
+    { retryAfterMs: 86_400_000 },
+  ])("retains the provider reset deadline through exhausted recovery and primary restoration", async (window) => {
+    const clock = installRuntimeFallbackTestClock()
+    cleanups.push(clock.restore)
+    const f = fixture({
+      agents: { sisyphus: { models: ["anthropic/first", "anthropic/second"] } },
+      runtime_fallback: { cooldown_seconds: 60, restore_primary_after_cooldown: true },
+    })
+    await install(f)
+    await f.fake.triggerRetry(
+      retry(
+        { type: "provider.rate-limit", status: 429, message: "Claude Max rate limit reached", ...window },
+        { attempt: 2 },
+      ),
+    )
+    await clock.advanceBy(61_000)
+    await f.fake.triggerPrompt({ sessionID: "ses_main", messageID: "msg_before_reset", prompt: { text: "next" } })
+    const exhausted = await f.fake.triggerRetry(
+      retry({ type: "provider.quota", message: "quota exceeded" }, { model: second }),
+    )
+    expect(exhausted.decision).toEqual({ retry: false })
+    expect((await f.fake.context.session.get({ sessionID: "ses_main" })).model?.id).toBe("second")
+    await clock.advanceBy(86_339_000)
+    const restored = await f.fake.triggerRetry(
+      retry({ type: "provider.quota", message: "quota exceeded" }, { model: second }),
+    )
+    expect(restored.decision).toEqual({ retry: true, delay: 0 })
+    expect((await f.fake.context.session.get({ sessionID: "ses_main" })).model?.id).toBe("first")
+  })
+
   test("rolls back selection when a durable model switch fails", async () => {
     // given
     const f = fixture()

@@ -385,6 +385,7 @@ export type V2StructuredError = {
   readonly message: string
   readonly status?: number
   readonly response?: { readonly body: string }
+  readonly retryAfterMs?: number
 }
 
 export type V2ToolContentItem =

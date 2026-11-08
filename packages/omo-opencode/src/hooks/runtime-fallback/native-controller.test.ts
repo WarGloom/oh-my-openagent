@@ -43,8 +43,8 @@ function fixture(pluginConfig: OhMyOpenCodeConfig) {
   }
   const controller = createNativeFallbackController(deps)
   const selected: string[] = []
-  const recover = (model: string) =>
-    controller.recover({ sessionID: "ses_child", agent, model, error: { status: 429 } }, async (payload) => {
+  const recover = (model: string, error: unknown = { status: 429 }) =>
+    controller.recover({ sessionID: "ses_child", agent, model, error }, async (payload) => {
       selected.push(`${payload.model.providerID}/${payload.model.modelID}`)
     })
   return { controller, recover, selected }
@@ -53,6 +53,16 @@ function fixture(pluginConfig: OhMyOpenCodeConfig) {
 afterEach(() => SessionCategoryRegistry.clear())
 
 describe("native controller configured primary recovery", () => {
+  test("preserves provider reset deadlines after a manual model switch", async () => {
+    using clock = spyOn(Date, "now").mockReturnValue(1_000)
+    const f = fixture({ agents: { [agent]: { ...chain, fallback_models: [...chain.fallback_models] } } })
+    await f.recover(primary, { status: 429, retryAfterMs: 86_400_000 })
+    await f.controller.restorePrimary({ sessionID: "ses_child", agent, model: copilot }, async () => {})
+    const recovered = await f.recover(copilot)
+    f.controller.forget("ses_child")
+    expect(recovered).toBe(true)
+    expect(f.selected).toEqual([luna, luna])
+  })
   test.each(["agent", "session-category", "agent-category", "agent-primary-category-fallbacks"] as const)(
     "recovers an untried %s primary before remaining fallbacks",
     async (source) => {

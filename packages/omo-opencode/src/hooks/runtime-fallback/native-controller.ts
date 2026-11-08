@@ -24,6 +24,8 @@ import type { HookDeps } from "./types"
 import { forgetNativeRecovery, nativeRecoveryState } from "../../v2/native-recovery-state"
 import { showFallbackToast } from "./fallback-retry-dispatcher"
 import { createNativeQuotaSignals } from "./native-quota-signals"
+import { getRuntimeFallbackRetryAfterMs } from "@oh-my-opencode/model-core"
+import { modelIdentity } from "./model-identity"
 
 const nativeClients = new WeakSet<object>()
 const nativeQuotaClients = new WeakMap<object, () => Promise<ReadonlySet<string>>>()
@@ -172,10 +174,9 @@ export function createNativeFallbackController(deps: HookDeps) {
         !areRuntimeModelsEquivalent(state.currentModel, input.model) ||
         (applied && applied.variant !== input.variant)
       ) {
-        nativeRecoveryState.states.set(
-          input.sessionID,
-          createFallbackState(stringifyRuntimeModelWithVariant(input.model, input.variant)),
-        )
+        const nextState = createFallbackState(stringifyRuntimeModelWithVariant(input.model, input.variant))
+        nextState.modelCooldownUntil = state.modelCooldownUntil
+        nativeRecoveryState.states.set(input.sessionID, nextState)
         nativeSessionModels.delete(input.sessionID)
         if (promptParamSessions.delete(input.sessionID)) clearSessionPromptParams(input.sessionID)
         return
@@ -204,9 +205,10 @@ export function createNativeFallbackController(deps: HookDeps) {
       nativeRecoveryState.inFlight.add(input.sessionID)
       try {
         await apply(payload)
-        const restored = createFallbackState(state.originalModel)
-        nativeRecoveryState.states.set(input.sessionID, restored)
-        deps.sessionStates.set(input.sessionID, restored)
+        state.currentModel = state.originalModel
+        state.fallbackIndex = -1
+        state.attemptCount = 0
+        deps.sessionStates.set(input.sessionID, state)
         nativeSessionModels.set(input.sessionID, payload)
         if (promptParamSessions.delete(input.sessionID)) clearSessionPromptParams(input.sessionID)
       } finally {
@@ -241,10 +243,6 @@ export function createNativeFallbackController(deps: HookDeps) {
         return false
       })
       const models = flattenToFallbackModelStrings(entries) ?? []
-      if (models.length === 0) {
-        input.onExhausted?.()
-        return false
-      }
       let state = nativeRecoveryState.states.get(input.sessionID) ?? deps.sessionStates.get(input.sessionID)
       const currentModel =
         stringifyRuntimeModelWithVariant(input.model, input.variant) ??
@@ -256,12 +254,26 @@ export function createNativeFallbackController(deps: HookDeps) {
           pluginConfig,
         }) ??
         models[0]
-      if (!state || !areRuntimeModelsEquivalent(state.currentModel, currentModel)) {
+      if (!state) {
         state = createFallbackState(currentModel)
         deps.sessionStates.set(input.sessionID, state)
+      } else if (!areRuntimeModelsEquivalent(state.currentModel, currentModel)) {
+        state.currentModel = currentModel
+        state.fallbackIndex = models.findIndex((model) => areRuntimeModelsEquivalent(model, currentModel))
+        state.pendingFallbackModel = undefined
       }
       nativeRecoveryState.states.set(input.sessionID, state)
       deps.sessionLastAccess.set(input.sessionID, Date.now())
+      const resetMs = getRuntimeFallbackRetryAfterMs(input.error)
+      if (resetMs !== undefined) {
+        const identity = modelIdentity(currentModel) ?? currentModel
+        const deadlines = (state.modelCooldownUntil ??= new Map())
+        deadlines.set(identity, Math.max(deadlines.get(identity) ?? 0, Date.now() + resetMs))
+      }
+      if (models.length === 0) {
+        input.onExhausted?.()
+        return false
+      }
       const snapshot = snapshotFallbackState(state)
       if (state.fallbackIndex >= 0) {
         const currentIndex = allEntries.findIndex((entry) =>

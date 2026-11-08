@@ -30,7 +30,9 @@ export function createFallbackState(originalModel: unknown): FallbackState {
 }
 
 export function isModelInCooldown(model: string, state: FallbackState, cooldownSeconds: number): boolean {
-  const failedAt = state.failedModels.get(modelIdentity(model) ?? model)
+  const identity = modelIdentity(model) ?? model
+  if ((state.modelCooldownUntil?.get(identity) ?? 0) > Date.now()) return true
+  const failedAt = state.failedModels.get(identity)
   if (failedAt === undefined) return false
   const cooldownMs = cooldownSeconds * 1000
   return Date.now() - failedAt < cooldownMs
@@ -41,7 +43,8 @@ export function findNextAvailableFallback(
   fallbackModels: string[],
   cooldownSeconds: number,
 ): string | undefined {
-  for (let i = state.fallbackIndex + 1; i < fallbackModels.length; i++) {
+  for (let offset = 1; offset <= fallbackModels.length; offset++) {
+    const i = (state.fallbackIndex + offset) % fallbackModels.length
     const candidate = fallbackModels[i]
     if (areRuntimeFallbackModelsEquivalent(candidate, state.currentModel)) {
       log(`[${HOOK_NAME}] Skipping equivalent fallback model`, {
