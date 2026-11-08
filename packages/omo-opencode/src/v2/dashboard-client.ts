@@ -51,8 +51,20 @@ export function createDashboardClient(
     directory = undefined
     publish(null)
   })
+  const actionOptions = (id: string) => {
+    const location = context.data.session.get(id)?.location
+    if (disposed || id !== sessionID || !location || location.directory !== directory)
+      throw new Error("Dashboard session changed; reopen the dashboard")
+    return { location, signal: lifetime.signal }
+  }
   return {
     refresh,
+    cancelTask: (input: { readonly sessionID: string; readonly taskID: string }) =>
+      rpc.cancelTask(input, actionOptions(input.sessionID)),
+    retryTask: (input: { readonly sessionID: string; readonly taskID: string }) =>
+      rpc.retryTask(input, actionOptions(input.sessionID)),
+    stopMonitor: (input: { readonly sessionID: string; readonly monitorID: string }) =>
+      rpc.stopMonitor(input, actionOptions(input.sessionID)),
     select: (id: string | undefined): Promise<void> => {
       const nextDirectory = id ? context.data.session.get(id)?.location.directory : undefined
       if (disposed || (id === sessionID && nextDirectory === directory)) return Promise.resolve()

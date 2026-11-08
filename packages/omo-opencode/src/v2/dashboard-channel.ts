@@ -35,6 +35,10 @@ export const dashboardSnapshotSchema = z.object({
         completedAt: z.number().optional(),
         toolCalls: count.optional(),
         lastTool: z.string().optional(),
+        error: z.string().max(300).optional(),
+        model: z.string().optional(),
+        teamMember: z.boolean().optional(),
+        retryable: z.boolean().optional(),
       }),
     ),
   }),
@@ -62,7 +66,16 @@ export const dashboardSnapshotSchema = z.object({
 export const dashboardChangedSchema = z.object({ revision: count, sessionIDs: z.array(z.string()).optional() })
 export const dashboardChannel = {
   id: "omo.dashboard",
-  methods: { get: { input: z.object({ sessionID: z.string().min(1) }), output: dashboardSnapshotSchema.nullable() } },
+  methods: {
+    get: { input: z.object({ sessionID: z.string().min(1) }), output: dashboardSnapshotSchema.nullable() },
+    cancelTask: { input: z.object({ sessionID: z.string().min(1), taskID: z.string().min(1) }), output: z.void() },
+    retryTask: {
+      input: z.object({ sessionID: z.string().min(1), taskID: z.string().min(1) }),
+      output: z.object({ taskID: z.string() }),
+      errors: { unavailable: z.void() },
+    },
+    stopMonitor: { input: z.object({ sessionID: z.string().min(1), monitorID: z.string().min(1) }), output: z.void() },
+  },
   events: { changed: { schema: dashboardChangedSchema } },
 } as const
 

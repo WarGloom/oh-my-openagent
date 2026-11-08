@@ -3,6 +3,8 @@ import { TextRenderable, type BoxRenderable, type KeyEvent, type MouseEvent } fr
 import { box, text, type ViewNode } from "../features/tui-sidebar/element-helpers"
 import { assertNever } from "../features/tui-sidebar/state-types"
 import type { DashboardSnapshot } from "./dashboard-channel"
+import { dashboardLabel } from "./dashboard-label"
+export { dashboardLabel } from "./dashboard-label"
 
 export type DashboardData = Pick<DashboardSnapshot, "tasks" | "monitors" | "teams">
 export type DashboardTheme = Pick<Plugin.Context["theme"], "text" | "background">
@@ -21,13 +23,6 @@ type DashboardStatus =
   | DashboardData["teams"][number]["status"]
   | DashboardData["teams"][number]["members"][number]["status"]
   | DashboardSnapshot["activity"]["agents"][number]["status"]
-
-export function dashboardLabel(value: string): string {
-  return value
-    .replace(/[\x00-\x1f\x7f-\x9f]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-}
 
 export function dashboardStatusColor(status: DashboardStatus, theme: DashboardTheme) {
   const tones = {

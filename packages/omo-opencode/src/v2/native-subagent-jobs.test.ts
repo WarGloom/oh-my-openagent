@@ -166,6 +166,8 @@ describe("native subagent consumer", () => {
       nativeInvocation: { kind: "tool", agent: "parent-agent", messageID: "message", toolCallID: "followup" },
     })
     await resumed
+    expect(f.manager.getTask(task.id)?.nativeContinued).toBe(true)
+    expect(backgroundTaskRecord.parse(f.stored.get(task.id)).nativeContinued).toBe(true)
     const result = f.manager.waitForNativeTask(task.id, new AbortController().signal)
     f.finish(f.manager.getTask(task.id)?.nativeAdmissionID ?? "")
     await result
