@@ -17,7 +17,11 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
 })
 
-async function fixture(error: V2StructuredError, models = ["openai/gpt-6.1-sol", "anthropic/claude-sonnet-5-5"]) {
+async function fixture(
+  error: V2StructuredError,
+  models = ["openai/gpt-6.1-sol", "anthropic/claude-sonnet-5-5"],
+  firstProgressSeconds = 60,
+) {
   const fake = createFakePluginContext({
     sessionAgent: "sisyphus",
     sessionInfo: { model: first },
@@ -27,7 +31,12 @@ async function fixture(error: V2StructuredError, models = ["openai/gpt-6.1-sol",
   const pluginConfig = OhMyOpenCodeConfigSchema.parse({ agents: { sisyphus: { models } } })
   const runtime = createRuntimeFallbackHook(input, {
     pluginConfig,
-    config: { enabled: true, timeout_seconds: 0, notify_on_fallback: false },
+    config: {
+      enabled: true,
+      timeout_seconds: 0,
+      first_progress_timeout_seconds: firstProgressSeconds,
+      notify_on_fallback: false,
+    },
   })
   const hooks: Hooks = {}
   bindNativeRuntimeFallback(hooks, runtime)
@@ -167,18 +176,6 @@ test.each([
     name: "provider.rate-limit",
   },
   {
-    error: {
-      type: "provider.rate-limit",
-      status: 429,
-      message: "rate_limit_error: Claude Max rate limit reached",
-      response: { body: '{"error":{"type":"rate_limit_error","retry_after":30}}' },
-    },
-    attempt: 2,
-    fallback: false,
-    classification: undefined,
-    name: "provider.rate-limit",
-  },
-  {
     error: { type: "provider.no-route", message: "Model unavailable" },
     attempt: 1,
     fallback: true,
@@ -219,6 +216,111 @@ test.each([
     ])
   },
 )
+
+test.each([
+  { attempt: 2, window: 5000, delay: 1000, expected: 5000 },
+  { attempt: 3, window: 5000, delay: 9000, expected: 9000 },
+  { attempt: 4, window: 30000, delay: 1000, expected: 30000 },
+  { attempt: 5, window: 5000, delay: 1000, expected: 0 },
+  { attempt: 3, window: 30001, delay: 1000, expected: 0 },
+])("honors a $window ms provider window at attempt $attempt", async ({ attempt, window, delay, expected }) => {
+  const error = {
+    type: "provider.rate-limit",
+    status: 429,
+    message: "Too many requests. Please retry later.",
+    retryAfterMs: window,
+  }
+  const f = await fixture(error)
+  const event: V2RetryHookEvent = {
+    sessionID: "ses_decision",
+    agent: "sisyphus",
+    model: first,
+    error,
+    attempt,
+    decision: { retry: true, delay },
+  }
+  await f.fake.triggerRetry(event)
+  expect(event.decision).toEqual({ retry: true, delay: expected })
+  expect((await f.fake.context.session.get({ sessionID: "ses_decision" })).model).toEqual(
+    expected === 0 ? { ...second, variant: undefined } : first,
+  )
+})
+
+test.each([
+  { window: 28_999, expected: 28_999 },
+  { window: 29_000, expected: 0 },
+  { window: 30_000, expected: 0 },
+])("applies the first-progress timeout margin to a $window ms window", async ({ window, expected }) => {
+  const error = {
+    type: "provider.rate-limit",
+    status: 429,
+    message: "Too many requests. Please retry later.",
+    retryAfterMs: window,
+  }
+  const f = await fixture(error, undefined, 30)
+  const event: V2RetryHookEvent = {
+    sessionID: "ses_decision",
+    agent: "sisyphus",
+    model: first,
+    error,
+    attempt: 3,
+    decision: { retry: true, delay: 1000 },
+  }
+  await f.fake.triggerRetry(event)
+  expect(event.decision).toEqual({ retry: true, delay: expected })
+  expect((await f.fake.context.session.get({ sessionID: "ses_decision" })).model).toEqual(
+    expected === 0 ? { ...second, variant: undefined } : first,
+  )
+})
+
+test("does not retry the same model when the host denies a short-window retry", async () => {
+  const error = {
+    type: "provider.rate-limit",
+    status: 429,
+    message: "Too many requests. Please retry later.",
+    retryAfterMs: 5000,
+  }
+  const f = await fixture(error)
+  const event: V2RetryHookEvent = {
+    sessionID: "ses_decision",
+    agent: "sisyphus",
+    model: first,
+    error,
+    attempt: 2,
+    decision: { retry: false },
+  }
+  await f.fake.triggerRetry(event)
+  expect(event.decision).toEqual({ retry: false })
+  expect((await f.fake.context.session.get({ sessionID: "ses_decision" })).model).toEqual(first)
+  expect(
+    await f.installed.beforeEvent({ type: "session.execution.failed", data: { sessionID: "ses_decision", error } }),
+  ).toBe(true)
+  expect((await f.fake.context.session.get({ sessionID: "ses_decision" })).model).toEqual({
+    ...second,
+    variant: undefined,
+  })
+})
+
+test("uses a short retry window from the provider response body", async () => {
+  const error = {
+    type: "provider.rate-limit",
+    status: 429,
+    message: "rate_limit_error: Claude Max rate limit reached",
+    response: { body: '{"error":{"type":"rate_limit_error","retry_after":30}}' },
+  }
+  const f = await fixture(error)
+  const event: V2RetryHookEvent = {
+    sessionID: "ses_decision",
+    agent: "sisyphus",
+    model: first,
+    error,
+    attempt: 3,
+    decision: { retry: true, delay: 1000 },
+  }
+  await f.fake.triggerRetry(event)
+  expect(event.decision).toEqual({ retry: true, delay: 30000 })
+  expect((await f.fake.context.session.get({ sessionID: "ses_decision" })).model).toEqual(first)
+})
 
 test.each([
   {

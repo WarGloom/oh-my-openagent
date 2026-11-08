@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
 import type { Hooks } from "@opencode-ai/plugin"
+import { getRuntimeFallbackRetryAfterMs } from "@oh-my-opencode/model-core"
 import type { RuntimeFallbackHook } from "../hooks/runtime-fallback/types"
 import type { NativeFallbackController } from "../hooks/runtime-fallback/native-controller"
 import { classifyErrorType, extractErrorName, isRetryableError } from "../hooks/runtime-fallback/error-classifier"
@@ -247,6 +248,7 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
       error: V2StructuredError
       attempt?: number
       readonly onExhausted?: () => void
+      readonly onProviderWindow?: (delay: number) => void
     },
     apply: (model: V2ModelRef) => Promise<void | "declined" | "duplicate">,
   ): Promise<boolean> => {
@@ -273,6 +275,24 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
     // V1 session-status-handler.ts:142-159 gives non-quota errors one provider retry.
     // V2 increments attempt before the retry hook, so its first event has attempt 2.
     const immediate = errorType === "quota_exceeded" || errorType === "model_not_found"
+    const retryAfterMs = getRuntimeFallbackRetryAfterMs(input.error)
+    // Reserve one second for retry dispatch and initial progress before the watchdog expires.
+    if (
+      input.onProviderWindow &&
+      input.attempt !== undefined &&
+      input.attempt <= 4 &&
+      !immediate &&
+      retryAfterMs !== undefined &&
+      retryAfterMs <= 30_000 &&
+      (controller.timeouts.firstProgressMs <= 0 || retryAfterMs < controller.timeouts.firstProgressMs - 1_000)
+    ) {
+      input.onProviderWindow(retryAfterMs)
+      log("[runtime-fallback] Native recovery decision", {
+        ...details,
+        outcome: `waiting ${retryAfterMs} ms for provider retry window`,
+      })
+      return false
+    }
     if (input.attempt !== undefined && input.attempt <= 2 && !immediate) {
       log("[runtime-fallback] Native recovery decision", { ...details, outcome: "left to V2's same-model retry" })
       return false
@@ -322,6 +342,11 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
         onExhausted: () => {
           exhausted = true
         },
+        onProviderWindow: event.decision.retry
+          ? (delay) => {
+              if (event.decision.retry && event.decision.delay < delay) event.decision = { retry: true, delay }
+            }
+          : undefined,
       },
       async (model) => {
         await context.session.switchModel({ sessionID: event.sessionID, model })
