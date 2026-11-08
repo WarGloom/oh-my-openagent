@@ -9,8 +9,14 @@ import type { RosterState } from "../features/tui-sidebar/state-types"
 import { log } from "../shared/logger"
 import { materializeReactive } from "../tui"
 import { createDashboardClient, type NativeDashboardState } from "./dashboard-client"
-import { buildDashboardFullViewNodes } from "./dashboard-full-view"
-import { buildDashboardActivityNodes, buildDashboardSidebarNodes, dashboardAction } from "./dashboard-view"
+import { buildDashboardFullViewNodes, type DashboardActions } from "./dashboard-full-view"
+import {
+  buildDashboardActivityNodes,
+  buildDashboardSidebarNodes,
+  dashboardAction,
+  dashboardLabel,
+} from "./dashboard-view"
+import { sanitizeParentVisibleError } from "../features/background-agent/parent-visible-error-sanitizer"
 import { toastSchema } from "./toast-channel"
 
 export type V2TuiSetup = Plugin.Definition["setup"]
@@ -54,6 +60,68 @@ export const setupV2Tui: V2TuiSetup = async (ctx) => {
       void client.refresh()
     }
     const close = (): void => ctx.ui.router.navigate(previous)
+    const pendingActions = new Set<string>()
+    const act = async (
+      action: "cancel" | "retry" | "stop",
+      row: { readonly id: string; readonly agent?: string; readonly model?: string },
+    ): Promise<void> => {
+      const current = state()
+      if (current?.kind !== "ready") return
+      const sessionID = current.snapshot.sessionID
+      const key = `${sessionID}:${row.id}`
+      if (pendingActions.has(key)) return
+      pendingActions.add(key)
+      try {
+        switch (action) {
+          case "cancel":
+            if (
+              !(await ctx.ui.dialog.confirm({
+                title: "Cancel task?",
+                message: "Cancel this pending or running task?",
+                label: { confirm: "Cancel task", cancel: "Keep task" },
+              }))
+            )
+              return
+            await client.cancelTask({ sessionID, taskID: row.id })
+            break
+          case "retry":
+            if (
+              !(await ctx.ui.dialog.confirm({
+                title: "Retry task?",
+                message: `${dashboardLabel(row.agent ?? "Unknown agent")} / ${dashboardLabel(row.model ?? "Agent default model")}: this re-runs the task and uses quota.`,
+                label: { confirm: "Retry task", cancel: "Keep task" },
+              }))
+            )
+              return
+            await client.retryTask({ sessionID, taskID: row.id })
+            break
+          case "stop":
+            await client.stopMonitor({ sessionID, monitorID: row.id })
+            break
+        }
+      } catch (error) {
+        ctx.ui.toast.show({
+          variant: "error",
+          message:
+            error instanceof Error
+              ? dashboardLabel(sanitizeParentVisibleError(error.message)).slice(0, 300)
+              : "Dashboard action failed",
+        })
+      } finally {
+        pendingActions.delete(key)
+      }
+    }
+    const actions: DashboardActions = {
+      onCancelTask: (row) => {
+        void act("cancel", row)
+      },
+      onRetryTask: (row) => {
+        void act("retry", row)
+      },
+      onStopMonitor: (row) => {
+        void act("stop", row)
+      },
+    }
     const offToast = ctx.data.on("rpc.omo.toast", (event) => {
       const toast = toastSchema.safeParse(event.data)
       if (toast.success) ctx.ui.toast.show(toast.data)
@@ -101,7 +169,7 @@ export const setupV2Tui: V2TuiSetup = async (ctx) => {
         solid.insert(
           scroll,
           materializeReactive(
-            () => buildDashboardFullViewNodes(state(), ctx.theme, { onNavigateSession: navigate }),
+            () => buildDashboardFullViewNodes(state(), ctx.theme, { onNavigateSession: navigate, ...actions }),
             solid,
           ),
         )

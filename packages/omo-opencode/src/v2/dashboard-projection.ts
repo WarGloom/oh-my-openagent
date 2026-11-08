@@ -5,10 +5,13 @@ import type { RuntimeState } from "@oh-my-opencode/team-core/types"
 import type { BackgroundManager } from "../features/background-agent"
 import type { MonitorManager } from "../features/monitor"
 import type { DashboardSnapshot } from "./dashboard-channel"
+import { sanitizeParentVisibleError } from "../features/background-agent/parent-visible-error-sanitizer"
+import { dashboardLabel } from "./dashboard-label"
 
 export type DashboardOwners = {
-  readonly backgroundManager: Pick<BackgroundManager, "getTasksByParentSession" | "onVisibleChange">
-  readonly monitorManager?: Pick<MonitorManager, "list" | "onVisibleChange">
+  readonly backgroundManager: Pick<BackgroundManager, "getTasksByParentSession" | "onVisibleChange"> &
+    Partial<Pick<BackgroundManager, "cancelTask" | "launch">>
+  readonly monitorManager?: Pick<MonitorManager, "list" | "onVisibleChange"> & Partial<Pick<MonitorManager, "stop">>
   readonly teamModeConfig?: TeamModeConfig
 }
 
@@ -43,6 +46,20 @@ export async function projectDashboard(
       agent: task.agent,
       description: task.description,
       status: task.status,
+      ...(task.error === undefined
+        ? {}
+        : { error: dashboardLabel(sanitizeParentVisibleError(task.error)).slice(0, 300) }),
+      ...(task.model === undefined
+        ? {}
+        : {
+            model: dashboardLabel(
+              `${task.model.providerID}/${task.model.modelID}${task.model.variant ? ` (${task.model.variant})` : ""}`,
+            ),
+          }),
+      ...(task.teamRunId === undefined ? {} : { teamMember: true }),
+      ...(!task.nativeContinued && (task.nativeInvocation === undefined || task.nativeInvocation.kind === "tool")
+        ? {}
+        : { retryable: false }),
       ...(task.sessionId === undefined ? {} : { sessionId: task.sessionId }),
       ...(task.startedAt === undefined ? {} : { startedAt: task.startedAt.getTime() }),
       ...(task.completedAt === undefined ? {} : { completedAt: task.completedAt.getTime() }),

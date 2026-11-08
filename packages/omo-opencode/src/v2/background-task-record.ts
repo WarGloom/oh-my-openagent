@@ -113,6 +113,7 @@ export const backgroundTaskRecord = z.object({
   nativeCompletion: z.enum(["parent", "none"]).optional(),
   nativeMode: z.enum(["foreground", "background"]).optional(),
   nativeInheritedPermit: z.boolean().optional(),
+  nativeContinued: z.boolean().optional(),
   nativePrompt: z
     .object({
       text: z.string(),

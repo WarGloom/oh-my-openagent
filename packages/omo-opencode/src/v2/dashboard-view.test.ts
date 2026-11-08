@@ -89,6 +89,100 @@ const navigation = { onOpenFullView: () => {}, onNavigateSession: (_id: string) 
 const solid = { createElement, insert, setProp }
 
 describe("native dashboard rendering", () => {
+  it("shows only eligible row actions and the failure reason and supports mouse and keyboard", async () => {
+    const actions: string[] = []
+    const setup = await testRender(
+      () =>
+        materializeReactive(
+          () =>
+            buildDashboardFullViewNodes(
+              {
+                kind: "ready",
+                snapshot: {
+                  ...snapshot,
+                  tasks: {
+                    ...snapshot.tasks,
+                    rows: [
+                      ...snapshot.tasks.rows,
+                      {
+                        id: "failed",
+                        agent: "worker",
+                        description: "Failed task",
+                        status: "error",
+                        error: "Model unavailable",
+                      },
+                      {
+                        id: "command",
+                        agent: "worker",
+                        description: "Command failure",
+                        status: "error",
+                        retryable: false,
+                      },
+                      {
+                        id: "continued",
+                        agent: "worker",
+                        description: "Continued task",
+                        status: "error",
+                        retryable: false,
+                      },
+                      { id: "team", agent: "member", description: "Team task", status: "cancelled", teamMember: true },
+                      { id: "done", agent: "worker", description: "Done task", status: "completed" },
+                    ],
+                  },
+                  monitors: {
+                    ...snapshot.monitors,
+                    rows: [
+                      ...snapshot.monitors.rows,
+                      { id: "starting", label: "Starting watch", status: "starting" },
+                      { id: "running", label: "Running watch", status: "running" },
+                    ],
+                  },
+                },
+              },
+              theme,
+              {
+                ...navigation,
+                onCancelTask: (row) => actions.push(`cancel:${row.id}`),
+                onRetryTask: (row) => actions.push(`retry:${row.id}`),
+                onStopMonitor: (row) => actions.push(`stop:${row.id}`),
+              },
+            ),
+          solid,
+        ),
+      { width: 80, height: 100 },
+    )
+    try {
+      await setup.renderOnce()
+      const lines = setup.captureCharFrame().split("\n")
+      expect(lines.filter((line) => line.trim() === "Cancel")).toHaveLength(2)
+      expect(lines.filter((line) => line.trim() === "Retry")).toHaveLength(2)
+      expect(lines.filter((line) => line.trim() === "Stop")).toHaveLength(2)
+      expect(setup.captureCharFrame()).toContain("Model unavailable")
+      await setup.mockMouse.click(
+        2,
+        lines.findIndex((line) => line.trim() === "Cancel"),
+      )
+      setup.mockInput.pressKey("RETURN")
+      await setup.mockMouse.click(
+        2,
+        lines.findIndex((line) => line.trim() === "Retry"),
+      )
+      setup.mockInput.pressKey(" ")
+      await setup.mockMouse.click(
+        2,
+        lines.findIndex((line) => line.trim() === "Stop"),
+      )
+      expect(actions).toEqual([
+        "cancel:queued",
+        "cancel:queued",
+        "retry:interrupted",
+        "retry:interrupted",
+        "stop:starting",
+      ])
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
   it("updates visible counts and active rows from the supplied snapshot", async () => {
     const [state, setState] = createSignal<DashboardViewState>({ kind: "ready", snapshot })
     const setup = await testRender(
