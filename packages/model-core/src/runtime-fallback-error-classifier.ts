@@ -13,6 +13,7 @@ export {
 import {
   getRuntimeFallbackErrorMessage,
   getRuntimeFallbackErrorName,
+  getRuntimeFallbackRetryAfterMs,
   getRuntimeFallbackRetryableSignal,
   getRuntimeFallbackStatusCode,
 } from "./runtime-fallback-error-shape"
@@ -146,6 +147,10 @@ export function classifyRuntimeFallbackError(error: unknown): RuntimeFallbackErr
 
   if (
     errorName?.includes("quotaexceeded") ||
+    ((getRuntimeFallbackRetryAfterMs(error) ?? 0) > 15 * 60 * 1000 &&
+      (getRuntimeFallbackStatusCode(error) === 429 ||
+        errorName?.includes("ratelimit") ||
+        /rate.?limit|too many requests/i.test(message))) ||
     errorName?.includes("insufficientquota") ||
     errorName?.includes("billingerror") ||
     errorName?.includes("resourceexhausted") ||
