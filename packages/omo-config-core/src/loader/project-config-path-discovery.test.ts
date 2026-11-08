@@ -1,5 +1,6 @@
 import { dirname, join, resolve } from "node:path"
 import { describe, expect, test } from "bun:test"
+import { parsePasswdHome } from "./account-home"
 import { findProjectConfigPathsFarthestFirst, MAX_PROJECT_CONFIG_DIRECTORY_DEPTH } from "./paths"
 import type { OmoConfigReadFileSystem } from "./types"
 
@@ -81,7 +82,7 @@ describe("findProjectConfigPathsFarthestFirst", () => {
   test("#given overridden HOME outside the account home #when resolving project paths #then the account user config is excluded", () => {
     // given
     const configuredHomeDir = resolve("/tmp/isolated-home")
-    const accountHomeDir = resolve("/home/alice")
+    const accountHomeDir = "/home/alice"
     const projectDir = join(accountHomeDir, "work", "project")
     const fileSystem = makeProjectFileSystem([accountHomeDir, projectDir])
 
@@ -145,4 +146,37 @@ describe("findProjectConfigPathsFarthestFirst", () => {
     expect(checkedDirectories).toHaveLength(MAX_PROJECT_CONFIG_DIRECTORY_DEPTH)
     expect(checkedDirectories).not.toContain(rootDir)
   })
+})
+
+// POSIX-only: the account-home split comes from Bun reporting $HOME as the passwd home; win32 never reads passwd.
+test.skipIf(process.platform === "win32")(
+  "resolveOmoConfigPaths stops at the resolved account home when HOME differs",
+  () => {
+    const source = `
+    import { mock } from "bun:test"
+    mock.module("./account-home", () => ({ resolveAccountHomeDir: () => "/home/alice" }))
+    const { resolveOmoConfigPaths } = await import("./paths")
+    const configs = new Set(["/home/alice/.omo/omo.jsonc", "/home/alice/work/.omo/omo.jsonc"])
+    const fileSystem = { existsSync: (path) => configs.has(path), readFileSync: () => "{}" }
+    console.log(JSON.stringify(resolveOmoConfigPaths({ cwd: "/home/alice/work", env: { HOME: "/isolated-home" }, fileSystem })))
+  `
+    const result = Bun.spawnSync({
+      cmd: [process.execPath, "-e", source],
+      cwd: import.meta.dir,
+      env: { ...process.env, HOME: "/isolated-home" },
+    })
+    expect(result.exitCode).toBe(0)
+    expect(JSON.parse(result.stdout.toString())).toEqual([
+      { path: "/isolated-home/.omo/omo.jsonc", scope: "user" },
+      { path: "/home/alice/work/.omo/omo.jsonc", scope: "project" },
+    ])
+  },
+)
+
+test("passwd home lookup selects the exact uid and rejects missing entries", () => {
+  const passwd =
+    "root:x:0:0:root:/root:/bin/sh\nalice:x:1001:1001:Alice:/home/alice:/bin/sh\ninvalid:x::0::/wrong:/bin/sh"
+  expect(parsePasswdHome(passwd, 1001)).toBe("/home/alice")
+  expect(parsePasswdHome(passwd, 0)).toBe("/root")
+  expect(parsePasswdHome(passwd, 100)).toBeUndefined()
 })
