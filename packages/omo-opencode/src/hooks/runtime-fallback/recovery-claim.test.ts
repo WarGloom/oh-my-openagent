@@ -110,7 +110,7 @@ function sessionStatusRetry(sessionID: string): SessionErrorEvent {
     type: "session.status",
     properties: {
       sessionID,
-      status: { type: "retry", attempt: 1, message: "Rate limit exceeded [retrying in 5s attempt #1]" },
+      status: { type: "retry", attempt: 2, message: "Rate limit exceeded [retrying in 5s attempt #2]" },
     },
   }
 }
