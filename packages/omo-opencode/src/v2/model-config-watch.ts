@@ -1,15 +1,15 @@
 import { existsSync, watch, type FSWatcher } from "node:fs"
 import { dirname, join, resolve } from "node:path"
-import { userInfo } from "node:os"
 import {
   MAX_PROJECT_CONFIG_DIRECTORY_DEPTH,
+  resolveAccountHomeDir,
   resolveHomeDir,
   resolveUserOmoConfigDirectory,
 } from "@oh-my-opencode/omo-config-core"
 
 function watchDirectories(directory: string): Set<string> {
   const home = resolveHomeDir()
-  const accountHome = userInfo().homedir
+  const accountHome = resolveAccountHomeDir()
   const candidates = [resolveUserOmoConfigDirectory()]
   let current = resolve(directory)
   for (
