@@ -249,6 +249,7 @@ export function createSessionStatusHandler(
 
     const stateBeforeMutation = sessionStates.get(sessionID)
     if (!canPrepareFallback(stateBeforeMutation, fallbackModels, deps.config, model)) {
+      deps.sessionFallbackAbortInFlight.delete(sessionID)
       log(`[${HOOK_NAME}] fallback exhausted; leaving native retry running (fallback-exhausted-no-abort)`, {
         sessionID,
       })
@@ -309,6 +310,7 @@ export function createSessionStatusHandler(
     })
 
     if (!canPrepareFallback(state, fallbackModels, deps.config)) {
+      deps.sessionFallbackAbortInFlight.delete(sessionID)
       log(`[${HOOK_NAME}] fallback exhausted; leaving native retry running (fallback-exhausted-no-abort)`, {
         sessionID,
       })

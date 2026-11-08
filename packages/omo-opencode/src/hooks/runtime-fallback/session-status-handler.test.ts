@@ -1165,7 +1165,7 @@ describe("createSessionStatusHandler", () => {
     SessionCategoryRegistry.clear()
   })
 
-  it("#given fallback abort marker and no next fallback model #when session.status cannot prepare fallback #then marker is cleared", async () => {
+  it("#given fallback abort marker and no next fallback model #when session.status cannot prepare fallback #then marker is cleared without another abort", async () => {
     // given
     SessionCategoryRegistry.clear()
     const sessionID = "session-status-no-next-model"
@@ -1207,9 +1207,11 @@ describe("createSessionStatusHandler", () => {
     })
 
     // then
-    expect(abortCalls).toEqual([sessionID])
+    expect(abortCalls).toEqual([])
     expect(retryCalls).toEqual([])
     expect(deps.sessionFallbackAbortInFlight.has(sessionID)).toBe(false)
+    expect(state.currentModel).toBe("anthropic/claude-opus-4-7")
+    expect(state.attemptCount).toBe(1)
     SessionCategoryRegistry.clear()
   })
 })
