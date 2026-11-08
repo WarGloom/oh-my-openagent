@@ -31,6 +31,7 @@ export const dashboardSnapshotSchema = z.object({
         description: z.string(),
         status: dashboardTaskStatus,
         sessionId: z.string().optional(),
+        queuedAt: z.number().optional(),
         startedAt: z.number().optional(),
         completedAt: z.number().optional(),
         toolCalls: count.optional(),

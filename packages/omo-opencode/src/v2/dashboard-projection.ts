@@ -61,6 +61,7 @@ export async function projectDashboard(
         ? {}
         : { retryable: false }),
       ...(task.sessionId === undefined ? {} : { sessionId: task.sessionId }),
+      ...(task.queuedAt === undefined ? {} : { queuedAt: task.queuedAt.getTime() }),
       ...(task.startedAt === undefined ? {} : { startedAt: task.startedAt.getTime() }),
       ...(task.completedAt === undefined ? {} : { completedAt: task.completedAt.getTime() }),
       ...(task.progress === undefined ? {} : { toolCalls: task.progress.toolCalls }),
