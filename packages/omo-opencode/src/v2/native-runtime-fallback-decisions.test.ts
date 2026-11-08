@@ -155,6 +155,30 @@ test.each([
     name: "provider.rate-limit",
   },
   {
+    error: {
+      type: "provider.rate-limit",
+      status: 429,
+      message: "rate_limit_error: Claude Max rate limit reached",
+      response: { body: '{"error":{"type":"rate_limit_error","retry_after":86400}}' },
+    },
+    attempt: 2,
+    fallback: true,
+    classification: "quota_exceeded",
+    name: "provider.rate-limit",
+  },
+  {
+    error: {
+      type: "provider.rate-limit",
+      status: 429,
+      message: "rate_limit_error: Claude Max rate limit reached",
+      response: { body: '{"error":{"type":"rate_limit_error","retry_after":30}}' },
+    },
+    attempt: 2,
+    fallback: false,
+    classification: undefined,
+    name: "provider.rate-limit",
+  },
+  {
     error: { type: "provider.no-route", message: "Model unavailable" },
     attempt: 1,
     fallback: true,
@@ -217,6 +241,17 @@ test.each([
     error: { type: "provider.internal", status: 503, message: "Service unavailable" },
     fallback: true,
     classification: undefined,
+    name: "provider.internal",
+  },
+  {
+    error: {
+      type: "provider.internal",
+      status: 200,
+      message: "rate_limit_error: Claude Max rate limit reached",
+      response: { body: '{"error":{"type":"rate_limit_error","retry_after":86400}}' },
+    },
+    fallback: true,
+    classification: "quota_exceeded",
     name: "provider.internal",
   },
 ])(
@@ -355,5 +390,26 @@ test("stops the exact weekly provider quota retry when no configured fallback re
   await f.fake.triggerRetry(event)
   expect(event.decision).toEqual({ retry: false })
   expect(event.error).toBe(error)
+  expect(f.fake.sessionCalls).toEqual([])
+})
+
+test("stops Claude Max same-model retries at attempt 2 when its long reset window exhausts the chain", async () => {
+  const error = {
+    type: "provider.rate-limit",
+    status: 429,
+    message: "rate_limit_error: Claude Max rate limit reached",
+    response: { body: '{"error":{"type":"rate_limit_error","retry_after":86400}}' },
+  }
+  const f = await fixture(error, ["openai/gpt-6.1-sol"])
+  const event: V2RetryHookEvent = {
+    sessionID: "ses_decision",
+    agent: "sisyphus",
+    model: first,
+    error,
+    attempt: 2,
+    decision: { retry: true, delay: 10_000 },
+  }
+  await f.fake.triggerRetry(event)
+  expect(event.decision).toEqual({ retry: false })
   expect(f.fake.sessionCalls).toEqual([])
 })

@@ -31,7 +31,12 @@ function classifierError(error: V2StructuredError) {
   }
   return {
     name: names[error.type] ?? error.type,
-    data: { message: error.message, statusCode: error.status, responseBody: error.response?.body },
+    data: {
+      message: error.message,
+      statusCode: error.status,
+      responseBody: error.response?.body,
+      retryAfterMs: error.retryAfterMs,
+    },
   }
 }
 
@@ -130,8 +135,15 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
     recover: async (sessionID, request, ownership) => {
       const watermark = (await context.session.context({ sessionID })).at(-1)?.id
       const host = await hostModels(context)
-      if (!ownership.current()) return false
-      return controller.recover(
+      if (!ownership.current()) {
+        log("[runtime-fallback] Native watchdog recovery declined", {
+          sessionID,
+          reason: "ownership lost before selection",
+        })
+        return false
+      }
+      let declineReason: string | undefined
+      const recovered = await controller.recover(
         {
           sessionID,
           agent: request.agent,
@@ -147,13 +159,19 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
         async (payload) => {
           const model = host.modelRef(sessionID, payload)
           const newest = (await context.session.context({ sessionID })).at(-1)?.id
-          if (!ownership.current() || newest !== watermark) return "declined"
+          if (!ownership.current() || newest !== watermark) {
+            declineReason = ownership.current() ? "history advanced past watermark" : "ownership lost before admission"
+            return "declined"
+          }
           let duplicate = true
           const committed = await context.experimental.session.recover(
             { sessionID },
             ({ boundaryID }) =>
               recoverNativeFailure(sessionID, boundaryID, async () => {
-                if (!ownership.current()) return false
+                if (!ownership.current()) {
+                  declineReason = "ownership lost during admission"
+                  return false
+                }
                 // Only a selected candidate may interrupt; admission still requires that exact captured boundary.
                 const outcome = await context.experimental.session.continueAfterFailure({
                   sessionID,
@@ -164,6 +182,7 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
                 })
                 switch (outcome) {
                   case "stale":
+                    declineReason = "continuation boundary stale"
                     return false
                   case "duplicate":
                     return true
@@ -176,10 +195,19 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
               }),
             { signal: ownership.signal },
           )
-          if (!committed) return "declined"
+          if (!committed) {
+            declineReason ??= "recovery did not commit a continuation"
+            return "declined"
+          }
           return duplicate ? "duplicate" : { ...payload, variant: model.variant }
         },
       )
+      if (!recovered)
+        log("[runtime-fallback] Native watchdog recovery declined", {
+          sessionID,
+          reason: declineReason ?? "no fallback admitted",
+        })
+      return recovered
     },
   })
   const watchdogRegistration = await context.session.hook("model.request", (event) => {
@@ -330,25 +358,42 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
         typeof error.message !== "string"
       )
         return false
+      const response = "response" in error ? error.response : undefined
       const failure = {
         type: error.type,
         message: error.message,
         status: "status" in error && typeof error.status === "number" ? error.status : undefined,
+        response:
+          typeof response === "object" && response !== null && "body" in response && typeof response.body === "string"
+            ? { body: response.body }
+            : undefined,
+        retryAfterMs:
+          "retryAfterMs" in error && typeof error.retryAfterMs === "number" ? error.retryAfterMs : undefined,
       }
       const session = await context.session.get({ sessionID })
       if (session.location.directory !== context.location.directory || disposed) return true
       const history = await context.session.context({ sessionID })
       const last = history.at(-1)
-      if (!last || last.type !== "idle" || last.outcome !== "failed") return true
+      if (!last || last.type !== "idle" || last.outcome !== "failed") {
+        log("[runtime-fallback] Native terminal recovery skipped", {
+          sessionID,
+          reason: "newest history entry is not a failed idle",
+          newestType: last?.type,
+          newestOutcome: last?.type === "idle" ? last.outcome : undefined,
+        })
+        return false
+      }
       const failureID = last.id
-      let superseded = false
       const handled = await recoverNativeFailure(sessionID, failureID, async () => {
         if (disposed) return false
         const currentHistory = await context.session.context({ sessionID })
         if (disposed) return false
         const current = currentHistory.at(-1)
         if (!current || current.id !== failureID || current.type !== "idle" || current.outcome !== "failed") {
-          superseded = true
+          log("[runtime-fallback] Native terminal recovery skipped", {
+            sessionID,
+            reason: "failed boundary is no longer newest",
+          })
           return false
         }
         const currentSession = await context.session.get({ sessionID })
@@ -373,7 +418,6 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
             })
             switch (outcome) {
               case "stale":
-                superseded = true
                 return "declined"
               case "duplicate":
                 return "duplicate"
@@ -386,7 +430,7 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
         )
         return recovered
       })
-      return handled || superseded
+      return handled
     },
     async dispose() {
       disposed = true

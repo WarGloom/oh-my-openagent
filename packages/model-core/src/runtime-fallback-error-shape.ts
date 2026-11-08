@@ -137,3 +137,45 @@ export function getRuntimeFallbackRetryableSignal(error: unknown): boolean | und
 
   return undefined
 }
+
+export function getRuntimeFallbackRetryAfterMs(error: unknown): number | undefined {
+  const root = isRecord(error) ? error : undefined
+  const data = getNestedRecord(root, "data")
+  const records = [
+    root,
+    data,
+    getNestedRecord(root, "error"),
+    getNestedRecord(data, "error"),
+    getNestedRecord(root, "cause"),
+  ]
+  let duration: number | undefined
+  for (const record of records) {
+    const response = getNestedRecord(record, "response")
+    let body = getRecordValue(record, "responseBody") ?? getRecordValue(response, "body")
+    if (typeof body === "string") {
+      try {
+        body = JSON.parse(body)
+      } catch (cause) {
+        if (!(cause instanceof SyntaxError)) throw cause
+        body = undefined
+      }
+    }
+    const payload = isRecord(body) ? body : undefined
+    for (const source of [record, response, payload, getNestedRecord(payload, "error")]) {
+      const milliseconds = getRecordValue(source, "retryAfterMs")
+      const seconds = getRecordValue(source, "retry_after")
+      const headers = getNestedRecord(source, "responseHeaders") ?? getNestedRecord(source, "headers")
+      const header = getRecordValue(headers, "retry-after") ?? getRecordValue(headers, "Retry-After")
+      const headerMs =
+        typeof header === "string"
+          ? /^\s*\d+(?:\.\d+)?\s*$/.test(header)
+            ? Number(header) * 1000
+            : Date.parse(header) - Date.now()
+          : undefined
+      for (const value of [milliseconds, typeof seconds === "number" ? seconds * 1000 : undefined, headerMs]) {
+        if (typeof value === "number" && Number.isFinite(value) && value >= 0) duration = Math.max(duration ?? 0, value)
+      }
+    }
+  }
+  return duration
+}

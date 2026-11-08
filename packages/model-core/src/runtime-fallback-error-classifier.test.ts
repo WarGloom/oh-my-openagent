@@ -11,6 +11,43 @@ import {
 const DEFAULT_RETRY_CODES = [429, 500, 502, 503, 504] as const
 
 describe("runtime fallback error classifier", () => {
+  test.each([
+    { retryAfter: 86_400, expected: "quota_exceeded" },
+    { retryAfter: 901, expected: "quota_exceeded" },
+    { retryAfter: 900, expected: undefined },
+    { retryAfter: 30, expected: undefined },
+  ])("classifies Claude Max reset window of $retryAfter seconds", ({ retryAfter, expected }) => {
+    // given: the native adapter places the provider JSON in data.responseBody
+    const error = {
+      name: "provider.rate-limit",
+      data: {
+        statusCode: 429,
+        message: "rate_limit_error: Claude Max rate limit reached. Wait a moment and try again.",
+        responseBody: JSON.stringify({ type: "error", error: { type: "rate_limit_error", retry_after: retryAfter } }),
+      },
+    }
+    // when / then
+    expect(classifyRuntimeFallbackError(error)).toBe(expected)
+  })
+
+  test.each([{ responseHeaders: { "retry-after": "86400" } }, { retryAfterMs: 86_400_000 }])(
+    "classifies long provider windows from header or host duration",
+    (window) => {
+      // given / when / then
+      expect(classifyRuntimeFallbackError({ name: "provider.rate-limit", message: "slow down", ...window })).toBe(
+        "quota_exceeded",
+      )
+      expect(
+        classifyRuntimeFallbackError({
+          name: "ValidationError",
+          statusCode: 400,
+          message: "invalid request",
+          ...window,
+        }),
+      ).toBeUndefined()
+    },
+  )
+
   test("recognizes named content-filter errors without retrying validation messages about filtering", () => {
     const errors = [
       {

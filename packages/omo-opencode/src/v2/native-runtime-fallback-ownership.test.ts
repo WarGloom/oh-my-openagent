@@ -1,4 +1,5 @@
-import { afterEach, expect, test } from "bun:test"
+import { afterEach, expect, spyOn, test } from "bun:test"
+import * as logger from "../shared/logger"
 import type { Hooks } from "@opencode-ai/plugin"
 import { OhMyOpenCodeConfigSchema } from "../config"
 import { createRuntimeFallbackHook } from "../hooks/runtime-fallback/hook"
@@ -106,11 +107,12 @@ test.each(["succeeded", "interrupted"] as const)(
   async (outcome) => {
     // given
     const f = fixture()
-    f.history.splice(0, 1, { type: "idle", id: `${f.sessionID}_later`, outcome, time: { created: 2 } })
+    f.history.push({ type: "idle", id: `${f.sessionID}_later`, outcome, time: { created: 2 } })
     const { installed } = await observer(f.fake.context, f.sessionID)
     // when
-    await installed.beforeEvent(f.event)
+    const handled = await installed.beforeEvent(f.event)
     // then
+    expect(handled).toBe(false)
     expect(f.fake.sessionCalls).toEqual([])
   },
 )
@@ -143,8 +145,9 @@ test.each(["interrupted", "user input"] as const)(
         : { type: "user", id: `${f.sessionID}_user`, text: "new direction", time: { created: 2 } },
     )
     release.resolve()
-    await recovering
+    const handled = await recovering
     // then
+    expect(handled).toBe(false)
     expect(f.fake.sessionCalls).toEqual([])
     expect((await f.fake.context.session.get({ sessionID: f.sessionID })).model).toEqual(first)
   },
@@ -157,6 +160,8 @@ test.each(["user input", "new execution"] as const)(
     const clock = installRuntimeFallbackTestClock()
     cleanups.push(clock.restore)
     const f = fixture()
+    const log = spyOn(logger, "log")
+    cleanups.push(() => log.mockRestore())
     const listing = Promise.withResolvers<void>()
     const release = Promise.withResolvers<void>()
     const context = {
@@ -191,8 +196,53 @@ test.each(["user input", "new execution"] as const)(
     // then
     expect(f.fake.sessionCalls.filter((call) => call.kind === "switchModel" || call.kind === "synthetic")).toEqual([])
     expect((await f.fake.context.session.get({ sessionID: f.sessionID })).model).toEqual(first)
+    expect(
+      log.mock.calls
+        .filter(([message]) => message === "[runtime-fallback] Native watchdog recovery declined")
+        .map(([, details]) => details),
+    ).toEqual([{ sessionID: f.sessionID, reason: "history advanced past watermark" }])
   },
 )
+
+test.each(["stale", "uncommitted"] as const)("logs one watchdog decline when host admission is %s", async (outcome) => {
+  const clock = installRuntimeFallbackTestClock()
+  cleanups.push(clock.restore)
+  const f = fixture()
+  const log = spyOn(logger, "log")
+  cleanups.push(() => log.mockRestore())
+  const session = f.fake.context.experimental.session
+  const context = {
+    ...f.fake.context,
+    experimental: {
+      ...f.fake.context.experimental,
+      session: {
+        ...session,
+        continueAfterFailure: async () => "stale" as const,
+        recover: outcome === "uncommitted" ? async () => false : session.recover,
+      },
+    },
+  }
+  await observer(context, f.sessionID, { first_progress_timeout_seconds: 1 })
+  await f.fake.triggerModelRequest({
+    sessionID: f.sessionID,
+    agent: "sisyphus",
+    model: first,
+    kind: "primary",
+    headers: {},
+  })
+  await clock.advanceBy(1_000)
+  expect(
+    log.mock.calls
+      .filter(([message]) => message === "[runtime-fallback] Native watchdog recovery declined")
+      .map(([, details]) => details),
+  ).toEqual([
+    {
+      sessionID: f.sessionID,
+      reason: outcome === "stale" ? "continuation boundary stale" : "recovery did not commit a continuation",
+    },
+  ])
+  expect(f.fake.sessionCalls.filter((call) => call.kind === "synthetic")).toEqual([])
+})
 
 test("a disposed observer cannot switch models or admit a recovery", async () => {
   // given
@@ -270,8 +320,26 @@ test.each([undefined, "high"])(
     cleanups.push(clock.restore)
     const f = fixture()
     if (variant) await f.fake.context.session.switchModel({ sessionID: f.sessionID, model: { ...first, variant } })
-    const current = await observer(f.fake.context, f.sessionID, { restore_primary_after_cooldown: true })
+    const current = await observer(f.fake.context, f.sessionID, {
+      restore_primary_after_cooldown: true,
+      max_fallback_attempts: 1,
+    })
     await current.installed.beforeEvent(f.event)
+    await f.fake.triggerModelRequest({
+      sessionID: f.sessionID,
+      agent: "sisyphus",
+      model: { providerID: "anthropic", id: "second" },
+      kind: "primary",
+      headers: {},
+    })
+    f.history.push({
+      type: "idle",
+      id: `${f.sessionID}_bounded_failure`,
+      outcome: "failed",
+      error,
+      time: { created: 2 },
+    })
+    expect(await current.installed.beforeEvent(f.event)).toBe(false)
     await clock.advanceBy(1_000)
     // when
     await f.fake.triggerPrompt({
@@ -281,5 +349,14 @@ test.each([undefined, "high"])(
     })
     // then
     expect((await f.fake.context.session.get({ sessionID: f.sessionID })).model).toEqual({ ...first, variant })
+    f.history.push({
+      type: "idle",
+      id: `${f.sessionID}_restored_failure`,
+      outcome: "failed",
+      error,
+      time: { created: 3 },
+    })
+    expect(await current.installed.beforeEvent(f.event)).toBe(true)
+    expect(f.fake.sessionCalls.filter((call) => call.kind === "synthetic")).toHaveLength(2)
   },
 )
