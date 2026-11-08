@@ -21,10 +21,27 @@ export function buildDashboardFullViewNodes(
   state: DashboardViewState | null,
   theme: DashboardTheme,
   navigation: Pick<DashboardNavigation, "onNavigateSession"> & DashboardActions,
+  clock: { readonly now: number; readonly timeZone?: string } = { now: Date.now() },
 ): ViewNode[] {
   const title = text({ fg: theme.text.base, attributes: 1 }, "Dashboard")
   if (state === null || state.kind !== "ready") return [title, ...dashboardStateNodes(state, theme)]
   const { tasks, monitors, teams } = state.snapshot
+  const date = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: clock.timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  })
+  const time = new Intl.DateTimeFormat("en-GB", {
+    timeZone: clock.timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  })
+  const today = date.format(clock.now)
+  const timestamp = (value: number): string =>
+    `${date.format(value) === today ? "" : `${date.format(value)} `}${time.format(value)}`
   return [
     box({ flexDirection: "column", width: "100%", gap: 1 }, [
       title,
@@ -40,11 +57,30 @@ export function buildDashboardFullViewNodes(
         ),
         ...tasks.rows.map((row) => {
           const sessionID = row.sessionId
+          const timing: string[] = []
+          if (row.startedAt !== undefined) timing.push(`started ${timestamp(row.startedAt)}`)
+          else if (row.queuedAt !== undefined) timing.push(`queued ${timestamp(row.queuedAt)}`)
+          if (row.completedAt !== undefined) {
+            const ended = `ended ${timestamp(row.completedAt)}`
+            if (row.startedAt === undefined) timing.push(ended)
+            else {
+              const seconds = Math.floor(Math.max(0, row.completedAt - row.startedAt) / 1000)
+              const minutes = Math.floor(seconds / 60)
+              const duration =
+                minutes >= 60
+                  ? `${Math.floor(minutes / 60)}h${minutes % 60}m`
+                  : minutes > 0
+                    ? `${minutes}m${seconds % 60}s`
+                    : `${seconds}s`
+              timing.push(`${ended} (${duration})`)
+            }
+          }
           return box({ flexDirection: "column", flexShrink: 0 }, [
             text(
               { fg: dashboardStatusColor(row.status, theme), wrapMode: "word" },
               `${row.status === "interrupt" ? "interrupted" : row.status} / ${dashboardLabel(row.agent)}`,
             ),
+            ...(timing.length === 0 ? [] : [text({ fg: theme.text.muted, wrapMode: "word" }, timing.join(" · "))]),
             ...(sessionID
               ? [dashboardAction({ label: row.description, run: () => navigation.onNavigateSession(sessionID) }, theme)]
               : [text({ fg: theme.text.base, wrapMode: "word" }, dashboardLabel(row.description))]),
