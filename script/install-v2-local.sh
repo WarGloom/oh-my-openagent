@@ -8,8 +8,8 @@ repo=$ws/.omo/worktrees/omo-v2-dev
 host=$ws/opencode-wt/v2
 binary=$host/packages/cli/dist/cli-linux-x64/bin/opencode
 launcher=/home/nikita/.local/bin/opencode-v2-lab
-host_oid=a3f6c1aae359e81c6446f1b8efe668fc37f02b35
-host_hash=2602388f9f0d28f69789853f7790ea85a8b8d21980109c921f08818ecc5c4d48
+host_oid=ed82c6c9b77e9546e915cbb44929783fb052178f
+host_hash=1c64a0ee61c217d05be5a460cc045d98b34c816bfd64c780c50b08a3c2c02dfc
 paths=(dist packages/lsp-tools-mcp/dist packages/lsp-daemon/dist packages/git-bash-mcp/dist packages/shared-skills/skills)
 
 fail() {
@@ -152,38 +152,31 @@ identity
 printf 'running_pid=%s\nrunning_exe_sha256=%s\n' "$pid" "$host_hash" >>"$evidence/provenance"
 # A matching server executable does not prove that the workspace plugin loaded.
 password=$(lab service get password 2>/dev/null) || fail 'Unable to obtain the V2 service credential.'
-printf '%s' "$password" | OMO_INSTALL_WORKSPACE="$ws" bun -e '
+printf '%s' "$password" | OMO_INSTALL_WORKSPACE="$ws" bun --cwd "$repo" -e '
 try {
 	const password = (await Bun.stdin.text()).trim()
 	if (!password) throw new Error("credential unavailable")
 	const signal = AbortSignal.timeout(120000)
+	const { setTimeout } = await import("node:timers/promises")
+	const { z } = await import("zod")
 	const authorization = `Basic ${btoa(`opencode:${password}`)}`
-	// RPC awaits native activation; the event-only OMO channel rejects this probe before any handler executes.
-	const readyURL = new URL("http://127.0.0.1:49375/api/rpc/omo/__omo_install_activation_probe__")
-	readyURL.searchParams.set("location[directory]", process.env.OMO_INSTALL_WORKSPACE)
-	const ready = await fetch(readyURL, {
-		method: "POST",
-		headers: { authorization, "content-type": "application/json" },
-		body: "{}",
-		signal,
-	})
-	const readiness = await ready.json()
-	if (ready.status !== 400 || readiness?._tag !== "RpcError" || readiness.type !== "rpc.method_not_found") throw new Error("activation barrier failed")
 	const url = new URL("http://127.0.0.1:49375/api/agent")
 	url.searchParams.set("location[directory]", process.env.OMO_INSTALL_WORKSPACE)
-	const response = await fetch(url, {
-		headers: { authorization },
-		signal,
-	})
-	if (response.status !== 200) {
-		console.error(`OMO activation check failed: HTTP ${response.status}`)
-		process.exit(1)
-	}
-	const body = await response.json()
-	if (!Array.isArray(body?.data)) throw new Error("invalid response")
-	const ids = body.data.map((agent) => agent?.id).filter((id) => typeof id === "string")
+	const catalog = z.object({ data: z.array(z.object({ id: z.string().min(1) })) })
 	const primary = [/sisyphus/i, /hephaestus/i, /prometheus/i, /atlas/i]
-	if (!primary.every((name) => ids.some((id) => name.test(id)))) throw new Error("missing primary")
+	// Catalogs can be partial during async activation; use the CLI startup polling interval on the client.
+	for (;;) {
+		signal.throwIfAborted()
+		const response = await fetch(url, { headers: { authorization }, signal, redirect: "error" })
+		if (response.status !== 200) {
+			console.error(`OMO activation check failed: HTTP ${response.status}`)
+			process.exit(1)
+		}
+		const body = catalog.parse(await response.json())
+		signal.throwIfAborted()
+		if (primary.every((name) => body.data.some((agent) => name.test(agent.id)))) break
+		await setTimeout(25, undefined, { signal })
+	}
 	console.log(`OMO activation check: HTTP 200; primary agents ${primary.length}`)
 } catch {
 	console.error("OMO activation check failed: credential, request, response, or primary agents invalid")
