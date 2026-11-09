@@ -47,6 +47,7 @@ export async function executeNativeDelegate(input: {
         nativeMode: args.run_in_background ? "background" : "foreground",
       })
     : await executor.manager.launch({
+        decisionId: args.decisionId,
         description: getPersistedBackgroundTaskDescription(args, agent),
         prompt: buildTaskPrompt(args.prompt, agent, executor.sisyphusAgentConfig?.tdd),
         agent,

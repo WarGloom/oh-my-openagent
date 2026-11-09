@@ -17,6 +17,8 @@ import { runSyncTaskLoop } from "./sync-task-runner"
 import { cleanupSyncSessionSideEffects, registerSyncSessionSideEffects } from "./sync-session-lifecycle"
 import { handOffTimedOutSyncSession } from "./sync-timeout-handoff"
 import type { DelegatedModelConfig, DelegateTaskArgs, ToolContextWithMetadata } from "./types"
+import { bindSyncLifecycleTask, createSyncLifecycleTask, finishSyncLifecycleTask } from "./sync-task-lifecycle"
+import type { BackgroundTask } from "../../features/background-agent/types"
 
 export async function executeSyncTask(
   args: DelegateTaskArgs,
@@ -44,6 +46,7 @@ export async function executeSyncTask(
         ? agentToUse
         : "default"
   const manager = executorCtx?.manager
+  let lifecycleTask: BackgroundTask | undefined
 
   try {
     if (
@@ -74,6 +77,12 @@ export async function executeSyncTask(
     const sessionID = createSessionResult.sessionID
     spawnReservation?.commit()
     syncSessionID = sessionID
+    lifecycleTask = createSyncLifecycleTask(args, parentContext, {
+      agent: agentToUse,
+      sessionID,
+      spawnDepth: spawnContext.childDepth,
+      startedAt: new Date(),
+    })
 
     const registerSyncSession = async (
       newSessionID: string,
@@ -81,6 +90,7 @@ export async function executeSyncTask(
       notifySessionCreated = true,
     ): Promise<void> => {
       syncSessionID = newSessionID
+      bindSyncLifecycleTask(lifecycleTask, newSessionID, currentModel)
       await registerSyncSessionSideEffects({
         args,
         executorCtx,
@@ -114,6 +124,12 @@ export async function executeSyncTask(
 
     taskId = `sync_${sessionID.slice(0, 8)}`
     const startTime = new Date()
+    if (lifecycleTask) {
+      lifecycleTask.startedAt = startTime
+      const attemptID = lifecycleTask.currentAttemptID
+      const attempt = lifecycleTask.attempts?.find((item) => item.attemptId === attemptID)
+      if (attempt) attempt.startedAt = startTime
+    }
 
     if (toastManager) {
       toastManager.addTask({
@@ -131,6 +147,7 @@ export async function executeSyncTask(
 
     try {
       return await runSyncTaskLoop({
+        lifecycleTask,
         args,
         ctx,
         executorCtx: {
@@ -160,6 +177,7 @@ export async function executeSyncTask(
             agent: agentToUse,
             parentAgent: parentContext.agent,
             category: args.category,
+            lifecycleTask,
             pollMessage,
           })
           if (handOffMessage) handedOffSessionID = timedOutSessionID
@@ -182,6 +200,13 @@ export async function executeSyncTask(
       category: args.category,
     })
   } finally {
+    if (
+      lifecycleTask &&
+      !handedOffSessionID &&
+      (lifecycleTask.status === "running" || lifecycleTask.status === "pending")
+    ) {
+      await finishSyncLifecycleTask(lifecycleTask, { status: ctx.abort?.aborted ? "cancelled" : "error" }, client)
+    }
     if (syncSessionID && syncSessionID === handedOffSessionID) {
       // The background manager now owns the still-running child: keep it alive and tracked.
       syncSubagentSessions.delete(syncSessionID)

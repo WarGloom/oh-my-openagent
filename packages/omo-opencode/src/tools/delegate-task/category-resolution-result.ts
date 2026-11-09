@@ -12,6 +12,7 @@ export interface CategoryResolutionResult {
   isUnstableAgent: boolean
   fallbackChain?: FallbackEntry[] // For runtime retry on model errors
   error?: string
+  routingNotice?: string
 }
 
 export function categoryResolutionError(error: string): CategoryResolutionResult {

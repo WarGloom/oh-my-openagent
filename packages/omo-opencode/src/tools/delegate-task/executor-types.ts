@@ -19,6 +19,9 @@ export interface ExecutorContext {
   userCategories?: CategoriesConfig
   jevRouting?: JevRoutingConfig
   abortSignal?: AbortSignal
+  jevParentSessionID?: string
+  jevOrchestratorCategory?: string
+  jevSurface?: "task" | "team"
   gitMasterConfig?: GitMasterConfig
   sisyphusJuniorModel?: string
   browserProvider?: BrowserAutomationProvider

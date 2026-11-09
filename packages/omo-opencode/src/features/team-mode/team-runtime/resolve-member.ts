@@ -19,6 +19,7 @@ export class TeamMemberResolutionError extends Error {
 }
 
 export interface ResolvedMember {
+  decisionId?: string
   memberName: string
   category?: string
   agentToUse: string
@@ -28,10 +29,11 @@ export interface ResolvedMember {
 }
 
 function createBaseDelegateTaskArgs(
+  name: string,
   prompt: string,
 ): Pick<DelegateTaskArgs, "description" | "load_skills" | "prompt" | "run_in_background"> {
   return {
-    description: "Resolve team member",
+    description: `${name}: ${prompt}`,
     load_skills: [],
     prompt,
     run_in_background: false,
@@ -75,7 +77,7 @@ export async function resolveMember(
   try {
     if (member.kind === "category") {
       const args: DelegateTaskArgs = {
-        ...createBaseDelegateTaskArgs(member.prompt),
+        ...createBaseDelegateTaskArgs(member.name, member.prompt),
         category: member.category,
         subagent_type: "sisyphus-junior",
       }
@@ -86,6 +88,7 @@ export async function resolveMember(
       }
 
       return {
+        decisionId: args.decisionId,
         memberName: member.name,
         category: args.category,
         agentToUse: execution.agentToUse,
@@ -131,7 +134,7 @@ export async function resolveMember(
 
     const execution = await resolveSubagentExecution(
       {
-        ...createBaseDelegateTaskArgs(member.prompt ?? ""),
+        ...createBaseDelegateTaskArgs(member.name, member.prompt ?? ""),
         subagent_type: requestedAgent,
       },
       ctx,

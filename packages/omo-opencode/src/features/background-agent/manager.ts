@@ -53,6 +53,7 @@ import {
 import { MESSAGE_STORAGE } from "../hook-message-injector"
 import { getTaskToastManager } from "../task-toast-manager"
 import { abortWithTimeout } from "./abort-with-timeout"
+import { captureTaskTerminalEvidence } from "./task-terminal-evidence"
 import {
   bindAttemptSession,
   ensureCurrentAttempt,
@@ -883,6 +884,7 @@ export class BackgroundManager {
 
       // Create task immediately with status="pending"
       const task: BackgroundTask = {
+        decisionId: input.decisionId,
         id: nativeTaskID ?? `bg_${crypto.randomUUID().slice(0, 8)}`,
         status: "pending",
         queuedAt: new Date(),
@@ -919,7 +921,14 @@ export class BackgroundManager {
       }
       const firstAttempt = startAttempt(task, input.model)
 
-      if (this.nativeJobs) await this.nativeJobs.prepare(task, input, getMaxSubagentDepth(this.config))
+      if (this.nativeJobs) {
+        try {
+          await this.nativeJobs.prepare(task, input, getMaxSubagentDepth(this.config))
+        } catch (error) {
+          finalizeAttempt(task, firstAttempt.attemptId, "error")
+          throw error
+        }
+      }
 
       this.addTask(task)
       this.taskHistory.record(input.parentSessionId, {
@@ -1723,6 +1732,7 @@ export class BackgroundManager {
    * This allows tasks created by other tools to receive the same toast/prompt notifications.
    */
   async trackTask(input: {
+    lifecycleTask?: BackgroundTask
     taskId: string
     sessionId: string
     parentSessionId: string
@@ -1733,6 +1743,12 @@ export class BackgroundManager {
   }): Promise<BackgroundTask> {
     const existingTask = this.tasks.get(input.taskId)
     if (existingTask) {
+      if (input.lifecycleTask?.decisionId) {
+        existingTask.decisionId = input.lifecycleTask.decisionId
+        existingTask.attempts = input.lifecycleTask.attempts
+        existingTask.currentAttemptID = input.lifecycleTask.currentAttemptID
+        existingTask.model = input.lifecycleTask.model
+      }
       // P2 fix: Clean up old parent's pending set BEFORE changing parent
       // Otherwise cleanupPendingByParent would use the new parent ID
       const parentChanged = input.parentSessionId !== existingTask.parentSessionId
@@ -1782,6 +1798,10 @@ export class BackgroundManager {
 
     const task: BackgroundTask = {
       id: input.taskId,
+      decisionId: input.lifecycleTask?.decisionId,
+      attempts: input.lifecycleTask?.attempts,
+      currentAttemptID: input.lifecycleTask?.currentAttemptID,
+      model: input.lifecycleTask?.model,
       sessionId: input.sessionId,
       parentSessionId: input.parentSessionId,
       parentMessageId: "",
@@ -1830,6 +1850,7 @@ export class BackgroundManager {
    * terminal notification to the parent under the returned background task ID.
    */
   async adoptTimedOutSyncSession(input: {
+    lifecycleTask?: BackgroundTask
     sessionId: string
     parentSessionId: string
     description: string
@@ -1838,7 +1859,7 @@ export class BackgroundManager {
   }): Promise<BackgroundTask> {
     const existingTask = this.findBySession(input.sessionId)
     if (!existingTask) {
-      return this.trackTask({ ...input, taskId: `bg_${crypto.randomUUID().slice(0, 8)}` })
+      return this.trackTask({ ...input, taskId: input.lifecycleTask?.id ?? `bg_${crypto.randomUUID().slice(0, 8)}` })
     }
     if (existingTask.parentSessionId !== input.parentSessionId) {
       throw new Error(`Task ${existingTask.id} belongs to a different parent session`)
@@ -1871,6 +1892,9 @@ export class BackgroundManager {
     if (this.tasks.has(task.id) || (task.sessionId !== undefined && this.findBySession(task.sessionId))) {
       throw new Error(`Task ${task.id} is already tracked`)
     }
+    const restoredAttempt = task.attempts?.find((attempt) => attempt.attemptId === task.currentAttemptID)
+    if (task.decisionId && restoredAttempt && !restoredAttempt.lifecycleCompleted)
+      restoredAttempt.lifecycleDetached = true
     this.addTask(task)
     if (this.nativeLifecycle && task.status === "pending" && (!task.sessionId || task.nativeAdmissionID)) {
       const input: LaunchInput = { ...task }
@@ -2073,13 +2097,20 @@ export class BackgroundManager {
         case "completed":
         case "error":
         case "cancelled":
-          if (task.currentAttemptID) finalizeAttempt(task, task.currentAttemptID, receipt.status, receipt.error)
+          task.result = receipt.output
+          if (task.currentAttemptID)
+            finalizeAttempt(
+              task,
+              task.currentAttemptID,
+              receipt.status,
+              receipt.error,
+              task.decisionId ? captureTaskTerminalEvidence(task.sessionId, this.client) : undefined,
+            )
           else {
             task.status = receipt.status
             task.completedAt = new Date()
             task.error = receipt.error
           }
-          task.result = receipt.output
           if (task.concurrencyKey) this.concurrencyManager.release(task.concurrencyKey)
           task.concurrencyKey = undefined
           if (task.rootSessionId) this.unregisterRootDescendant(task.rootSessionId)
@@ -2274,7 +2305,7 @@ export class BackgroundManager {
         queuedAt: new Date(),
         result: undefined,
       }
-      const attempt = startAttempt(prepared, task.model)
+      const attempt = startAttempt(prepared, task.model, "continuation")
       prepared.sessionId = task.sessionId
       await jobs.prepare(prepared, input, getMaxSubagentDepth(this.config))
       const timer = this.completionTimers.get(task.id)
@@ -2322,6 +2353,10 @@ export class BackgroundManager {
     }
     if (!existingTask.sessionId) throw new Error(`Task has no sessionID: ${existingTask.id}`)
     existingTask.pendingResume = undefined
+    if (existingTask.decisionId) {
+      const continuation = startAttempt(existingTask, existingTask.model, "continuation")
+      bindAttemptSession(existingTask, continuation.attemptId, input.sessionId, existingTask.model)
+    }
     existingTask.originalPrompt ??= existingTask.prompt
     existingTask.prompt = input.prompt
     existingTask.concurrencyKey = concurrencyKey
@@ -3898,7 +3933,13 @@ export class BackgroundManager {
     try {
       // Atomically mark as completed to prevent race conditions
       if (task.currentAttemptID) {
-        finalizeAttempt(task, task.currentAttemptID, "completed")
+        finalizeAttempt(
+          task,
+          task.currentAttemptID,
+          "completed",
+          undefined,
+          task.decisionId ? captureTaskTerminalEvidence(task.sessionId, this.client) : undefined,
+        )
       } else {
         task.status = "completed"
         task.completedAt = new Date()

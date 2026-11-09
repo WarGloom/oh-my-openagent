@@ -15,13 +15,15 @@ import {
 } from "./executor"
 import { prepareDelegateTaskArgs } from "./tool-argument-preparation"
 import { createDelegateTaskPresentation } from "./tool-description"
-import { BUILTIN_SUBAGENT_TYPES, isDirectSubagentTypeDisabled } from "./builtin-subagent-types"
+import { buildDelegateTaskArgsSchema } from "./task-args-schema"
 import { isPlanAgent } from "./constants"
 import { selectAgentWithJev } from "./jev-routing"
 import type { AvailableSkill } from "../../agents/dynamic-agent-prompt-builder"
 import { mergeNativeSkillInfos, type NativeSkillEntry } from "../skill/native-skills"
 import type { SkillInfo } from "../skill/types"
 import { executeNativeDelegate } from "./native-execution"
+import { getJevRoutingEligibility } from "./jev-routing"
+import { mergeCategories } from "../../shared/merge-categories"
 
 const RUNTIME_PLAN_AGENT_DISABLED_MESSAGE = `OpenCode runtime plan agent is disabled in OMO task routing. Use metis for pre-plan sanity, momus for saved .omo/plans/*.md review, oracle for hard architecture/debugging, or a category for execution.`
 
@@ -64,73 +66,6 @@ export { resolveCategoryConfig } from "./categories"
 export type { SyncSessionCreatedEvent, DelegateTaskToolOptions, BuildSystemContentInput } from "./types"
 export { buildSystemContent, buildTaskPrompt } from "./prompt-builder"
 
-function buildSubagentTypeSchema(availableSubagentNames?: readonly string[], aliases: readonly string[] = []) {
-  const describe = "REQUIRED if category not provided. Do NOT provide both category and subagent_type."
-  if (!availableSubagentNames?.length) return tool.schema.string().optional().describe(describe)
-
-  const subagentNames = [...new Set([...availableSubagentNames, ...aliases])].filter(
-    (name) => !isPlanAgent(name) && !isDirectSubagentTypeDisabled(name),
-  )
-  const schemaSubagentNames =
-    subagentNames.length > 0
-      ? subagentNames
-      : BUILTIN_SUBAGENT_TYPES.map((subagent) => subagent.name).filter(
-          (name) => !isPlanAgent(name) && !isDirectSubagentTypeDisabled(name),
-        )
-  return tool.schema
-    .enum(schemaSubagentNames as unknown as [string, ...string[]])
-    .optional()
-    .describe(describe)
-}
-
-function buildDelegateTaskArgsSchema(availableSubagentNames?: readonly string[], aliases: readonly string[] = []) {
-  return {
-    load_skills: tool.schema
-      .array(tool.schema.string())
-      .optional()
-      .describe(
-        'Skill names to inject. Optional; defaults to [] when omitted. Pass an explicit array (e.g. ["git-master"]) for skill-specific tasks.',
-      ),
-    description: tool.schema
-      .string()
-      .optional()
-      .describe("Short task description (3-5 words). Auto-generated from prompt if omitted."),
-    prompt: tool.schema
-      .string()
-      .describe(
-        "Concrete goal, acceptance criteria, allowed scope, sourced hard limits, and relevant context labeled verified, assumed, or unknown. Capable workers own the method; add steps only when required by the contract or a mechanical/limited-worker assignment. Use normal prose and spaces; preserve exact identifiers.",
-      ),
-    run_in_background: tool.schema
-      .boolean()
-      .optional()
-      .describe(
-        "true is the standard spawn: returns a background task ID `bg_...` at once; inspect the result/error delivered in the native completion notification. background_output is optional for missing/truncated output or transcript/diagnostic detail. false blocks this response until the child finishes; use it only for a short child whose result gates your very next call. Omitted counts as false.",
-      ),
-    category: tool.schema
-      .string()
-      .optional()
-      .describe("REQUIRED if subagent_type not provided. Do NOT provide both category and subagent_type."),
-    model_routing: tool.schema
-      .boolean()
-      .optional()
-      .describe(
-        "Set false to bypass optional Jev routing for category auto or an agent ladder; omitted uses the configured mode. Does not affect team members or real named agents.",
-      ),
-    subagent_type: buildSubagentTypeSchema(availableSubagentNames, aliases),
-    reasoning: tool.schema
-      .string()
-      .optional()
-      .describe(
-        "Optional reasoning override only with subagent_type (including a Jev alias). Canonical levels: off, auto, minimal, low, medium, high, xhigh, max. Unknown names pass through as provider variants, matching permissive agent config. Overrides agent configuration; category delegation ignores this argument.",
-      ),
-    task_id: tool.schema
-      .string()
-      .optional()
-      .describe("Continuation session id (`ses_...`) from task metadata; not a background task id (`bg_...`)."),
-    command: tool.schema.string().optional().describe("The command that triggered this task"),
-  }
-}
-
 export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefinition {
   const { availableCategories, availableSkills, categoryExamples, description } =
     createDelegateTaskPresentation(options)
@@ -143,8 +78,8 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
     description,
     args: delegateTaskArgsSchema,
     async execute(args, toolContext) {
-      const ctx = toolContext as ToolContextWithMetadata
-      ctx.abort?.throwIfAborted()
+      const originalContext = toolContext as ToolContextWithMetadata
+      originalContext.abort?.throwIfAborted()
       const currentModelConfig = options.loadCurrentModelConfig?.()
       const agentOverrides = {
         ...(currentModelConfig === undefined ? options.agentOverrides : currentModelConfig.agents),
@@ -159,7 +94,21 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
         sisyphusJuniorModel:
           currentModelConfig === undefined ? options.sisyphusJuniorModel : agentOverrides["sisyphus-junior"]?.model,
       }
-      const delegateTaskArgs = await prepareDelegateTaskArgs(args, ctx)
+      const delegateTaskArgs = await prepareDelegateTaskArgs(args, originalContext)
+      const ctx = originalContext
+      const orchestratorCategory = delegateTaskArgs.category ?? "omitted"
+      if (
+        !delegateTaskArgs.task_id &&
+        !delegateTaskArgs.category &&
+        !delegateTaskArgs.subagent_type &&
+        modelOptions.jevRouting &&
+        modelOptions.jevRouting.mode !== "off" &&
+        getJevRoutingEligibility({
+          config: modelOptions.jevRouting,
+          enabledCategories: mergeCategories(modelOptions.userCategories),
+        }).validDefault
+      )
+        delegateTaskArgs.category = "auto"
       if (!delegateTaskArgs.task_id && !delegateTaskArgs.category && delegateTaskArgs.subagent_type) {
         const config = modelOptions.jevRouting
         const alias = delegateTaskArgs.subagent_type
@@ -266,7 +215,12 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
         ? `${parentContext.model.providerID}/${parentContext.model.modelID}`
         : undefined
 
-      const routingOptions = { ...modelOptions, abortSignal: ctx.abort }
+      const routingOptions = {
+        ...modelOptions,
+        abortSignal: ctx.abort,
+        jevParentSessionID: ctx.sessionID,
+        jevOrchestratorCategory: orchestratorCategory,
+      }
 
       let agentToUse: string
       let categoryModel: DelegatedModelConfig | undefined
@@ -276,6 +230,11 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
       let isUnstableAgent = false
       let fallbackChain: import("../../shared/model-requirements").FallbackEntry[] | undefined
       let maxPromptTokens: number | undefined
+      let routingNotice: string | undefined
+      const withRoutingNotice = async (result: Promise<string>) => {
+        const text = await result
+        return routingNotice ? `${text}\n${routingNotice}` : text
+      }
 
       if (delegateTaskArgs.category) {
         const resolution = await resolveCategoryExecution(
@@ -295,6 +254,7 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
         isUnstableAgent = resolution.isUnstableAgent
         fallbackChain = resolution.fallbackChain
         maxPromptTokens = resolution.maxPromptTokens
+        routingNotice = resolution.routingNotice
 
         const isRunInBackgroundExplicitlyFalse = isExplicitSyncRun(delegateTaskArgs.run_in_background)
 
@@ -322,26 +282,30 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
             nativeSkillInfos,
           })
           if (options.manager.nativeJobs)
-            return executeNativeDelegate({
-              args: { ...delegateTaskArgs, run_in_background: true },
+            return withRoutingNotice(
+              executeNativeDelegate({
+                args: { ...delegateTaskArgs, run_in_background: true },
+                ctx,
+                executor: modelOptions,
+                parent: parentContext,
+                agent: agentToUse,
+                model: categoryModel,
+                system: systemContent,
+                fallbackChain,
+              }),
+            )
+          return withRoutingNotice(
+            executeUnstableAgentTask(
+              delegateTaskArgs,
               ctx,
-              executor: modelOptions,
-              parent: parentContext,
-              agent: agentToUse,
-              model: categoryModel,
-              system: systemContent,
+              modelOptions,
+              parentContext,
+              agentToUse,
+              categoryModel,
+              systemContent,
+              actualModel,
               fallbackChain,
-            })
-          return executeUnstableAgentTask(
-            delegateTaskArgs,
-            ctx,
-            modelOptions,
-            parentContext,
-            agentToUse,
-            categoryModel,
-            systemContent,
-            actualModel,
-            fallbackChain,
+            ),
           )
         }
       } else {
@@ -375,19 +339,36 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
       ctx.abort?.throwIfAborted()
 
       if (options.manager.nativeJobs)
-        return executeNativeDelegate({
-          args: delegateTaskArgs,
-          ctx,
-          executor: modelOptions,
-          parent: parentContext,
-          agent: agentToUse,
-          model: categoryModel,
-          system: systemContent,
-          fallbackChain,
-        })
+        return withRoutingNotice(
+          executeNativeDelegate({
+            args: delegateTaskArgs,
+            ctx,
+            executor: modelOptions,
+            parent: parentContext,
+            agent: agentToUse,
+            model: categoryModel,
+            system: systemContent,
+            fallbackChain,
+          }),
+        )
 
       if (runInBackground) {
-        return executeBackgroundTask(
+        return withRoutingNotice(
+          executeBackgroundTask(
+            delegateTaskArgs,
+            ctx,
+            modelOptions,
+            parentContext,
+            agentToUse,
+            categoryModel,
+            systemContent,
+            fallbackChain,
+          ),
+        )
+      }
+
+      return withRoutingNotice(
+        executeSyncTask(
           delegateTaskArgs,
           ctx,
           modelOptions,
@@ -395,20 +376,9 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
           agentToUse,
           categoryModel,
           systemContent,
+          modelInfo,
           fallbackChain,
-        )
-      }
-
-      return executeSyncTask(
-        delegateTaskArgs,
-        ctx,
-        modelOptions,
-        parentContext,
-        agentToUse,
-        categoryModel,
-        systemContent,
-        modelInfo,
-        fallbackChain,
+        ),
       )
     },
   })

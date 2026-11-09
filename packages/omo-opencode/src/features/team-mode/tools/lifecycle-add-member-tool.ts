@@ -24,7 +24,7 @@ const TeamAddMemberInlineMemberToolSchema = tool.schema.object({
     .string()
     .optional()
     .describe(
-      "Required for category members unless a fallback category can be inferred. Examples: quick, deep, ultrabrain, writing, artistry.",
+      "Omit for auto when category routing is available; observe mode uses the configured default. Select explicitly for deliberate model diversity or categories outside auto.",
     ),
   subagent_type: tool.schema
     .string()
@@ -70,7 +70,7 @@ export function createTeamAddMemberTool(
 ): ToolDefinition {
   return tool({
     description:
-      "Add ONE member to an ACTIVE team run. Lead-only. The run keeps its existing members, tasks, and mailboxes; the new member counts against the run's max_members cap. Returns { teamRunId, memberName, sessionId, status } only after the member's durable row, inbox, and session registry entry are ready.",
+      "Add ONE member to an ACTIVE team run. Lead-only. Omit category for auto when category routing is available; observe mode uses the configured default. Select explicitly for model diversity or categories outside auto. The member counts against max_members. Returns { teamRunId, memberName, sessionId, status } after its durable row, inbox, and session registry entry are ready.",
     args: {
       teamRunId: tool.schema
         .string()
@@ -103,7 +103,10 @@ export function createTeamAddMemberTool(
         )
       }
 
-      const defaultCategoryName = resolveDefaultInlineCategory(executorConfig?.userCategories)
+      const defaultCategoryName = resolveDefaultInlineCategory(
+        executorConfig?.userCategories,
+        executorConfig?.jevRouting,
+      )
       const normalizedMember = normalizeInlineMember((args.member ?? {}) as Record<string, unknown>, {
         defaultCategoryName,
       })

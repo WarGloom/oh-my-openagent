@@ -26,6 +26,7 @@ import { dispatchInternalPrompt } from "../../shared/prompt-async-gate"
 import { assertTeamSessionCanContinue } from "../../features/team-mode/team-session-registry"
 import { isSyncPollTimeout } from "./sync-session-poller"
 import { handOffTimedOutSyncSession } from "./sync-timeout-handoff"
+import { finishSyncLifecycleTask, resumeSyncLifecycleTask } from "./sync-task-lifecycle"
 
 type ResumeModel = { providerID: string; modelID: string }
 
@@ -152,6 +153,12 @@ export async function executeSyncContinuation(
   let anchorMessageCount: number | undefined
   let anchorMessageID: string | undefined
   let handedBackToParent = false
+  let handedOff = false
+  const lifecycleTask = resumeSyncLifecycleTask(
+    continuationID,
+    parentContext.sessionID,
+    retainedTask ?? executorCtx.manager?.findBySession?.(continuationID),
+  )
 
   try {
     try {
@@ -284,8 +291,10 @@ export async function executeSyncContinuation(
           agent: resumeAgent,
           parentAgent: parentContext.agent,
           category: args.category,
+          lifecycleTask,
           pollMessage: pollError,
         })
+        handedOff = handOffMessage !== undefined
         return handOffMessage ?? pollError
       }
       if (pollError && shouldAttemptPollErrorRecovery(pollError)) {
@@ -301,6 +310,11 @@ export async function executeSyncContinuation(
         }
 
         const duration = formatDuration(startTime)
+        await finishSyncLifecycleTask(
+          lifecycleTask,
+          { status: "completed", output: recoveredResult.textContent, archive: !isManagedContinuation },
+          client,
+        )
         handedBackToParent = true
 
         return `Task continued and completed in ${duration}.
@@ -327,6 +341,11 @@ ${buildTaskMetadataBlock({
       }
 
       const duration = formatDuration(startTime)
+      await finishSyncLifecycleTask(
+        lifecycleTask,
+        { status: "completed", output: result.textContent, archive: !isManagedContinuation },
+        client,
+      )
       handedBackToParent = true
 
       return `Task continued and completed in ${duration}.
@@ -358,6 +377,13 @@ ${buildTaskMetadataBlock({
       }
     }
   } finally {
+    if (lifecycleTask && !handedOff && (lifecycleTask.status === "running" || lifecycleTask.status === "pending")) {
+      await finishSyncLifecycleTask(
+        lifecycleTask,
+        { status: ctx.abort?.aborted ? "cancelled" : "error", archive: !isManagedContinuation },
+        client,
+      )
+    }
     releaseSyncClaim?.()
     detachFromManager?.()
   }

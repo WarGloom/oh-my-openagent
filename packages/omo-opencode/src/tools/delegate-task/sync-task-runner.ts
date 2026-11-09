@@ -12,8 +12,11 @@ import type { SyncTaskDeps } from "./sync-task-deps"
 import { getNextSyncFallbackModel, retrySyncPromptWithFallbacks } from "./sync-task-fallback"
 import { isSyncPollTimeout } from "./sync-session-poller"
 import type { DelegatedModelConfig, DelegateTaskArgs, ToolContextWithMetadata } from "./types"
+import type { BackgroundTask } from "../../features/background-agent/types"
+import { bindSyncLifecycleTask, finishSyncLifecycleTask } from "./sync-task-lifecycle"
 
 type SyncTaskRunnerInput = {
+  readonly lifecycleTask?: BackgroundTask
   readonly args: DelegateTaskArgs
   readonly ctx: ToolContextWithMetadata
   readonly executorCtx: ExecutorContext
@@ -185,6 +188,11 @@ export async function runSyncTaskLoop(input: SyncTaskRunnerInput): Promise<strin
           deliverableTag,
         })
         if (recoveredResult.ok) {
+          await finishSyncLifecycleTask(
+            input.lifecycleTask,
+            { status: "completed", output: recoveredResult.textContent },
+            client,
+          )
           return buildRecoveredSyncTaskCompletion({
             activeSessionID,
             agentToUse,
@@ -237,7 +245,13 @@ export async function runSyncTaskLoop(input: SyncTaskRunnerInput): Promise<strin
 
     await publishSyncMetadata(activeSessionID, effectiveCategoryModel, spawnDepth)
 
-    if (!ctx.abort?.aborted) {
+    bindSyncLifecycleTask(input.lifecycleTask, activeSessionID, effectiveCategoryModel)
+    await finishSyncLifecycleTask(
+      input.lifecycleTask,
+      { status: ctx.abort?.aborted ? "cancelled" : "completed", output: result.textContent },
+      client,
+    )
+    if (!ctx.abort?.aborted && !input.lifecycleTask) {
       archiveBackgroundTask({
         id: `sync_${activeSessionID}`,
         sessionId: activeSessionID,

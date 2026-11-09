@@ -7,6 +7,7 @@ import type {
   NativeSubagentRun,
   NativeSubagentSkillSelection,
 } from "../../v2/native-subagent-types"
+import type { TaskAttemptCause } from "./task-lifecycle"
 
 export type BackgroundTaskStatus = "pending" | "running" | "completed" | "error" | "cancelled" | "interrupt"
 
@@ -32,6 +33,11 @@ export type UserToolPermission = "ask" | "allow" | "deny"
 export type BackgroundTaskUserPermission = Readonly<Record<string, UserToolPermission>>
 
 export interface BackgroundTaskAttempt {
+  cause?: TaskAttemptCause
+  lifecycleStarted?: boolean
+  lifecycleSessionId?: string
+  lifecycleCompleted?: boolean
+  lifecycleDetached?: boolean
   attemptId: string
   attemptNumber: number
   sessionId?: string
@@ -45,6 +51,8 @@ export interface BackgroundTaskAttempt {
 }
 
 export interface BackgroundTask {
+  decisionId?: string
+  producingModel?: string
   nativeContinued?: boolean
   nativeAdmissionID?: string
   nativeProvisioningAdmissionID?: string
@@ -144,6 +152,7 @@ export interface BackgroundTaskSnapshot {
 }
 
 export interface LaunchInput {
+  decisionId?: string
   nativeInheritedPermit?: boolean
   nativeSignal?: AbortSignal
   nativePrompt?: NativeSubagentPrompt
