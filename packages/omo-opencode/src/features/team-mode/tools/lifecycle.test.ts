@@ -254,6 +254,28 @@ describe("team lifecycle tools", () => {
     )
   })
 
+  test.each([
+    [{ mode: "active" as const, default: "quick" }, "auto"],
+    [{ mode: "off" as const, default: "quick" }, undefined],
+    [{ mode: "active" as const }, undefined],
+  ])("named spec defaults only when category routing is eligible (%s)", async (routing, expected) => {
+    const tool = createTeamCreateTool(
+      config,
+      mockClient,
+      backgroundManager,
+      undefined,
+      { jevRouting: routing },
+      lifecycleDeps,
+    )
+    await tool.execute({ teamName: "alpha-team" }, createToolContext("lead-session"))
+    expect(loadTeamSpecMock).toHaveBeenCalledWith(
+      "alpha-team",
+      config,
+      "/project",
+      expect.objectContaining({ defaultCategoryName: expected }),
+    )
+  })
+
   test("team_create checks participant conflicts against the caller session", async () => {
     // given
     const teamCreateTool = createTeamCreateToolForTest()
@@ -618,7 +640,7 @@ describe("team lifecycle tools", () => {
       ladder: ["quick", "deep-low"],
       default: "quick",
     }
-    const executorConfig = { jevRouting: routing }
+    const executorConfig = { jevRouting: routing, userCategories: { writing: {}, quick: {} } }
     const createTool = createTeamCreateTool(
       config,
       mockClient,
@@ -632,15 +654,25 @@ describe("team lifecycle tools", () => {
     const toolContext = { ...createToolContext("lead-session"), abort: abort.signal }
     // when: a team is created and a category member is added
     const created = parseToolResult<{ teamRunId: string }>(
-      await createTool.execute({ inline_spec: createSpec() }, toolContext),
+      await createTool.execute(
+        {
+          inline_spec: {
+            name: "alpha-team",
+            members: [{ name: "writer", kind: "category", prompt: "write the report" }],
+          },
+        },
+        toolContext,
+      ),
     )
     await addTool.execute(
-      { teamRunId: created.teamRunId, member: { name: "reviewer", category: "auto", prompt: "review work" } },
+      { teamRunId: created.teamRunId, member: { name: "reviewer", kind: "category", prompt: "review work" } },
       toolContext,
     )
     // then: both executor contexts receive routing and cancellation
     expect(createTeamRunMock).toHaveBeenCalledWith(
-      expect.anything(),
+      expect.objectContaining({
+        members: expect.arrayContaining([expect.objectContaining({ name: "writer", category: "auto" })]),
+      }),
       "lead-session",
       expect.objectContaining({ jevRouting: routing, abortSignal: abort.signal }),
       config,

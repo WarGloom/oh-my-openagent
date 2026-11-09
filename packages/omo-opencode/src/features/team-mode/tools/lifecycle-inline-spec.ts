@@ -2,6 +2,7 @@ import { z } from "zod"
 
 import type { AgentOverrides, CategoriesConfig, JevRoutingConfig } from "../../../config/schema"
 import { mergeCategories } from "../../../shared/merge-categories"
+import { getJevRoutingEligibility } from "../../../tools/delegate-task/jev-routing"
 import { normalizeTeamSpecInput } from "@oh-my-opencode/team-core/team-registry/loader"
 import { validateSpec } from "@oh-my-opencode/team-core/team-registry/validator"
 import { TeamSpecSchema, type TeamSpec } from "@oh-my-opencode/team-core/types"
@@ -49,7 +50,16 @@ export type TeamCreateExecutorConfig = {
   disabledAgents?: readonly string[]
 }
 
-export function resolveDefaultInlineCategory(userCategories?: CategoriesConfig): string | undefined {
+export function resolveDefaultInlineCategory(
+  userCategories?: CategoriesConfig,
+  jevRouting?: JevRoutingConfig,
+): string | undefined {
+  if (
+    jevRouting &&
+    jevRouting.mode !== "off" &&
+    getJevRoutingEligibility({ config: jevRouting, enabledCategories: mergeCategories(userCategories) }).validDefault
+  )
+    return "auto"
   const userCategoryName = Object.entries(userCategories ?? {}).find(
     ([, categoryConfig]) => categoryConfig.disable !== true,
   )?.[0]

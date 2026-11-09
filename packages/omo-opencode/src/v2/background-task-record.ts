@@ -15,6 +15,8 @@ const settings = {
 }
 
 export const backgroundTaskRecord = z.object({
+  decisionId: z.string().optional(),
+  producingModel: z.string().optional(),
   id: z.string(),
   sessionId: z.string().optional(),
   parentSessionId: z.string(),
@@ -57,6 +59,11 @@ export const backgroundTaskRecord = z.object({
   attempts: z
     .array(
       z.object({
+        cause: z.enum(["initial", "retry", "fallback_replacement", "continuation"]).optional(),
+        lifecycleStarted: z.boolean().optional(),
+        lifecycleSessionId: z.string().optional(),
+        lifecycleCompleted: z.boolean().optional(),
+        lifecycleDetached: z.boolean().optional(),
         attemptId: z.string(),
         attemptNumber: z.number(),
         status,

@@ -34,6 +34,7 @@ export async function executeUnstableAgentTask(
     const effectivePrompt = buildTaskPrompt(args.prompt, agentToUse, tddEnabled)
     const persistedDescription = getPersistedBackgroundTaskDescription(args, agentToUse)
     const task = await manager.launch({
+      decisionId: args.decisionId,
       description: persistedDescription,
       prompt: effectivePrompt,
       agent: agentToUse,

@@ -1,11 +1,21 @@
-import { afterEach, describe, expect, it } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test"
 import { BackgroundManager } from "../features/background-agent/manager"
 import type { NativeDelegationSkills } from "./native-subagent-jobs"
 import { backgroundTaskRecord } from "./background-task-record"
 import { cleanupNativeFixtures, cleanups, fixture } from "./native-subagent-jobs-test-fixture"
 import { V2NativeSubagentJobs } from "./native-subagent-jobs"
+import { subscribeTaskLifecycle, type TaskLifecycleEvent } from "../features/background-agent/task-lifecycle"
+import * as ledger from "../tools/delegate-task/jev-routing-ledger"
+import { unsafeTestValue } from "../../../../test-support/unsafe-test-value"
 
-afterEach(cleanupNativeFixtures)
+let recordSpy: ReturnType<typeof spyOn>
+beforeEach(() => {
+  recordSpy = spyOn(ledger, "recordJevRouting").mockResolvedValue(undefined)
+})
+afterEach(async () => {
+  await cleanupNativeFixtures()
+  recordSpy.mockRestore()
+})
 
 describe("native subagent consumer", () => {
   it.each(["ready", "skills", "missing"] as const)(
@@ -151,8 +161,17 @@ describe("native subagent consumer", () => {
 
   it("resumes the same child with a fresh native generation and stable OMO task identity", async () => {
     const f = await fixture()
+    const decisionId = crypto.randomUUID()
+    const events: TaskLifecycleEvent[] = []
+    const observed = Promise.withResolvers<void>()
+    cleanups.push(
+      subscribeTaskLifecycle((event) => {
+        if (event.decisionId === decisionId) events.push(event)
+        if (events.filter((event) => event.event === "outcome").length === 2) observed.resolve()
+      }),
+    )
     const started = f.nextStart()
-    const task = await f.manager.launch(f.launch("first"))
+    const task = await f.manager.launch({ ...f.launch("first"), decisionId })
     await started
     const completed = f.manager.waitForNativeTask(task.id, new AbortController().signal)
     f.finish(task.nativeAdmissionID ?? "")
@@ -171,15 +190,86 @@ describe("native subagent consumer", () => {
     const result = f.manager.waitForNativeTask(task.id, new AbortController().signal)
     f.finish(f.manager.getTask(task.id)?.nativeAdmissionID ?? "")
     await result
+    await observed.promise
     expect(f.starts).toEqual(["child-1", "child-1"])
     expect(f.manager.getTask(task.id)?.nativeRun).toEqual({ childSessionID: "child-1", generation: "2" })
     expect(f.manager.getTask(task.id)?.attempts).toHaveLength(2)
+    expect(backgroundTaskRecord.parse(f.stored.get(task.id)).decisionId).toBe(decisionId)
+    const outcomes = events.filter((event) => event.event === "outcome")
+    expect(outcomes).toHaveLength(2)
+    expect(outcomes.map((event) => event.taskId)).toEqual([task.id, task.id])
+    expect(outcomes[0]?.attemptId).not.toBe(outcomes[1]?.attemptId)
+    expect(
+      events.filter((event) => event.event === "attempt" && event.childSessionId !== null).map((event) => event.cause),
+    ).toEqual(["initial", "continuation"])
+  })
+
+  it("native completion settles before terminal evidence returns", async () => {
+    const f = await fixture()
+    const decisionId = crypto.randomUUID()
+    const response = Promise.withResolvers<unknown>()
+    const entered = Promise.withResolvers<void>()
+    const manager = new BackgroundManager({
+      pluginContext: unsafeTestValue({
+        ...f.input,
+        client: {
+          ...f.input.client,
+          session: {
+            ...f.input.client.session,
+            messages: async () => {
+              entered.resolve()
+              return response.promise
+            },
+          },
+        },
+      }),
+      config: { defaultConcurrency: 1 },
+      nativeJobs: f.createJobs(),
+      nativeLifecycle: { save: async () => {}, notify: async () => {} },
+      preserveSessionsOnShutdown: true,
+    })
+    cleanups.push(() => manager.shutdown())
+    await manager.restoreNativeJobs()
+    const started = f.nextStart()
+    const task = await manager.launch({ ...f.launch("nonblocking-terminal"), decisionId })
+    await started
+    const outcome = Promise.withResolvers<TaskLifecycleEvent>()
+    cleanups.push(
+      subscribeTaskLifecycle((event) => {
+        if (event.decisionId === decisionId && event.event === "outcome") outcome.resolve(event)
+      }),
+    )
+    const settled = manager.waitForNativeTask(task.id, new AbortController().signal)
+    f.finish(task.nativeAdmissionID ?? "")
+    expect(await settled).toMatchObject({ status: "completed", result: "child result" })
+    await entered.promise
+    response.resolve({
+      data: [
+        {
+          info: { role: "assistant", providerID: "test", modelID: "producing" },
+          parts: [{ type: "text", text: "child result" }],
+        },
+      ],
+    })
+    expect(await outcome.promise).toMatchObject({
+      decisionId,
+      taskId: task.id,
+      event: "outcome",
+      producingModel: "test/producing",
+    })
   })
 
   it.each(["running", "completed"] as const)(
     "restores permits before acknowledging recovered %s generation",
     async (status) => {
       const f = await fixture()
+      const decisionId = crypto.randomUUID()
+      const outcomes: TaskLifecycleEvent[] = []
+      cleanups.push(
+        subscribeTaskLifecycle((event) => {
+          if (event.decisionId === decisionId && event.event === "outcome") outcomes.push(event)
+        }),
+      )
       const started = f.nextStart()
       const nativePrompt = {
         text: "command",
@@ -196,6 +286,7 @@ describe("native subagent consumer", () => {
       }
       const task = await f.manager.launch({
         ...f.launch("first"),
+        decisionId,
         nativePrompt,
         nativeMetadata: { omoCommandParts: [{ type: "text", text: "marker", synthetic: true }] },
       })
@@ -228,6 +319,7 @@ describe("native subagent consumer", () => {
       if (secondStarted) {
         await secondStarted
         expect(f.starts).toEqual(["child-1", "child-2"])
+        expect(outcomes).toHaveLength(0)
         return
       }
       expect(queued.status).toBe("pending")
@@ -236,6 +328,7 @@ describe("native subagent consumer", () => {
       f.finish(task.nativeAdmissionID ?? "")
       await next
       expect(f.starts).toEqual(["child-1", "child-2"])
+      expect(outcomes).toHaveLength(0)
     },
   )
 

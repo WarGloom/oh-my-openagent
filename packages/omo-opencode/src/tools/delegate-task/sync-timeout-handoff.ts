@@ -1,6 +1,7 @@
 import type { ExecutorContext } from "./executor-types"
 import { buildTaskMetadataBlock } from "../../features/tool-metadata-store/task-metadata-contract"
 import { log } from "../../shared/logger"
+import type { BackgroundTask } from "../../features/background-agent/types"
 
 /**
  * Hands a sync child whose parent-side poll timed out to the background manager, so the
@@ -16,11 +17,13 @@ export async function handOffTimedOutSyncSession(input: {
   parentAgent?: string
   category?: string
   pollMessage: string
+  lifecycleTask?: BackgroundTask
 }): Promise<string | undefined> {
   if (typeof input.manager?.adoptTimedOutSyncSession !== "function") return undefined
 
   try {
     const task = await input.manager.adoptTimedOutSyncSession({
+      ...(input.lifecycleTask ? { lifecycleTask: input.lifecycleTask } : {}),
       sessionId: input.sessionID,
       parentSessionId: input.parentSessionID,
       description: input.description,
