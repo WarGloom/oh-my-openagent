@@ -444,7 +444,7 @@ export type V2SessionMessage =
   | (V2MessageBase & { readonly type: "synthetic" | "system"; readonly text: string })
   | (V2MessageBase & { readonly type: "skill"; readonly name: string; readonly text: string })
   | (V2MessageBase & { readonly type: "agent-switched"; readonly agent: string })
-  | (V2MessageBase & { readonly type: "model-switched"; readonly model: V2ModelRef })
+  | (V2MessageBase & { readonly type: "model-switched"; readonly model: V2ModelRef; readonly previous?: V2ModelRef })
   | (V2MessageBase & {
       readonly type: "assistant"
       readonly agent: string
