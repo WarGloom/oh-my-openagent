@@ -3,6 +3,11 @@ import type { TaskPromptBody } from "./spawner/task-prompt-body"
 import type { NativeSubagentReceipt } from "../../v2/native-subagent-types"
 
 export interface NativeBackgroundJobs {
+  readonly recover?: (
+    sessionID: string,
+    parentSessionID: string,
+    archived?: BackgroundTask,
+  ) => Promise<BackgroundTask | undefined>
   readonly prepare: (task: BackgroundTask, input: LaunchInput | ResumeInput, maxDepth: number) => Promise<void>
   readonly start: (task: BackgroundTask, body: TaskPromptBody) => Promise<"started" | "suspended">
   readonly cancel: (task: BackgroundTask) => Promise<void>

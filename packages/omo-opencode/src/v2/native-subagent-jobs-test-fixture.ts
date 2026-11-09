@@ -12,6 +12,7 @@ import type { NativeSubagentDomain, NativeSubagentReceipt } from "./native-subag
 import type { NativeSubagentPrompt } from "./native-subagent-types"
 import { encodeBackgroundTask } from "./background-task-record"
 import { createNativeRecoveryNotifier } from "./native-recovery-notice"
+import { V2BackgroundLifecycle } from "./background-lifecycle"
 
 export const cleanups: Array<() => void | Promise<void>> = []
 // Each importing test file registers this in its own afterEach: a hook registered at module import
@@ -26,6 +27,7 @@ export async function fixture(
     readonly activate?: () => Promise<NativeDelegationSkills>
     readonly restoredText?: string
     readonly denied?: boolean
+    readonly cleanupDelay?: number
   } = {},
 ) {
   const directory = mkdtempSync(join(tmpdir(), "omo-native-jobs-"))
@@ -137,26 +139,29 @@ export async function fixture(
     },
   }
   const input = createPluginInput(context, { tracker: createSessionTracker(), warn: () => {} })
+  if (!context.storage) throw new Error("fake storage missing")
+  const lifecycle = new V2BackgroundLifecycle(context, context.storage)
+  const save = async (task: Parameters<typeof encodeBackgroundTask>[0]) => {
+    stored.set(task.id, encodeBackgroundTask(task))
+    await lifecycle.save(task)
+  }
   const createJobs = () =>
     new V2NativeSubagentJobs(context, domain, {
+      load: (sessionID, parentSessionID) => lifecycle.findRetainedTask(sessionID, parentSessionID),
       activateSkills: async () =>
         options.activate
           ? options.activate()
           : { text: "skill content", activationIDs: ["activation-1"], selections: [{ id: "skill" }] },
       restoreSkills: async () => ({ text: options.restoredText ?? "accepted skill content" }),
-      save: async (task) => {
-        stored.set(task.id, encodeBackgroundTask(task))
-      },
+      save,
       notifyRecovery: createNativeRecoveryNotifier(context, input, () => true),
     })
   const manager = new BackgroundManager({
     pluginContext: input,
-    config: { defaultConcurrency: 1 },
+    config: { defaultConcurrency: 1, taskCleanupDelayMs: options.cleanupDelay },
     nativeJobs: createJobs(),
     nativeLifecycle: {
-      save: async (task) => {
-        stored.set(task.id, encodeBackgroundTask(task))
-      },
+      save,
       notify: async (task) => {
         notices.push(task.id)
       },
