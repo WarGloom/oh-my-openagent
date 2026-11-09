@@ -2138,7 +2138,7 @@ export class BackgroundManager {
       )
     }
 
-    if (existingTask.status === "pending" && existingTask.pendingResume) {
+    if (existingTask.status === "pending" && (existingTask.pendingResume || this.nativeJobs)) {
       throw new Error(
         `Task ${existingTask.id} already has a continuation queued for admission and cannot accept another one. ` +
           "Wait for it to start and complete before resuming it with task_id.",
@@ -2255,7 +2255,17 @@ export class BackgroundManager {
       }
       const attempt = startAttempt(prepared, task.model, "continuation")
       prepared.sessionId = task.sessionId
-      await jobs.prepare(prepared, input, getMaxSubagentDepth(this.config))
+      try {
+        await jobs.prepare(prepared, input, getMaxSubagentDepth(this.config))
+        await this.nativeLifecycle?.save(prepared)
+      } catch (error) {
+        finalizeAttempt(prepared, attempt.attemptId, "error", error instanceof Error ? error.message : String(error))
+        if (prepared.nativeAdmissionID !== task.nativeAdmissionID) {
+          await jobs.cancel(prepared)
+          await this.nativeLifecycle?.save(task)
+        }
+        throw error
+      }
       const timer = this.completionTimers.get(task.id)
       if (timer) {
         clearTimeout(timer)
@@ -2274,7 +2284,6 @@ export class BackgroundManager {
       const pending = this.pendingByParent.get(task.parentSessionId) ?? new Set<string>()
       pending.add(task.id)
       this.pendingByParent.set(task.parentSessionId, pending)
-      await this.nativeLifecycle?.save(task)
       void this.processKey(key)
       return task
     } finally {

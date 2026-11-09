@@ -230,6 +230,23 @@ export class V2BackgroundLifecycle implements NativeBackgroundLifecycle {
     )
   }
 
+  async findRetainedTask(sessionID: string, parentSessionID: string): Promise<BackgroundTask | undefined> {
+    let after: string | undefined
+    do {
+      const page = await this.storage.scan({ prefix: this.prefix, ...(after ? { after } : {}) })
+      for (const entry of page.entries) {
+        const task = backgroundTaskRecord.parse(entry.value)
+        if (task.sessionId !== sessionID) continue
+        if (task.parentSessionId !== parentSessionID || entry.key !== `${this.prefix}${task.id}`) {
+          throw new Error("Retained-session recovery denied: task ownership or storage identity mismatch")
+        }
+        return task
+      }
+      after = page.next
+    } while (after)
+    return undefined
+  }
+
   async notify(task: BackgroundTask, text: string): Promise<void> {
     await this.save(task)
     if (task.nativeRun) return

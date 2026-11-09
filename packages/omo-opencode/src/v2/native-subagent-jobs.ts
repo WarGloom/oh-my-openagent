@@ -10,6 +10,7 @@ import { normalizeAction } from "./config-bridge/migrate-agent"
 import { lowerReasoningForModel } from "../shared/agent-variant"
 import type { V2PluginContext } from "./context-types"
 import type { NativeSubagentDomain, NativeSubagentReceipt, NativeSubagentSkillSelection } from "./native-subagent-types"
+import { recoverNativeTask } from "./native-retained-task"
 
 export type NativeDelegationSkills = {
   readonly text: string
@@ -18,6 +19,7 @@ export type NativeDelegationSkills = {
 }
 
 export type NativeSubagentJobsDeps = {
+  readonly load?: (sessionID: string, parentSessionID: string) => Promise<BackgroundTask | undefined>
   readonly activateSkills: (task: BackgroundTask) => Promise<NativeDelegationSkills>
   readonly restoreSkills: (task: BackgroundTask) => Promise<{ readonly text: string }>
   readonly save: (task: BackgroundTask) => Promise<void>
@@ -32,6 +34,18 @@ export class V2NativeSubagentJobs implements NativeBackgroundJobs {
     private readonly domain: NativeSubagentDomain,
     private readonly deps: NativeSubagentJobsDeps,
   ) {}
+
+  async recover(
+    sessionID: string,
+    parentSessionID: string,
+    archived?: BackgroundTask,
+  ): Promise<BackgroundTask | undefined> {
+    return recoverNativeTask(
+      { context: this.context, domain: this.domain },
+      { sessionID, parentSessionID, archived },
+      await this.deps.load?.(sessionID, parentSessionID),
+    )
+  }
 
   async prepare(task: BackgroundTask, input: LaunchInput | ResumeInput, maxDepth: number): Promise<void> {
     const invocation = input.nativeInvocation
