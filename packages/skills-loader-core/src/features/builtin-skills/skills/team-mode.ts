@@ -46,7 +46,7 @@ Example:
 }
 \`\`\`
 
-Inline shorthand is accepted for category members. If \`kind\` is omitted, \`category\` implies \`kind: "category"\`. If a member uses natural planning fields like \`role\`, \`description\`, \`capabilities\`, or an unknown \`kind\`, it becomes a category worker using the current config's first enabled category. If \`kind\` is an unknown string such as a category name, that string is used as the category. \`systemPrompt\` is accepted as a \`prompt\` alias, and \`loadSkills\` is ignored because team members receive their behavior through \`prompt\`.
+Inline shorthand is accepted for category members. If \`kind\` is omitted, \`category\` implies \`kind: "category"\`. A member with natural planning fields becomes a category worker. If category routing is available, omit its category for auto; otherwise inline members use the first enabled category. Observe mode uses the configured default. An unknown \`kind\` string is used as the category. \`systemPrompt\` is a \`prompt\` alias, and \`loadSkills\` is ignored.
 
 Example:
 
@@ -75,7 +75,7 @@ Example:
 
 ## Member schema
 
-Use \`kind: "category"\` when you want a category-backed worker. It must include both \`category\` and \`prompt\`. D-40: category members always route through \`sisyphus-junior\`.
+Use \`kind: "category"\` for a category-backed worker and include a \`prompt\`. Omit \`category\` for auto when category routing is available. Select it explicitly for deliberate model diversity or categories outside auto. Category members route through \`sisyphus-junior\`.
 
 Use \`kind: "subagent_type"\` only for eligible agents.
 

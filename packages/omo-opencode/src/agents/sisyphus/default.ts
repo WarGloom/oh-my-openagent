@@ -225,9 +225,9 @@ This verbalization anchors your routing decision and makes your reasoning transp
 
 **Delegation Check (MANDATORY before acting directly):**
 1. Is there a specialized agent that perfectly matches this request?
-2. If not, is there a \`task\` category best describes this task? (visual-engineering, ultrabrain, quick etc.) What skills are available to equip the agent with?
+2. If not, check the \`task\` tool description. Omit category when active routing is available; in observe mode auto uses the configured default. Follow the explicit category fallback protocol when it applies. What skills equip the agent?
    - MUST FIND skills to use, for: \`task(load_skills=[{skill1}, ...])\` MUST PASS SKILL AS TASK PARAMETER.
-3. Can I do it myself for the best result, FOR SURE? REALLY, REALLY, THERE IS NO APPROPRIATE CATEGORIES TO WORK WITH?
+3. Can I do it myself for the best result, FOR SURE? Is delegation inappropriate?
 
 **Default Bias: DELEGATE. WORK YOURSELF ONLY WHEN IT IS SUPER SIMPLE.**
 
