@@ -10,9 +10,12 @@ import { createSessionTracker } from "./session-tracker"
 import { V2NativeSubagentJobs, type NativeDelegationSkills } from "./native-subagent-jobs"
 import type { NativeSubagentDomain, NativeSubagentReceipt } from "./native-subagent-types"
 import type { NativeSubagentPrompt } from "./native-subagent-types"
-import { encodeBackgroundTask } from "./background-task-record"
+import { backgroundTaskRecord, encodeBackgroundTask } from "./background-task-record"
 import { createNativeRecoveryNotifier } from "./native-recovery-notice"
 import { V2BackgroundLifecycle } from "./background-lifecycle"
+import { spyOn } from "bun:test"
+import { createDelegateTask } from "../tools/delegate-task/tools"
+import * as ledger from "../tools/delegate-task/jev-routing-ledger"
 
 export const cleanups: Array<() => void | Promise<void>> = []
 // Each importing test file registers this in its own afterEach: a hook registered at module import
@@ -208,4 +211,61 @@ export async function fixture(
         startListeners.push(resolve)
       }),
   }
+}
+
+export async function completedFixture() {
+  const record = spyOn(ledger, "recordJevRouting").mockResolvedValue(undefined)
+  cleanups.push(() => record.mockRestore())
+  const f = await fixture({ cleanupDelay: 0 })
+  const get = f.context.session.get
+  const session = spyOn(f.context.session, "get").mockImplementation(async (input) => ({
+    ...(await get(input)),
+    ...(input.sessionID === "parent" ? {} : { parentID: "parent", agent: "worker" }),
+  }))
+  cleanups.push(() => session.mockRestore())
+  const started = f.nextStart()
+  const task = await f.manager.launch({
+    ...f.launch("initial"),
+    decisionId: crypto.randomUUID(),
+    category: "retained",
+    skills: ["skill"],
+  })
+  await started
+  const removed = Promise.withResolvers<void>()
+  cleanups.push(
+    f.manager.onVisibleChange(() => {
+      if (!f.manager.findBySession(task.sessionId ?? "")) removed.resolve()
+    }),
+  )
+  const completed = f.manager.waitForNativeTask(task.id, new AbortController().signal)
+  f.finish(task.nativeAdmissionID ?? "")
+  await completed
+  await removed.promise
+  const retained = backgroundTaskRecord.parse(f.stored.get(task.id))
+  const sessionID = task.sessionId
+  if (!sessionID) throw new Error("native child missing")
+  const execute = (manager: BackgroundManager, callID = "continue") => {
+    const context = {
+      sessionID: "parent",
+      messageID: "followup-message",
+      agent: "parent-agent",
+      callID,
+      abort: new AbortController().signal,
+      directory: f.input.directory,
+      worktree: f.input.directory,
+      ask: async () => {},
+      metadata: async () => {},
+    }
+    return createDelegateTask({ manager, client: f.input.client, directory: f.input.directory }).execute(
+      {
+        task_id: sessionID,
+        prompt: "followup",
+        description: "continue retained",
+        run_in_background: true,
+        load_skills: [],
+      },
+      context,
+    )
+  }
+  return { ...f, task, sessionID, retained, execute, session }
 }
