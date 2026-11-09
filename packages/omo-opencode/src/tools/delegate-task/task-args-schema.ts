@@ -2,6 +2,13 @@ import { tool } from "@opencode-ai/plugin"
 import { BUILTIN_SUBAGENT_TYPES, isDirectSubagentTypeDisabled } from "./builtin-subagent-types"
 import { isPlanAgent } from "./constants"
 
+type StringSchema = InstanceType<typeof tool.schema.ZodString>
+type OptionalStringSchema = ReturnType<StringSchema["optional"]>
+type OptionalBooleanSchema = ReturnType<ReturnType<typeof tool.schema.boolean>["optional"]>
+type OptionalStringArraySchema = ReturnType<ReturnType<typeof tool.schema.array<StringSchema>>["optional"]>
+type EnumSchema = typeof tool.schema.enum extends { (values: string[]): infer T; (entries: never): unknown } ? T : never
+type OptionalEnumSchema = EnumSchema extends { optional(): infer T } ? T : never
+
 function buildSubagentTypeSchema(availableSubagentNames?: readonly string[], aliases: readonly string[] = []) {
   const describe =
     "Optional direct agent selection instead of a category. Omit both to use category auto when Jev routing is enabled. Do NOT provide both category and subagent_type."
@@ -21,7 +28,18 @@ function buildSubagentTypeSchema(availableSubagentNames?: readonly string[], ali
 export function buildDelegateTaskArgsSchema(
   availableSubagentNames?: readonly string[],
   aliases: readonly string[] = [],
-) {
+): {
+  load_skills: OptionalStringArraySchema
+  description: OptionalStringSchema
+  prompt: StringSchema
+  run_in_background: OptionalBooleanSchema
+  category: OptionalStringSchema
+  model_routing: OptionalBooleanSchema
+  subagent_type: OptionalStringSchema | OptionalEnumSchema
+  reasoning: OptionalStringSchema
+  task_id: OptionalStringSchema
+  command: OptionalStringSchema
+} {
   return {
     load_skills: tool.schema
       .array(tool.schema.string())
