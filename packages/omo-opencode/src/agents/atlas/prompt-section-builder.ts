@@ -39,14 +39,16 @@ export function buildCategorySection(userCategories?: Record<string, CategoryCon
     return `- **\`${name}\`** (${temp}): ${desc}`
   })
 
-  return `##### Option A: Use CATEGORY (for domain-specific work)
+  return `##### Option A: Delegate by category
+
+Check the task tool description. When active category routing is available, omit category or use \`category="auto"\`; Jev detects UI work. In observe mode, auto dispatches the configured default while Jev records its choice. If category routing is unavailable, Jev falls back, the needed category is outside auto's set, a user, skill, or contract fixes it, or you can name a specific reason auto would choose incorrectly, select explicitly using the fallback protocol below. Keep intentional team roster diversity.
 
 Categories spawn \`Sisyphus-Junior-{category}\` with optimized settings:
 
 ${categoryRows.join("\n")}
 
 \`\`\`typescript
-task(category="[category-name]", load_skills=[...], run_in_background=true, prompt="...")
+task(load_skills=[...], run_in_background=true, prompt="...")
 \`\`\``
 }
 
@@ -73,7 +75,7 @@ Read each skill's description in the section below and ask: "Does this skill's d
 
 **Usage:**
 \`\`\`typescript
-task(category="[category]", load_skills=["skill-1", "skill-2"], run_in_background=true, prompt="...")
+task(load_skills=["skill-1", "skill-2"], run_in_background=true, prompt="...")
 \`\`\`
 
 **IMPORTANT:**
@@ -95,7 +97,7 @@ export function buildDecisionMatrix(agents: AvailableAgent[], userCategories?: R
     return `- **${shortDesc}**: \`agent="${a.name}"\``
   })
 
-  return `##### Decision Matrix
+  return `##### Explicit Category Fallback Matrix
 
 ${categoryRows.join("\n")}
 ${agentRows.join("\n")}
