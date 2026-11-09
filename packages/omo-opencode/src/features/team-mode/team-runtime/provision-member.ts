@@ -164,11 +164,17 @@ export async function provisionTeamMember(input: ProvisionTeamMemberInput): Prom
     )
   }
 
-  const resolvedMember = await resolveMember(input.member, input.ctx, input.categoryExamples, input.leadAgentName)
+  const resolvedMember = await resolveMember(
+    input.member,
+    { ...input.ctx, jevParentSessionID: input.leadSessionId, jevSurface: "team" },
+    input.categoryExamples,
+    input.leadAgentName,
+  )
   const memberGoal = input.member.prompt?.replace(/\s+/g, " ").trim()
 
   input.ctx.abortSignal?.throwIfAborted()
   const task = await input.bgMgr.launch({
+    decisionId: resolvedMember.decisionId,
     description: memberGoal ? `${input.member.name}: ${memberGoal}` : input.member.name,
     prompt: buildMemberPrompt({
       teamName: input.teamName,

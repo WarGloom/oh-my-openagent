@@ -12,7 +12,13 @@ import {
 } from "../../shared/model-error-classifier"
 import { transformModelForProvider } from "../../shared/provider-model-id-transform"
 import { abortWithTimeout, type AbortSessionClient } from "./abort-with-timeout"
-import { ensureCurrentAttempt, scheduleRetryAttempt } from "./attempt-lifecycle"
+import {
+  bindAttemptSession,
+  ensureCurrentAttempt,
+  finalizeAttempt,
+  scheduleRetryAttempt,
+  startAttempt,
+} from "./attempt-lifecycle"
 import { filterProvidersServingModel } from "./fallback-provider-model-filter"
 import { sanitizeParentVisibleError } from "./parent-visible-error-sanitizer"
 import { hasNativeRuntimeFallback } from "../../hooks/runtime-fallback/native-controller"
@@ -447,7 +453,15 @@ export async function tryFallbackRetry(args: {
           task.failedFallbackRetryToken = undefined
         }
 
-        const currentAttempt = ensureCurrentAttempt(task, previousModel)
+        let currentAttempt = ensureCurrentAttempt(task, previousModel)
+        if (task.decisionId) {
+          const startedAt = task.startedAt
+          finalizeAttempt(task, currentAttempt.attemptId, "error", errorInfo.message)
+          currentAttempt = startAttempt(task, nextModel, "retry")
+          bindAttemptSession(task, currentAttempt.attemptId, previousSessionID, nextModel)
+          currentAttempt.startedAt = startedAt
+          task.startedAt = startedAt
+        }
         currentAttempt.sessionId = previousSessionID
         currentAttempt.providerId = nextModel.providerID
         currentAttempt.modelId = nextModel.modelID

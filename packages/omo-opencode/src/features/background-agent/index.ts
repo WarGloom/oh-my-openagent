@@ -8,3 +8,5 @@ export {
 } from "./manager"
 export { waitForTaskSessionID } from "./wait-for-task-session"
 export type { WaitForTaskSessionIDOptions } from "./wait-for-task-session"
+export { subscribeTaskLifecycle } from "./task-lifecycle"
+export type { TaskLifecycleEvent } from "./task-lifecycle"

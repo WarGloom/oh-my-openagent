@@ -2,6 +2,11 @@ import { isGpt5_5Model, isGpt5_6Model, isGpt6Model } from "../../agents/types"
 import type { BuiltinCategoryDefinition } from "./builtin-category-definition"
 import { LATEST_MODEL_BY_FAMILY } from "@oh-my-opencode/model-core/latest-models"
 
+export const DEEP_HIGH_ESCALATION = "ESCALATE: deep-high"
+export function isDeepHighEscalation(result: string): boolean {
+  return result.split(/\r?\n/, 1)[0] === DEEP_HIGH_ESCALATION
+}
+
 // GPT appends, byte-identical to packages/senpi-task/src/category/openai-categories.ts, where the
 // rationale lives: each append is a delta over the model's own core preset and carries only why the
 // orchestrator chose the category, what a finished result looks like, and the harness facts a child
@@ -35,7 +40,7 @@ Success means:
 - the change removes the cause you traced, at least two levels above the symptom, with the diff as small as that fix allows;
 - the final message reports the change, the evidence that it works, and each assumption you decided from context, because a question ends your turn and returns the task unfinished.
 
-Escalation is a complete result. When the correct choice turns out to depend on a trade-off the brief does not settle, on a contract other packages rely on, or on an argument about invariants you cannot verify by running something, stop before editing and return \`ESCALATE: deep-high\` as the first line, followed by what you read, the decision you could not settle, and the options you saw. A confident guess through that decision costs more than the escalation.
+Escalation is a complete result. When the correct choice turns out to depend on a trade-off the brief does not settle, on a contract other packages rely on, or on an argument about invariants you cannot verify by running something, stop before editing and return \`${DEEP_HIGH_ESCALATION}\` as the first line, followed by what you read, the decision you could not settle, and the options you saw. A confident guess through that decision costs more than the escalation.
 
 Stop the moment the success criteria hold; work past them is a defect. Stop early only for a blocker you cannot route around: a missing secret, a decision only the user can make, or three materially different attempts that all failed.
 </Category_Context>`
@@ -75,7 +80,7 @@ Before any change, read the files involved and trace their dependencies until yo
 
 When the goal lists numbered steps or phases, execute all of them in this turn as one atomic task. Genuinely independent tasks bundled into one goal: flag them and do only the one the goal centers on.
 
-Escalation is a complete result. When the correct choice depends on a trade-off the brief does not settle, a contract other packages rely on, or an argument about invariants you cannot verify by running something, stop before editing and return \`ESCALATE: deep-high\` as the first line, followed by what you read, the decision you could not settle, and the options you saw.
+Escalation is a complete result. When the correct choice depends on a trade-off the brief does not settle, a contract other packages rely on, or an argument about invariants you cannot verify by running something, stop before editing and return \`${DEEP_HIGH_ESCALATION}\` as the first line, followed by what you read, the decision you could not settle, and the options you saw.
 
 Prefer the fix that removes the cause over the patch that hides the symptom. Report completion with the changes made and the evidence they work.
 </Category_Context>`
@@ -146,7 +151,7 @@ You are working on tasks that don't fit specific categories but require substant
 
 const UNSPECIFIED_HIGH_CATEGORY_CALLER_GUIDANCE = `<Selection_Gate>Use only when no specialist category fits and substantial effort spans systems/modules with broad impact. Use unspecified-low for contained moderate work.</Selection_Gate>`
 
-const DEEP_LOW_CATEGORY_CALLER_GUIDANCE = `<Selection_Gate>Of the two deep lanes this is the default: the child settles its decisions from what it reads. When unsure, choose deep-low; a misrouted child returns \`ESCALATE: deep-high\` after one cheap attempt, and you re-spawn the same brief as deep-high with its findings.</Selection_Gate>`
+const DEEP_LOW_CATEGORY_CALLER_GUIDANCE = `<Selection_Gate>Of the two deep lanes this is the default: the child settles its decisions from what it reads. When unsure, choose deep-low; a misrouted child returns \`${DEEP_HIGH_ESCALATION}\` after one cheap attempt, and you re-spawn the same brief as deep-high with its findings.</Selection_Gate>`
 
 const DEEP_HIGH_CATEGORY_CALLER_GUIDANCE = `<Selection_Gate>Route here only when you can name the decision evidence cannot settle: a trade-off with no single right answer, a contract change crossing a package or process boundary, a mechanism with no in-repo pattern to copy, or correctness argued from invariants rather than observed in a test. Wide scope with easy decisions is deep-low or unspecified-high; reasoning as the deliverable is ultrabrain.</Selection_Gate>`
 

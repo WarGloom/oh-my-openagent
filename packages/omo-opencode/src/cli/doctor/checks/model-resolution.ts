@@ -12,6 +12,7 @@ import type {
   ModelResolutionInfo,
   OmoConfig,
 } from "./model-resolution-types"
+import { readJevRoutingHealth } from "../../../shared/jev-routing-health"
 
 export function parseProviderModel(value: string): { providerID: string; modelID: string } | null {
   const slashIndex = value.indexOf("/")
@@ -139,6 +140,19 @@ export async function checkModels(): Promise<CheckResult> {
   }
 
   issues.push(...collectCapabilityResolutionIssues(info))
+  const routingHealth = await readJevRoutingHealth()
+  if (
+    routingHealth.model_mismatches > 0 ||
+    routingHealth.ledger_write_failures > 0 ||
+    routingHealth.unknown_artifacts > 0
+  ) {
+    issues.push({
+      title: "Jev routing warnings",
+      severity: "warning",
+      affects: ["category routing"],
+      description: `${routingHealth.model_mismatches} pinned-model mismatches, ${routingHealth.ledger_write_failures} ledger write failures, ${routingHealth.unknown_artifacts} unknown artifacts`,
+    })
+  }
 
   const overrideCount =
     info.agents.filter((agent) => Boolean(agent.userOverride)).length +

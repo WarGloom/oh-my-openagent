@@ -50,6 +50,8 @@ function cloneAttempts(attempts: BackgroundTask["attempts"]): BackgroundTask["at
 function cloneRegisteredTask(task: BackgroundTask): BackgroundTask {
   return {
     id: task.id,
+    decisionId: task.decisionId,
+    producingModel: task.producingModel,
     rootSessionId: task.rootSessionId,
     parentSessionId: task.parentSessionId,
     parentMessageId: task.parentMessageId,
@@ -134,6 +136,17 @@ export function getRegisteredBackgroundTask(taskID: string): BackgroundTask | un
 
   const completedTask = registry.completedTasks.get(taskID)
   return completedTask ? cloneRegisteredTask(completedTask) : undefined
+}
+
+export function findRegisteredBackgroundTaskBySession(
+  sessionID: string,
+  parentSessionID: string,
+): BackgroundTask | undefined {
+  const registry = getRegistry()
+  const task = [...registry.completedTasks.values()].find(
+    (task) => task.sessionId === sessionID && task.parentSessionId === parentSessionID,
+  )
+  return task ? cloneRegisteredTask(task) : undefined
 }
 
 export function forgetBackgroundTask(taskID: string): void {

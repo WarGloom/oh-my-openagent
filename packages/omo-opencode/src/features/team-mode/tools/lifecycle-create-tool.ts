@@ -7,6 +7,8 @@ import type { BackgroundManager } from "../../background-agent/manager"
 import type { TmuxSessionManager } from "../../tmux-subagent/manager"
 import { resolveCurrentCallerTeamLead } from "../resolve-caller-team-lead"
 import { loadTeamSpec } from "@oh-my-opencode/team-core/team-registry/loader"
+import { getJevRoutingEligibility } from "../../../tools/delegate-task/jev-routing"
+import { mergeCategories } from "../../../shared/merge-categories"
 import { createTeamRun } from "../team-runtime/create"
 import { listActiveTeams, loadRuntimeState } from "@oh-my-opencode/team-core/team-state-store/store"
 import { AGENT_ELIGIBILITY_REGISTRY } from "@oh-my-opencode/team-core/types"
@@ -31,7 +33,7 @@ const TeamCreateInlineMemberToolSchema = tool.schema.object({
     .string()
     .optional()
     .describe(
-      "Required for category members unless a fallback category can be inferred. Examples: quick, unspecified-low, unspecified-high, deep, ultrabrain, visual-engineering, writing, artistry, git, data-analysis.",
+      "Omit for auto when category routing is available; observe mode uses the configured default. Select explicitly for deliberate model diversity or categories outside auto.",
     ),
   subagent_type: tool.schema
     .string()
@@ -97,7 +99,7 @@ export function createTeamCreateTool(
 ): ToolDefinition {
   return tool({
     description:
-      "Create a team run and spawn member sessions. Provide exactly one of teamName (existing declared spec) or inline_spec (one-off spec); omit unused optional args. Returns teamRunId; monitor with team_status/team_task_list.",
+      "Create a team run and spawn member sessions. Omit member category for auto when category routing is available; observe mode uses the configured default. Select explicitly for model diversity or categories outside auto. Provide exactly one of teamName or inline_spec. Returns teamRunId; monitor with team_status/team_task_list.",
     args: {
       teamName: tool.schema
         .string()
@@ -137,10 +139,22 @@ export function createTeamCreateTool(
           )
         }
       }
-      const defaultCategoryName = resolveDefaultInlineCategory(executorConfig?.userCategories)
+      const defaultCategoryName = resolveDefaultInlineCategory(
+        executorConfig?.userCategories,
+        executorConfig?.jevRouting,
+      )
       const spec = args.teamName
         ? await deps.loadTeamSpec(args.teamName, config, projectRoot, {
             callerTeamLead,
+            defaultCategoryName:
+              executorConfig?.jevRouting &&
+              executorConfig.jevRouting.mode !== "off" &&
+              getJevRoutingEligibility({
+                config: executorConfig.jevRouting,
+                enabledCategories: mergeCategories(executorConfig.userCategories),
+              }).validDefault
+                ? "auto"
+                : undefined,
             allowUnknownSubagentTypes: true,
           })
         : parseInlineTeamSpec(args.inline_spec, { callerTeamLead, defaultCategoryName })

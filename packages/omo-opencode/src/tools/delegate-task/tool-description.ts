@@ -3,8 +3,8 @@ import { mergeCategories } from "../../shared/merge-categories"
 import { CATEGORY_CALLER_GUIDANCE } from "./builtin-categories"
 import { formatAvailableAgentTypesSection } from "./builtin-subagent-types"
 import { CATEGORY_DESCRIPTIONS } from "./constants"
-import { getJevRoutingEligibility } from "./jev-routing"
 import type { DelegateTaskToolOptions } from "./types"
+import { getJevRoutingEligibility } from "./jev-routing"
 
 export interface DelegateTaskPresentation {
   availableCategories: AvailableCategory[]
@@ -27,12 +27,20 @@ type DelegateTaskPresentationOptions = Pick<
 
 export function createDelegateTaskPresentation(options: DelegateTaskPresentationOptions): DelegateTaskPresentation {
   const { userCategories } = options
-  const allCategories = mergeCategories(userCategories)
   const routing = options.jevRouting
   const showTierRouting =
     routing &&
     routing.mode !== "off" &&
-    getJevRoutingEligibility({ config: routing, categories: userCategories, enabledCategories: allCategories }).valid
+    getJevRoutingEligibility({ config: routing, enabledCategories: mergeCategories(userCategories) }).validDefault
+  const autoDescription =
+    userCategories?.auto?.description ||
+    (routing?.mode === "observe"
+      ? `Observe mode: dispatch configured default ${routing.default}; Jev records its choice`
+      : "Default delegation: Jev selects quick, unspecified-low, deep-low, unspecified-high, visual-engineering, or writing")
+  const allCategories: ReturnType<typeof mergeCategories> = {
+    ...mergeCategories(userCategories),
+    ...(showTierRouting ? { auto: { description: autoDescription } } : {}),
+  }
   const agentNames = new Set(options.descriptionAgentNames ?? options.availableSubagentNames ?? [])
   const visibleAgent = (name: string) =>
     agentNames.has(name) &&
@@ -55,7 +63,10 @@ export function createDelegateTaskPresentation(options: DelegateTaskPresentation
   const categoryEntries = Object.entries(allCategories).map(([name, categoryConfig]) => ({
     name,
     categoryConfig,
-    description: userCategories?.[name]?.description || CATEGORY_DESCRIPTIONS[name],
+    description:
+      name === "auto" && showTierRouting
+        ? categoryConfig.description
+        : userCategories?.[name]?.description || CATEGORY_DESCRIPTIONS[name],
     callerGuidance: CATEGORY_CALLER_GUIDANCE[name],
   }))
   if (showTierRouting) {
@@ -64,8 +75,14 @@ export function createDelegateTaskPresentation(options: DelegateTaskPresentation
   const categoryNames = categoryEntries.map(({ name }) => name)
   const categoryExamples = categoryNames.join(", ")
 
+  const suppliedCategories = options.availableCategories
+    ? [
+        ...(showTierRouting ? [{ name: "auto", description: autoDescription }] : []),
+        ...options.availableCategories.filter((category) => !showTierRouting || category.name !== "auto"),
+      ]
+    : undefined
   const availableCategories: AvailableCategory[] =
-    options.availableCategories ??
+    suppliedCategories ??
     categoryEntries.map(({ name, categoryConfig, description }) => {
       return {
         name,
@@ -85,14 +102,9 @@ export function createDelegateTaskPresentation(options: DelegateTaskPresentation
     .join("\n")
 
   const description = `Spawn agent task with category-based or direct agent selection.
-${showTierRouting ? `TIER ROUTING: if the right tier is unclear, use task(category="auto"); Jev picks the cheapest suitable tier (${routing.ladder?.map((tier) => JSON.stringify(tier)).join(" → ")}) and falls back to ${JSON.stringify(routing.default)}.` : ""}
+${showTierRouting ? `CATEGORY ROUTING: ${routing.mode === "active" ? "auto is the default; Jev selects the category" : `auto dispatches the configured default ${JSON.stringify(routing.default)}; Jev observes`}. Omit category and subagent_type, or use task(category="auto"). Explicit categories dispatch unchanged and record the model's opinion in the background.` : ""}
 
-  ⚠️  CRITICAL: You MUST provide EITHER category OR subagent_type. Omitting BOTH will FAIL.
-
-  **COMMON MISTAKE (DO NOT DO THIS):**
-  \`\`\`
-  task(description="...", prompt="...")  // ❌ FAILS - missing category AND subagent_type
-  \`\`\`
+  ${showTierRouting ? "Default selection: auto. Explicit categories and direct agents remain available." : "You MUST provide EITHER category OR subagent_type. Category routing is unavailable."}
 
   **CORRECT - Using category:**
   \`\`\`
@@ -104,7 +116,7 @@ ${showTierRouting ? `TIER ROUTING: if the right tier is unclear, use task(catego
   task(subagent_type="explore", description="Find patterns", prompt="...", run_in_background=true)
   \`\`\`
 
-  REQUIRED: Provide ONE of:
+  ${showTierRouting ? "OPTIONAL: Select a category or direct agent:" : "REQUIRED: Provide ONE of:"}
   - category: For task delegation (uses Sisyphus-Junior with category-optimized model)
   - subagent_type: For direct agent invocation (explore, librarian, oracle, etc.)
 

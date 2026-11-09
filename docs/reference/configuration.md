@@ -384,28 +384,25 @@ Domain-specific model delegation used by the `task()` tool. When the main agent 
 
 Disable categories: `{ "categories": { "ultrabrain": { "disable": true } } }`
 
-### Optional Jev Tier and Agent Routing
+### Optional Jev Category and Agent Routing
 
-OpenCode delegations with `category: "auto"` can score a declared cheapest-first ladder of **categories** before spawning `sisyphus-junior`. Put this in the project's `.omo/omo.jsonc`, or use `~/.omo/omo.jsonc` for a global default (not `opencode.json`). The `jev-1.13-free` endpoint accepts anonymous requests; no API key is needed or sent:
+When Jev routing is enabled, `auto` is the default category for new OpenCode tasks. Omit both `category` and `subagent_type`, or pass `category: "auto"`. Put this configuration in the project's `.omo/omo.jsonc`, or use `~/.omo/omo.jsonc` for a global default:
 
 ```jsonc
 {
   "[opencode]": {
-    "categories": {
-      "auto": { "description": "Choose the cheapest suitable category for this task." }
-    },
     "jev_routing": {
       "mode": "active",
       "timeout_ms": 2000,
-      "min_suitability": 0.6,
-      "ladder": ["quick", "unspecified-low", "deep-low", "unspecified-high", "deep-high"],
       "default": "unspecified-low"
     }
   }
 }
 ```
 
-A complete project-local example is in [`docs/examples/jev-project.jsonc`](../examples/jev-project.jsonc). Declare `categories.auto` with **only a description**; it is a routing entry, not a worker and must not configure models. Every name in `ladder` and `default` must be an existing, enabled category other than `auto`; the ladder has 2–8 distinct tiers ordered by your cost preference. An invalid routing configuration disables scoring and uses `default` if valid. `jev_routing.mode` defaults to `off` (no classifier request); `observe` sends one request and logs the would-be choice while using `default`; `active` selects the first tier scoring at least `min_suitability`, otherwise `default`. `timeout_ms` defaults to 2000 and is limited to 100–5000; `min_suitability` defaults to 0.6 and must be 0–1. Price order is user-declared, not a measured cost guarantee. Once selected, normal category resolution applies the tier's complete, unchanged model chain, reasoning, prompt append, requirements and provider fallbacks.
+`active` uses the parent-grouped logistic refit and asymmetric rule. If the combined probability of `deep-low`, `unspecified-high`, and `visual-engineering` reaches 0.41, the rule selects the strongest of those classes. Otherwise it selects top-1. It preserves a stronger ladder top-1. `observe` uses `default` and records the model opinion. `off` makes no category classifier request and requires a category or direct agent for new tasks. The default must be an enabled category other than `auto`. The 14 questions remain frozen. Category routing ignores the old `ladder` and `min_suitability`; `ladder` remains accepted for compatibility, and `min_suitability` still controls named-agent ladders. Classifier failures, timeouts, malformed responses, and unavailable predicted categories use the configured default. Normal category model chains, reasoning, prompt append, and provider fallbacks still apply.
+
+`jev_routing.artifact_id` selects the complete routing artifact. Its content identity covers the questions, state-builder version, coefficients, classes, standardizer and decision rule. The default refit artifact is `a8cb4f73e19f141fcf431239c8fd082f6fe8d52a139d1ba2ab108451f3427605`. Set `artifact_id` to `91fada03892ea700e206f8c07ac93785876786b6918bdbdfab5387efcac6164c` to use the previous frozen coefficients and top-1 rule. Unknown identities use the default category and record a warning.
 
 For named-agent routing, add `agent_ladders` instead of (or alongside) the category `ladder` and `default`. Each key is an alias accepted as `subagent_type`; its ladder lists **real dispatchable agent names**, cheapest first. The optional `suitability` map replaces an agent's configured description only for scoring:
 
@@ -430,9 +427,11 @@ For named-agent routing, add `agent_ladders` instead of (or alongside) the categ
 
 Replace the placeholder names with configured agents (`mode: "subagent"` or `"all"`). Aliases cannot shadow a real agent or category; ladder entries and default must be real enabled, callable agents, with 2–8 distinct ladder entries. Invalid aliases use their valid default without a classifier request, or produce the normal unknown-agent error if the default is invalid. The selected agent retains its own prompt, permissions and model; this routing never substitutes a model. A project `[opencode].jev_routing` object **replaces** the user-level object as a whole: `mergeConfigs` spreads overrides but deep-merges only selected fields (`packages/omo-opencode/src/plugin-config/config-merger.ts:8-24`). To keep user-level agent ladders alongside a project override, repeat them in the project block.
 
-Jev receives only the current task/member brief (up to 8192 UTF-8 bytes), candidate names and category descriptions or agent suitability text—not model IDs, session history or repository contents. Do not opt in for sensitive briefs. Calls go only to `https://opencode.ai/zen/v1/systemone` using `jev-1.13-free`; free availability and service limits may change. There is no paid classifier fallback, retry, or classifier session. Jev's score is a suitability judgment, **not a verification of model capability**. An oversized brief, unsuitable score, timeout, HTTP error or invalid response uses `default`; cancellation stops dispatch instead.
+Category requests contain a sanitized title, prompt, referenced brief or plan files read from disk, and the study's numeric facts. References resolve against the parent session directory at call time, including for team members dispatched into another worktree. Reads stay inside that directory tree. Symlinks and outside references remain unresolved and are not read. Only regular files up to 1 MiB qualify. Title and prompt caps are 200 and 6000 characters; each brief is capped at 8000 characters on whitespace. Paths become basenames, and common secret patterns are redacted. Resolution status and would-block reason codes appear only in the ledger; they do not change the Jev state or block work. Category routing pins `jev-1.14.0` when `model` has its default `jev-latest` value; another configured version overrides that pin. If `TYPESAFE_API_KEY` (or `api_key_env`) is set, calls use `https://api.typesafe.ai/v1/systemone` with Bearer authentication. Otherwise they use the existing Zen endpoint. Calls retain bounded requests, responses, redirects, and timeouts. Agent ladders retain their existing selector and produce no ledger records in this increment.
 
-Category routing applies to `task(category="auto")` and category team members with `category: "auto"`; agent routing applies to `task(subagent_type="general-worker")` and named team members using that alias. For an individual task, `model_routing: false` uses the relevant default without a request. Explicit categories, `task_id` continuations and **real** named agents never call Jev. Team member specs have no individual bypass: set `jev_routing.mode` to `off` in the project `[opencode]` config for that team. Runtime fallback stays within the selected category tier's model chain, including other providers; cheapest runtime cost is not guaranteed.
+Explicit categories dispatch unchanged while their model opinion is collected in the background. `task_id` continuations and real named agents bypass category routing. `model_routing: false` bypasses auto or agent-ladder classification. Team named-member resolution remains unchanged.
+
+Decisions are durable JSONL records under the telemetry data directory, normally `$XDG_DATA_HOME/oh-my-opencode/jev-routing` or `~/.local/share/oh-my-opencode/jev-routing`. Files use mode 0600, one month per file, with numbered parts after 50 MiB. Old files are never deleted. Each versioned event has an event ID and decision ID. Decisions contain numeric answers, top-2 probabilities, artifact identity, model/backend identifiers, timing, usage, category choices, configuration hash, brief status, and the original task prompt's SHA-256 and byte size. Task lifecycle owners publish attempt and outcome events. Retries, replacements and continuations receive new attempt IDs under the original decision. A child whose first line is `ESCALATE: deep-high` has an escalated outcome, not a failed or retried outcome. Restart does not replay past attempt events or infer missing outcomes. The ledger contains no prompt, brief text, filesystem paths or credentials. Writes never delay dispatch. Write failures, unknown artifacts and model mismatches produce warning counters; the existing doctor Models check shows those counters.
 
 ### Model Resolution
 

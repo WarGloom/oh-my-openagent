@@ -28960,6 +28960,11 @@
                 "active"
               ]
             },
+            "artifact_id": {
+              "default": "a8cb4f73e19f141fcf431239c8fd082f6fe8d52a139d1ba2ab108451f3427605",
+              "type": "string",
+              "minLength": 1
+            },
             "model": {
               "default": "jev-latest",
               "type": "string",

@@ -117,6 +117,7 @@ export async function executeBackgroundTask(
     const effectivePrompt = buildTaskPrompt(args.prompt, normalizedAgent, tddEnabled)
     const persistedDescription = getPersistedBackgroundTaskDescription(args, normalizedAgent)
     const task = await manager.launch({
+      decisionId: args.decisionId,
       description: persistedDescription,
       prompt: effectivePrompt,
       agent: normalizedAgent,

@@ -22,6 +22,8 @@ import { applyFallbackEntrySettings } from "./fallback-entry-settings"
 import { lowerReasoningForModel } from "../../shared/agent-variant"
 import { distributeTaskModels } from "./models-distribution"
 import { selectCategoryTierWithJev } from "./jev-routing"
+import { beginJevDecision, jevConfigGeneration } from "./jev-routing-context"
+import { log } from "../../shared/logger"
 
 function getConfiguredModel(entry: string | { model: string } | undefined): string | undefined {
   return typeof entry === "string" ? entry : entry?.model
@@ -98,6 +100,7 @@ export interface CategoryResolutionResult {
   isUnstableAgent: boolean
   fallbackChain?: FallbackEntry[]
   error?: string
+  routingNotice?: string
 }
 
 function categoryResolutionError(error: string): CategoryResolutionResult {
@@ -125,18 +128,59 @@ export async function resolveCategoryExecution(
   // A retired builtin name resolves to its replacement so third-party skills and AGENTS.md text
   // spawning the old category keep working; a user category of that name still wins over the alias.
   const enabledCategories = mergeCategories(userCategories)
+  const routing = executorCtx.jevRouting
+  let routingNotice: string | undefined
+  const decision = routing && routing.mode !== "off" ? beginJevDecision(args) : undefined
+  const jevInput = {
+    brief: args.prompt,
+    description: args.description,
+    directory: executorCtx.directory,
+    onFallback: (reason: string, category: string) => {
+      routingNotice = `Routing: Jev unavailable (${reason}); used default ${category}.`
+    },
+    config: routing,
+    enabledCategories,
+    modelRouting: args.model_routing,
+    signal: executorCtx.abortSignal,
+    decisionId: decision,
+    parentSessionId: executorCtx.jevParentSessionID,
+    surface: executorCtx.jevSurface,
+    configGeneration: jevConfigGeneration(enabledCategories, {
+      userCategories,
+      juniorModel: sisyphusJuniorModel,
+      juniorFallbackModels: resolveSisyphusJuniorOverride(agentOverrides)?.fallback_models,
+    }),
+    resolveDirectory: executorCtx.jevParentSessionID
+      ? async () => {
+          const signal = AbortSignal.any([
+            AbortSignal.timeout(routing?.timeout_ms ?? 2000),
+            ...(executorCtx.abortSignal ? [executorCtx.abortSignal] : []),
+          ])
+          const parent = await Promise.race([
+            client.session.get({ path: { id: executorCtx.jevParentSessionID ?? "" } }),
+            new Promise<never>((_, reject) => {
+              if (signal.aborted) reject(signal.reason)
+              else signal.addEventListener("abort", () => reject(signal.reason), { once: true })
+            }),
+          ])
+          if (!parent.data?.directory) throw new RangeError("Parent session directory is unavailable")
+          return parent.data.directory
+        }
+      : undefined,
+    orchestratorCategory: executorCtx.jevOrchestratorCategory ?? args.category,
+  }
   if (args.category === "auto") {
-    const selected = await selectCategoryTierWithJev({
-      brief: args.prompt,
-      config: executorCtx.jevRouting,
-      categories: userCategories,
-      enabledCategories,
-      modelRouting: args.model_routing,
-      signal: executorCtx.abortSignal,
-    })
+    const selected = await selectCategoryTierWithJev(jevInput)
     executorCtx.abortSignal?.throwIfAborted()
     if (!selected) return categoryResolutionError("Invalid Jev routing default for category auto")
     args.category = selected
+  } else if (decision) {
+    queueMicrotask(() => {
+      void selectCategoryTierWithJev(jevInput).catch((error: unknown) => {
+        if (!executorCtx.abortSignal?.aborted)
+          log("[jev-routing] observation failed", { error: error instanceof Error ? error.name : "unknown" })
+      })
+    })
   }
   const requestedCategoryName = args.category!
   const categoryName =
@@ -407,5 +451,6 @@ Available categories: ${categoryNames.join(", ")}`)
     actualModel,
     isUnstableAgent,
     fallbackChain: runtimeFallbackChain,
+    routingNotice,
   }
 }

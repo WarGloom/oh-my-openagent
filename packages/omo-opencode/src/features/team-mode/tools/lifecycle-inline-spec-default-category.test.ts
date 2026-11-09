@@ -2,9 +2,22 @@
 
 import { describe, expect, test } from "bun:test"
 
-import { parseInlineTeamSpec } from "./lifecycle-inline-spec"
+import { parseInlineTeamSpec, resolveDefaultInlineCategory } from "./lifecycle-inline-spec"
+import { JevRoutingConfigSchema } from "../../../config/schema/jev-routing"
 
 describe("parseInlineTeamSpec default category fallback", () => {
+  test("defaults to auto when routing is enabled and preserves category order when off", () => {
+    const categories = { writing: {}, quick: {} }
+    const enabled = JevRoutingConfigSchema.parse({ mode: "active", default: "quick" })
+    const off = JevRoutingConfigSchema.parse({ mode: "off" })
+    const agentOnly = JevRoutingConfigSchema.parse({
+      mode: "active",
+      agent_ladders: { helper: { ladder: ["a", "b"], default: "a" } },
+    })
+    expect(resolveDefaultInlineCategory(categories, enabled)).toBe("auto")
+    expect(resolveDefaultInlineCategory(categories, off)).toBe("writing")
+    expect(resolveDefaultInlineCategory(categories, agentOnly)).toBe("writing")
+  })
   test("accepts explicit category-kind members when the category is omitted but a fallback exists", () => {
     // given
     const inlineSpec = {

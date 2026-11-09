@@ -1,8 +1,10 @@
 import { z } from "zod"
+import { DEFAULT_JEV_ARTIFACT_ID } from "../../shared/jev-artifact-metadata"
 
 export const JevRoutingConfigSchema = z
   .object({
     mode: z.enum(["off", "observe", "active"]).default("off"),
+    artifact_id: z.string().trim().min(1).default(DEFAULT_JEV_ARTIFACT_ID),
     model: z.string().trim().min(1).default("jev-latest"),
     api_key_env: z.string().trim().min(1).default("TYPESAFE_API_KEY"),
     timeout_ms: z.number().int().min(100).max(5000).default(2000),

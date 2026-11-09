@@ -149,7 +149,13 @@ export class V2NativeSubagentJobs implements NativeBackgroundJobs {
       delivery: "steer",
       mode: "background",
       completion: task.nativeCompletion ?? (task.teamRunId ? "none" : "parent"),
-      metadata: { ...task.nativeMetadata, omoTaskID: task.id, category: task.category, teamRunId: task.teamRunId },
+      metadata: {
+        ...task.nativeMetadata,
+        omoTaskID: task.id,
+        category: task.category,
+        teamRunId: task.teamRunId,
+        ...(task.decisionId ? { decisionId: task.decisionId, attemptId: task.currentAttemptID } : {}),
+      },
     })
     task.nativeRun = receipt.run
     if (receipt.status === "cancelled" || receipt.status === "error")

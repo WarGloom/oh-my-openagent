@@ -1,12 +1,16 @@
 import { z } from "zod"
 import type { AgentOverrides, CategoriesConfig, JevRoutingConfig } from "../../config/schema"
 import { log } from "../../shared/logger"
-import { CATEGORY_DESCRIPTIONS } from "./constants"
 import { mergeCategories } from "../../shared/merge-categories"
 import { normalizeSDKResponse } from "../../shared"
 import { findCallableAgentMatch, mergeWithClaudeCodeAgents, type AgentInfo } from "./subagent-discovery"
 import type { OpencodeClient } from "./types"
 import { getAgentConfigKey } from "../../shared/agent-display-names"
+export {
+  getCategoryRoutingEligibility as getJevRoutingEligibility,
+  routeCategoryWithJev as selectCategoryTierWithJev,
+} from "./jev-category-routing"
+export type { JevCategoryInput as JevRoutingInput } from "./jev-category-routing"
 
 const JEV_URL = "https://opencode.ai/zen/v1/systemone"
 const TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone"
@@ -25,15 +29,6 @@ const JevResponseSchema = z.object({
     }),
   ),
 })
-
-export type JevRoutingInput = {
-  readonly brief: string
-  readonly config: JevRoutingConfig | undefined
-  readonly categories: CategoriesConfig | undefined
-  readonly enabledCategories: Readonly<Record<string, { description?: string }>>
-  readonly modelRouting?: false
-  readonly signal?: AbortSignal
-}
 
 type Candidate = { readonly name: string; readonly description: string }
 type SelectorInput = {
@@ -128,59 +123,6 @@ export async function selectAgentWithJev(
           : undefined) ??
         dispatchable(agents, name)?.description ??
         "",
-    })),
-  })
-}
-
-export function getJevRoutingEligibility({
-  config,
-  categories,
-  enabledCategories,
-}: Pick<JevRoutingInput, "config" | "categories" | "enabledCategories">) {
-  const ladder = config?.ladder ?? []
-  const fallback = config?.default
-  const validTier = (name: string) =>
-    name !== "auto" && Object.hasOwn(enabledCategories, name) && enabledCategories[name] !== undefined
-  const validDefault = fallback !== undefined && validTier(fallback)
-  const valid = Boolean(
-    categories?.auto &&
-    !categories.auto.disable &&
-    Object.keys(categories.auto).every((key) => key === "description") &&
-    categories.auto.description?.trim() &&
-    validDefault &&
-    ladder.length >= 2 &&
-    ladder.length <= 8 &&
-    new Set(ladder).size === ladder.length &&
-    ladder.every(validTier),
-  )
-  return { valid, validDefault }
-}
-
-export async function selectCategoryTierWithJev(input: JevRoutingInput): Promise<string | undefined> {
-  const { brief, config, categories, enabledCategories, modelRouting, signal } = input
-  signal?.throwIfAborted()
-  const ladder = config?.ladder ?? []
-  const fallback = config?.default
-  const { valid, validDefault } = getJevRoutingEligibility({ config, categories, enabledCategories })
-  if (!valid || !config || !fallback) {
-    log("[jev-routing] tier decision", {
-      status: "invalid_config",
-      candidates: ladder,
-      scores: {},
-      chosenCategory: fallback,
-    })
-    return validDefault ? fallback : undefined
-  }
-  return selectCandidateWithJev({
-    brief,
-    config,
-    fallback,
-    kind: "tier",
-    modelRouting,
-    signal,
-    candidates: ladder.map((name) => ({
-      name,
-      description: categories?.[name]?.description || CATEGORY_DESCRIPTIONS[name] || "",
     })),
   })
 }

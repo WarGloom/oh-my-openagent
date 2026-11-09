@@ -1,5 +1,28 @@
 import type { DelegatedModelConfig } from "../../shared/model-resolution-types"
 import type { BackgroundTask, BackgroundTaskAttempt, BackgroundTaskStatus } from "./types"
+import { publishTaskLifecycle, type TaskAttemptCause } from "./task-lifecycle"
+import type { TaskTerminalEvidence } from "./task-terminal-evidence"
+import { getRegisteredBackgroundTask } from "./task-registry"
+
+function publishAttempt(task: BackgroundTask, attempt: BackgroundTaskAttempt): void {
+  if (
+    !task.decisionId ||
+    attempt.lifecycleDetached ||
+    (attempt.lifecycleStarted && attempt.lifecycleSessionId === attempt.sessionId)
+  )
+    return
+  attempt.lifecycleStarted = true
+  attempt.lifecycleSessionId = attempt.sessionId
+  publishTaskLifecycle({
+    event: "attempt",
+    decisionId: task.decisionId,
+    attemptId: attempt.attemptId,
+    taskId: task.id,
+    childSessionId: attempt.sessionId ?? null,
+    cause: attempt.cause ?? "initial",
+    resolvedModel: attempt.providerId && attempt.modelId ? `${attempt.providerId}/${attempt.modelId}` : null,
+  })
+}
 
 type TerminalAttemptStatus = Extract<BackgroundTaskStatus, "completed" | "error" | "cancelled" | "interrupt">
 
@@ -91,8 +114,13 @@ export function projectTaskFromCurrentAttempt(task: BackgroundTask): BackgroundT
   return task
 }
 
-export function startAttempt(task: BackgroundTask, model: DelegatedModelConfig | undefined): BackgroundTaskAttempt {
+export function startAttempt(
+  task: BackgroundTask,
+  model: DelegatedModelConfig | undefined,
+  cause: TaskAttemptCause = "initial",
+): BackgroundTaskAttempt {
   const attempt: BackgroundTaskAttempt = {
+    cause,
     attemptId: `att_${crypto.randomUUID().slice(0, 8)}`,
     attemptNumber: (task.attempts?.length ?? 0) + 1,
     ...toAttemptModel(model),
@@ -107,6 +135,11 @@ export function startAttempt(task: BackgroundTask, model: DelegatedModelConfig |
   task.completedAt = undefined
   task.error = undefined
   task.model = model
+  if (task.decisionId) {
+    task.result = undefined
+    task.producingModel = undefined
+  }
+  publishAttempt(task, attempt)
 
   return attempt
 }
@@ -135,6 +168,7 @@ export function bindAttemptSession(
   attempt.providerId = model?.providerID ?? attempt.providerId
   attempt.modelId = model?.modelID ?? attempt.modelId
   attempt.variant = model?.variant ?? attempt.variant
+  publishAttempt(task, attempt)
 
   return getCurrentAttempt(projectTaskFromCurrentAttempt(task))
 }
@@ -144,18 +178,55 @@ export function finalizeAttempt(
   attemptID: string,
   status: TerminalAttemptStatus,
   error?: string,
+  evidence?: Promise<TaskTerminalEvidence>,
 ): BackgroundTaskAttempt | undefined {
   const attempt = getAttempt(task, attemptID)
   if (!attempt) {
     return undefined
   }
 
+  const alreadyEmitted = attempt.lifecycleCompleted
   attempt.status = status
   attempt.completedAt = new Date()
   attempt.error = error
 
   if (task.currentAttemptID === attemptID) {
     projectTaskFromCurrentAttempt(task)
+  }
+  if (task.decisionId && !alreadyEmitted && !attempt.lifecycleDetached) {
+    attempt.lifecycleCompleted = true
+    const outcome = {
+      event: "outcome" as const,
+      decisionId: task.decisionId,
+      attemptId: attempt.attemptId,
+      taskId: task.id,
+      childSessionId: attempt.sessionId ?? null,
+      status: status === "error" ? ("failed" as const) : status === "interrupt" ? ("interrupted" as const) : status,
+      producingModel: task.producingModel ?? null,
+      output: status === "completed" ? task.result : undefined,
+    }
+    if (evidence) {
+      void evidence.then(
+        (observed) => {
+          const registered = getRegisteredBackgroundTask(outcome.taskId)
+          if (
+            task.currentAttemptID !== outcome.attemptId ||
+            (registered?.decisionId === outcome.decisionId &&
+              registered.currentAttemptID !== undefined &&
+              registered.currentAttemptID !== outcome.attemptId)
+          ) {
+            publishTaskLifecycle(outcome)
+            return
+          }
+          publishTaskLifecycle({
+            ...outcome,
+            producingModel: observed.producingModel ?? outcome.producingModel,
+            output: status === "completed" ? (outcome.output ?? observed.output) : undefined,
+          })
+        },
+        () => publishTaskLifecycle(outcome),
+      )
+    } else publishTaskLifecycle(outcome)
   }
 
   return attempt
@@ -172,7 +243,7 @@ export function scheduleRetryAttempt(
     return undefined
   }
 
-  return startAttempt(task, nextModel)
+  return startAttempt(task, nextModel, "fallback_replacement")
 }
 
 export function findAttemptBySession(task: BackgroundTask, sessionID: string): BackgroundTaskAttempt | undefined {
