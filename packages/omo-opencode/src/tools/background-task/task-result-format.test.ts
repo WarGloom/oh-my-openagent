@@ -79,3 +79,27 @@ describe("formatTaskResult", () => {
     expect(output).toContain("Final report: fix landed")
   })
 })
+
+describe("formatTaskResult launch denial", () => {
+  test("#given an empty child session from a blocked launch #when formatting #then the denial line is shown with the no-messages marker", async () => {
+    const task = createTask({
+      status: "error",
+      launchDenial: {
+        kind: "permission-denied",
+        permission: "skill",
+        resources: ["codebase-memory"],
+        phase: "before-model-execution",
+      },
+    })
+    const client: BackgroundOutputClient = {
+      session: {
+        messages: async () => ({ data: [] }),
+      },
+    }
+
+    const output = await formatTaskResult(task, client)
+
+    expect(output).toContain('Launch blocked: skill "codebase-memory" was denied. Model execution did not start.')
+    expect(output).toContain("(No messages found)")
+  })
+})

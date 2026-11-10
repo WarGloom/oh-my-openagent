@@ -8,6 +8,7 @@ import type {
   NativeSubagentSkillSelection,
 } from "../../v2/native-subagent-types"
 import type { TaskAttemptCause } from "./task-lifecycle"
+import type { LaunchDenialDiagnosis } from "./parent-visible-error-sanitizer"
 
 export type BackgroundTaskStatus = "pending" | "running" | "completed" | "error" | "cancelled" | "interrupt"
 
@@ -87,6 +88,8 @@ export interface BackgroundTask {
   completedAt?: Date
   result?: string
   error?: string
+  /** Allowlisted diagnosis when a launch was blocked before model execution. */
+  launchDenial?: LaunchDenialDiagnosis
   progress?: TaskProgress
   parentModel?: { providerID: string; modelID: string }
   model?: DelegatedModelConfig

@@ -143,3 +143,27 @@ describe("formatFullSession", () => {
     expect(output).not.toContain("PROMPT_2")
   })
 })
+
+describe("formatFullSession launch denial", () => {
+  test("#given an empty child session from a blocked launch #when formatting #then the denial line precedes the no-messages marker", async () => {
+    const task = {
+      ...makeTask(),
+      status: "error" as const,
+      launchDenial: {
+        kind: "permission-denied" as const,
+        permission: "skill",
+        resources: ["codebase-memory"],
+        phase: "before-model-execution" as const,
+      },
+    }
+    const client = makeClient([])
+
+    const output = await formatFullSession(task, client, {
+      includeThinking: false,
+      includeToolResults: false,
+    })
+
+    expect(output).toContain('Launch blocked: skill "codebase-memory" was denied. Model execution did not start.')
+    expect(output).toContain("(No messages found)")
+  })
+})

@@ -1,4 +1,5 @@
 import type { BackgroundTask } from "../../features/background-agent"
+import { resolveParentVisibleTaskError } from "../../features/background-agent/parent-visible-error-sanitizer"
 import type { BackgroundOutputClient, BackgroundOutputMessagesResult, BackgroundOutputMessage } from "./clients"
 import { extractMessages, getErrorMessage } from "./session-messages"
 import { formatMessageTime } from "./time-format"
@@ -134,6 +135,11 @@ export async function formatFullSession(
 
   if (visibleMessages.length === 0) {
     lines.push("")
+    const resolvedError = resolveParentVisibleTaskError(task)
+    if (resolvedError) {
+      lines.push(resolvedError)
+      lines.push("")
+    }
     lines.push("(No messages found)")
     return lines.join("\n")
   }

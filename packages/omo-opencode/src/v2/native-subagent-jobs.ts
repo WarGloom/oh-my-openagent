@@ -11,6 +11,7 @@ import { lowerReasoningForModel } from "../shared/agent-variant"
 import type { V2PluginContext } from "./context-types"
 import type { NativeSubagentDomain, NativeSubagentReceipt, NativeSubagentSkillSelection } from "./native-subagent-types"
 import { recoverNativeTask } from "./native-retained-task"
+import { PreModelSkillAcceptanceError } from "../features/background-agent/parent-visible-error-sanitizer"
 
 export type NativeDelegationSkills = {
   readonly text: string
@@ -116,7 +117,12 @@ export class V2NativeSubagentJobs implements NativeBackgroundJobs {
     if (this.stopped) return "suspended"
     if (!task.nativeAdmissionID || !task.sessionId) throw new Error("Native task was not prepared")
     if (task.nativeAcceptedSkillsAdmissionID !== task.nativeAdmissionID) {
-      const skills = await this.deps.activateSkills(task)
+      let skills: NativeDelegationSkills
+      try {
+        skills = await this.deps.activateSkills(task)
+      } catch (error) {
+        throw new PreModelSkillAcceptanceError(error)
+      }
       task.nativeSkillActivationIDs = [...new Set([...(task.nativeSkillActivationIDs ?? []), ...skills.activationIDs])]
       task.nativeSkillSelections = skills.selections
       task.nativeAcceptedSkillsAdmissionID = task.nativeAdmissionID
