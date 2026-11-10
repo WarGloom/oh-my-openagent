@@ -502,4 +502,84 @@ describe("installConfigBridge", () => {
       expect([...fake.builtAgents().keys()]).toEqual(["build"])
     })
   })
+
+  describe("#given the host Explore agent that denies the skill action by default", () => {
+    // Mirrors the host Permission.evaluate: the LAST rule whose action and resource globs match wins.
+    const glob = (value: string, pattern: string) => {
+      if (pattern === value) return true
+      if (!pattern.includes("*")) return false
+      const parts = pattern.split("*")
+      return value.startsWith(parts[0] ?? "") && value.endsWith(parts[parts.length - 1] ?? "")
+    }
+    const wins = (
+      rules: ReadonlyArray<{ action: string; resource: string; effect: string }>,
+      action: string,
+      resource: string,
+    ) => rules.findLast((rule) => glob(action, rule.action) && glob(resource, rule.resource))?.effect
+    // The host Explore defaults (packages/core/src/plugin/agent.ts): a leading deny-all, action allows
+    // with no skill allow, and a subagent deny.
+    const explore: V2AgentInfo = {
+      id: "explore",
+      name: "explore",
+      mode: "subagent",
+      hidden: false,
+      permissions: [
+        { action: "*", resource: "*", effect: "deny" },
+        { action: "shell", resource: "*", effect: "allow" },
+        { action: "read", resource: "*", effect: "allow" },
+        { action: "subagent", resource: "*", effect: "deny" },
+      ],
+    }
+    const restricted: V2AgentInfo = {
+      id: "general",
+      name: "general",
+      mode: "subagent",
+      hidden: false,
+      permissions: [{ action: "*", resource: "*", effect: "deny" }],
+    }
+
+    it("#when installed with no skill rules #then Explore allows the skill action while other restrictions stand", async () => {
+      // given
+      const fake = createFakePluginContext({ agents: [explore, restricted] })
+
+      // when
+      await installConfigBridge(fake.context, hookReturning({}), { warn: () => {}, debounceMs: 0 })
+
+      // then
+      const rules = fake.builtAgents().get("explore")?.permissions ?? []
+      expect(wins(rules, "skill", "codebase-memory")).toBe("allow")
+      expect(wins(rules, "subagent", "*")).toBe("deny")
+      expect(wins(rules, "shell", "*")).toBe("allow")
+      // scope: a non-preload agent keeps its deny for the skill action.
+      expect(wins(fake.builtAgents().get("general")?.permissions ?? [], "skill", "codebase-memory")).toBe("deny")
+    })
+
+    it("#when the user denies the skill action globally #then that deny overrides the intended Explore default", async () => {
+      // given
+      const fake = createFakePluginContext({ agents: [explore] })
+
+      // when
+      await installConfigBridge(fake.context, hookReturning({ permission: { skill: "deny" } }), {
+        warn: () => {},
+        debounceMs: 0,
+      })
+
+      // then
+      expect(wins(fake.builtAgents().get("explore")?.permissions ?? [], "skill", "codebase-memory")).toBe("deny")
+    })
+
+    it("#when the user denies one skill on Explore #then only that skill is blocked and the rest stay allowed", async () => {
+      // given
+      const fake = createFakePluginContext({ agents: [explore] })
+      const hook = hookReturning({ agent: { explore: { permission: { skill: { "codebase-memory": "deny" } } } } })
+
+      // when
+      await installConfigBridge(fake.context, hook, { warn: () => {}, debounceMs: 0 })
+
+      // then
+      const rules = fake.builtAgents().get("explore")?.permissions ?? []
+      expect(wins(rules, "skill", "codebase-memory")).toBe("deny")
+      expect(wins(rules, "skill", "other-skill")).toBe("allow")
+    })
+  })
 })
