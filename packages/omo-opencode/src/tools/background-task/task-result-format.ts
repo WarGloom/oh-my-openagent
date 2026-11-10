@@ -1,5 +1,6 @@
 import type { BackgroundTask } from "../../features/background-agent"
 import { extractErrorMessage } from "../../features/background-agent/error-classifier"
+import { resolveParentVisibleTaskError } from "../../features/background-agent/parent-visible-error-sanitizer"
 import { consumeNewMessages } from "../../shared/session-cursor"
 import type { BackgroundOutputClient, BackgroundOutputMessagesResult } from "./clients"
 import { extractMessages, getErrorMessage } from "./session-messages"
@@ -32,6 +33,7 @@ export async function formatTaskResult(task: BackgroundTask, client: BackgroundO
 
   const messages = extractMessages(messagesResult)
   if (!Array.isArray(messages) || messages.length === 0) {
+    const resolvedError = resolveParentVisibleTaskError(task)
     return `Task Result
 
 Task ID: ${task.id}
@@ -41,7 +43,7 @@ Session ID: ${task.sessionId}
 
 ---
 
-(No messages found)`
+${resolvedError ? `${resolvedError}\n\n` : ""}(No messages found)`
   }
 
   const relevantMessages = messages.filter((m) => m.info?.role === "assistant" || m.info?.role === "tool")

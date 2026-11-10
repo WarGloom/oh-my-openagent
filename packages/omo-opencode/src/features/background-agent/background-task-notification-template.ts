@@ -2,7 +2,9 @@ import type { BackgroundTaskAttempt, BackgroundTaskStatus } from "./types"
 import {
   formatParentVisibleError,
   limitParentVisibleNotification,
+  resolveParentVisibleTaskError,
   sanitizeParentVisibleError,
+  type LaunchDenialDiagnosis,
 } from "./parent-visible-error-sanitizer"
 
 export type BackgroundTaskNotificationStatus = "COMPLETED" | "CANCELLED" | "INTERRUPTED" | "ERROR"
@@ -12,6 +14,7 @@ export interface BackgroundTaskNotificationTask {
   description: string
   status: BackgroundTaskStatus
   error?: string
+  launchDenial?: LaunchDenialDiagnosis
   attempts?: BackgroundTaskAttempt[]
 }
 
@@ -55,7 +58,7 @@ function formatAttemptTimeline(task: BackgroundTaskNotificationTask): string {
 
 function formatTaskSummaryLine(task: BackgroundTaskNotificationTask): string {
   const baseLine = `- \`${task.id}\`: ${sanitizeParentVisibleError(task.description || task.id)}`
-  const error = task.error ? formatParentVisibleError(task.error) : undefined
+  const error = resolveParentVisibleTaskError(task)
   const statusSuffix = task.status === "completed" ? "" : ` [${task.status.toUpperCase()}]${error ? ` - ${error}` : ""}`
   const timeline = formatAttemptTimeline(task)
 
@@ -76,7 +79,8 @@ export function buildBackgroundTaskNotificationText(input: {
 
   const safeDescription = (t: BackgroundTaskNotificationTask): string =>
     sanitizeParentVisibleError(t.description || t.id)
-  const errorInfo = task.error ? `\n**Error:** ${formatParentVisibleError(task.error)}` : ""
+  const resolvedError = resolveParentVisibleTaskError(task)
+  const errorInfo = resolvedError ? `\n**Error:** ${resolvedError}` : ""
 
   if (allComplete) {
     const succeededTasks = completedTasks.filter((t) => t.status === "completed")

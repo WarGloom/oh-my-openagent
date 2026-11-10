@@ -62,6 +62,7 @@ import {
   type BackgroundTaskNotificationTask,
   buildBackgroundTaskNotificationText,
 } from "./background-task-notification-template"
+import { diagnoseLaunchDenial, PreModelSkillAcceptanceError } from "./parent-visible-error-sanitizer"
 import { writeBackgroundTaskMarker } from "./background-task-marker"
 import {
   findNearestMessageExcludingCompaction,
@@ -1013,6 +1014,13 @@ export class BackgroundManager {
         } catch (error) {
           log("[background-agent] Error starting task:", error)
           this.rollbackPreStartDescendantReservation(item.task)
+          const launchDenial = diagnoseLaunchDenial(error)
+          if (launchDenial) {
+            item.task.launchDenial =
+              error instanceof PreModelSkillAcceptanceError
+                ? { ...launchDenial, phase: "before-model-execution" }
+                : launchDenial
+          }
 
           // Mark task as error so the parent polling loop detects the failure
           // instead of leaving it in a zombie "running" state with no prompt sent
@@ -3939,6 +3947,7 @@ export class BackgroundManager {
       description: task.description,
       status: task.status,
       error: task.error,
+      launchDenial: task.launchDenial,
       attempts: cloneAttempts(task),
     })
 
@@ -3978,6 +3987,7 @@ export class BackgroundManager {
             description: task.description,
             status: task.status,
             error: task.error,
+            launchDenial: task.launchDenial,
             attempts: cloneAttempts(task),
           },
         ])
