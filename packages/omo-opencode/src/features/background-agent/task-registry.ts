@@ -207,11 +207,18 @@ function reserveRecoveryClaim(
 export function claimRetainedSessionRecovery(
   sessionID: string,
   parentSessionID: string,
+  policy: "completed" | "native-terminal" = "completed",
 ): { task: BackgroundTask; release: () => void } {
   const registry = getRegistry()
   const claims = reserveRecoveryClaim(registry, sessionID, parentSessionID)
   const task = [...registry.completedTasks.values()].find((candidate) => candidate.sessionId === sessionID)
-  if (!task || task.status !== "completed" || task.parentSessionId !== parentSessionID || !task.agent || !task.model) {
+  if (
+    !task ||
+    (task.status !== "completed" && !(policy === "native-terminal" && task.status === "error")) ||
+    task.parentSessionId !== parentSessionID ||
+    !task.agent ||
+    !task.model
+  ) {
     throw new Error(MISSING_RETAINED_TASK_ERROR)
   }
   claims.add(sessionID)

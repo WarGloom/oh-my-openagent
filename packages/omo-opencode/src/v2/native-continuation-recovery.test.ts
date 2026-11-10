@@ -11,113 +11,126 @@ import { V2BackgroundLifecycle } from "./background-lifecycle"
 afterEach(cleanupNativeFixtures)
 
 describe("native task entrypoint retained continuation", () => {
-  it.each(["archive", "durable", "restart", "reload-variant", "reload-switch", "reload-chain"] as const)(
-    "continues the original child after cleanup from %s",
-    async (source) => {
-      // given a completed child removed through the manager's cleanup timer
-      const f = await completedFixture()
-      let manager = f.manager
-      if (source === "archive") {
-        await f.context.storage?.remove(
-          `background-task/${encodeURIComponent(f.context.location.directory)}/${f.task.id}`,
-        )
-      }
-      if (source === "restart") {
-        await manager.shutdown()
-        clearBackgroundTaskRegistryForTesting()
-        manager = new BackgroundManager({
-          pluginContext: f.input,
-          nativeJobs: f.createJobs(),
-          preserveSessionsOnShutdown: true,
-        })
-        cleanups.push(() => manager.shutdown())
-        await manager.restoreNativeJobs()
-      }
-      if (source === "reload-variant" || source === "reload-switch" || source === "reload-chain") {
-        const storage = f.context.storage
-        const get = f.session.getMockImplementation()
-        if (!storage || !get) throw new Error("native fixture missing")
-        await manager.shutdown()
-        const model =
-          source === "reload-variant"
-            ? { providerID: "test", id: "model", variant: "max" }
-            : { providerID: "switched", id: "model2", variant: "high" }
-        const previous = { providerID: "test", id: "model", variant: "max" }
-        const intermediate = { providerID: "test", id: "intermediate", variant: "medium" }
-        const created = f.retained.startedAt?.getTime() ?? 0
-        if (source === "reload-chain")
-          f.fake
-            .sessionHistory(f.sessionID)
-            .push({ id: "msg_first_switch", type: "model-switched", previous, model: intermediate, time: { created } })
-        if (source !== "reload-variant")
-          f.fake.sessionHistory(f.sessionID).push({
-            id: "msg_switch",
-            type: "model-switched",
-            previous: source === "reload-chain" ? intermediate : previous,
-            model,
-            time: { created: created + 1 },
-          })
-        f.session.mockImplementation(async (input) => {
-          const child = await get(input)
-          return { ...child, ...(input.sessionID === f.sessionID ? { model } : {}) }
-        })
-        await storage.set(
-          `background-task/${encodeURIComponent(f.context.location.directory)}/${f.task.id}`,
-          encodeBackgroundTask({
-            ...f.retained,
-            model: { ...f.retained.model, providerID: "test", modelID: "model", reasoning: "max" },
-          }),
-        )
-        const lifecycle = new V2BackgroundLifecycle(f.context, storage)
-        await lifecycle.load()
-        manager = new BackgroundManager({
-          pluginContext: f.input,
-          config: { taskCleanupDelayMs: 0 },
-          nativeJobs: f.createJobs(),
-          nativeLifecycle: lifecycle,
-          preserveSessionsOnShutdown: true,
-        })
-        const reloaded = manager
-        cleanups.push(() => reloaded.shutdown())
-        const removed = Promise.withResolvers<void>()
-        cleanups.push(
-          reloaded.onVisibleChange(() => {
-            if (!reloaded.findBySession(f.sessionID)) removed.resolve()
-          }),
-        )
-        lifecycle.connect(reloaded)
-        await reloaded.restoreNativeJobs()
-        await removed.promise
-      }
-      // when the real task tool continues that retained session
-      const started = f.nextStart()
-      await f.execute(manager)
-      await started
-      const settled = manager.waitForNativeTask(f.task.id, new AbortController().signal)
-      f.finish([...f.rows.values()].at(-1)?.admissionID ?? "")
-      const continued = await settled
-      // then the same task owns one new native admission to the same child
-      expect(continued).toMatchObject({
-        id: f.task.id,
-        sessionId: f.task.sessionId,
-        model:
-          source === "reload-switch" || source === "reload-chain"
-            ? { providerID: "switched", modelID: "model2", variant: "high" }
-            : f.retained.model,
-        decisionId: f.retained.decisionId,
-        category: "retained",
-        skills: ["skill"],
-        nativeRun: { childSessionID: f.task.sessionId, generation: "2" },
-        nativeSkillActivationIDs: ["activation-1"],
+  it.each([
+    "archive",
+    "durable",
+    "restart",
+    "reload-variant",
+    "reload-switch",
+    "reload-chain",
+    "error-durable",
+    "error-restart",
+    "error-chain",
+  ] as const)("continues the original child after cleanup from %s", async (source) => {
+    // given a terminal child removed through the manager's cleanup timer
+    const f = await completedFixture(source.startsWith("error-") ? "error" : "completed")
+    let manager = f.manager
+    if (source === "archive") {
+      await f.context.storage?.remove(
+        `background-task/${encodeURIComponent(f.context.location.directory)}/${f.task.id}`,
+      )
+    }
+    if (source === "restart" || source === "error-restart") {
+      await manager.shutdown()
+      clearBackgroundTaskRegistryForTesting()
+      manager = new BackgroundManager({
+        pluginContext: f.input,
+        nativeJobs: f.createJobs(),
+        preserveSessionsOnShutdown: true,
       })
-      expect(continued?.attempts?.map((attempt) => attempt.cause)).toEqual(["initial", "continuation"])
-      expect(continued?.attempts?.[0]).toEqual(f.retained.attempts?.[0])
-      expect(f.starts).toEqual([f.sessionID, f.sessionID])
-      expect([...f.rows.values()].map((row) => row.childSessionID)).toEqual([f.sessionID, f.sessionID])
-      expect(f.rows.get(f.retained.nativeAdmissionID ?? "")?.run).toEqual(f.retained.nativeRun)
-      expect(continued.status).toBe("completed")
-    },
-  )
+      cleanups.push(() => manager.shutdown())
+      await manager.restoreNativeJobs()
+    }
+    if (
+      source === "reload-variant" ||
+      source === "reload-switch" ||
+      source === "reload-chain" ||
+      source === "error-chain"
+    ) {
+      const storage = f.context.storage
+      const get = f.session.getMockImplementation()
+      if (!storage || !get) throw new Error("native fixture missing")
+      await manager.shutdown()
+      const model =
+        source === "reload-variant"
+          ? { providerID: "test", id: "model", variant: "max" }
+          : { providerID: "switched", id: "model2", variant: "high" }
+      const previous = { providerID: "test", id: "model", variant: "max" }
+      const intermediate = { providerID: "test", id: "intermediate", variant: "medium" }
+      const created = f.retained.startedAt?.getTime() ?? 0
+      if (source === "reload-chain" || source === "error-chain")
+        f.fake
+          .sessionHistory(f.sessionID)
+          .push({ id: "msg_first_switch", type: "model-switched", previous, model: intermediate, time: { created } })
+      if (source !== "reload-variant")
+        f.fake.sessionHistory(f.sessionID).push({
+          id: "msg_switch",
+          type: "model-switched",
+          previous: source === "reload-chain" || source === "error-chain" ? intermediate : previous,
+          model,
+          time: { created: created + 1 },
+        })
+      f.session.mockImplementation(async (input) => {
+        const child = await get(input)
+        return { ...child, ...(input.sessionID === f.sessionID ? { model } : {}) }
+      })
+      await storage.set(
+        `background-task/${encodeURIComponent(f.context.location.directory)}/${f.task.id}`,
+        encodeBackgroundTask({
+          ...f.retained,
+          model: { ...f.retained.model, providerID: "test", modelID: "model", reasoning: "max" },
+        }),
+      )
+      const lifecycle = new V2BackgroundLifecycle(f.context, storage)
+      await lifecycle.load()
+      manager = new BackgroundManager({
+        pluginContext: f.input,
+        config: { taskCleanupDelayMs: 0 },
+        nativeJobs: f.createJobs(),
+        nativeLifecycle: lifecycle,
+        preserveSessionsOnShutdown: true,
+      })
+      const reloaded = manager
+      cleanups.push(() => reloaded.shutdown())
+      const removed = Promise.withResolvers<void>()
+      cleanups.push(
+        reloaded.onVisibleChange(() => {
+          if (!reloaded.findBySession(f.sessionID)) removed.resolve()
+        }),
+      )
+      lifecycle.connect(reloaded)
+      await reloaded.restoreNativeJobs()
+      await removed.promise
+      if (source === "error-chain") clearBackgroundTaskRegistryForTesting()
+    }
+    // when the real task tool continues that retained session
+    const started = f.nextStart()
+    await f.execute(manager)
+    await started
+    const settled = manager.waitForNativeTask(f.task.id, new AbortController().signal)
+    f.finish([...f.rows.values()].at(-1)?.admissionID ?? "")
+    const continued = await settled
+    // then the same task owns one new native admission to the same child
+    expect(continued).toMatchObject({
+      id: f.task.id,
+      sessionId: f.task.sessionId,
+      model:
+        source === "reload-switch" || source === "reload-chain" || source === "error-chain"
+          ? { providerID: "switched", modelID: "model2", variant: "high" }
+          : f.retained.model,
+      decisionId: f.retained.decisionId,
+      category: "retained",
+      skills: ["skill"],
+      nativeRun: { childSessionID: f.task.sessionId, generation: "2" },
+      nativeSkillActivationIDs: ["activation-1"],
+    })
+    expect(continued?.attempts?.map((attempt) => attempt.cause)).toEqual(["initial", "continuation"])
+    expect(continued?.attempts?.[0]).toEqual(f.retained.attempts?.[0])
+    expect(f.starts).toEqual([f.sessionID, f.sessionID])
+    expect([...f.rows.values()].map((row) => row.childSessionID)).toEqual([f.sessionID, f.sessionID])
+    expect(f.rows.get(f.retained.nativeAdmissionID ?? "")?.run).toEqual(f.retained.nativeRun)
+    expect(continued.status).toBe("completed")
+  })
 
   it.each([
     "missing",
@@ -138,14 +151,62 @@ describe("native task entrypoint retained continuation", () => {
     "switch-unrelated",
     "switch-stale",
     "switch-archive",
+    "pending",
+    "running",
+    "interrupt",
+    "authorizing",
+    "prepared",
+    "accepted",
+    "active-receipt",
+    "completed-receipt",
+    "error-receipt",
+    "wrong-parent",
+    "wrong-project",
   ] as const)("rejects %s retained state before another native admission", async (failure) => {
     // given retained metadata or current native state that cannot authorize recovery
-    const f = await completedFixture()
+    const f = await completedFixture(
+      failure === "error-receipt" || failure === "switch-archive" ? "completed" : "error",
+    )
+    if (failure !== "switch-archive") clearBackgroundTaskRegistryForTesting()
     const receipt = f.rows.get(f.retained.nativeAdmissionID ?? "")
     if (!receipt || !f.context.storage) throw new Error("native fixture missing")
     const key = `background-task/${encodeURIComponent(f.context.location.directory)}/${f.task.id}`
     const child = await f.context.session.get({ sessionID: receipt.childSessionID })
     switch (failure) {
+      case "pending":
+      case "running":
+      case "interrupt":
+        await f.context.storage.set(key, encodeBackgroundTask({ ...f.retained, status: failure }))
+        break
+      case "authorizing":
+      case "prepared":
+      case "accepted":
+      case "active-receipt":
+      case "completed-receipt":
+      case "error-receipt":
+        f.rows.set(receipt.admissionID, {
+          ...receipt,
+          status:
+            failure === "active-receipt"
+              ? "running"
+              : failure === "completed-receipt"
+                ? "completed"
+                : failure === "error-receipt"
+                  ? "error"
+                  : failure,
+        })
+        break
+      case "wrong-parent":
+        await f.context.storage.set(key, encodeBackgroundTask({ ...f.retained, parentSessionId: "other-parent" }))
+        break
+      case "wrong-project":
+        clearBackgroundTaskRegistryForTesting()
+        await f.context.storage.remove(key)
+        await f.context.storage.set(
+          `background-task/${encodeURIComponent("/other-project")}/${f.task.id}`,
+          encodeBackgroundTask(f.retained),
+        )
+        break
       case "missing":
         clearBackgroundTaskRegistryForTesting()
         await f.context.storage.remove(key)
@@ -264,7 +325,11 @@ describe("native task entrypoint retained continuation", () => {
     const starts = [...f.starts]
     // when the parent requests continuation through the task entrypoint
     await expect(f.execute(f.manager)).rejects.toThrow(
-      failure === "missing" ? "Task not found" : failure === "missing-child" ? "child missing" : /recovery denied/,
+      failure === "missing" || failure === "wrong-project"
+        ? "Task not found"
+        : failure === "missing-child"
+          ? "child missing"
+          : /recovery denied/,
     )
     // then it cannot adopt a task or create another admission
     expect(f.manager.findBySession(receipt.childSessionID)).toBeUndefined()
@@ -364,32 +429,35 @@ describe("native task entrypoint retained continuation", () => {
     expect(f.rows.size).toBe(3)
   })
 
-  it("keeps the recovery claim until adoption and admission finish", async () => {
-    // given a recovery paused at durable lookup
-    const f = await completedFixture()
-    const entered = Promise.withResolvers<void>()
-    const release = Promise.withResolvers<void>()
-    const scan = f.context.storage?.scan
-    if (!scan || !f.context.storage) throw new Error("fake storage missing")
-    const reading = spyOn(f.context.storage, "scan").mockImplementation(async (input) => {
-      entered.resolve()
-      await release.promise
-      return scan(input)
-    })
-    cleanups.push(() => reading.mockRestore())
-    const first = f.execute(f.manager)
-    await entered.promise
-    // when another invocation targets the claimed child
-    await expect(f.execute(f.manager, "competitor")).rejects.toThrow("active, claimed")
-    release.resolve()
-    const started = f.nextStart()
-    await first
-    await started
-    const settled = f.manager.waitForNativeTask(f.task.id, new AbortController().signal)
-    f.finish([...f.rows.values()].at(-1)?.admissionID ?? "")
-    await settled
-    // then only the winning continuation admits work
-    expect(f.starts).toEqual([f.sessionID, f.sessionID])
-    expect(f.rows.size).toBe(2)
-  })
+  it.each(["completed", "error"] as const)(
+    "keeps the %s recovery claim until adoption and admission finish",
+    async (status) => {
+      // given a recovery paused at durable lookup
+      const f = await completedFixture(status)
+      const entered = Promise.withResolvers<void>()
+      const release = Promise.withResolvers<void>()
+      const scan = f.context.storage?.scan
+      if (!scan || !f.context.storage) throw new Error("fake storage missing")
+      const reading = spyOn(f.context.storage, "scan").mockImplementation(async (input) => {
+        entered.resolve()
+        await release.promise
+        return scan(input)
+      })
+      cleanups.push(() => reading.mockRestore())
+      const first = f.execute(f.manager)
+      await entered.promise
+      // when another invocation targets the claimed child
+      await expect(f.execute(f.manager, "competitor")).rejects.toThrow("active, claimed")
+      release.resolve()
+      const started = f.nextStart()
+      await first
+      await started
+      const settled = f.manager.waitForNativeTask(f.task.id, new AbortController().signal)
+      f.finish([...f.rows.values()].at(-1)?.admissionID ?? "")
+      await settled
+      // then only the winning continuation admits work
+      expect(f.starts).toEqual([f.sessionID, f.sessionID])
+      expect(f.rows.size).toBe(2)
+    },
+  )
 })

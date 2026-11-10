@@ -55,14 +55,14 @@ export async function recoverNativeTask(
   if (
     task.sessionId !== request.sessionID ||
     task.parentSessionId !== request.parentSessionID ||
-    task.status !== "completed" ||
+    (task.status !== "completed" && task.status !== "error") ||
     !task.agent ||
     !task.model ||
     !task.nativeAdmissionID ||
     !task.nativeRun ||
     task.nativeRun.childSessionID !== request.sessionID
   ) {
-    throw new NativeContinuationRecoveryError("no owned completed native task with trusted metadata")
+    throw new NativeContinuationRecoveryError("no owned completed or failed native task with trusted metadata")
   }
   const receipt = await owner.domain.get({ admissionID: task.nativeAdmissionID })
   if (
@@ -72,7 +72,7 @@ export async function recoverNativeTask(
     receipt.admissionID !== task.nativeAdmissionID ||
     receipt.run?.generation !== task.nativeRun.generation ||
     receipt.run.childSessionID !== request.sessionID ||
-    receipt.status !== "completed" ||
+    receipt.status !== task.status ||
     receipt.revoked
   ) {
     throw new NativeContinuationRecoveryError("native admission is missing, active, cancelled, revoked or mismatched")
