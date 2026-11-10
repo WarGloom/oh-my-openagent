@@ -28,7 +28,7 @@ import { isCompactionGuardActive } from "./compaction-guard"
 import { getMessageDir } from "./message-directory"
 import { isTokenLimitError } from "./token-limit-detection"
 import { isUnrecoverableRequestError } from "./unrecoverable-request-error"
-import { getIncompleteCount } from "./todo"
+import { getActionableTodos, getIncompleteCount } from "./todo"
 import type { ResolvedMessageInfo, Todo } from "./types"
 import type { SessionStateStore } from "./session-state"
 
@@ -93,22 +93,6 @@ export async function injectContinuation(args: {
     return
   }
 
-  let todos: Todo[] = []
-  try {
-    const response = await ctx.client.session.todo({ path: { id: sessionID } })
-    todos = normalizeSDKResponse(response, [] as Todo[], { preferResponseOnMissingData: true })
-  } catch (error) {
-    const loggedError = error instanceof Error ? error : String(error)
-    log(`[${HOOK_NAME}] Failed to fetch todos`, { sessionID, error: loggedError })
-    return
-  }
-
-  const freshIncompleteCount = getIncompleteCount(todos)
-  if (freshIncompleteCount === 0) {
-    log(`[${HOOK_NAME}] Skipped injection: no incomplete todos`, { sessionID })
-    return
-  }
-
   let agentName = resolvedInfo?.agent ?? getSessionAgent(sessionID)
   let model = resolvedInfo?.model
   let tools = resolvedInfo?.tools
@@ -163,11 +147,23 @@ export async function injectContinuation(args: {
     return
   }
 
-  const incompleteTodos = todos.filter((todo) => todo.status !== "completed" && todo.status !== "cancelled")
+  let todos: Todo[] = []
+  try {
+    const response = await ctx.client.session.todo({ path: { id: sessionID } })
+    todos = normalizeSDKResponse(response, [] as Todo[], { preferResponseOnMissingData: true })
+  } catch (error) {
+    const loggedError = error instanceof Error ? error : String(error)
+    log(`[${HOOK_NAME}] Failed to fetch todos`, { sessionID, error: loggedError })
+    return
+  }
+
+  const incompleteTodos = getActionableTodos(todos)
+  const freshIncompleteCount = incompleteTodos.length
+  if (freshIncompleteCount === 0) return
   const todoList = incompleteTodos.map((todo) => `- [${todo.status}] ${todo.content}`).join("\n")
   const prompt = `${CONTINUATION_PROMPT}
 
-[Status: ${todos.length - freshIncompleteCount}/${todos.length} completed, ${freshIncompleteCount} remaining]
+[Status: ${todos.length - getIncompleteCount(todos)}/${todos.length} completed, ${freshIncompleteCount} remaining]
 
 Remaining tasks:
 ${todoList}`
