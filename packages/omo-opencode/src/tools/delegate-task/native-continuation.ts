@@ -17,7 +17,7 @@ export async function claimNativeContinuation(manager: BackgroundManager, sessio
   let archived: BackgroundTask | undefined
   let release: () => void
   try {
-    const claim = claimRetainedSessionRecovery(sessionID, parentSessionID)
+    const claim = claimRetainedSessionRecovery(sessionID, parentSessionID, "native-terminal")
     archived = claim.task
     release = claim.release
   } catch (error) {
