@@ -6,6 +6,7 @@ import { createSignal } from "solid-js"
 import { materializeReactive } from "../tui"
 import { buildDashboardFullViewNodes } from "./dashboard-full-view"
 import {
+  buildDashboardActivityNodes,
   buildDashboardSidebarNodes,
   type DashboardData,
   type DashboardTheme,
@@ -295,6 +296,12 @@ describe("native dashboard rendering", () => {
       expect(setup.captureCharFrame()).toContain("2 error")
       expect(setup.captureCharFrame()).toContain("3 interrupted")
       expect(setup.captureCharFrame()).toContain("1 failed")
+      expect(
+        setup
+          .captureCharFrame()
+          .split("\n")
+          .map((line) => line.trim()),
+      ).toContain("Team")
       expect(setup.captureCharFrame().indexOf("render-worker")).toBeLessThan(
         setup.captureCharFrame().indexOf("queue-worker"),
       )
@@ -321,6 +328,12 @@ describe("native dashboard rendering", () => {
       expect(setup.captureCharFrame()).toContain("1 completed")
       expect(setup.captureCharFrame()).not.toContain("Render dashboard")
       expect(setup.captureCharFrame()).not.toContain("Queued review")
+      setState({ kind: "ready", snapshot: { ...snapshot, teams: [...snapshot.teams, ...snapshot.teams] } })
+      await setup.renderOnce()
+      expect(setup.captureCharFrame()).toContain("Teams: 2")
+      setState({ kind: "ready", snapshot: { ...snapshot, teams: [] } })
+      await setup.renderOnce()
+      expect(setup.captureCharFrame()).toContain("Teams: 0")
     } finally {
       setup.renderer.destroy()
     }
@@ -359,14 +372,25 @@ describe("native dashboard rendering", () => {
 
   it("opens full view with pointer and keyboard and navigates only supplied session IDs", async () => {
     const opened: string[] = []
+    const nav = {
+      onOpenFullView: () => opened.push("full"),
+      onNavigateSession: (id: string) => opened.push(id),
+    }
+    const activity = {
+      agents: [
+        { name: "same-agent", status: "busy", sessionId: "exact-first" },
+        { name: "same-agent", status: "busy", sessionId: "exact-second" },
+        { name: "unresolved-agent", status: "busy" },
+      ],
+      loop: null,
+    } as const
     const setup = await testRender(
       () =>
         materializeReactive(
-          () =>
-            buildDashboardSidebarNodes({ kind: "ready", snapshot }, theme, {
-              onOpenFullView: () => opened.push("full"),
-              onNavigateSession: (id) => opened.push(id),
-            }),
+          () => [
+            ...buildDashboardSidebarNodes({ kind: "ready", snapshot }, theme, nav),
+            ...buildDashboardActivityNodes(activity, theme, nav),
+          ],
           solid,
         ),
       { width: 40, height: 50 },
@@ -387,7 +411,24 @@ describe("native dashboard rendering", () => {
         .split("\n")
         .findIndex((line) => line.includes("Queued review"))
       await setup.mockMouse.click(2, queued)
-      expect(opened).toEqual(["full", "full", "native-task", "native-task"])
+      const agents = setup.captureCharFrame().split("\n")
+      const first = agents.findIndex((line) => line.includes("same-agent"))
+      await setup.mockMouse.click(2, first)
+      setup.mockInput.pressKey("RETURN")
+      await setup.mockMouse.click(2, first + 1)
+      await setup.mockMouse.click(
+        2,
+        agents.findIndex((line) => line.includes("unresolved-agent")),
+      )
+      expect(opened).toEqual([
+        "full",
+        "full",
+        "native-task",
+        "native-task",
+        "exact-first",
+        "exact-first",
+        "exact-second",
+      ])
     } finally {
       setup.renderer.destroy()
     }

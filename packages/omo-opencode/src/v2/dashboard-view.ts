@@ -55,6 +55,7 @@ export function dashboardStatusColor(status: DashboardStatus, theme: DashboardTh
 export function buildDashboardActivityNodes(
   activity: DashboardSnapshot["activity"],
   theme: DashboardTheme,
+  navigation: Pick<DashboardNavigation, "onNavigateSession">,
 ): ViewNode[] {
   const loop = activity.loop
   return [
@@ -63,12 +64,13 @@ export function buildDashboardActivityNodes(
       : [
           box({ flexDirection: "column" }, [
             text({ fg: theme.text.base, attributes: 1 }, "Agents"),
-            ...activity.agents.map((agent) =>
-              text(
-                { fg: dashboardStatusColor(agent.status, theme), wrapMode: "word" },
-                `${agent.status} / ${dashboardLabel(agent.name)}`,
-              ),
-            ),
+            ...activity.agents.map((agent) => {
+              const sessionID = agent.sessionId
+              const label = `${agent.status} / ${dashboardLabel(agent.name)}`
+              return sessionID
+                ? dashboardAction({ label, run: () => navigation.onNavigateSession(sessionID) }, theme)
+                : text({ fg: dashboardStatusColor(agent.status, theme), wrapMode: "word" }, label)
+            }),
           ]),
         ]),
     ...(loop === null
@@ -230,7 +232,7 @@ export function buildDashboardSidebarNodes(
           : []),
       ]),
       box({ flexDirection: "column" }, [
-        text({ fg: theme.text.base }, `Teams: ${teams.length}`),
+        text({ fg: theme.text.base }, teams.length === 1 ? "Team" : `Teams: ${teams.length}`),
         ...teams
           .slice(0, 3)
           .flatMap((team) => [

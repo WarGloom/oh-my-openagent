@@ -19,7 +19,7 @@ export const dashboardSnapshotSchema = z.object({
   revision: count,
   sessionID: z.string(),
   activity: z.object({
-    agents: z.array(AgentRowSchema),
+    agents: z.array(AgentRowSchema.extend({ sessionId: z.string().optional() })),
     loop: LoopLiveSchema.extend({ activeGoal: z.null() }).nullable(),
   }),
   tasks: z.object({

@@ -20,7 +20,7 @@ export async function projectDashboardActivity(
   return {
     agents: sessions
       .filter((info) => info.time.busy !== undefined && info.time.busy > (info.time.idle ?? 0))
-      .map((info) => ({ name: info.agent?.toLowerCase() ?? info.id, status: "busy" })),
+      .map((info) => ({ name: info.agent?.toLowerCase() ?? info.id, status: "busy", sessionId: info.id })),
     loop: loop.kind === "live" ? { ...loop, activeGoal: null } : null,
   }
 }

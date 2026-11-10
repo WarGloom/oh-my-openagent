@@ -228,7 +228,9 @@ export const setupV2Tui: V2TuiSetup = async (ctx) => {
               { text: ctx.theme.text.base, textMuted: ctx.theme.text.muted, error: ctx.theme.text.feedback.error.base },
             ),
             ...buildDashboardSidebarNodes(current, ctx.theme, { onOpenFullView: open, onNavigateSession: navigate }),
-            ...(current?.kind === "ready" ? buildDashboardActivityNodes(current.snapshot.activity, ctx.theme) : []),
+            ...(current?.kind === "ready"
+              ? buildDashboardActivityNodes(current.snapshot.activity, ctx.theme, { onNavigateSession: navigate })
+              : []),
           ]
         }, solid),
     })

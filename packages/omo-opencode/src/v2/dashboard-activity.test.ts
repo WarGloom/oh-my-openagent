@@ -26,6 +26,7 @@ test("scoped native activity follows selected root and child agents and clears o
       ...fake.context.session,
       get: async ({ sessionID }: { sessionID: string }) => {
         lookedUp.push(sessionID)
+        if (sessionID === "missing") throw new Error("Session no longer exists")
         const info = await fake.context.session.get({ sessionID })
         return {
           ...info,
@@ -69,6 +70,16 @@ test("scoped native activity follows selected root and child agents and clears o
                 prompt: "private",
                 status: "running",
               },
+              {
+                id: "finished",
+                parentSessionId: "lead",
+                parentMessageId: "msg",
+                sessionId: "missing",
+                agent: "old-agent",
+                description: "finished work",
+                prompt: "private",
+                status: "completed",
+              },
             ]
           : [],
       onVisibleChange: () => () => {},
@@ -78,17 +89,18 @@ test("scoped native activity follows selected root and child agents and clears o
     await reset
     expect((await dashboard.get({ sessionID: "lead" }))?.activity).toEqual({
       agents: [
-        { name: "sisyphus", status: "busy" },
-        { name: "explore", status: "busy" },
-        { name: "atlas", status: "busy" },
+        { name: "sisyphus", status: "busy", sessionId: "lead" },
+        { name: "explore", status: "busy", sessionId: "child" },
+        { name: "atlas", status: "busy", sessionId: "member" },
       ],
       loop: null,
     })
     expect((await dashboard.get({ sessionID: "member" }))?.activity.agents).toEqual([
-      { name: "atlas", status: "busy" },
-      { name: "sisyphus", status: "busy" },
+      { name: "atlas", status: "busy", sessionId: "member" },
+      { name: "sisyphus", status: "busy", sessionId: "lead" },
     ])
     expect(lookedUp).not.toContain("outside")
+    expect(lookedUp).toContain("missing")
     const switched = stream.next()
     selected.set("lead", "Prometheus")
     fake.emit({ type: "session.agent.selected", data: { sessionID: "lead", agent: "Prometheus" } })
@@ -97,6 +109,7 @@ test("scoped native activity follows selected root and child agents and clears o
     expect((await dashboard.get({ sessionID: "lead" }))?.activity.agents[0]).toEqual({
       name: "prometheus",
       status: "busy",
+      sessionId: "lead",
     })
     const childChanged = stream.next()
     selected.set("child", "Librarian")
@@ -106,6 +119,7 @@ test("scoped native activity follows selected root and child agents and clears o
     expect((await dashboard.get({ sessionID: "lead" }))?.activity.agents[1]).toEqual({
       name: "librarian",
       status: "busy",
+      sessionId: "child",
     })
     const idle = stream.next()
     active.clear()
