@@ -122,7 +122,7 @@ ${showTierRouting ? `CATEGORY ROUTING: ${routing.mode === "active" ? "auto is th
 
   **DO NOT provide both.** If category is provided, subagent_type is ignored.
 
-  - load_skills: Optional. Defaults to [] when omitted. Pass ["skill-1", "skill-2"] for skill-specific tasks.
+  - load_skills: Optional. Omit for best-effort skill suggestions when Jev routing is active; otherwise no skills are inferred. Pass [] for no skills, or explicit names to preserve your selection. Follow mandatory skill workflows.
   - category: Use predefined category → Spawns Sisyphus-Junior with category config
     Available categories:
   ${categoryList}
