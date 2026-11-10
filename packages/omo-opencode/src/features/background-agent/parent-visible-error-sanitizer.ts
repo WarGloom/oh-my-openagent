@@ -4,6 +4,7 @@ const MAX_PARENT_VISIBLE_ERROR_LENGTH = 2_000
 export const MAX_PARENT_VISIBLE_NOTIFICATION_LENGTH = 12_000
 const REDACTED = "[REDACTED]"
 const GENERIC_PARENT_VISIBLE_ERROR = "Task failed. Raw error details are available in internal logs."
+const NATIVE_ADMISSION_CONFLICT = "SubagentAdmission.Conflict: Active generation owner or completion differs"
 
 const SENSITIVE_FIELD_NAMES = [
   "Authorization",
@@ -288,6 +289,8 @@ export function formatParentVisibleError(error: string | undefined): string {
     return GENERIC_PARENT_VISIBLE_ERROR
   }
 
+  if (error === NATIVE_ADMISSION_CONFLICT) return NATIVE_ADMISSION_CONFLICT
+
   const normalized = error.toLowerCase()
 
   if (/\b(?:401|403)\b/.test(normalized)) {
@@ -317,6 +320,17 @@ export function formatParentVisibleError(error: string | undefined): string {
   }
 
   return GENERIC_PARENT_VISIBLE_ERROR
+}
+
+export function diagnoseNativeAdmissionConflict(error: unknown): string | undefined {
+  if (
+    isRecord(error) &&
+    error["_tag"] === "SubagentAdmission.Conflict" &&
+    error["reason"] === "Active generation owner or completion differs"
+  ) {
+    return NATIVE_ADMISSION_CONFLICT
+  }
+  return undefined
 }
 
 export function limitParentVisibleNotification(notification: string): string {
