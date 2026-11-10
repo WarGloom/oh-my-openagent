@@ -130,16 +130,13 @@ export async function formatFullSession(
   lines.push(`Total messages: ${normalizedMessages.length}`)
   lines.push(`Returned: ${visibleMessages.length}`)
   lines.push(`Has more: ${hasMore ? "true" : "false"}`)
+  const resolvedError = resolveParentVisibleTaskError(task)
+  if (resolvedError) lines.push(`Current task error: ${resolvedError}`)
   lines.push("")
   lines.push("## Messages")
 
   if (visibleMessages.length === 0) {
     lines.push("")
-    const resolvedError = resolveParentVisibleTaskError(task)
-    if (resolvedError) {
-      lines.push(resolvedError)
-      lines.push("")
-    }
     lines.push("(No messages found)")
     return lines.join("\n")
   }
