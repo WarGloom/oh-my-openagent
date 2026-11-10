@@ -64,15 +64,7 @@ export async function prepareDelegateTaskArgs(
   }
 
   if (loadSkills === undefined) {
-    // Default to no skills when the field is OMITTED. Callers that don't
-    // pass the field implicitly mean "no skill content needed". This is
-    // what fixes the #4119 retry loop when Sisyphus / Claude Code Agent
-    // SDK forget the argument.
     loadSkills = []
-    log("[task] load_skills omitted; defaulting to []", {
-      category: args.category,
-      subagent_type: originalSubagentType,
-    })
   }
 
   if (loadSkills === null) {

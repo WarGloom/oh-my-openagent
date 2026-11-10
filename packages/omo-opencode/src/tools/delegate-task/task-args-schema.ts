@@ -45,7 +45,7 @@ export function buildDelegateTaskArgsSchema(
       .array(tool.schema.string())
       .optional()
       .describe(
-        'Skill names to inject. Optional; defaults to [] when omitted. Pass an explicit array (e.g. ["git-master"]) for skill-specific tasks.',
+        "Optional skill names. Omit for best-effort suggestions when Jev routing is active. Pass [] for none, or explicit names to use those names unchanged. Mandatory skill workflows still apply.",
       ),
     description: tool.schema
       .string()

@@ -24,6 +24,7 @@ import type { SkillInfo } from "../skill/types"
 import { executeNativeDelegate } from "./native-execution"
 import { getJevRoutingEligibility } from "./jev-routing"
 import { mergeCategories } from "../../shared/merge-categories"
+import { suggestDelegateSkills } from "./jev-skill-suggestions"
 
 const RUNTIME_PLAN_AGENT_DISABLED_MESSAGE = `OpenCode runtime plan agent is disabled in OMO task routing. Use metis for pre-plan sanity, momus for saved .omo/plans/*.md review, oracle for hard architecture/debugging, or a category for execution.`
 
@@ -94,6 +95,7 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
         sisyphusJuniorModel:
           currentModelConfig === undefined ? options.sisyphusJuniorModel : agentOverrides["sisyphus-junior"]?.model,
       }
+      const skillsOmitted = args.load_skills === undefined
       const delegateTaskArgs = await prepareDelegateTaskArgs(args, originalContext)
       const ctx = originalContext
       const orchestratorCategory = delegateTaskArgs.category ?? "omitted"
@@ -135,6 +137,27 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
         return RUNTIME_PLAN_AGENT_DISABLED_MESSAGE
       }
 
+      let nativeSkillEntries: NativeSkillEntry[] | undefined
+      if (
+        skillsOmitted &&
+        !delegateTaskArgs.task_id &&
+        modelOptions.jevRouting?.mode === "active" &&
+        delegateTaskArgs.model_routing !== false
+      ) {
+        nativeSkillEntries = await loadNativeSkillEntries(options.nativeSkills)
+        const nativeInfos: SkillInfo[] = []
+        mergeNativeSkillInfos(nativeInfos, nativeSkillEntries, options.disabledSkills, options.directory)
+        const candidates = options.manager.nativeJobs ? nativeInfos : [...availableSkills, ...nativeInfos]
+        delegateTaskArgs.load_skills = await suggestDelegateSkills({
+          description: delegateTaskArgs.description,
+          skills: candidates,
+          disabledSkills: options.disabledSkills,
+          config: modelOptions.jevRouting,
+          modelRouting: delegateTaskArgs.model_routing,
+          signal: ctx.abort,
+        })
+      }
+
       const runInBackground = delegateTaskArgs.run_in_background === true
 
       const {
@@ -156,7 +179,7 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
       if (skillError) {
         return skillError
       }
-      const nativeSkillEntries = await loadNativeSkillEntries(options.nativeSkills)
+      nativeSkillEntries ??= await loadNativeSkillEntries(options.nativeSkills)
       const nativeSkillInfos = buildPromptNativeSkillInfos(availableSkills, nativeSkillEntries, options.disabledSkills)
 
       const continuationSystemContent = buildSystemContent({

@@ -38,7 +38,7 @@ type SelectorInput = {
   readonly fallback: string
   readonly modelRouting?: false
   readonly signal?: AbortSignal
-  readonly kind: "tier" | "agent"
+  readonly kind: "tier" | "agent" | "skill"
 }
 
 export type AgentLadderContext = {
@@ -128,6 +128,15 @@ export async function selectAgentWithJev(
 }
 
 export async function selectCandidateWithJev(input: SelectorInput): Promise<string> {
+  const selected = await selectCandidatesWithJev(input)
+  return selected[0] ?? input.fallback
+}
+
+export async function selectSkillsWithJev(input: Omit<SelectorInput, "fallback" | "kind">): Promise<string[]> {
+  return selectCandidatesWithJev({ ...input, fallback: "", kind: "skill" })
+}
+
+async function selectCandidatesWithJev(input: SelectorInput): Promise<string[]> {
   const { brief, config, fallback, candidates, modelRouting, signal, kind } = input
   signal?.throwIfAborted()
   const started = performance.now()
@@ -137,32 +146,41 @@ export async function selectCandidateWithJev(input: SelectorInput): Promise<stri
   let status = "disabled"
   let scores: Record<string, number> = {}
   let choice: string = fallback
+  const fallbackResult = kind === "skill" ? [] : [fallback]
   try {
-    if (config.mode === "off" || modelRouting === false) return fallback
+    if (config.mode === "off" || modelRouting === false || (kind === "skill" && config.mode !== "active"))
+      return fallbackResult
     if (new TextEncoder().encode(brief).length > MAX_BRIEF_BYTES) {
       status = "oversized_brief"
-      return fallback
+      return fallbackResult
     }
     const questions = Object.fromEntries(
       candidates.map(({ name: tier, description }, index) => {
-        const label = kind === "tier" ? "tier" : "agent"
+        const label = kind === "tier" ? "tier" : kind === "skill" ? "skill" : "agent"
         return [
           `tier_${index}`,
           {
             type: "noul",
-            instructions: `Score whether ${label} ${tier} is suitable for the current delegation brief. ${kind === "tier" ? "Category" : "Agent"} description: ${description}. Score suitability only, not price or model capability claims.`,
-            criteria: {
-              true: `The delegation brief is suitable for ${label} ${tier}: ${description}`,
-              false: `The delegation brief is not suitable for ${label} ${tier}.`,
-            },
+            instructions:
+              kind === "skill"
+                ? `Is skill ${tier} useful for this task? ${description}`
+                : `Score whether ${label} ${tier} is suitable for the current delegation brief. ${kind === "tier" ? "Category" : "Agent"} description: ${description}. Score suitability only, not price or model capability claims.`,
+            ...(kind === "skill"
+              ? {}
+              : {
+                  criteria: {
+                    true: `The delegation brief is suitable for ${label} ${tier}: ${description}`,
+                    false: `The delegation brief is not suitable for ${label} ${tier}.`,
+                  },
+                }),
           },
         ]
       }),
     )
     const body = JSON.stringify({ model: apiKey ? config.model : JEV_MODEL, state: brief, questions })
-    if (new TextEncoder().encode(body).length > MAX_REQUEST_BYTES) {
+    if (new TextEncoder().encode(body).length > (kind === "skill" ? 65536 : MAX_REQUEST_BYTES)) {
       status = "oversized_request"
-      return fallback
+      return fallbackResult
     }
     const timeout = AbortSignal.timeout(config.timeout_ms)
     const response = await fetch(apiKey ? TYPESAFE_URL : JEV_URL, {
@@ -174,18 +192,18 @@ export async function selectCandidateWithJev(input: SelectorInput): Promise<stri
     })
     if (!response.ok) {
       status = "http_error"
-      return fallback
+      return fallbackResult
     }
     const contentLength = response.headers.get("content-length")
     if (contentLength !== null && Number(contentLength) > MAX_RESPONSE_BYTES) {
       status = "malformed"
       void response.body?.cancel().catch(() => undefined)
-      return fallback
+      return fallbackResult
     }
     const reader = response.body?.getReader()
     if (!reader) {
       status = "malformed"
-      return fallback
+      return fallbackResult
     }
     const chunks: Uint8Array[] = []
     let size = 0
@@ -196,7 +214,7 @@ export async function selectCandidateWithJev(input: SelectorInput): Promise<stri
       if (size > MAX_RESPONSE_BYTES) {
         status = "malformed"
         void reader.cancel().catch(() => undefined)
-        return fallback
+        return fallbackResult
       }
       chunks.push(value)
     }
@@ -216,22 +234,25 @@ export async function selectCandidateWithJev(input: SelectorInput): Promise<stri
       expectedKeys.some((key) => !Object.hasOwn(parsed.data.answers, key))
     ) {
       status = "malformed"
-      return fallback
+      return fallbackResult
     }
     scores = Object.fromEntries(ladder.map((tier, index) => [tier, parsed.data.answers[`tier_${index}`]?.noul ?? 0]))
+    if (kind === "skill") {
+      status = "selected"
+      return ladder.filter((name) => (scores[name] ?? 0) >= 0.7)
+    }
     choice = ladder.find((tier) => (scores[tier] ?? 0) >= config.min_suitability) ?? fallback
     status = config.mode === "active" ? "selected" : "observed"
-    return config.mode === "active" ? choice : fallback
+    return [config.mode === "active" ? choice : fallback]
   } catch {
     status = "unavailable"
-    return fallback
+    return fallbackResult
   } finally {
     log(`[jev-routing] ${kind} decision`, {
       status,
       backend,
-      candidates: ladder,
-      scores,
-      ...(kind === "tier" ? { chosenCategory: choice } : { chosenAgent: choice }),
+      ...(kind === "skill" ? { candidate_count: ladder.length } : { candidates: ladder, scores }),
+      ...(kind === "tier" ? { chosenCategory: choice } : kind === "agent" ? { chosenAgent: choice } : {}),
       latency_ms: Math.round(performance.now() - started),
     })
     signal?.throwIfAborted()

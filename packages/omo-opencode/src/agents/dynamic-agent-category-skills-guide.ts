@@ -24,7 +24,7 @@ function buildSkillsSection(skills: AvailableSkill[]): string {
 **⚡ YOUR SKILLS (PRIORITY)**: ${customNames}
 
 > User-installed skills OVERRIDE built-in defaults. ALWAYS prefer YOUR SKILLS when domain matches.
-> Full skill descriptions → use the \`skill\` tool to check before EVERY delegation.`
+> Use the \`skill\` tool when you need a skill's full instructions.`
   }
 
   if (customSkills.length > 0) {
@@ -33,7 +33,7 @@ function buildSkillsSection(skills: AvailableSkill[]): string {
 **⚡ YOUR SKILLS (PRIORITY)**: ${customNames}
 
 > User-installed skills OVERRIDE built-in defaults. ALWAYS prefer YOUR SKILLS when domain matches.
-> Full skill descriptions → use the \`skill\` tool to check before EVERY delegation.`
+> Use the \`skill\` tool when you need a skill's full instructions.`
   }
 
   if (builtinSkills.length > 0) {
@@ -41,7 +41,7 @@ function buildSkillsSection(skills: AvailableSkill[]): string {
 
 **Built-in**: ${builtinNames}
 
-> Full skill descriptions → use the \`skill\` tool to check before EVERY delegation.`
+> Use the \`skill\` tool when you need a skill's full instructions.`
   }
 
   return ""
@@ -57,13 +57,7 @@ export function buildCategorySkillsDelegationGuide(categories: AvailableCategory
     return `- \`${category.name}\` - ${description}`
   })
 
-  const customSkills = skills.filter((skill) => skill.location !== "plugin")
   const skillsSection = buildSkillsSection(skills)
-  const customPriorityNote =
-    customSkills.length > 0
-      ? `
-> **User-installed skills get PRIORITY.** When in doubt, INCLUDE rather than omit.`
-      : ""
 
   return `### Category + Skills Delegation System
 
@@ -93,12 +87,8 @@ When explicitly selecting:
 - Match task requirements to category domain
 - Select the category whose domain BEST fits the task
 
-**STEP 2: Evaluate ALL Skills**
-Check the \`skill\` tool for available skills and their descriptions. For EVERY skill, ask:
-> "Does this skill's expertise domain overlap with my task?"
-
-- If YES → INCLUDE in \`load_skills=[...]\`
-- If NO → OMIT (no justification needed)${customPriorityNote}
+**STEP 2: Select skills when needed**
+Follow mandatory skill workflows and explicit skill requests. Pass their names in \`load_skills\`. Omit the field for best-effort suggestions when Jev routing is active. Suggestions can be empty, unavailable, or incomplete. Pass \`[]\` to select no skills, or pass multiple names when they apply.
 
 ---
 
@@ -106,15 +96,10 @@ Check the \`skill\` tool for available skills and their descriptions. For EVERY 
 
 \`\`\`typescript
 task(
-  load_skills=["skill-1", "skill-2"],  // Include ALL relevant skills - ESPECIALLY user-installed ones
+  load_skills=["skill-1", "skill-2"],
   run_in_background=true,
   prompt="..."
 )
-\`\`\`
-
-**ANTI-PATTERN (will produce poor results):**
-\`\`\`typescript
-task(category="...", load_skills=[], run_in_background=true, prompt="...")  // Empty load_skills without justification
 \`\`\`
 
 ---
