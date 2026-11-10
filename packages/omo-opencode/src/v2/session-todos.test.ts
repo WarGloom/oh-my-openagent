@@ -75,6 +75,45 @@ const task: Task = {
 }
 
 describe("V2 session todos", () => {
+  it.each(["single", "bulk"] as const)(
+    "preserves waiting metadata through %s sync and reload after an unrelated message",
+    async (mode) => {
+      // given
+      const store = storage()
+      const ctx = input({ ...createFakePluginContext().context, storage: store })
+      const waiting = { ...task, metadata: { priority: "high", waiting_on: "user" } }
+      // when
+      if (mode === "single") await syncTaskTodoUpdate(ctx, waiting, "ses_1")
+      else await syncAllTasksToTodos(ctx, [waiting], "ses_1")
+      const reloaded = input({
+        ...createFakePluginContext({
+          sessionMessages: [{ type: "user", id: "unrelated", time: { created: 2 }, text: "Show current progress" }],
+        }).context,
+        storage: store,
+      })
+      // then
+      const expected = [
+        { id: "T-1", content: "Port todos", status: "pending", priority: "high", metadata: { waiting_on: "user" } },
+      ]
+      expect((await reloaded.client.session.todo({ path: { id: "ses_1" } })).data).toEqual(expected)
+    },
+  )
+
+  it("clears waiting metadata only when the task marker is explicitly removed", async () => {
+    // given
+    const store = storage()
+    const context = { ...createFakePluginContext().context, storage: store }
+    const ctx = input(context)
+    await syncTaskTodoUpdate(ctx, { ...task, metadata: { waiting_on: "user" } }, "ses_1")
+    // when
+    await syncTaskTodoUpdate(ctx, task, "ses_1")
+    const reloaded = input({ ...context })
+    // then
+    expect((await reloaded.client.session.todo({ path: { id: "ses_1" } })).data).toEqual([
+      { id: "T-1", content: "Port todos", status: "pending", priority: "high" },
+    ])
+  })
+
   it("rebuilds the latest successful historical list in V1 shape before the plugin loaded", async () => {
     // given
     const fake = createFakePluginContext({
