@@ -213,7 +213,7 @@ export async function fixture(
   }
 }
 
-export async function completedFixture() {
+export async function completedFixture(status: "completed" | "error" = "completed") {
   const record = spyOn(ledger, "recordJevRouting").mockResolvedValue(undefined)
   cleanups.push(() => record.mockRestore())
   const f = await fixture({ cleanupDelay: 0 })
@@ -238,7 +238,7 @@ export async function completedFixture() {
     }),
   )
   const completed = f.manager.waitForNativeTask(task.id, new AbortController().signal)
-  f.finish(task.nativeAdmissionID ?? "")
+  f.finish(task.nativeAdmissionID ?? "", status)
   await completed
   await removed.promise
   const retained = backgroundTaskRecord.parse(f.stored.get(task.id))

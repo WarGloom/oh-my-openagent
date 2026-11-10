@@ -175,6 +175,8 @@ describe("executeBackgroundContinuation - subagent metadata", () => {
       ["missing", "no owned completed task"],
       ["foreign", "no owned completed task"],
       ["cancelled", "no owned completed task"],
+      ["error", "no owned completed task"],
+      ["native-error", "no owned completed task"],
       ["busy", "SDK session is busy"],
       ["api-error", "Invalid"],
       ["wrong-sdk-parent", "Invalid"],
@@ -189,8 +191,12 @@ describe("executeBackgroundContinuation - subagent metadata", () => {
           parentMessageId: "old",
           description: "old",
           agent: "sisyphus",
-          status: kind === "cancelled" ? "cancelled" : "completed",
+          status:
+            kind === "cancelled" ? "cancelled" : kind === "error" || kind === "native-error" ? "error" : "completed",
           model: { providerID: "test", modelID: "original" },
+          ...(kind === "native-error"
+            ? { nativeAdmissionID: "native", nativeRun: { childSessionID: id, generation: "1" } }
+            : {}),
         })
       const client = {
         session: {
