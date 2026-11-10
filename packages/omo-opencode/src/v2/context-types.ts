@@ -2,6 +2,7 @@ import type { V2ToastRpc } from "./toast-channel"
 import type { V2ExperimentalSkillDomain, V2SkillDomain, V2SubagentSkillsDomain } from "./native-skill-types"
 import type { NativeSubagentDomain } from "./native-subagent-types"
 import type { NativeWorktreeDomain } from "./native-team-worktrees"
+import type { NativeSessionHandoff } from "./session-handoff-types"
 
 /**
  * Structural view of the OpenCode 2.x plugin context (`@opencode/plugin` `Plugin.Context`).
@@ -712,6 +713,7 @@ export type V2ContinueAfterIdleInput = {
 }
 
 export type V2ExperimentalSessionDomain = {
+  readonly handoff?: NativeSessionHandoff
   /** Trusted process snapshot; undefined preserves host process inheritance. */
   readonly environment: (input: { readonly sessionID: string }) => Promise<Readonly<Record<string, string>> | undefined>
   /** Accepts a failed boundary, or an interrupted boundary journaled by this plugin's own `interrupt`. */
