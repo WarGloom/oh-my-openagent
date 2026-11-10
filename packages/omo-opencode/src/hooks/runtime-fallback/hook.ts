@@ -59,7 +59,10 @@ export function createRuntimeFallbackHook(
     max_fallback_attempts: options?.config?.max_fallback_attempts ?? DEFAULT_CONFIG.max_fallback_attempts,
     cooldown_seconds: options?.config?.cooldown_seconds ?? DEFAULT_CONFIG.cooldown_seconds,
     first_prompt_timeout_seconds:
-      options?.config?.first_prompt_timeout_seconds ?? DEFAULT_CONFIG.first_prompt_timeout_seconds,
+      options?.config?.first_prompt_timeout_seconds ??
+      options?.config?.first_progress_timeout_seconds ??
+      configuredTimeoutSeconds ??
+      DEFAULT_CONFIG.first_prompt_timeout_seconds,
     timeout_seconds: legacyTimeoutSeconds,
     first_progress_timeout_seconds: firstProgressTimeoutSeconds,
     stall_timeout_seconds:

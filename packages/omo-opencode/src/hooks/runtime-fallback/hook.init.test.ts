@@ -169,12 +169,12 @@ describe("createRuntimeFallbackHook initialization", () => {
     )
 
     // then
-    expect(watchdogMs).toBe(DEFAULT_CONFIG.first_progress_timeout_seconds * 1000)
+    expect(watchdogMs).toBe(DEFAULT_CONFIG.first_prompt_timeout_seconds * 1000)
   })
 
   test("#given runtime fallback timeout_seconds is configured #when the hook factory runs #then the first-prompt watchdog uses the configured timeout", () => {
     // given
-    const configuredTimeoutSeconds = 300
+    const configuredTimeoutSeconds = 17
     let watchdogMs: number | undefined
 
     // when
