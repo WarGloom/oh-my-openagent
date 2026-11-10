@@ -22,7 +22,7 @@ import { hasUnansweredQuestion } from "./pending-question-detection"
 import { resolveLatestMessageInfo } from "./resolve-message-info"
 import type { SessionStateStore } from "./session-state"
 import { shouldStopForStagnation } from "./stagnation-detection"
-import { getIncompleteCount } from "./todo"
+import { getActionableTodos, getIncompleteCount } from "./todo"
 import type { MessageWithInfo, ResolvedMessageInfo, SessionState, Todo } from "./types"
 
 function getCompactionGuardRemaining(state: SessionState, now: number): number {
@@ -203,11 +203,11 @@ export async function handleSessionIdle(args: {
     return
   }
 
-  const incompleteCount = getIncompleteCount(todos)
+  const actionableTodos = getActionableTodos(todos)
+  const incompleteCount = actionableTodos.length
   if (incompleteCount === 0) {
-    state.allTodosCompletedAt = Date.now()
+    state.allTodosCompletedAt = getIncompleteCount(todos) === 0 ? Date.now() : undefined
     sessionStateStore.resetContinuationProgress(sessionID)
-    log(`[${HOOK_NAME}] All todos complete`, { sessionID, total: todos.length })
     return
   }
 
@@ -334,7 +334,7 @@ export async function handleSessionIdle(args: {
     return
   }
 
-  const progressUpdate = sessionStateStore.trackContinuationProgress(sessionID, incompleteCount, todos)
+  const progressUpdate = sessionStateStore.trackContinuationProgress(sessionID, incompleteCount, actionableTodos)
   if (state.continuationBlockReason) {
     log(`[${HOOK_NAME}] Skipped: continuation paused at turn boundary`, {
       sessionID,

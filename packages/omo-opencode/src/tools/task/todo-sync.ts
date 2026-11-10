@@ -8,6 +8,7 @@ export interface TodoInfo {
   content: string
   status: "pending" | "in_progress" | "completed" | "cancelled"
   priority?: "low" | "medium" | "high"
+  readonly metadata?: { readonly waiting_on: "user" }
 }
 
 type TodoWriter = (input: { sessionID: string; todos: TodoInfo[] }) => Promise<void>
@@ -57,6 +58,7 @@ export function syncTaskToTodo(task: Task): TodoInfo | null {
     content: task.subject,
     status: todoStatus,
     priority: extractPriority(task.metadata) ?? "medium",
+    ...(task.metadata?.waiting_on === "user" ? { metadata: { waiting_on: "user" as const } } : {}),
   }
 }
 

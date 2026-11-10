@@ -20,6 +20,7 @@ export interface Todo {
   status: string
   priority: string
   id?: string
+  readonly metadata?: Readonly<Record<string, unknown>>
 }
 
 export interface SessionState {

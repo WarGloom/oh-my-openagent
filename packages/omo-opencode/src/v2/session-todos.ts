@@ -8,6 +8,7 @@ const todoSchema = z.object({
   status: z.enum(["pending", "in_progress", "completed", "cancelled"]),
   id: z.string().optional(),
   priority: z.enum(["low", "medium", "high"]).default("medium"),
+  metadata: z.record(z.string(), z.json()).optional(),
 })
 const todosSchema = z.array(todoSchema)
 const snapshotSchema = z.object({ todos: todosSchema, callID: z.string().optional() })
