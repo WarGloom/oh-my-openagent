@@ -6,6 +6,7 @@ import { installToolHooks } from "./tool-hooks"
 import { installSessionHooks } from "./session-hooks"
 import { installNativeSubagentModel } from "./native-subagent-model"
 import { installToolDefinitions } from "./tool-definition-bridge"
+import { registerSessionHandoff } from "./session-handoff"
 
 export type InstallHooksDeps = {
   readonly warn: (message: string) => void
@@ -23,6 +24,7 @@ export async function installHooks(
   deps: InstallHooksDeps,
 ): Promise<() => Promise<void>> {
   const registrations: V2Registration[] = []
+  registrations.push(await registerSessionHandoff(context))
 
   const tools = Object.entries(hooks.tool ?? {})
   if (tools.length > 0) {
