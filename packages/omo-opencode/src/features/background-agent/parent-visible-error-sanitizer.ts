@@ -1,7 +1,10 @@
+import { isRecord } from "@oh-my-opencode/utils"
+
 const MAX_PARENT_VISIBLE_ERROR_LENGTH = 2_000
 export const MAX_PARENT_VISIBLE_NOTIFICATION_LENGTH = 12_000
 const REDACTED = "[REDACTED]"
 const GENERIC_PARENT_VISIBLE_ERROR = "Task failed. Raw error details are available in internal logs."
+const NATIVE_ADMISSION_CONFLICT = "SubagentAdmission.Conflict: Active generation owner or completion differs"
 
 const SENSITIVE_FIELD_NAMES = [
   "Authorization",
@@ -286,6 +289,8 @@ export function formatParentVisibleError(error: string | undefined): string {
     return GENERIC_PARENT_VISIBLE_ERROR
   }
 
+  if (error === NATIVE_ADMISSION_CONFLICT) return NATIVE_ADMISSION_CONFLICT
+
   const normalized = error.toLowerCase()
 
   if (/\b(?:401|403)\b/.test(normalized)) {
@@ -317,6 +322,17 @@ export function formatParentVisibleError(error: string | undefined): string {
   return GENERIC_PARENT_VISIBLE_ERROR
 }
 
+export function diagnoseNativeAdmissionConflict(error: unknown): string | undefined {
+  if (
+    isRecord(error) &&
+    error["_tag"] === "SubagentAdmission.Conflict" &&
+    error["reason"] === "Active generation owner or completion differs"
+  ) {
+    return NATIVE_ADMISSION_CONFLICT
+  }
+  return undefined
+}
+
 export function limitParentVisibleNotification(notification: string): string {
   if (notification.length <= MAX_PARENT_VISIBLE_NOTIFICATION_LENGTH) {
     return notification
@@ -324,4 +340,110 @@ export function limitParentVisibleNotification(notification: string): string {
 
   const suffix = "\n… [notification truncated]"
   return `${notification.slice(0, MAX_PARENT_VISIBLE_NOTIFICATION_LENGTH - suffix.length)}${suffix}`
+}
+
+export type LaunchDenialPhase = "before-model-execution"
+
+export class PreModelSkillAcceptanceError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : "Native skill acceptance failed", { cause })
+  }
+}
+
+export interface LaunchDenialDiagnosis {
+  readonly kind: "permission-denied"
+  readonly permission: string
+  readonly resources: readonly string[]
+  readonly phase?: LaunchDenialPhase
+}
+
+const PERMISSION_BLOCKED_ERROR_TAG = "Permission.BlockedError"
+const MAX_DENIAL_RESOURCES = 20
+const SAFE_DENIAL_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+
+function toSafeDenialIdentifier(value: string): string {
+  const trimmed = value.trim()
+  if (!SAFE_DENIAL_IDENTIFIER.test(trimmed)) {
+    return REDACTED
+  }
+  if (sanitizeParentVisibleError(trimmed) !== trimmed) {
+    return REDACTED
+  }
+  return trimmed
+}
+
+function readPermissionBlock(candidate: unknown): { permission: string; resources: string[] } | undefined {
+  if (!isRecord(candidate)) {
+    return undefined
+  }
+
+  const tag = candidate["_tag"] ?? candidate["name"]
+  if (tag !== PERMISSION_BLOCKED_ERROR_TAG) {
+    return undefined
+  }
+
+  const permission = candidate["permission"]
+  if (typeof permission !== "string" || permission.trim().length === 0) {
+    return undefined
+  }
+
+  const rawResources = candidate["resources"]
+  if (!Array.isArray(rawResources)) {
+    return undefined
+  }
+
+  const resources = rawResources.filter(
+    (entry): entry is string => typeof entry === "string" && entry.trim().length > 0,
+  )
+  if (resources.length === 0) {
+    return undefined
+  }
+
+  return { permission, resources }
+}
+
+export function diagnoseLaunchDenial(error: unknown): LaunchDenialDiagnosis | undefined {
+  const candidates: unknown[] = [error]
+  if (isRecord(error)) {
+    candidates.push(error["cause"], error["data"])
+  }
+
+  for (const candidate of candidates) {
+    const block = readPermissionBlock(candidate)
+    if (!block) {
+      continue
+    }
+
+    return {
+      kind: "permission-denied",
+      permission: toSafeDenialIdentifier(block.permission),
+      resources: block.resources.slice(0, MAX_DENIAL_RESOURCES).map(toSafeDenialIdentifier),
+    }
+  }
+
+  return undefined
+}
+
+export function formatLaunchDenialDiagnosis(diagnosis: LaunchDenialDiagnosis): string {
+  const quotedResources = diagnosis.resources.map((resource) => `"${resource}"`).join(", ")
+  const verb = diagnosis.resources.length === 1 ? "was denied" : "were denied"
+  const base = `Launch blocked: ${diagnosis.permission} ${quotedResources} ${verb}.`
+  const executionNote = diagnosis.phase === "before-model-execution" ? " Model execution did not start." : ""
+
+  return `${base}${executionNote}`
+}
+
+export function resolveParentVisibleTaskError(input: {
+  readonly error?: string
+  readonly launchDenial?: LaunchDenialDiagnosis
+}): string | undefined {
+  if (input.launchDenial) {
+    return formatLaunchDenialDiagnosis(input.launchDenial)
+  }
+
+  if (input.error && input.error.trim().length > 0) {
+    return formatParentVisibleError(input.error)
+  }
+
+  return undefined
 }

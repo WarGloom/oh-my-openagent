@@ -65,6 +65,11 @@ import {
   type BackgroundTaskNotificationTask,
   buildBackgroundTaskNotificationText,
 } from "./background-task-notification-template"
+import {
+  diagnoseLaunchDenial,
+  diagnoseNativeAdmissionConflict,
+  PreModelSkillAcceptanceError,
+} from "./parent-visible-error-sanitizer"
 import { writeBackgroundTaskMarker } from "./background-task-marker"
 import {
   findNearestMessageExcludingCompaction,
@@ -1028,22 +1033,26 @@ export class BackgroundManager {
           log("[background-agent] Error starting task:", error)
           this.rollbackPreStartDescendantReservation(item.task)
           if (this.getTask(item.task.id)?.status === "cancelled") {
-            this.concurrencyManager.release(key)
+            if (!item.task.nativeInheritedPermit) this.concurrencyManager.release(key)
             continue
+          }
+          const launchDenial = diagnoseLaunchDenial(error)
+          const errorMessage =
+            diagnoseNativeAdmissionConflict(error) ?? (error instanceof Error ? error.message : String(error))
+          if (launchDenial) {
+            item.task.launchDenial =
+              error instanceof PreModelSkillAcceptanceError
+                ? { ...launchDenial, phase: "before-model-execution" }
+                : launchDenial
           }
 
           // Mark task as error so the parent polling loop detects the failure
           // instead of leaving it in a zombie "running" state with no prompt sent
           if (item.task.currentAttemptID) {
-            finalizeAttempt(
-              item.task,
-              item.task.currentAttemptID,
-              "error",
-              error instanceof Error ? error.message : String(error),
-            )
+            finalizeAttempt(item.task, item.task.currentAttemptID, "error", errorMessage)
           } else {
             item.task.status = "error"
-            item.task.error = error instanceof Error ? error.message : String(error)
+            item.task.error = errorMessage
             item.task.completedAt = new Date()
           }
           this.clearFallbackRetryResultsForTask(item.task)
@@ -4066,6 +4075,7 @@ export class BackgroundManager {
       description: task.description,
       status: task.status,
       error: task.error,
+      launchDenial: task.launchDenial,
       attempts: cloneAttempts(task),
     })
 
@@ -4105,6 +4115,7 @@ export class BackgroundManager {
             description: task.description,
             status: task.status,
             error: task.error,
+            launchDenial: task.launchDenial,
             attempts: cloneAttempts(task),
           },
         ])

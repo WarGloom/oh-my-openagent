@@ -367,3 +367,73 @@ describe("buildBackgroundTaskNotificationText", () => {
     })
   })
 })
+
+describe("buildBackgroundTaskNotificationText launch denial", () => {
+  test("#given a launch blocked before model execution #when building the partial notification #then it shows the safe denial line, not the generic error", () => {
+    // when
+    const notification = buildBackgroundTaskNotificationText({
+      task: {
+        id: "task-1",
+        description: "Index repo",
+        status: "error",
+        error: "Permission denied: skill",
+        launchDenial: {
+          kind: "permission-denied",
+          permission: "skill",
+          resources: ["codebase-memory"],
+          phase: "before-model-execution",
+        },
+      },
+      duration: "0s",
+      statusText: "ERROR",
+      allComplete: false,
+      remainingCount: 1,
+      completedTasks: [],
+    })
+
+    // then
+    expect(notification).toContain('Launch blocked: skill "codebase-memory" was denied. Model execution did not start.')
+    expect(notification).not.toContain("Task failed. Raw error details")
+  })
+
+  test("#given an all-complete batch with a denied task #when building the notification #then the summary line carries the denial", () => {
+    // when
+    const notification = buildBackgroundTaskNotificationText({
+      task: {
+        id: "task-1",
+        description: "Index repo",
+        status: "error",
+        error: "Permission denied: skill",
+        launchDenial: {
+          kind: "permission-denied",
+          permission: "skill",
+          resources: ["codebase-memory"],
+          phase: "before-model-execution",
+        },
+      },
+      duration: "0s",
+      statusText: "ERROR",
+      allComplete: true,
+      allTasksComplete: true,
+      remainingCount: 0,
+      completedTasks: [
+        {
+          id: "task-1",
+          description: "Index repo",
+          status: "error",
+          error: "Permission denied: skill",
+          launchDenial: {
+            kind: "permission-denied",
+            permission: "skill",
+            resources: ["codebase-memory"],
+            phase: "before-model-execution",
+          },
+        },
+      ],
+    })
+
+    // then
+    expect(notification).toContain('Launch blocked: skill "codebase-memory" was denied. Model execution did not start.')
+    expect(notification).not.toContain("Task failed. Raw error details")
+  })
+})

@@ -143,3 +143,40 @@ describe("formatFullSession", () => {
     expect(output).not.toContain("PROMPT_2")
   })
 })
+
+describe("formatFullSession launch denial", () => {
+  test("#given a current failure and historical messages #when formatting #then the current error and history are visible", async () => {
+    const task = { ...makeTask(), status: "error" as const, error: "429 quota exceeded" }
+    const output = await formatFullSession(
+      task,
+      makeClient([makeMessage("old", "assistant", "Historical response", 1)]),
+      {
+        includeThinking: false,
+        includeToolResults: false,
+      },
+    )
+    expect(output).toContain("Provider rate limit or quota error")
+    expect(output).toContain("Historical response")
+  })
+  test("#given an empty child session from a blocked launch #when formatting #then the denial line precedes the no-messages marker", async () => {
+    const task = {
+      ...makeTask(),
+      status: "error" as const,
+      launchDenial: {
+        kind: "permission-denied" as const,
+        permission: "skill",
+        resources: ["codebase-memory"],
+        phase: "before-model-execution" as const,
+      },
+    }
+    const client = makeClient([])
+
+    const output = await formatFullSession(task, client, {
+      includeThinking: false,
+      includeToolResults: false,
+    })
+
+    expect(output).toContain('Launch blocked: skill "codebase-memory" was denied. Model execution did not start.')
+    expect(output).toContain("(No messages found)")
+  })
+})

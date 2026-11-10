@@ -1,4 +1,5 @@
 import type { BackgroundTask } from "../../features/background-agent"
+import { resolveParentVisibleTaskError } from "../../features/background-agent/parent-visible-error-sanitizer"
 import type { BackgroundOutputClient, BackgroundOutputMessagesResult, BackgroundOutputMessage } from "./clients"
 import { extractMessages, getErrorMessage } from "./session-messages"
 import { formatMessageTime } from "./time-format"
@@ -129,6 +130,8 @@ export async function formatFullSession(
   lines.push(`Total messages: ${normalizedMessages.length}`)
   lines.push(`Returned: ${visibleMessages.length}`)
   lines.push(`Has more: ${hasMore ? "true" : "false"}`)
+  const resolvedError = resolveParentVisibleTaskError(task)
+  if (resolvedError) lines.push(`Current task error: ${resolvedError}`)
   lines.push("")
   lines.push("## Messages")
 
