@@ -39,6 +39,17 @@ export const frozenVectors = [
   },
 ] as const
 
+export const nonVisualVectors = [
+  [
+    0.52, 0, 0.36, 0.12, 0, 0, 0, 0.09, 0.28, 0.01, 0.09, 0.28, 0.4, 0.22, 0.07, 0.67, 0.65, 0.05, 0.06, 0.07, 0.01, 0,
+    0.01, 0.91, 0.75, 0.76, 0.12, 0.13,
+  ],
+  [
+    0.97, 0, 0.01, 0.02, 0, 0, 0, 0.09, 0.28, 0.01, 0.27, 0.33, 0.2, 0.19, 0.12, 0.66, 0.29, 0.03, 0.06, 0.01, 0.04,
+    0.02, 0, 0.93, 0.28, 0.38, 0.11, 0.12,
+  ],
+] as const
+
 export function categoryReply(vector: readonly number[] = frozenVectors[0].vector) {
   const features = new Map(FROZEN_ROUTER.features.map((name, index) => [String(name), vector[index]]))
   const answers = Object.fromEntries(
