@@ -18,6 +18,7 @@ export interface OutputLine {
   stream: OutputStreamType
   seq: number
   text: string
+  capturedAt?: number
   truncated?: boolean
 }
 
