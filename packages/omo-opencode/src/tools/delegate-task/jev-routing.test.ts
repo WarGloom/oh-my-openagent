@@ -124,23 +124,23 @@ describe("Jev frozen category routing", () => {
     )
   })
 
-  test.each([
-    { brief: "", status: "none", reason: "empty_prompt" },
-    { brief: "Read missing-plan.md", status: "unresolved", reason: "referenced_brief_unresolved" },
-  ])("would-block diagnostics remain ledger-only for $reason", async ({ brief, status, reason }) => {
-    expect(await selectCategoryTierWithJev(input({ brief, directory }))).toBe("visual-engineering")
-    expect(ledgerSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        brief_status: status,
-        would_block: true,
-        reason_codes: expect.arrayContaining([reason]),
-      }),
-    )
-    const state = JSON.parse(fetchSpy.mock.calls[0]?.[1]?.body).state
-    expect(Object.keys(state)).toEqual(["task", "facts"])
-    expect(state.task.brief_status).toBeUndefined()
-    expect(state.task.would_block).toBeUndefined()
-  })
+  test.each([{ brief: "", status: "none", reason: "empty_prompt" }])(
+    "would-block diagnostics remain ledger-only for $reason",
+    async ({ brief, status, reason }) => {
+      expect(await selectCategoryTierWithJev(input({ brief, directory }))).toBe("visual-engineering")
+      expect(ledgerSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          brief_status: status,
+          would_block: true,
+          reason_codes: expect.arrayContaining([reason]),
+        }),
+      )
+      const state = JSON.parse(fetchSpy.mock.calls[0]?.[1]?.body).state
+      expect(Object.keys(state)).toEqual(["task", "facts"])
+      expect(state.task.brief_status).toBeUndefined()
+      expect(state.task.would_block).toBeUndefined()
+    },
+  )
 
   test.each(["off", "bypass"])("%s uses the default without a request", async (mode) => {
     expect(

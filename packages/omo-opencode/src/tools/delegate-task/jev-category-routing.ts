@@ -24,6 +24,17 @@ export type JevCategoryInput = {
   readonly onFallback?: (reason: string, category: string) => void
 }
 
+export class JevIncompleteInputError extends Error {
+  readonly name = "JevIncompleteInputError"
+  readonly code = "incomplete_input"
+
+  constructor() {
+    super(
+      "Automatic category routing requires a complete referenced brief. Provide the permitted brief inline or choose an explicit category or agent.",
+    )
+  }
+}
+
 export function getCategoryRoutingEligibility(input: Pick<JevCategoryInput, "config" | "enabledCategories">) {
   const fallback = input.config?.default
   const validDefault =
@@ -105,6 +116,14 @@ export async function routeCategoryWithJev(input: JevCategoryInput): Promise<str
     briefStatus = built.briefStatus
     if (briefStatus === "unresolved") reasons.push("referenced_brief_unresolved", ...built.briefReasons)
     input.signal?.throwIfAborted()
+    if (briefStatus === "unresolved") {
+      error = "incomplete_input"
+      if (mode === "active") {
+        chosen = undefined
+        throw new JevIncompleteInputError()
+      }
+      return chosen
+    }
     const body = JSON.stringify({ model, state: built.state, questions: questions() })
     if (Buffer.byteLength(body) + 2048 > 65536) {
       error = "oversized_request"
@@ -147,12 +166,20 @@ export async function routeCategoryWithJev(input: JevCategoryInput): Promise<str
     if (mode === "active") chosen = selected
     return chosen
   } catch (cause) {
-    if (!(cause instanceof Error)) throw cause
+    if (cause instanceof JevIncompleteInputError || !(cause instanceof Error)) throw cause
     if (input.signal?.aborted) error = "cancelled"
     else if (cause.name === "TimeoutError" || cause.name === "AbortError") error = "unavailable"
     return chosen
   } finally {
-    if (!explicit && error && fallback && chosen === fallback && error !== "disabled" && error !== "cancelled")
+    if (
+      !explicit &&
+      error &&
+      fallback &&
+      chosen === fallback &&
+      error !== "disabled" &&
+      error !== "cancelled" &&
+      error !== "incomplete_input"
+    )
       input.onFallback?.(error, fallback)
     recordJevRouting({
       schema_version: 1,
