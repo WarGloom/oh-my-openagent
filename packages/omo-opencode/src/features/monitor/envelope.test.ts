@@ -48,6 +48,27 @@ describe("#given monitor output envelope formatting", () => {
         expect(output).toContain("[stderr seq=43] another line")
       })
 
+      it("shows each captured UTC time in order and marks missing times unknown", () => {
+        const batch: OutputBatch = {
+          monitorId: "mon_test",
+          batchSeq: 3,
+          stillRunning: true,
+          lines: [
+            { stream: "stdout", seq: 42, text: "first", capturedAt: Date.parse("2026-11-11T10:34:56.789Z") },
+            { stream: "stderr", seq: 43, text: "second", capturedAt: Date.parse("2026-11-11T11:35:57.000Z") },
+            { stream: "stdout", seq: 44, text: "legacy" },
+          ],
+        }
+
+        const output = formatMonitorBatch(baseRecord, batch, baseCounters)
+
+        expect(output).toContain(
+          "captured_at: 2026-11-11 10:34:56 UTC\n[stdout seq=42] first\n" +
+            "captured_at: 2026-11-11 11:35:57 UTC\n[stderr seq=43] second\n" +
+            "captured_at: unknown\n[stdout seq=44] legacy",
+        )
+      })
+
       it("reports running status", () => {
         // given
         const batch = createBatch({ stillRunning: true })
