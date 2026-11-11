@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test"
+import type { z } from "zod"
 import { createFakePluginContext } from "./fake-plugin-context"
 import { registerSessionHandoff } from "./session-handoff"
-import type { HandoffBinding, NativeHandoffReceipt } from "./session-handoff-types"
-import type { V2PluginContext, V2ToolExecuteContext } from "./context-types"
+import type { HandoffBinding, NativeHandoffReceipt, SessionIdentity } from "./session-handoff-types"
+import type { V2PluginContext, V2SessionInfo, V2ToolExecuteContext } from "./context-types"
 
 const invocation: V2ToolExecuteContext = {
   sessionID: "ses_sender",
@@ -14,20 +15,36 @@ const invocation: V2ToolExecuteContext = {
 }
 const request = { action: "send", sessionID: "ses_target", text: "Repair the missing failure response" }
 
-async function fixture(answer: readonly string[] = ["Send and wake"]) {
+async function fixture(answer: readonly string[] = ["Send and wake"], crossProject = true) {
   const fake = createFakePluginContext({ sessionAgent: "sisyphus" })
   const questions: unknown[] = []
+  const inspected: HandoffBinding[] = []
   const admitted: HandoffBinding[] = []
+  const source = await fake.context.session.get({ sessionID: invocation.sessionID })
+  const target = {
+    ...(await fake.context.session.get({ sessionID: request.sessionID })),
+    projectID: crossProject ? "proj_recipient" : source.projectID,
+    location: { directory: "/work/recipient" },
+    agent: "recipient-agent",
+  }
+  const sessions = new Map<string, V2SessionInfo & z.infer<typeof SessionIdentity>>([
+    [source.id, source],
+    [target.id, target],
+  ])
   let approved: HandoffBinding | undefined
   let onQuestion: (() => void) | undefined
   const context: V2PluginContext = {
     ...fake.context,
     session: {
       ...fake.context.session,
-      get: async (input) => ({ ...(await fake.context.session.get(input)), title: `Work ${input.sessionID}` }),
+      get: async (input) => {
+        const session = sessions.get(input.sessionID)
+        if (!session) throw new Error("Unknown fixture session")
+        return { ...session, title: `Work ${input.sessionID}` }
+      },
       list: async () => ({
         data: await Promise.all(
-          ["ses_sender", "ses_target", "ses_other"].map(async (sessionID) => ({
+          ["ses_sender", "ses_local", "ses_other"].map(async (sessionID) => ({
             ...(await fake.context.session.get({ sessionID })),
             ...(sessionID === "ses_other" ? { projectID: "other" } : {}),
           })),
@@ -40,7 +57,8 @@ async function fixture(answer: readonly string[] = ["Send and wake"]) {
       session: {
         ...fake.context.experimental.session,
         handoff: async (input): Promise<NativeHandoffReceipt> => {
-          if (!input.commit)
+          if (!input.commit) {
+            inspected.push(input)
             return {
               id: "msg_durable",
               sessionID: input.target.sessionID,
@@ -48,6 +66,7 @@ async function fixture(answer: readonly string[] = ["Send and wake"]) {
               duplicate: approved !== undefined,
               wakeScheduled: false,
             }
+          }
           admitted.push(input)
           approved = input
           return {
@@ -79,7 +98,11 @@ async function fixture(answer: readonly string[] = ["Send and wake"]) {
   return {
     fake,
     context,
+    source,
+    target,
+    sessions,
     questions,
+    inspected,
     admitted,
     registration,
     onQuestion: (callback: () => void) => {
@@ -89,25 +112,42 @@ async function fixture(answer: readonly string[] = ["Send and wake"]) {
   }
 }
 
-test("asks the user with the exact recipient, content and wake before native admission despite permission allow", async () => {
-  const f = await fixture()
-  const result = await f.execute()
-  expect(f.questions).toHaveLength(1)
-  expect(JSON.stringify(f.questions[0])).toContain(request.text)
-  expect(JSON.stringify(f.questions[0])).toContain(request.sessionID)
-  expect(f.admitted).toHaveLength(1)
-  expect(f.admitted[0]).toMatchObject({
-    text: request.text,
-    target: { sessionID: request.sessionID, projectID: "proj_1" },
-    sender: {
-      sessionID: invocation.sessionID,
-      agent: invocation.agent,
-      messageID: invocation.messageID,
-      callID: invocation.id,
-    },
-  })
-  expect(JSON.parse(String(result.content))).toMatchObject({ status: "admitted", wakeScheduled: true })
-})
+test.each([false, true])(
+  "asks with both exact scopes before native admission with crossProject=%s",
+  async (crossProject) => {
+    const f = await fixture(["Send and wake"], crossProject)
+    const result = await f.execute()
+    expect(f.questions).toHaveLength(1)
+    for (const value of [
+      request.text,
+      f.source.id,
+      f.source.projectID,
+      f.source.location.directory,
+      f.target.id,
+      f.target.projectID,
+      f.target.location.directory,
+      f.target.agent,
+    ])
+      expect(JSON.stringify(f.questions[0])).toContain(value)
+    expect(f.admitted).toHaveLength(1)
+    expect(f.admitted[0]).toMatchObject({
+      text: request.text,
+      target: {
+        sessionID: request.sessionID,
+        projectID: f.target.projectID,
+        location: f.target.location,
+        agent: f.target.agent,
+      },
+      sender: {
+        sessionID: invocation.sessionID,
+        agent: invocation.agent,
+        messageID: invocation.messageID,
+        callID: invocation.id,
+      },
+    })
+    expect(JSON.parse(String(result.content))).toMatchObject({ status: "admitted", wakeScheduled: true })
+  },
+)
 
 test.each([{ answer: ["Cancel"] }, { answer: [] }, { answer: ["Send and wake", "Cancel"] }, { answer: ["yes"] }])(
   "admits nothing for a non-approval answer $answer",
@@ -142,6 +182,67 @@ test("propagates a dismissed native question without admitting or waking", async
   expect(f.admitted).toEqual([])
 })
 
+test("admits nothing when the original invocation aborts during approval", async () => {
+  const f = await fixture()
+  const controller = new AbortController()
+  f.onQuestion(() => controller.abort())
+  await expect(f.execute(request, { ...invocation, signal: controller.signal })).rejects.toThrow()
+  expect(f.inspected).toHaveLength(1)
+  expect(f.admitted).toEqual([])
+})
+
+test.each(["workspace", "child", "archived"] as const)(
+  "rejects an ineligible recipient before approval: %s",
+  async (boundary) => {
+    const f = await fixture()
+    switch (boundary) {
+      case "workspace":
+        f.sessions.set(f.target.id, { ...f.target, location: { ...f.target.location, workspaceID: "wrk_remote" } })
+        break
+      case "child":
+        f.sessions.set(f.target.id, { ...f.target, parentID: f.source.id })
+        break
+      case "archived":
+        f.sessions.set(f.target.id, { ...f.target, time: { ...f.target.time, archived: 3_000 } })
+        break
+      default: {
+        const exhaustive: never = boundary
+        return exhaustive
+      }
+    }
+    await expect(f.execute()).rejects.toThrow()
+    expect(f.questions).toEqual([])
+    expect(f.inspected).toEqual([])
+    expect(f.admitted).toEqual([])
+  },
+)
+
+test.each(["project", "directory", "workspace"] as const)(
+  "keeps the sender bound to its current host scope: %s",
+  async (boundary) => {
+    const f = await fixture()
+    switch (boundary) {
+      case "project":
+        f.sessions.set(f.source.id, { ...f.source, projectID: "proj_substitute" })
+        break
+      case "directory":
+        f.sessions.set(f.source.id, { ...f.source, location: { directory: "/work/moved-sender" } })
+        break
+      case "workspace":
+        f.sessions.set(f.source.id, { ...f.source, location: { ...f.source.location, workspaceID: "wrk_remote" } })
+        break
+      default: {
+        const exhaustive: never = boundary
+        return exhaustive
+      }
+    }
+    await expect(f.execute()).rejects.toThrow()
+    expect(f.questions).toEqual([])
+    expect(f.inspected).toEqual([])
+    expect(f.admitted).toEqual([])
+  },
+)
+
 test("joins duplicate in-flight invocations and uses the native receipt instead of asking again after admission", async () => {
   const f = await fixture()
   await Promise.all([f.execute(), f.execute()])
@@ -166,7 +267,7 @@ test("rejects a substituted target or message under an active invocation", async
 test("discovers only other work sessions in the exact project using session metadata", async () => {
   const f = await fixture()
   const result = JSON.parse(String((await f.execute({ action: "list" })).content))
-  expect(result.candidates.map((entry: { sessionID: string }) => entry.sessionID)).toEqual(["ses_target"])
+  expect(result.candidates.map((entry: { sessionID: string }) => entry.sessionID)).toEqual(["ses_local"])
   expect(f.questions).toEqual([])
   expect(f.admitted).toEqual([])
 })
