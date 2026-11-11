@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import type { CategoryConfig, JevRoutingConfig } from "../../config/schema"
 import { MODEL, parseJevCategoryResponse, questions } from "./jev-router-model"
-import { applyJevDecisionRule, selectJevArtifact } from "./jev-router-artifacts"
+import { applyJevDecisionRule, JevVisualDomainError, selectJevArtifact } from "./jev-router-artifacts"
 import { buildJevState } from "./jev-router-state"
 import { recordJevRouting, type JevDecisionRecord } from "./jev-routing-ledger"
 import { warnJevRouting } from "../../shared/jev-routing-health"
@@ -157,7 +157,8 @@ export async function routeCategoryWithJev(input: JevCategoryInput): Promise<str
       return chosen
     }
     result = parsed
-    const selected = applyJevDecisionRule(result.ranking, artifact.rule)
+    input.signal?.throwIfAborted()
+    const selected = applyJevDecisionRule(result.ranking, artifact.rule, result.answers)
     if (!Object.hasOwn(input.enabledCategories, selected) || input.enabledCategories[selected] === undefined) {
       error = "category_unavailable"
       return chosen
@@ -166,6 +167,15 @@ export async function routeCategoryWithJev(input: JevCategoryInput): Promise<str
     if (mode === "active") chosen = selected
     return chosen
   } catch (cause) {
+    if (cause instanceof JevVisualDomainError) {
+      error = cause.code
+      reasons.push(cause.code)
+      if (mode === "active") {
+        chosen = undefined
+        throw cause
+      }
+      return chosen
+    }
     if (cause instanceof JevIncompleteInputError || !(cause instanceof Error)) throw cause
     if (input.signal?.aborted) error = "cancelled"
     else if (cause.name === "TimeoutError" || cause.name === "AbortError") error = "unavailable"
@@ -178,7 +188,9 @@ export async function routeCategoryWithJev(input: JevCategoryInput): Promise<str
       chosen === fallback &&
       error !== "disabled" &&
       error !== "cancelled" &&
-      error !== "incomplete_input"
+      error !== "incomplete_input" &&
+      error !== "domain_conflict" &&
+      error !== "domain_uncertain"
     )
       input.onFallback?.(error, fallback)
     recordJevRouting({
@@ -203,7 +215,11 @@ export async function routeCategoryWithJev(input: JevCategoryInput): Promise<str
       backend,
       error,
       brief_status: briefStatus,
-      would_block: reasons.includes("empty_prompt") || reasons.includes("referenced_brief_unresolved"),
+      would_block:
+        reasons.includes("empty_prompt") ||
+        reasons.includes("referenced_brief_unresolved") ||
+        reasons.includes("domain_conflict") ||
+        reasons.includes("domain_uncertain"),
       reason_codes: reasons,
       config_generation:
         input.configGeneration ?? createHash("sha256").update(JSON.stringify(input.enabledCategories)).digest("hex"),
