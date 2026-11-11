@@ -1,4 +1,5 @@
 import { isPlainRecord } from "@oh-my-opencode/utils"
+import { JevRoutingConfigSchema } from "../config/schema/jev-routing"
 import {
   loadOmoConfig,
   mergeOmoConfigRecords,
@@ -23,6 +24,7 @@ export type OmoOpenCodeConfigChain = {
   readonly diagnostics: readonly (OmoConfigDiagnostic | OmoModelReferenceDiagnostic)[]
   readonly protectedUserView: Record<string, unknown>
   readonly views: readonly OmoOpenCodeConfigView[]
+  readonly explicitJevArtifactId?: string
 }
 
 const NON_PLUGIN_FIELDS = new Set(["legacy_migrations", "models", "task", "teams"])
@@ -168,6 +170,9 @@ export function loadOmoOpenCodeConfigChain(
     harness: "opencode",
     ...(loaded.profile === undefined ? {} : { profile: loaded.profile }),
   })
+  const rawArtifact = recordFields(resolved.config.jev_routing, ["artifact_id"])
+  const explicitArtifact =
+    rawArtifact === undefined ? undefined : JevRoutingConfigSchema.shape.artifact_id.safeParse(rawArtifact.artifact_id)
   const views: OmoOpenCodeConfigView[] = []
   const selectedProfile = loaded.profile
 
@@ -197,5 +202,6 @@ export function loadOmoOpenCodeConfigChain(
     diagnostics: [...loaded.diagnostics, ...resolvedModels.diagnostics],
     protectedUserView,
     views,
+    ...(explicitArtifact?.success ? { explicitJevArtifactId: explicitArtifact.data } : {}),
   }
 }
