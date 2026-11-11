@@ -4,6 +4,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { validatePluginConfig } from "./validate"
+import { JevRoutingConfigSchema } from "./schema/jev-routing"
+import { PG_ARTIFACT, VISUAL_GUARDED_ARTIFACT } from "../tools/delegate-task/jev-router-artifacts"
 
 function withProjectConfig<T>(name: string, config: unknown, run: (project: string) => T): T {
   const home = process.env.HOME
@@ -35,6 +37,83 @@ function withProjectConfig<T>(name: string, config: unknown, run: (project: stri
 }
 
 describe("validatePluginConfig pipeline", () => {
+  it.each([
+    {
+      name: "inherited-user-pin",
+      user: VISUAL_GUARDED_ARTIFACT.artifact_id,
+      project: undefined,
+      expected: VISUAL_GUARDED_ARTIFACT.artifact_id,
+    },
+    {
+      name: "explicit-project-pin",
+      user: VISUAL_GUARDED_ARTIFACT.artifact_id,
+      project: PG_ARTIFACT.artifact_id,
+      expected: PG_ARTIFACT.artifact_id,
+    },
+    { name: "legacy-user-pin", user: PG_ARTIFACT.artifact_id, project: undefined, expected: PG_ARTIFACT.artifact_id },
+    { name: "no-pin", user: undefined, project: undefined, expected: PG_ARTIFACT.artifact_id },
+    {
+      name: "project-only-pin",
+      user: undefined,
+      project: VISUAL_GUARDED_ARTIFACT.artifact_id,
+      expected: VISUAL_GUARDED_ARTIFACT.artifact_id,
+    },
+  ])(
+    "preserves artifact precedence without changing project routing for $name",
+    ({ name, user, project, expected }) => {
+      const routing = {
+        mode: "observe",
+        default: "project-default",
+        model: "project-model",
+        timeout_ms: 1234,
+        min_suitability: 0.8,
+        api_key_env: "PROJECT_JEV_KEY",
+        ladder: ["quick", "deep-low"],
+        agent_ladders: {
+          worker: { ladder: ["cheap", "capable"], default: "capable", suitability: { cheap: "Settled changes" } },
+        },
+        ...(project === undefined ? {} : { artifact_id: project }),
+      }
+      withProjectConfig(
+        name,
+        {
+          "[opencode]": {
+            jev_routing: routing,
+            categories: { quick: { model: "provider/quick", temperature: "hot" } },
+          },
+        },
+        (directory) => {
+          const home = process.env.HOME
+          if (!home) throw new RangeError("Missing isolated fixture home")
+          mkdirSync(join(home, ".omo"))
+          writeFileSync(
+            join(home, ".omo", "omo.jsonc"),
+            JSON.stringify({
+              "[opencode]": {
+                mcp_env_allowlist: ["USER_SAFE"],
+                jev_routing: {
+                  mode: "active",
+                  default: "user-default",
+                  model: "user-model",
+                  timeout_ms: 4000,
+                  ...(user === undefined ? {} : { artifact_id: user }),
+                },
+              },
+            }),
+          )
+          const result = validatePluginConfig(directory)
+          expect(result.config.jev_routing).toEqual({ ...JevRoutingConfigSchema.parse(routing), artifact_id: expected })
+          expect(result.config.mcp_env_allowlist).toEqual(["USER_SAFE"])
+          expect(result.valid).toBe(true)
+          expect(result.messages).toEqual([])
+          expect(result.warnings).toEqual([
+            "config: ~/project/.omo/omo.jsonc: [opencode].categories.quick.temperature ignored (invalid value)",
+          ])
+        },
+      )
+    },
+  )
+
   it("#given unsafe own permission keys beside valid agent and TUI values #when validating #then ignores and reports the keys without crashing or dropping valid siblings", () => {
     withProjectConfig(
       "unsafe-own-keys",

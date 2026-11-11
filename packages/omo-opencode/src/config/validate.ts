@@ -228,6 +228,9 @@ export function validatePluginConfig(
     prunePluginView({ config: chain.protectedUserView, homeDir, keyPrefix: "", path: "" }).config,
   )
   const modelConfigBase = protectUserFields(mergeViews(views), userConfig)
+  if (chain.explicitJevArtifactId !== undefined && modelConfigBase.jev_routing !== undefined) {
+    modelConfigBase.jev_routing = { ...modelConfigBase.jev_routing, artifact_id: chain.explicitJevArtifactId }
+  }
   const config = materializeAgentModelChains(applyDisabledProviders(projectModels(structuredClone(modelConfigBase))))
   warnLegacyUlwExecuteKey(chain.views)
   if (config.skills) {
