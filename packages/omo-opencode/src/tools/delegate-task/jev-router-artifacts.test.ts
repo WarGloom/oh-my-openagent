@@ -1,13 +1,15 @@
 import { expect, test } from "bun:test"
-import { inferJevCategory } from "./jev-router-model"
+import { inferJevCategory, parseJevCategoryResponse, questions } from "./jev-router-model"
 import {
   PG_ARTIFACT,
   PG_ROUTER,
   PG_RULE,
   ROLLBACK_ARTIFACT,
+  VISUAL_GUARDED_ARTIFACT,
   applyJevDecisionRule,
   selectJevArtifact,
 } from "./jev-router-artifacts"
+import { categoryReply, nonVisualVectors } from "./jev-router.test-support"
 import { jevConfigGeneration } from "./jev-routing-context"
 
 const examples = [
@@ -82,6 +84,59 @@ test.each(examples)("PG artifact matches parity example $id", (example) => {
   expect(applyJevDecisionRule(ranking, PG_ARTIFACT.rule)).toBe(example.expected)
 })
 
+test.each(nonVisualVectors.map((vector) => ({ vector })))(
+  "guarded artifact abstains on a confident non-visual saved vector",
+  async ({ vector }) => {
+    const parsed = parseJevCategoryResponse(categoryReply(vector), PG_ROUTER)
+    expect(parsed.ranking[0]?.category).toBe("visual-engineering")
+    await expect(
+      Promise.resolve().then(() => applyJevDecisionRule(parsed.ranking, VISUAL_GUARDED_ARTIFACT.rule, parsed.answers)),
+    ).rejects.toMatchObject({ name: "JevVisualDomainError", code: "domain_conflict" })
+    expect(applyJevDecisionRule(parsed.ranking, PG_ARTIFACT.rule, parsed.answers)).toBe("visual-engineering")
+  },
+)
+
+test.each(examples)("guarded artifact preserves parity control $expected", (example) => {
+  const parsed = parseJevCategoryResponse(categoryReply(example.features), PG_ROUTER)
+  expect(applyJevDecisionRule(parsed.ranking, VISUAL_GUARDED_ARTIFACT.rule, parsed.answers)).toBe(example.expected)
+})
+
+test.each([
+  { frontend: 0, work: 0, expected: "domain_conflict" },
+  { frontend: 0.3, work: 0.3, expected: "domain_conflict" },
+  { frontend: 0.300001, work: 0.3, expected: "domain_uncertain" },
+  { frontend: 0.3, work: 0.300001, expected: "domain_uncertain" },
+  { frontend: 0.699999, work: 0.2, expected: "domain_uncertain" },
+  { frontend: 0.5, work: 0.5, expected: "domain_uncertain" },
+  { frontend: 0.7, work: 0, expected: "visual-engineering" },
+  { frontend: 0, work: 0.7, expected: "visual-engineering" },
+  { frontend: 0.7, work: 0.3, expected: "visual-engineering" },
+  { frontend: 0.3, work: 0.7, expected: "visual-engineering" },
+] as const)("visual evidence $frontend/$work produces $expected", async ({ frontend, work, expected }) => {
+  const ranking = [{ category: "visual-engineering", probability: 1 }]
+  const answers = {
+    requires_frontend_ui_expertise: frontend,
+    kind_of_work: Object.keys(questions().kind_of_work.criteria).map((option) =>
+      option === "visual_ui" ? work : option === "code_change" ? 1 - work : 0,
+    ),
+  }
+  switch (expected) {
+    case "visual-engineering":
+      expect(applyJevDecisionRule(ranking, VISUAL_GUARDED_ARTIFACT.rule, answers)).toBe(expected)
+      break
+    case "domain_conflict":
+    case "domain_uncertain":
+      await expect(
+        Promise.resolve().then(() => applyJevDecisionRule(ranking, VISUAL_GUARDED_ARTIFACT.rule, answers)),
+      ).rejects.toMatchObject({ code: expected })
+      break
+    default: {
+      const exhaustive: never = expected
+      throw new RangeError(`Unexpected visual outcome: ${exhaustive}`)
+    }
+  }
+})
+
 test("strong mass uses an inclusive threshold and preserves stronger ladder top-1", () => {
   for (const [mass, expected] of [
     [PG_RULE.threshold - 1e-12, "unspecified-low"],
@@ -120,6 +175,9 @@ test("strong mass uses an inclusive threshold and preserves stronger ladder top-
 
 test("content identity selects refit by default and retains frozen rollback", () => {
   expect(selectJevArtifact()).toBe(PG_ARTIFACT)
+  expect(PG_ARTIFACT.artifact_id).toBe("a8cb4f73e19f141fcf431239c8fd082f6fe8d52a139d1ba2ab108451f3427605")
+  expect(selectJevArtifact(VISUAL_GUARDED_ARTIFACT.artifact_id)).toBe(VISUAL_GUARDED_ARTIFACT)
+  expect(VISUAL_GUARDED_ARTIFACT.artifact_id).not.toBe(PG_ARTIFACT.artifact_id)
   expect(selectJevArtifact(ROLLBACK_ARTIFACT.artifact_id)).toBe(ROLLBACK_ARTIFACT)
   expect(PG_ARTIFACT.artifact_id).toMatch(/^[0-9a-f]{64}$/)
   expect(ROLLBACK_ARTIFACT.artifact_id).not.toBe(PG_ARTIFACT.artifact_id)

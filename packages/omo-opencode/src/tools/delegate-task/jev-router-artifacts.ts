@@ -85,7 +85,30 @@ export const PG_RULE = {
   preserve_stronger_ladder_top1: true,
   ladder: ["quick", "unspecified-low", "deep-low", "unspecified-high", "deep-high"],
 } as const
-type DecisionRule = { readonly kind: "top1" } | typeof PG_RULE
+export const VISUAL_GUARD_RULE = {
+  ...PG_RULE,
+  visual_domain: {
+    frontend_question: "requires_frontend_ui_expertise",
+    work_question: "kind_of_work",
+    work_option: "visual_ui",
+    positive_threshold: 0.7,
+    negative_threshold: 0.3,
+    conflict: "domain_conflict",
+    uncertain: "domain_uncertain",
+    action: "abstain",
+  },
+} as const
+type DecisionRule = { readonly kind: "top1" } | typeof PG_RULE | typeof VISUAL_GUARD_RULE
+
+export class JevVisualDomainError extends Error {
+  readonly name = "JevVisualDomainError"
+
+  constructor(readonly code: "domain_conflict" | "domain_uncertain") {
+    super(
+      `Automatic visual routing abstained (${code}). Clarify whether the task needs visual/UI work or choose an explicit category or agent.`,
+    )
+  }
+}
 
 function canonical(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value)
@@ -101,15 +124,17 @@ function artifact(router: JevRouterWeights, rule: DecisionRule) {
   return { artifact_id: createHash("sha256").update(canonical(content)).digest("hex"), router, rule }
 }
 export const PG_ARTIFACT = artifact(PG_ROUTER, PG_RULE)
+export const VISUAL_GUARDED_ARTIFACT = artifact(PG_ROUTER, VISUAL_GUARD_RULE)
 export const ROLLBACK_ARTIFACT = artifact(FROZEN_ROUTER, { kind: "top1" })
 
 export function selectJevArtifact(id: string = PG_ARTIFACT.artifact_id) {
-  return [PG_ARTIFACT, ROLLBACK_ARTIFACT].find((artifact) => artifact.artifact_id === id)
+  return [PG_ARTIFACT, VISUAL_GUARDED_ARTIFACT, ROLLBACK_ARTIFACT].find((artifact) => artifact.artifact_id === id)
 }
 
 export function applyJevDecisionRule(
   ranking: readonly { readonly category: string; readonly probability: number }[],
   rule: DecisionRule,
+  answers?: Readonly<Record<string, number | readonly number[]>>,
 ): string {
   const top = ranking[0]
   if (!top) throw new RangeError("Missing classifier ranking")
@@ -122,11 +147,27 @@ export function applyJevDecisionRule(
         .filter((row) => row !== undefined)
       const mass = strong.reduce((sum, row) => sum + row.probability, 0)
       const strongest = [...strong].sort((a, b) => b.probability - a.probability)[0]
-      if (!strongest || mass < rule.threshold) return top.category
       const ladder: readonly string[] = rule.ladder
       const from = ladder.indexOf(top.category)
-      const to = ladder.indexOf(strongest.category)
-      return rule.preserve_stronger_ladder_top1 && from >= 0 && to >= 0 && to < from ? top.category : strongest.category
+      const to = ladder.indexOf(strongest?.category ?? "")
+      const selected =
+        !strongest || mass < rule.threshold || (rule.preserve_stronger_ladder_top1 && from >= 0 && to >= 0 && to < from)
+          ? top.category
+          : strongest.category
+      if (selected !== "visual-engineering" || !("visual_domain" in rule)) return selected
+      const guard = rule.visual_domain
+      const frontend = answers?.[guard.frontend_question]
+      const work = answers?.[guard.work_question]
+      const option = Object.keys(questions().kind_of_work.criteria).indexOf(guard.work_option)
+      const visualWork = work !== undefined && typeof work !== "number" ? work[option] : undefined
+      if (typeof frontend !== "number" || typeof visualWork !== "number")
+        throw new RangeError("Missing visual policy evidence")
+      if (frontend >= guard.positive_threshold || visualWork >= guard.positive_threshold) return selected
+      throw new JevVisualDomainError(
+        frontend <= guard.negative_threshold && visualWork <= guard.negative_threshold
+          ? guard.conflict
+          : guard.uncertain,
+      )
     }
     default: {
       const exhaustive: never = rule
