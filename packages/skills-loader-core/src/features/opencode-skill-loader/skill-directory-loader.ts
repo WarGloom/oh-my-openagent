@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises"
 import { join } from "node:path"
+import { log } from "@oh-my-opencode/utils"
 import type { DiscoveredProjectDirectory } from "../../shared/project-discovery-dirs"
 import type { LoadedSkill, SkillScope } from "./types"
 import { inferSkillNameFromFileName, loadSkillFromPath } from "./loaded-skill-from-path"
@@ -106,6 +107,10 @@ export async function loadSkillsFromDir(options: {
           if (skill && !skillMap.has(skill.name)) skillMap.set(skill.name, skill)
         }
       } catch (error) {
+        if (entry.isSymbolicLink() && error instanceof Error && "code" in error && error.code === "ENOENT") {
+          log("[skill-discovery] Skipped dangling skill link", { path, code: error.code })
+          continue
+        }
         reportSkillLoadError(error, path, options.onDiagnostic)
       }
     }
