@@ -59,12 +59,11 @@ export function registerSessionHandoff(context: V2PluginContext) {
         if (!handoff) throw new HandoffError("This host does not provide experimental project-bound handoff admission")
         const target = SessionIdentity.parse(await context.session.get({ sessionID: input.sessionID }))
         if (
-          target.projectID !== source.projectID ||
           target.location.workspaceID !== undefined ||
           target.parentID !== undefined ||
           target.time.archived !== undefined
         )
-          throw new HandoffError("The recipient must be a local, unarchived work session in the exact same project")
+          throw new HandoffError("The recipient must be a local, unarchived top-level work session")
         const binding: HandoffBinding = {
           sender: {
             sessionID: invocation.sessionID,
@@ -91,8 +90,8 @@ export function registerSessionHandoff(context: V2PluginContext) {
           {
             questions: [
               {
-                header: "Session handoff",
-                question: `Send this exact message to ${target.title ?? target.id} (${target.id}) in ${target.location.directory}? This wakes the target and can incur model/tool costs. If it is busy, the message waits behind active work.\n\nMessage:\n${input.text}`,
+                header: target.projectID === source.projectID ? "Session handoff" : "Cross-project handoff",
+                question: `Send this exact message to ${target.title ?? target.id}? This wakes the target and can incur model/tool costs. If it is busy, the message waits behind active work.\n\nSender: ${source.id}\nProject: ${source.projectID}\nDirectory: ${source.location.directory}\nAgent: ${invocation.agent}\n\nRecipient: ${target.id}\nProject: ${target.projectID}\nDirectory: ${target.location.directory}\nAgent: ${target.agent ?? "recipient default"}\n\nMessage:\n${input.text}`,
                 options: [
                   {
                     label: "Send and wake",
@@ -122,7 +121,7 @@ export function registerSessionHandoff(context: V2PluginContext) {
       name: "session_handoff",
       options: { codemode: false },
       description:
-        "Find an existing work session in this exact project on this host, then ask the user to send it an exact repair/handoff and wake it. Use action=list with a title query first. Return candidate metadata, not transcripts. If multiple sessions fit, ask the user to choose rather than guess. Use action=send with the selected sessionID and full text; the tool asks for approval itself. Approval applies only to this message, includes paid wake, and queues behind busy work without interrupting tools. A delivered receipt means native history promotion, not a completed repair. Never use this for other projects/hosts, grants, or automatic reply loops.",
+        "Find an existing work session on this host, then ask the user to send it an exact repair/handoff and wake it. Use action=list with a title query to discover metadata in this exact project, not transcripts. A known, explicitly selected sessionID may belong to another local project; the approval shows both project and directory scopes. If multiple sessions fit, ask the user to choose rather than guess. Use action=send with the selected sessionID and full text; the tool asks for approval itself. Approval applies only to this message, includes paid wake, and queues behind busy work without interrupting tools. A delivered receipt means native history promotion, not a completed repair. Never use this for other hosts, nonlocal workspaces, grants, or automatic reply loops.",
       input: toPlainJsonSchema(z.toJSONSchema(HandoffInput)),
       execute: async (raw: unknown, invocation) => {
         const key = JSON.stringify([invocation.sessionID, invocation.messageID, invocation.id])
