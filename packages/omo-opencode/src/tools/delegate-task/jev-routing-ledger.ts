@@ -44,6 +44,7 @@ const DecisionSchema = z
         "model_mismatch",
         "oversized_request",
         "state_error",
+        "incomplete_input",
         "http_error",
         "malformed",
         "unavailable",

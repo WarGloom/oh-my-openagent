@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, watch } from "node:fs"
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  watch,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { JevRoutingConfigSchema } from "../../config/schema/jev-routing"
@@ -148,6 +158,107 @@ describe("Jev task dispatch", () => {
     expect(launch).toHaveBeenCalledWith(expect.objectContaining({ category: "unspecified-low" }))
     expect(output).toContain("Routing: Jev unavailable (unavailable); used default unspecified-low.")
   })
+
+  test.each(["missing", "outside_root", "symlink", "unreadable", "not_regular", "oversized"] as const)(
+    "rejects active %s briefs before task or team selection",
+    async (reason) => {
+      const path = join(root, "brief.md")
+      let reference = "brief.md"
+      switch (reason) {
+        case "missing":
+          break
+        case "outside_root":
+          reference = "../private-plan.md"
+          break
+        case "symlink":
+          writeFileSync(join(root, "target.md"), "PRIVATE CONTENT")
+          symlinkSync(join(root, "target.md"), path)
+          break
+        case "unreadable":
+          writeFileSync(path, "PRIVATE CONTENT")
+          chmodSync(path, 0)
+          break
+        case "not_regular":
+          mkdirSync(path)
+          break
+        case "oversized":
+          writeFileSync(path, "x".repeat(1024 * 1024 + 1))
+          break
+        default: {
+          const exhaustive: never = reason
+          throw new RangeError(`Unexpected brief reason: ${exhaustive}`)
+        }
+      }
+      const { delegate, ctx, launch, options } = setup()
+      const prompt = `Read ${reference} and implement the change`
+      const watched = watchRecords(2)
+      try {
+        await expect(
+          delegate.execute({ category: "auto", prompt, run_in_background: true, load_skills: [] }, ctx),
+        ).rejects.toMatchObject({ name: "JevIncompleteInputError" })
+        await expect(
+          resolveMember(
+            unsafeTestValue({ kind: "category", name: "worker", category: "auto", prompt }),
+            unsafeTestValue<ExecutorContext>({ ...options, jevSurface: "team" }),
+            "",
+          ),
+        ).rejects.toThrow("Provide the permitted brief inline or choose an explicit category or agent")
+        const rows = await watched.promise
+        expect(rows).toHaveLength(2)
+        expect(rows.map((row) => row.surface).sort()).toEqual(["task", "team"])
+        for (const row of rows)
+          expect(row).toMatchObject({
+            event: "decision",
+            error: "incomplete_input",
+            chosen_category: null,
+            top1: null,
+            answers: null,
+            jev_model_id: null,
+            brief_status: "unresolved",
+            would_block: true,
+            reason_codes: ["referenced_brief_unresolved", reason],
+          })
+        expect(fetchSpy).not.toHaveBeenCalled()
+        expect(launch).not.toHaveBeenCalled()
+      } finally {
+        watched.close()
+      }
+    },
+  )
+
+  test.each(["resolved", "inline"])("routes complete %s briefs normally", async (kind) => {
+    writeFileSync(join(root, "brief.md"), "Implement the bounded change")
+    const { delegate, ctx, launch } = setup()
+    await delegate.execute(
+      {
+        prompt: kind === "resolved" ? "Read brief.md and implement the change" : "Implement the bounded change",
+        run_in_background: true,
+        load_skills: [],
+      },
+      ctx,
+    )
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect(launch).toHaveBeenCalledWith(expect.objectContaining({ category: "visual-engineering" }))
+  })
+
+  test.each([
+    { mode: "active", category: "unspecified-low" },
+    { mode: "observe", category: "auto" },
+    { mode: "off", category: "unspecified-low" },
+    { mode: "active", category: "auto", model_routing: false },
+  ] as const)(
+    "preserves $mode category $category authority for an unresolved brief",
+    async ({ mode, ...selection }) => {
+      const { delegate, ctx, launch } = setup(mode)
+      const output = await delegate.execute(
+        { ...selection, prompt: "Read missing-plan.md", run_in_background: true, load_skills: [] },
+        ctx,
+      )
+      expect(launch).toHaveBeenCalledWith(expect.objectContaining({ category: "unspecified-low" }))
+      expect(fetchSpy).not.toHaveBeenCalled()
+      expect(output).not.toContain("Routing: Jev unavailable")
+    },
+  )
 
   test("mode off preserves the omitted-selection error without a classifier request", async () => {
     const { delegate, ctx, launch } = setup("off")
