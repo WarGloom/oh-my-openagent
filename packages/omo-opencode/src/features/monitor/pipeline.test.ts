@@ -1,8 +1,9 @@
 /// <reference types="bun-types" />
 
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
 
 import { MonitorBatcher, type SchedulerDeps, type TimerHandle } from "./batcher"
+import { formatMonitorBatch } from "./envelope"
 import { createMonitorFilter } from "./filter"
 import { LineStream } from "./line-stream"
 import { createMonitorPipeline } from "./pipeline"
@@ -139,6 +140,28 @@ function createPipelineHarness(pattern = "") {
 }
 
 describe("createMonitorPipeline", () => {
+  test("retains capture time when formatting happens later", async () => {
+    const harness = createPipelineHarness()
+    const clock = spyOn(Date, "now").mockReturnValue(Date.parse("2026-11-11T10:34:56.000Z"))
+    try {
+      const captured = new Promise<OutputBatch>((resolve) => harness.pipeline.onBatch(resolve))
+      harness.stdout.enqueueText("captured line\n")
+      harness.stdout.close()
+      harness.stderr.close()
+      const batch = await captured
+      clock.mockReturnValue(Date.parse("2026-11-12T10:34:56.000Z"))
+
+      const output = formatMonitorBatch(
+        { id: "test", label: "test", command: "", status: "exited" },
+        batch,
+        harness.pipeline.counters(),
+      )
+      expect(output).toContain("captured_at: 2026-11-11 10:34:56 UTC\n[stdout seq=1] captured line")
+    } finally {
+      clock.mockRestore()
+      harness.pipeline.stop()
+    }
+  })
   describe("#given stdout and stderr streams", () => {
     test("#when the pipeline starts #then both streams are read concurrently before either stream ends", async () => {
       // given
@@ -173,9 +196,9 @@ describe("createMonitorPipeline", () => {
       // then
       const allLines = harness.ring.query({ stream: "all" }).lines
       expect(allLines).toEqual([
-        { stream: "stdout", seq: 1, text: "out-1" },
-        { stream: "stderr", seq: 2, text: "err-1" },
-        { stream: "stdout", seq: 3, text: "out-2" },
+        { stream: "stdout", seq: 1, text: "out-1", capturedAt: expect.any(Number) },
+        { stream: "stderr", seq: 2, text: "err-1", capturedAt: expect.any(Number) },
+        { stream: "stdout", seq: 3, text: "out-2", capturedAt: expect.any(Number) },
       ])
       expect(harness.pipeline.counters().lastSequence).toBe(3)
     })
@@ -222,7 +245,9 @@ describe("createMonitorPipeline", () => {
 
       // then
       expect(harness.batches).toHaveLength(1)
-      expect(harness.batches[0]?.lines).toEqual([{ stream: "stdout", seq: 1, text: "ERROR final" }])
+      expect(harness.batches[0]?.lines).toEqual([
+        { stream: "stdout", seq: 1, text: "ERROR final", capturedAt: expect.any(Number) },
+      ])
     })
   })
 

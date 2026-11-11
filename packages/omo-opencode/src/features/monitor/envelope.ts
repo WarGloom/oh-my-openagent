@@ -37,9 +37,16 @@ export function formatMonitorBatch(
 }
 
 function formatOutputLines(batch: OutputBatch): string[] {
-  return batch.lines.flatMap((line) =>
-    line.text.split(/\r?\n/).map((textLine) => `[${line.stream} seq=${line.seq}] ${textLine}`),
-  )
+  return batch.lines.flatMap((line) => {
+    const capturedAt =
+      line.capturedAt === undefined
+        ? "unknown"
+        : `${new Date(line.capturedAt).toISOString().slice(0, 19).replace("T", " ")} UTC`
+    return [
+      `captured_at: ${capturedAt}`,
+      ...line.text.split(/\r?\n/).map((textLine) => `[${line.stream} seq=${line.seq}] ${textLine}`),
+    ]
+  })
 }
 
 function formatStatus(

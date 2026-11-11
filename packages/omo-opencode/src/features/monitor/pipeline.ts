@@ -46,6 +46,7 @@ export function createMonitorPipeline(
       stream,
       seq: nextSequence,
       text: decodedLine.text,
+      capturedAt: Date.now(),
     }
     nextSequence += 1
 
