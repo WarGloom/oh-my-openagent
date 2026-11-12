@@ -8,8 +8,8 @@ repo=$ws/.omo/worktrees/omo-v2-dev
 host=$ws/opencode-wt/v2
 binary=$host/packages/cli/dist/cli-linux-x64/bin/opencode
 launcher=/home/nikita/.local/bin/opencode-v2-lab
-host_oid=c78876a9aed114042d7419b4cf3d18c9e677fdf3
-host_hash=a9cd5641d8935e285caa3b0013664b43c39fa45d5d6be08816ea00c8d1ae9056
+host_oid=1b48391c05b4bd9c8d4ac1e660307265ce7a4ff1
+host_hash=5ea0a593570285bcdcf876da7e473f1cdaee80eec51c3bb1057faba44d2f2865
 paths=(dist packages/lsp-tools-mcp/dist packages/lsp-daemon/dist packages/git-bash-mcp/dist packages/shared-skills/skills)
 
 fail() {
