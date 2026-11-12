@@ -102,6 +102,19 @@ describe("runtime fallback error classifier", () => {
     }
   })
 
+  test.each([
+    "All 4 account(s) are rate-limited. Try again in 10s.",
+    "All 4 account(s) are rate-limited. Try again in 1d 5h.",
+  ])("does not infer quota exhaustion from account-pool throttling: %s", (message) => {
+    //#given
+    const error = { message, status: 429 }
+    //#when
+    const type = classifyRuntimeFallbackError(error)
+    //#then
+    expect(type).toBeUndefined()
+    expect(isRuntimeFallbackRetryableError(error, DEFAULT_RETRY_CODES)).toBe(true)
+  })
+
   test("classifies representative Anthropic provider payloads without adapter state", () => {
     //#given
     const cases = [
