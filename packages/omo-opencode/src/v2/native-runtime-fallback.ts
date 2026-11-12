@@ -13,6 +13,14 @@ import { recoverNativeFailure } from "./native-recovery-state"
 
 const controllers = new WeakMap<Hooks, NativeFallbackController>()
 
+function isRateLimit(error: V2StructuredError): boolean {
+  return (
+    error.type === "provider.rate-limit" ||
+    error.type === "rate_limit_error" ||
+    /\brate_limit_error\b/i.test(`${error.message} ${error.response?.body ?? ""}`)
+  )
+}
+
 // Stable per failure, so a replayed or concurrent admission of the same failure is a host duplicate.
 function recoveryMessageID(failureID: string): string {
   return `msg_${createHash("sha256").update(`omo-native-recovery:${failureID}`).digest("hex").slice(0, 26)}`
@@ -252,6 +260,7 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
     },
     apply: (model: V2ModelRef) => Promise<void | "declined" | "duplicate">,
   ): Promise<boolean> => {
+    if (isRateLimit(input.error)) return false
     const error = classifierError(input.error)
     const errorType = classifyErrorType(error)
     const retryable = isRetryableError(error, controller.retryOnErrors)
@@ -330,6 +339,7 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
     return recovered
   }
   const registration = await context.session.hook("retry", async (event) => {
+    if (isRateLimit(event.error) && event.decision.retry) watchdog.defer(event.sessionID, event.decision.delay)
     let exhausted = false
     const recovered = await recover(
       {
