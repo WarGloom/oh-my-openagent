@@ -5,6 +5,7 @@ import { selectSkillsWithJev } from "./jev-routing"
 
 export async function suggestDelegateSkills(input: {
   readonly description: string
+  readonly prompt: string
   readonly skills: readonly { readonly name: string; readonly description: string }[]
   readonly disabledSkills?: ReadonlySet<string>
   readonly config?: JevRoutingConfig
@@ -30,7 +31,7 @@ export async function suggestDelegateSkills(input: {
   }))
   if (candidates.length === 0) return []
   const selected = await selectSkillsWithJev({
-    brief: capJevText(sanitizeJevText(input.description), 200),
+    brief: `${capJevText(sanitizeJevText(input.description), 200)}\n\n${capJevText(sanitizeJevText(input.prompt), 1800)}`,
     config: input.config,
     candidates,
     modelRouting: input.modelRouting,
