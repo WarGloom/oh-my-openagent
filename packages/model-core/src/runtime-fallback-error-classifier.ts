@@ -192,9 +192,7 @@ export function classifyRuntimeFallbackError(error: unknown): RuntimeFallbackErr
     /已耗尽/.test(message) ||
     isLocalizedQuotaExhaustionMessage(message) ||
     hasProviderResetWindowSignal(message) ||
-    message.includes("an error occurred while processing your request") ||
-    // oc-codex: all accounts in the pool exhausted their quota window
-    /all\s+\d+\s+account\(s\)\s+are\s+rate-limited/i.test(message)
+    message.includes("an error occurred while processing your request")
   ) {
     return "quota_exceeded"
   }
