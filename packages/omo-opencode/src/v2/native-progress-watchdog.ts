@@ -10,6 +10,7 @@ type Request = {
   cancelled: boolean
   timer?: ReturnType<typeof setTimeout>
   hard?: ReturnType<typeof setTimeout>
+  backoff?: ReturnType<typeof setTimeout>
 }
 
 export function createNativeProgressWatchdog(deps: {
@@ -37,6 +38,7 @@ export function createNativeProgressWatchdog(deps: {
     const request = requests.get(sessionID)
     clearTimeout(request?.timer)
     clearTimeout(request?.hard)
+    clearTimeout(request?.backoff)
     requests.delete(sessionID)
   }
   const expire = async (sessionID: string, request: Request) => {
@@ -74,6 +76,25 @@ export function createNativeProgressWatchdog(deps: {
     request.hard = undefined
   }
   return {
+    defer(sessionID: string, delay: number) {
+      const request = requests.get(sessionID)
+      if (!request) return
+      pause(request)
+      clearTimeout(request.backoff)
+      request.waits.set("provider:retry", "pending")
+      const until = Date.now() + Math.max(0, delay)
+      const resume = () => {
+        const remaining = until - Date.now()
+        if (remaining > 0) {
+          request.backoff = setTimeout(resume, Math.min(remaining, 2_147_483_647))
+          return
+        }
+        request.waits.delete("provider:retry")
+        request.backoff = undefined
+        arm(sessionID, request)
+      }
+      resume()
+    },
     start(sessionID: string, agent: string, model: V2ModelRef) {
       clear(sessionID)
       recovering.delete(sessionID)

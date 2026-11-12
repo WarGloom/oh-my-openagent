@@ -44,6 +44,16 @@ function questionFixture() {
   return { clock, fake, recover, watchdog, form }
 }
 
+test("provider backoff pauses both watchdog deadlines and rearms afterward", async () => {
+  const f = questionFixture()
+  f.watchdog.defer("question", 10_000)
+  await f.clock.advanceBy(10_999)
+  expect(f.recover).not.toHaveBeenCalled()
+  expect(f.fake.sessionCalls).toEqual([])
+  await f.clock.advanceBy(1)
+  expect(f.recover).toHaveBeenCalledTimes(1)
+})
+
 test.each([
   { agent: "sisyphus", unsafe: false, chain: true, suppressed: true, delayed: false },
   { agent: "sisyphus", unsafe: false, chain: true, suppressed: true, delayed: true },
