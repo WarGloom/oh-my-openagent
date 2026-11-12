@@ -162,6 +162,7 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
         const candidates = options.manager.nativeJobs ? nativeInfos : [...availableSkills, ...nativeInfos]
         delegateTaskArgs.load_skills = await suggestDelegateSkills({
           description: delegateTaskArgs.description,
+          prompt: delegateTaskArgs.prompt,
           skills: candidates,
           disabledSkills: options.disabledSkills,
           config: modelOptions.jevRouting,

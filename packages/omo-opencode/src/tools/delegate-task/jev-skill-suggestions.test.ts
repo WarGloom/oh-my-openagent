@@ -43,7 +43,7 @@ function fixture(mode: "active" | "observe" | "off" = "active") {
     task.execute(
       unsafeTestValue({
         description: "Review the task",
-        prompt: "PRIVATE TRANSCRIPT",
+        prompt: "Review TypeScript changes; do not install dependencies.",
         subagent_type: "explore",
         run_in_background: true,
         ...selection,
@@ -86,7 +86,10 @@ describe("delegate skill suggestions", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(request).not.toContain("blocked")
     expect(request).not.toContain("PRIVATE SKILL BODY")
-    expect(request).not.toContain("PRIVATE TRANSCRIPT")
+    const state = JSON.parse(request).state
+    expect(state).toContain("Review the task")
+    expect(state).toContain("TypeScript")
+    expect(state).toContain("do not install dependencies")
     fetchMock.mockRestore()
   })
 
@@ -98,6 +101,22 @@ describe("delegate skill suggestions", () => {
     await execute(selection)
     expect(launches).toEqual([selection.load_skills])
     expect(fetchMock).not.toHaveBeenCalled()
+    fetchMock.mockRestore()
+  })
+
+  test("bounds and sanitizes supplied task context before selection", async () => {
+    let request = ""
+    const fetchMock = spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      request = String(init?.body)
+      return reply([0.9, 0.1])
+    })
+    const { execute, launches } = fixture()
+    await execute({ prompt: `TypeScript api_key=synthetic-secret ${"\u{1F9EA} ".repeat(4000)}` })
+    const state = JSON.parse(request).state
+    expect(Buffer.byteLength(state)).toBeLessThanOrEqual(8192)
+    expect(state).toContain("TypeScript")
+    expect(state).not.toContain("synthetic-secret")
+    expect(launches).toEqual([["alpha"]])
     fetchMock.mockRestore()
   })
 
