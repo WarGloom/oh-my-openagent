@@ -50,6 +50,17 @@ export async function resolveSubagentAgentMatch(
   executorCtx: ExecutorContext,
   options: ResolveSubagentExecutionOptions,
 ): Promise<SubagentAgentMatch> {
+  if (executorCtx.disabledAgents?.some((agent) => getAgentConfigKey(agent) === getAgentConfigKey(requestedAgent))) {
+    return {
+      kind: "error",
+      result: {
+        agentToUse: "",
+        categoryModel: undefined,
+        error:
+          "The requested registered agent is disabled. Choose an enabled executor or change the explicit agent configuration.",
+      },
+    }
+  }
   const agentsResult = await executorCtx.client.app.agents()
   const agents = normalizeSDKResponse(agentsResult, [] as AgentInfo[], {
     preferResponseOnMissingData: true,

@@ -5,7 +5,7 @@ import { BackgroundManager } from "../features/background-agent/manager"
 import type { LaunchInput } from "../features/background-agent/types"
 import { clearBackgroundTaskRegistryForTesting } from "../features/background-agent/task-registry"
 import { createFakePluginContext } from "./fake-plugin-context"
-import { createPluginInput } from "./create-plugin-input"
+import { bindV2BackgroundJobs, createPluginInput } from "./create-plugin-input"
 import { createSessionTracker } from "./session-tracker"
 import { V2NativeSubagentJobs, type NativeDelegationSkills } from "./native-subagent-jobs"
 import type { NativeSubagentDomain, NativeSubagentReceipt } from "./native-subagent-types"
@@ -15,7 +15,10 @@ import { createNativeRecoveryNotifier } from "./native-recovery-notice"
 import { V2BackgroundLifecycle } from "./background-lifecycle"
 import { spyOn } from "bun:test"
 import { createDelegateTask } from "../tools/delegate-task/tools"
+import type { DelegateTaskArgs } from "../tools/delegate-task/types"
 import * as ledger from "../tools/delegate-task/jev-routing-ledger"
+import { createToolExecuteBeforeHandler } from "../plugin/tool-execute-before"
+import { unsafeTestValue } from "../../../../test-support/unsafe-test-value"
 
 export const cleanups: Array<() => void | Promise<void>> = []
 // Each importing test file registers this in its own afterEach: a hook registered at module import
@@ -213,7 +216,7 @@ export async function fixture(
   }
 }
 
-export async function completedFixture(status: "completed" | "error" = "completed") {
+export async function completedFixture(status: "completed" | "error" = "completed", requiredModel?: string) {
   const record = spyOn(ledger, "recordJevRouting").mockResolvedValue(undefined)
   cleanups.push(() => record.mockRestore())
   const f = await fixture({ cleanupDelay: 0 })
@@ -229,6 +232,7 @@ export async function completedFixture(status: "completed" | "error" = "complete
     decisionId: crypto.randomUUID(),
     category: "retained",
     skills: ["skill"],
+    ...(requiredModel ? { nativeMetadata: { requiredModel } } : {}),
   })
   await started
   const removed = Promise.withResolvers<void>()
@@ -244,7 +248,11 @@ export async function completedFixture(status: "completed" | "error" = "complete
   const retained = backgroundTaskRecord.parse(f.stored.get(task.id))
   const sessionID = task.sessionId
   if (!sessionID) throw new Error("native child missing")
-  const execute = (manager: BackgroundManager, callID = "continue") => {
+  const execute = async (
+    manager: BackgroundManager,
+    callID = "continue",
+    selection: Pick<DelegateTaskArgs, "subagent_type" | "required_model" | "category"> = {},
+  ) => {
     const context = {
       sessionID: "parent",
       messageID: "followup-message",
@@ -256,14 +264,24 @@ export async function completedFixture(status: "completed" | "error" = "complete
       ask: async () => {},
       metadata: async () => {},
     }
-    return createDelegateTask({ manager, client: f.input.client, directory: f.input.directory }).execute(
-      {
+    if (!manager.nativeJobs) throw new Error("Native continuation fixture requires native jobs")
+    bindV2BackgroundJobs(f.input, manager.nativeJobs)
+    const output = {
+      args: {
         task_id: sessionID,
         prompt: "followup",
         description: "continue retained",
         run_in_background: true,
         load_skills: [],
+        ...selection,
       },
+    }
+    await createToolExecuteBeforeHandler({ ctx: f.input, hooks: unsafeTestValue({}) })(
+      { tool: "task", sessionID: context.sessionID, callID },
+      output,
+    )
+    return createDelegateTask({ manager, client: f.input.client, directory: f.input.directory }).execute(
+      output.args,
       context,
     )
   }
