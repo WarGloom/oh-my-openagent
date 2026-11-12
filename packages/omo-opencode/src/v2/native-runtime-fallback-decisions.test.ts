@@ -14,6 +14,42 @@ const first = { providerID: "openai", id: "gpt-6.1-sol" }
 const second = { providerID: "anthropic", id: "claude-sonnet-5-5" }
 const cleanups: Array<() => void | Promise<void>> = []
 
+test.each(["retry", "terminal"])(
+  "uses configured fallback for explicit quota with rate-limit compatibility body on %s",
+  async (source) => {
+    const error = {
+      type: "provider.quota",
+      status: 200,
+      message: "rate_limit_error: Claude Max rate limit reached",
+      response: {
+        body: '{"type":"error","error":{"type":"rate_limit_error","code":"insufficient_quota","retry_after":55907}}',
+      },
+    }
+    const model = { ...first, variant: "high" }
+    const f = await fixture(error, undefined, 60, model)
+    if (source === "retry") {
+      const event: V2RetryHookEvent = {
+        sessionID: "ses_decision",
+        agent: "sisyphus",
+        model,
+        error,
+        attempt: 2,
+        decision: { retry: false },
+      }
+      await f.fake.triggerRetry(event)
+      expect(event.decision).toEqual({ retry: true, delay: 0 })
+    } else {
+      expect(
+        await f.installed.beforeEvent({ type: "session.execution.failed", data: { sessionID: "ses_decision", error } }),
+      ).toBe(true)
+    }
+    expect((await f.fake.context.session.get({ sessionID: "ses_decision" })).model).toEqual({
+      ...second,
+      variant: undefined,
+    })
+  },
+)
+
 test.each([
   { type: "provider.rate-limit", message: "Rate limit reached", response: undefined },
   {
