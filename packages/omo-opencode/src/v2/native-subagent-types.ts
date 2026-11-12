@@ -47,6 +47,7 @@ export type NativeSubagentReceipt = {
   readonly promptID?: string
   readonly completion?: "parent" | "none"
   readonly output?: string
+  readonly outputModel?: V2ModelRef
   readonly error?: string
   readonly revoked?: true
 }

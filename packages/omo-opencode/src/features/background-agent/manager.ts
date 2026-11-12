@@ -2107,6 +2107,10 @@ export class BackgroundManager {
         case "error":
         case "cancelled":
           task.result = receipt.output
+          task.producingModel =
+            receipt.status === "completed" && receipt.outputModel
+              ? `${receipt.outputModel.providerID}/${receipt.outputModel.id}`
+              : undefined
           if (task.currentAttemptID)
             finalizeAttempt(
               task,
