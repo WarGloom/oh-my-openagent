@@ -18,7 +18,9 @@ import { createDelegateTask } from "../tools/delegate-task/tools"
 import type { DelegateTaskArgs } from "../tools/delegate-task/types"
 import * as ledger from "../tools/delegate-task/jev-routing-ledger"
 import { createToolExecuteBeforeHandler } from "../plugin/tool-execute-before"
-import { unsafeTestValue } from "../../../../test-support/unsafe-test-value"
+import { createHooks } from "../create-hooks"
+import { createModelCacheState } from "../plugin-state"
+import { OhMyOpenCodeConfigSchema } from "../config"
 
 export const cleanups: Array<() => void | Promise<void>> = []
 // Each importing test file registers this in its own afterEach: a hook registered at module import
@@ -276,10 +278,19 @@ export async function completedFixture(status: "completed" | "error" = "complete
         ...selection,
       },
     }
-    await createToolExecuteBeforeHandler({ ctx: f.input, hooks: unsafeTestValue({}) })(
-      { tool: "task", sessionID: context.sessionID, callID },
-      output,
-    )
+    await createToolExecuteBeforeHandler({
+      ctx: f.input,
+      hooks: createHooks({
+        ctx: f.input,
+        pluginConfig: OhMyOpenCodeConfigSchema.parse({}),
+        modelCacheState: createModelCacheState(),
+        backgroundManager: manager,
+        isHookEnabled: () => false,
+        safeHookEnabled: false,
+        mergedSkills: [],
+        availableSkills: [],
+      }),
+    })({ tool: "task", sessionID: context.sessionID, callID }, output)
     return createDelegateTask({ manager, client: f.input.client, directory: f.input.directory }).execute(
       output.args,
       context,
