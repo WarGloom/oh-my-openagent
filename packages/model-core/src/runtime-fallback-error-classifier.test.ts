@@ -102,6 +102,16 @@ describe("runtime fallback error classifier", () => {
     }
   })
 
+  test("#given oc-codex all-accounts-rate-limited message #when classified #then it is quota_exceeded", () => {
+    //#given
+    const message =
+      "Account exclusions: #1=quota-exhausted,already-attempted; #2=quota-exhausted,already-attempted; #3=quota-exhausted,already-attempted; #4=disabled:auth-failures. All 4 account(s) are rate-limited. Try again in 1d 5h or add another account with `opencode auth login`."
+    //#when
+    const type = classifyRuntimeFallbackError({ message, status: 429 })
+    //#then
+    expect(type).toBe("quota_exceeded")
+  })
+
   test("classifies representative Anthropic provider payloads without adapter state", () => {
     //#given
     const cases = [
