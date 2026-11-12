@@ -6,7 +6,11 @@ import { cleanupNativeFixtures, cleanups, fixture } from "./native-subagent-jobs
 import { V2NativeSubagentJobs } from "./native-subagent-jobs"
 import { subscribeTaskLifecycle, type TaskLifecycleEvent } from "../features/background-agent/task-lifecycle"
 import * as ledger from "../tools/delegate-task/jev-routing-ledger"
+import "../tools/delegate-task/jev-routing-context"
 import { unsafeTestValue } from "../../../../test-support/unsafe-test-value"
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 
 let recordSpy: ReturnType<typeof spyOn>
 beforeEach(() => {
@@ -18,6 +22,67 @@ afterEach(async () => {
 })
 
 describe("native subagent consumer", () => {
+  it("records the observed model per generation and leaves a continuation without evidence unknown", async () => {
+    const f = await fixture()
+    const decisionId = crypto.randomUUID()
+    const directory = mkdtempSync(join(tmpdir(), "jev-native-outcomes-"))
+    const originalDataHome = process.env.XDG_DATA_HOME
+    process.env.XDG_DATA_HOME = directory
+    cleanups.push(() => {
+      if (originalDataHome === undefined) delete process.env.XDG_DATA_HOME
+      else process.env.XDG_DATA_HOME = originalDataHome
+      rmSync(directory, { recursive: true, force: true })
+    })
+    const writes: Promise<void>[] = []
+    const outcomes: Extract<ledger.JevRoutingRecord, { event: "outcome" }>[] = []
+    const firstPublished = Promise.withResolvers<void>()
+    const published = Promise.withResolvers<void>()
+    recordSpy.mockImplementation((record) => {
+      const write = ledger.appendJevRoutingRecord(record).then(() => {
+        if (record.event !== "outcome" || record.decision_id !== decisionId) return
+        outcomes.push(record)
+        if (outcomes.length === 1) firstPublished.resolve()
+        if (outcomes.length === 2) published.resolve()
+      })
+      writes.push(write)
+      return write
+    })
+    const started = f.nextStart()
+    const task = await f.manager.launch({ ...f.launch("first"), decisionId })
+    await started
+    const first = f.manager.waitForNativeTask(task.id, new AbortController().signal)
+    f.finish(task.nativeAdmissionID ?? "", "completed", { providerID: "observed", id: "actual" })
+    await first
+    await firstPublished.promise
+    const resumed = f.nextStart()
+    await f.manager.resume({
+      sessionId: task.sessionId ?? "",
+      prompt: "followup",
+      parentSessionId: "parent",
+      parentMessageId: "message",
+      nativeInvocation: { kind: "tool", agent: "parent-agent", messageID: "message", toolCallID: "followup" },
+    })
+    await resumed
+    const second = f.manager.waitForNativeTask(task.id, new AbortController().signal)
+    f.finish(f.manager.getTask(task.id)?.nativeAdmissionID ?? "")
+    await second
+    await published.promise
+    await Promise.all(writes)
+    expect(outcomes).toHaveLength(2)
+    const ledgerPath = join(
+      ledger.getJevLedgerDirectory(),
+      readdirSync(ledger.getJevLedgerDirectory()).find((name) => name.endsWith(".jsonl")) ?? "",
+    )
+    const rows = readFileSync(ledgerPath, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+    expect(
+      rows.filter((row) => row.event === "outcome" && row.decision_id === decisionId).map((row) => row.producing_model),
+    ).toEqual(["observed/actual", null])
+    expect(outcomes[0]?.attempt_id).not.toBe(outcomes[1]?.attempt_id)
+  })
+
   it.each(["ready", "skills", "missing"] as const)(
     "isolates a recovered %s failure and releases its permit while restoring peers",
     async (failure) => {

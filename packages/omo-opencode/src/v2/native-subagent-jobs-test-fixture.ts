@@ -188,10 +188,20 @@ export async function fixture(
     model: { providerID: "test", modelID: "model" },
     nativeInvocation: { kind: "tool", agent: "parent-agent", messageID: "message", toolCallID: call },
   })
-  const finish = (admissionID: string, status: "completed" | "error" = "completed") => {
+  const finish = (
+    admissionID: string,
+    status: "completed" | "error" = "completed",
+    outputModel?: { readonly providerID: string; readonly id: string },
+  ) => {
     const receipt = rows.get(admissionID)
     if (!receipt?.run) throw new Error("run missing")
-    const terminal = { ...receipt, status, output: "child result", ...(status === "error" ? { error: "failed" } : {}) }
+    const terminal = {
+      ...receipt,
+      status,
+      output: "child result",
+      ...(outputModel ? { outputModel } : {}),
+      ...(status === "error" ? { error: "failed" } : {}),
+    }
     rows.set(admissionID, terminal)
     completions.get(receipt.run.generation)?.resolve(terminal)
   }
