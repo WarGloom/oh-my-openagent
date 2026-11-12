@@ -384,6 +384,7 @@ export type V2SessionInfo = {
 export type V2StructuredError = {
   readonly type: string
   readonly message: string
+  readonly kind?: V2SessionRequestKind
   readonly status?: number
   readonly response?: { readonly body: string }
   readonly retryAfterMs?: number
@@ -542,6 +543,7 @@ export type V2RetryHookEvent = {
   readonly sessionID: string
   readonly agent: string
   readonly model: V2ModelRef
+  readonly kind?: V2SessionRequestKind
   readonly error: V2StructuredError
   readonly attempt: number
   decision: { retry: false } | { retry: true; delay: number }

@@ -7,7 +7,7 @@ import { classifyErrorType, extractErrorName, isRetryableError } from "../hooks/
 import { SessionCategoryRegistry } from "../shared/session-category-registry"
 import { filterProvidersServingModel } from "../features/background-agent/fallback-provider-model-filter"
 import { log } from "../shared/logger"
-import type { V2Event, V2ModelRef, V2PluginContext, V2StructuredError } from "./context-types"
+import type { V2Event, V2ModelRef, V2PluginContext, V2SessionRequestKind, V2StructuredError } from "./context-types"
 import { createNativeProgressWatchdog } from "./native-progress-watchdog"
 import { recoverNativeFailure } from "./native-recovery-state"
 
@@ -253,6 +253,7 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
       agent: string | undefined
       model: string | undefined
       variant?: string
+      kind?: V2SessionRequestKind
       error: V2StructuredError
       attempt?: number
       readonly onExhausted?: () => void
@@ -260,7 +261,7 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
     },
     apply: (model: V2ModelRef) => Promise<void | "declined" | "duplicate">,
   ): Promise<boolean> => {
-    if (isRateLimit(input.error)) return false
+    if ((input.kind !== undefined && input.kind !== "primary") || isRateLimit(input.error)) return false
     const error = classifierError(input.error)
     const errorType = classifyErrorType(error)
     const retryable = isRetryableError(error, controller.retryOnErrors)
@@ -339,11 +340,13 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
     return recovered
   }
   const registration = await context.session.hook("retry", async (event) => {
-    if (isRateLimit(event.error) && event.decision.retry) watchdog.defer(event.sessionID, event.decision.delay)
+    if ((event.kind === undefined || event.kind === "primary") && isRateLimit(event.error) && event.decision.retry)
+      watchdog.defer(event.sessionID, event.decision.delay)
     let exhausted = false
     const recovered = await recover(
       {
         sessionID: event.sessionID,
+        kind: event.kind,
         agent: event.agent,
         model: `${event.model.providerID}/${event.model.id}`,
         variant: event.model.variant,
@@ -390,7 +393,8 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
         !("type" in error) ||
         typeof error.type !== "string" ||
         !("message" in error) ||
-        typeof error.message !== "string"
+        typeof error.message !== "string" ||
+        ("kind" in error && typeof error.kind === "string" && error.kind !== "primary")
       )
         return false
       const response = "response" in error ? error.response : undefined
