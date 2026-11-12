@@ -12,6 +12,8 @@ import type { V2PluginContext } from "./context-types"
 import type { NativeSubagentDomain, NativeSubagentReceipt, NativeSubagentSkillSelection } from "./native-subagent-types"
 import { recoverNativeTask } from "./native-retained-task"
 import { PreModelSkillAcceptanceError } from "../features/background-agent/parent-visible-error-sanitizer"
+import { assertRequiredModel, requiredModelFromMetadata } from "../shared/delegated-executor-requirement"
+import { enforceNativeExecutorRequirement } from "./native-executor-requirement"
 
 export type NativeDelegationSkills = {
   readonly text: string
@@ -65,6 +67,7 @@ export class V2NativeSubagentJobs implements NativeBackgroundJobs {
         ? { providerID: task.model.providerID, id: task.model.modelID, ...(variant ? { variant } : {}) }
         : parent.model)
     if (!model) throw new Error("Native delegation requires a resolved model")
+    assertRequiredModel(requiredModelFromMetadata(task.nativeMetadata), `${model.providerID}/${model.id}`)
     const invocationID =
       invocation.kind === "tool" ? `${invocation.messageID}:${invocation.toolCallID}` : invocation.invocationID
     const admissionID = `omo:${task.id}:${invocationID}`
@@ -110,12 +113,14 @@ export class V2NativeSubagentJobs implements NativeBackgroundJobs {
     task.nativeRun = receipt.run
     task.sessionId = receipt.childSessionID
     task.model = { ...task.model, providerID: model.providerID, modelID: model.id, variant: model.variant }
+    await enforceNativeExecutorRequirement(this.context, task)
     await this.deps.save(task)
   }
 
   async start(task: BackgroundTask, body: TaskPromptBody): Promise<"started" | "suspended"> {
     if (this.stopped) return "suspended"
     if (!task.nativeAdmissionID || !task.sessionId) throw new Error("Native task was not prepared")
+    await enforceNativeExecutorRequirement(this.context, task)
     if (task.nativeAcceptedSkillsAdmissionID !== task.nativeAdmissionID) {
       let skills: NativeDelegationSkills
       try {
@@ -245,6 +250,7 @@ export class V2NativeSubagentJobs implements NativeBackgroundJobs {
       if (!receipt.run) continue
       if (this.recoveryFailures.has(receipt.admissionID)) continue
       try {
+        await enforceNativeExecutorRequirement(this.context, task)
         await this.deps.restoreSkills(task)
         if (this.stopped) return
         const system = task.skillContent

@@ -17,6 +17,7 @@ export interface ExecutorContext {
   client: OpencodeClient
   directory: string
   userCategories?: CategoriesConfig
+  requiredModel?: string
   jevRouting?: JevRoutingConfig
   abortSignal?: AbortSignal
   jevParentSessionID?: string

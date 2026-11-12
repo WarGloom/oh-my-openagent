@@ -205,7 +205,11 @@ export async function resolveCategoryExecution(
     }
   }
 
-  const availableModels = await getAvailableModelsForDelegateTask(client)
+  const availableModels = new Set(
+    [...(await getAvailableModelsForDelegateTask(client))].filter(
+      (model) => !args.required_model || model === args.required_model,
+    ),
+  )
 
   const resolved = resolveCategoryConfig(categoryName, {
     userCategories,

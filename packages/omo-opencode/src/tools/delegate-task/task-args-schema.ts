@@ -36,6 +36,7 @@ export function buildDelegateTaskArgsSchema(
   category: OptionalStringSchema
   model_routing: OptionalBooleanSchema
   subagent_type: OptionalStringSchema | OptionalEnumSchema
+  required_model: OptionalStringSchema
   reasoning: OptionalStringSchema
   task_id: OptionalStringSchema
   command: OptionalStringSchema
@@ -75,6 +76,12 @@ export function buildDelegateTaskArgsSchema(
         "Set false to bypass optional Jev routing for category auto or an agent ladder; omitted uses the configured mode. Does not affect team members, explicit categories or real named agents.",
       ),
     subagent_type: buildSubagentTypeSchema(availableSubagentNames, aliases),
+    required_model: tool.schema
+      .string()
+      .optional()
+      .describe(
+        "Exact provider/model requirement for V2 native delegation. A registered subagent_type keeps its configured model chain unless required_model is set. Category auto considers only matching configured executors. No match rejects before launch. Existing task metadata constrains bypass, observation, fallback and retained continuation; unavailable trusted records refuse continuation. Do not infer requirements from prompt prose.",
+      ),
     reasoning: tool.schema
       .string()
       .optional()

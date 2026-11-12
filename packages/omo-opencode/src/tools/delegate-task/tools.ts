@@ -25,6 +25,9 @@ import { executeNativeDelegate } from "./native-execution"
 import { getJevRoutingEligibility } from "./jev-routing"
 import { mergeCategories } from "../../shared/merge-categories"
 import { suggestDelegateSkills } from "./jev-skill-suggestions"
+import { ExecutorRequirementError, assertRequiredModel } from "../../shared/delegated-executor-requirement"
+import { resolveRequiredCategory } from "./required-category-resolution"
+import { getAvailableModelsForDelegateTask } from "./available-models"
 
 const RUNTIME_PLAN_AGENT_DISABLED_MESSAGE = `OpenCode runtime plan agent is disabled in OMO task routing. Use metis for pre-plan sanity, momus for saved .omo/plans/*.md review, oracle for hard architecture/debugging, or a category for execution.`
 
@@ -97,6 +100,15 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
       }
       const skillsOmitted = args.load_skills === undefined
       const delegateTaskArgs = await prepareDelegateTaskArgs(args, originalContext)
+      if (delegateTaskArgs.required_model && !options.manager.nativeJobs)
+        throw new ExecutorRequirementError("unsupported_execution")
+      if (
+        delegateTaskArgs.required_model &&
+        !delegateTaskArgs.task_id &&
+        !(await getAvailableModelsForDelegateTask(options.client)).has(delegateTaskArgs.required_model)
+      ) {
+        throw new ExecutorRequirementError("no_eligible_executor")
+      }
       const ctx = originalContext
       const orchestratorCategory = delegateTaskArgs.category ?? "omitted"
       if (
@@ -260,12 +272,14 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
       }
 
       if (delegateTaskArgs.category) {
-        const resolution = await resolveCategoryExecution(
-          delegateTaskArgs,
-          routingOptions,
-          inheritedModel,
-          systemDefaultModel,
-        )
+        const resolution = delegateTaskArgs.required_model
+          ? await resolveRequiredCategory({
+              args: delegateTaskArgs,
+              context: routingOptions,
+              inheritedModel,
+              defaultModel: systemDefaultModel,
+            })
+          : await resolveCategoryExecution(delegateTaskArgs, routingOptions, inheritedModel, systemDefaultModel)
         if (resolution.error) {
           return resolution.error
         }
@@ -334,7 +348,7 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
       } else {
         const resolution = await resolveSubagentExecution(
           delegateTaskArgs,
-          modelOptions,
+          { ...modelOptions, requiredModel: delegateTaskArgs.required_model },
           parentContext.agent,
           categoryExamples,
           { defaultModel: systemDefaultModel ?? inheritedModel },
@@ -345,6 +359,11 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
         agentToUse = resolution.agentToUse
         categoryModel = resolution.categoryModel
         fallbackChain = resolution.fallbackChain
+        assertRequiredModel(
+          delegateTaskArgs.required_model,
+          categoryModel && `${categoryModel.providerID}/${categoryModel.modelID}`,
+        )
+        if (delegateTaskArgs.required_model) fallbackChain = []
       }
 
       const systemContent = buildSystemContent({

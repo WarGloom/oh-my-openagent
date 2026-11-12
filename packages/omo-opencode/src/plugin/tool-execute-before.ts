@@ -8,6 +8,8 @@ import { getMainSessionID } from "../features/claude-code-session-state"
 import { log, replaceToolArgs } from "../shared"
 import { resolveSessionAgent } from "./session-agent-resolver"
 import { stopContinuation } from "./stop-continuation"
+import { assertExecutorSelection } from "../shared/delegated-executor-requirement"
+import { getV2BackgroundJobs } from "../v2/create-plugin-input"
 
 import type { CreatedHooks } from "../create-hooks"
 import type { BackgroundManager } from "../features/background-agent"
@@ -66,6 +68,7 @@ export function createToolExecuteBeforeHandler(args: {
     }
 
     const normalizedToolName = input.tool.toLowerCase()
+    if (normalizedToolName === "task") assertExecutorSelection(output.args)
     if (BTW_DELEGATION_TOOLS.has(normalizedToolName) && isTrackedBtwSideSession(input.sessionID)) {
       throw new Error("BTW side conversations cannot delegate work.")
     }
@@ -133,11 +136,13 @@ export function createToolExecuteBeforeHandler(args: {
       const subagentType = typeof output.args.subagent_type === "string" ? output.args.subagent_type : undefined
       const taskId = typeof output.args.task_id === "string" ? output.args.task_id : undefined
 
-      if (category) {
-        replaceToolArgs(output, { subagent_type: "sisyphus-junior" })
-      } else if (!subagentType && taskId) {
-        const resolvedAgent = await resolveSessionAgent(ctx.client, taskId)
-        replaceToolArgs(output, { subagent_type: resolvedAgent ?? "continue" })
+      if (!taskId || !getV2BackgroundJobs(ctx)) {
+        if (category && !subagentType) {
+          replaceToolArgs(output, { subagent_type: "sisyphus-junior" })
+        } else if (!subagentType && taskId) {
+          const resolvedAgent = await resolveSessionAgent(ctx.client, taskId)
+          replaceToolArgs(output, { subagent_type: resolvedAgent ?? "continue" })
+        }
       }
     }
 

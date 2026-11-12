@@ -64,7 +64,10 @@ export async function resolveSubagentModel(
     canonicalModels?.slice(1) ?? agentOverride?.fallback_models ?? agentCategoryConfig?.fallback_models,
   )
 
-  const availableModels = await getAvailableModelsForDelegateTask(executorCtx.client)
+  const available = await getAvailableModelsForDelegateTask(executorCtx.client)
+  const availableModels = executorCtx.requiredModel
+    ? new Set([...available].filter((model) => model === executorCtx.requiredModel))
+    : available
   const normalizedMatchedModel = matchedAgent.model ? normalizeModelFormat(matchedAgent.model) : undefined
   const matchedAgentModelStr = normalizedMatchedModel
     ? `${normalizedMatchedModel.providerID}/${normalizedMatchedModel.modelID}`

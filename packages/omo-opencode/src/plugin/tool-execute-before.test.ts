@@ -240,7 +240,7 @@ describe("createToolExecuteBeforeHandler", () => {
       expect(output.args.subagent_type).toBe("plan")
     })
 
-    test("sets subagent_type to sisyphus-junior when category provided with different subagent_type", async () => {
+    test("rejects a category that conflicts with an explicit subagent", async () => {
       //#given
       const ctx = createCtxWithSessionMessages()
       const handler = createToolExecuteBeforeHandler({ ctx, hooks: emptyHooks })
@@ -250,13 +250,16 @@ describe("createToolExecuteBeforeHandler", () => {
       }
 
       //#when
-      await handler(input, output)
+      await expect(handler(input, output)).rejects.toMatchObject({
+        code: "executor_requirement",
+        reason: "agent_conflict",
+      })
 
       //#then
-      expect(output.args.subagent_type).toBe("sisyphus-junior")
+      expect(output.args.subagent_type).toBe("oracle")
     })
 
-    test("routes stale category plus plan subagent through category", async () => {
+    test("rejects stale category and plan fields without replacing the agent", async () => {
       //#given
       const ctx = createCtxWithSessionMessages()
       const handler = createToolExecuteBeforeHandler({ ctx, hooks: emptyHooks })
@@ -269,10 +272,13 @@ describe("createToolExecuteBeforeHandler", () => {
       }
 
       //#when
-      await handler(input, output)
+      await expect(handler(input, output)).rejects.toMatchObject({
+        code: "executor_requirement",
+        reason: "agent_conflict",
+      })
 
       //#then
-      expect(output.args.subagent_type).toBe("sisyphus-junior")
+      expect(output.args.subagent_type).toBe("plan")
       expect(output.args.category).toBe("project_manager")
     })
 
