@@ -14,6 +14,7 @@ import { recoverNativeFailure } from "./native-recovery-state"
 const controllers = new WeakMap<Hooks, NativeFallbackController>()
 
 function isRateLimit(error: V2StructuredError): boolean {
+  if (error.type === "provider.quota") return false
   return (
     error.type === "provider.rate-limit" ||
     error.type === "rate_limit_error" ||
