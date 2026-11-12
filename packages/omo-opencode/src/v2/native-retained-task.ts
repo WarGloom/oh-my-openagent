@@ -2,6 +2,8 @@ import type { BackgroundTask } from "../features/background-agent/types"
 import type { V2ModelRef, V2PluginContext } from "./context-types"
 import type { NativeSubagentDomain } from "./native-subagent-types"
 import { normalizeReasoning } from "@oh-my-opencode/model-core"
+import { requiredModelFromMetadata } from "../shared/delegated-executor-requirement"
+import { enforceNativeExecutorRequirement } from "./native-executor-requirement"
 
 function retainedVariant(
   model: { readonly variant?: string; readonly reasoning?: string } | undefined,
@@ -48,7 +50,8 @@ export async function recoverNativeTask(
       durable.nativeProvisioningAdmissionID !== archived.nativeProvisioningAdmissionID ||
       durable.nativeAdmissionID !== archived.nativeAdmissionID ||
       durable.nativeRun?.childSessionID !== archived.nativeRun?.childSessionID ||
-      durable.nativeRun?.generation !== archived.nativeRun?.generation)
+      durable.nativeRun?.generation !== archived.nativeRun?.generation ||
+      requiredModelFromMetadata(durable.nativeMetadata) !== requiredModelFromMetadata(archived.nativeMetadata))
   ) {
     throw new NativeContinuationRecoveryError("retained task identity or generation mismatch")
   }
@@ -107,6 +110,7 @@ export async function recoverNativeTask(
   if (child.time.busy !== undefined && child.time.busy > (child.time.idle ?? 0)) {
     throw new NativeContinuationRecoveryError("child session is busy")
   }
+  await enforceNativeExecutorRequirement(owner.context, task)
   const model = { providerID: task.model.providerID, id: task.model.modelID, variant: retainedVariant(task.model) }
   const archivedModel = archived?.model && {
     providerID: archived.model.providerID,

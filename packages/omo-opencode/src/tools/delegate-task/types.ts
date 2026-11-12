@@ -67,6 +67,7 @@ export interface DelegateTaskArgs {
   category?: string
   model_routing?: false
   subagent_type?: string
+  required_model?: string
   reasoning?: DelegatedModelConfig["reasoning"]
   requested_subagent_type?: string
   run_in_background: boolean

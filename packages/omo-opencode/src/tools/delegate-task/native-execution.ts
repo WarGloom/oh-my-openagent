@@ -4,7 +4,7 @@ import type { FallbackEntry } from "../../shared/model-requirements"
 import { buildTaskPrompt } from "./prompt-builder"
 import { getPersistedBackgroundTaskDescription } from "./background-task-description"
 import { getSessionTools } from "../../shared/session-tools-store"
-import { stripAgentListSortPrefix } from "../../shared/agent-display-names"
+import { getAgentConfigKey, stripAgentListSortPrefix } from "../../shared/agent-display-names"
 import { migrateToolsToPermission } from "../../shared/permission-compat"
 import { QUESTION_DENIED_SESSION_PERMISSION } from "../../shared/question-denied-session-permission"
 import { publishToolMetadata } from "../../features/tool-metadata-store"
@@ -12,6 +12,11 @@ import { buildTaskMetadataBlock } from "../../features/tool-metadata-store/task-
 import { resolveMetadataModel } from "./resolve-metadata-model"
 import { subagentSessions } from "../../features/claude-code-session-state"
 import { claimNativeContinuation } from "./native-continuation"
+import {
+  ExecutorRequirementError,
+  assertRequiredModel,
+  requiredModelFromMetadata,
+} from "../../shared/delegated-executor-requirement"
 
 export async function executeNativeDelegate(input: {
   readonly args: DelegateTaskArgs
@@ -32,6 +37,19 @@ export async function executeNativeDelegate(input: {
   try {
     const existing = continuation?.task
     const agent = existing?.agent ?? stripAgentListSortPrefix(input.agent ?? "")
+    const retainedModel = requiredModelFromMetadata(existing?.nativeMetadata)
+    assertRequiredModel(retainedModel, args.required_model ?? retainedModel)
+    const requiredModel = retainedModel ?? args.required_model
+    if (existing) {
+      if (
+        (args.requested_subagent_type &&
+          getAgentConfigKey(args.requested_subagent_type) !== getAgentConfigKey(existing.agent)) ||
+        (args.category && args.category !== existing.category)
+      )
+        throw new ExecutorRequirementError("agent_conflict")
+      assertRequiredModel(requiredModel, existing.model && `${existing.model.providerID}/${existing.model.modelID}`)
+    } else assertRequiredModel(requiredModel, input.model && `${input.model.providerID}/${input.model.modelID}`)
+    const nativeMetadata = requiredModel ? { ...existing?.nativeMetadata, requiredModel } : existing?.nativeMetadata
     const task = existing
       ? await executor.manager.resume({
           sessionId: args.task_id ?? "",
@@ -42,6 +60,7 @@ export async function executeNativeDelegate(input: {
           parentAgent: parent.agent,
           parentModel: parent.model,
           nativeInvocation,
+          nativeMetadata,
           nativeSignal: ctx.abort,
           skills: args.load_skills.length ? args.load_skills : existing.skills,
           nativeInheritedPermit: !args.run_in_background && subagentSessions.has(parent.sessionID),
@@ -63,6 +82,7 @@ export async function executeNativeDelegate(input: {
           skillContent: input.system,
           skills: args.load_skills,
           category: args.category,
+          nativeMetadata,
           sessionPermission: QUESTION_DENIED_SESSION_PERMISSION,
           userPermission: input.model?.tools ? migrateToolsToPermission(input.model.tools) : undefined,
           nativeInvocation,
@@ -84,6 +104,7 @@ export async function executeNativeDelegate(input: {
         prompt: args.prompt,
         description: args.description,
         command: args.command,
+        ...(requiredModel ? { required_model: requiredModel } : {}),
         ...(args.requested_subagent_type ? { requested_subagent_type: args.requested_subagent_type } : {}),
         model: resolveMetadataModel(input.model ?? task.model, parent.model),
       },

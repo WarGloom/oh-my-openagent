@@ -84,7 +84,7 @@ describe("Jev task dispatch", () => {
       },
     }
   }
-  function setup(mode: "active" | "observe" | "off" = "active") {
+  function setup(mode: "active" | "observe" | "off" = "active", native = false) {
     const launch = mock(async (input: LaunchInput) => {
       const task: BackgroundTask = { ...input, id: "bg_worker", status: "pending" }
       const attempt = startAttempt(task, input.model)
@@ -97,7 +97,7 @@ describe("Jev task dispatch", () => {
       session: { get: async () => ({ data: { directory: root } }), messages: async () => ({ data: [] }) },
     }
     const options = {
-      manager: { launch },
+      manager: { launch, ...(native ? { nativeJobs: {} } : {}) },
       client,
       directory: root,
       userCategories: categories,
@@ -113,6 +113,94 @@ describe("Jev task dispatch", () => {
     })
     return { launch, delegate, ctx, options }
   }
+
+  test("rejects an exact model with no eligible category before classifier or child launch", async () => {
+    const { delegate, ctx, launch } = setup("active", true)
+    await expect(
+      delegate.execute(
+        {
+          ...{ required_model: "example/specialist" },
+          category: "auto",
+          prompt: "Review the sanitized fixture",
+          run_in_background: true,
+          load_skills: [],
+        },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ code: "executor_requirement", reason: "no_eligible_executor" })
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(launch).not.toHaveBeenCalled()
+  })
+
+  test.each([
+    { mode: "active" },
+    { mode: "observe" },
+    { mode: "off" },
+    { mode: "active", model_routing: false },
+    { mode: "active", offline: true },
+    { mode: "active", roundRobin: true },
+  ] as const)("keeps an exact model binding in $mode routing ($model_routing, $offline)", async (selection) => {
+    const { delegate, ctx, launch, options } = setup(selection.mode, true)
+    const category = `round-robin-${crypto.randomUUID()}`
+    const rr = {
+      ...options,
+      userCategories: {
+        ...categories,
+        [category]: { models: ["example/visual", "example/default"], models_distribution: "round_robin" },
+      },
+    }
+    const selected = "roundRobin" in selection ? createDelegateTask(unsafeTestValue(rr)) : delegate
+    if ("offline" in selection) fetchSpy.mockRejectedValue(new Error("offline"))
+    await selected.execute(
+      {
+        ...{ required_model: "example/default" },
+        category: "auto",
+        prompt: "Review the sanitized fixture",
+        model_routing: "model_routing" in selection ? selection.model_routing : undefined,
+        run_in_background: true,
+        load_skills: [],
+      },
+      ctx,
+    )
+    expect(launch).toHaveBeenCalledTimes(1)
+    expect(launch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: "unspecified-low",
+        model: expect.objectContaining({ providerID: "example", modelID: "default" }),
+        nativeMetadata: { requiredModel: "example/default" },
+        fallbackChain: [],
+      }),
+    )
+    if ("roundRobin" in selection)
+      expect(
+        (
+          await resolveCategoryExecution(
+            { category, prompt: "work", description: "work", load_skills: [], run_in_background: false },
+            unsafeTestValue<ExecutorContext>({ ...rr, jevRouting: undefined }),
+            undefined,
+            undefined,
+          )
+        ).categoryModel?.modelID,
+      ).toBe("visual")
+  })
+
+  test("rejects a category that would replace a required registered agent", async () => {
+    const { delegate, ctx, launch } = setup("active", true)
+    await expect(
+      delegate.execute(
+        {
+          category: "auto",
+          subagent_type: "registered-specialist",
+          prompt: "Review the sanitized fixture",
+          run_in_background: true,
+          load_skills: [],
+        },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ code: "executor_requirement", reason: "agent_conflict" })
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(launch).not.toHaveBeenCalled()
+  })
 
   test.each([undefined, "auto"])("routes category %s through top-1 and joins the child dispatch", async (category) => {
     const { delegate, ctx, launch } = setup()

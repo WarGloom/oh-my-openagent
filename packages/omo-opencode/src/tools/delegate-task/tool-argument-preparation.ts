@@ -2,22 +2,18 @@ import type { DelegateTaskArgs, ToolContextWithMetadata } from "./types"
 import { SISYPHUS_JUNIOR_AGENT } from "./sisyphus-junior-agent"
 import { log } from "../../shared/logger"
 import { stripInternalInitiatorMarkers } from "../../shared/internal-initiator-marker"
+import { assertExecutorSelection, parseRequiredModel } from "../../shared/delegated-executor-requirement"
 
 export async function prepareDelegateTaskArgs(
   args: Record<string, unknown>,
   ctx: ToolContextWithMetadata,
 ): Promise<DelegateTaskArgs> {
+  assertExecutorSelection(args)
   let category = typeof args.category === "string" ? args.category : undefined
   const prompt = stripInternalInitiatorMarkers(typeof args.prompt === "string" ? args.prompt : "")
   const originalSubagentType = typeof args.subagent_type === "string" ? args.subagent_type : undefined
   let subagentType = originalSubagentType
-
-  if (category && subagentType && subagentType !== SISYPHUS_JUNIOR_AGENT) {
-    log("[task] category provided - overriding subagent_type to sisyphus-junior", {
-      category,
-      subagent_type: subagentType,
-    })
-  }
+  const requiredModel = parseRequiredModel(args.required_model)
 
   if (category) {
     subagentType = SISYPHUS_JUNIOR_AGENT
@@ -88,6 +84,7 @@ export async function prepareDelegateTaskArgs(
     category,
     model_routing: args.model_routing === false ? false : undefined,
     subagent_type: subagentType,
+    required_model: requiredModel,
     reasoning: typeof args.reasoning === "string" ? args.reasoning : undefined,
     requested_subagent_type: originalSubagentType,
     description,

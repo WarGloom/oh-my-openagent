@@ -18,6 +18,8 @@ import { isNativeRecoveryPending } from "./native-recovery-state"
 import { settleCompactionRestore } from "./compaction-continuation"
 import { registerNativeDashboard } from "./native-dashboard"
 import { createNativeRecoveryNotifier } from "./native-recovery-notice"
+import { bindNativeExecutorRequirements } from "./native-executor-requirement"
+import { findRegisteredBackgroundTaskBySession } from "../features/background-agent/task-registry"
 
 export type V2SetupDeps = {
   readonly serverPlugin: Plugin
@@ -40,8 +42,15 @@ const warnOnce = (): ((message: string) => void) => {
  */
 export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => Promise<V2Cleanup> {
   const warn = deps.warn ?? warnOnce()
-  return async (context) => {
-    if (!context.storage) throw new Error("Native background jobs require host storage")
+  return async (unboundContext) => {
+    if (!unboundContext.storage) throw new Error("Native background jobs require host storage")
+    const background = new V2BackgroundLifecycle(unboundContext, unboundContext.storage)
+    const context = bindNativeExecutorRequirements(
+      unboundContext,
+      async (sessionID, parentSessionID) =>
+        (await background.findRetainedTask(sessionID, parentSessionID)) ??
+        findRegisteredBackgroundTaskBySession(sessionID, parentSessionID),
+    )
     if (!context.experimental.subagent) throw new Error("Native background jobs require the host subagent domain")
     const tracker = createSessionTracker()
     const bridge = startEventBridge(context, { tracker, warn })
@@ -58,7 +67,6 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
     let stopping = false
     const recoveryAbort = new AbortController()
     let backgroundStart: Promise<void> | undefined
-    const background = new V2BackgroundLifecycle(context, context.storage)
     try {
       toast = await context.rpc.register(toastChannel, {})
       const toastEvents = toast.events
