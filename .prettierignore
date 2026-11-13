@@ -17,6 +17,7 @@
 *.astro
 *.graphql
 # packages/web keeps its own Prettier setup (packages/web/.prettierrc, tailwind plugin).
+packages/omo-opencode/src/tools/delegate-task/jev-router-model.ts
 packages/web/
 # Vendored, fixture, golden and generated code is compared byte for byte or owned upstream.
 **/vendor/**
