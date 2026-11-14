@@ -110,8 +110,25 @@ export const CREATIVE_APPROACH_QUESTION = {
     },
   },
 } as const
+export const UI_MAIN_WORK_QUESTION = {
+  ui_is_main_work: {
+    type: "noul",
+    instructions: "Is frontend/UI work the main part of the work requested in `task`?",
+    criteria: {
+      true: "Most of the requested work changes or reviews frontend/UI code, components, layout, styling, UX, on-screen text, or rendered UI evidence. Backend, script, infrastructure, or documentation work is absent or minor.",
+      false:
+        "The main work is backend code, scripts, infrastructure, data, tests of non-UI behavior, investigation of non-UI behavior, or documentation. UI code is touched only as a small part, such as one label or message, or a UI is only mentioned.",
+    },
+  },
+} as const
 export const ALL_CATEGORIES_RULE = {
   ...VISUAL_GUARD_RULE,
+  visual_domain: {
+    ...VISUAL_GUARD_RULE.visual_domain,
+    main_work_question: "ui_is_main_work",
+    // 0.5: on 27 real briefs, UI changes and UI reviews score 0.55 to 0.97; tasks that only touch UI code score at most 0.15 while their frontend-expertise answer stays at 0.75 to 0.95.
+    main_work_threshold: 0.5,
+  },
   open_decision: {
     settled_question: "how_settled",
     open_level: 4,
@@ -177,7 +194,10 @@ function artifact(router: JevRouterWeights, rule: DecisionRule, extraQuestions?:
 type JevArtifact = ReturnType<typeof artifact>
 export const PG_ARTIFACT = artifact(PG_ROUTER, PG_RULE)
 export const VISUAL_GUARDED_ARTIFACT = artifact(PG_ROUTER, VISUAL_GUARD_RULE)
-export const ALL_CATEGORIES_ARTIFACT = artifact(PG_ROUTER, ALL_CATEGORIES_RULE, CREATIVE_APPROACH_QUESTION)
+export const ALL_CATEGORIES_ARTIFACT = artifact(PG_ROUTER, ALL_CATEGORIES_RULE, {
+  ...CREATIVE_APPROACH_QUESTION,
+  ...UI_MAIN_WORK_QUESTION,
+})
 export const ROLLBACK_ARTIFACT = artifact(FROZEN_ROUTER, { kind: "top1" })
 
 export function selectJevArtifact(id: string = PG_ARTIFACT.artifact_id) {
@@ -211,13 +231,26 @@ function workProbability(answers: Answers, question: string, option: string): nu
   return work !== undefined && typeof work !== "number" ? work[index] : undefined
 }
 
-function readVisualEvidence(guard: typeof VISUAL_GUARD_RULE.visual_domain, answers: Answers) {
+function readVisualEvidence(
+  guard: typeof VISUAL_GUARD_RULE.visual_domain | typeof ALL_CATEGORIES_RULE.visual_domain,
+  answers: Answers,
+) {
   const frontend = answers?.[guard.frontend_question]
   const visualWork = workProbability(answers, guard.work_question, guard.work_option)
   if (typeof frontend !== "number" || typeof visualWork !== "number")
     throw new RangeError("Missing visual policy evidence")
+  if (!("main_work_question" in guard))
+    return {
+      positive: frontend >= guard.positive_threshold || visualWork >= guard.positive_threshold,
+      mixed: false,
+      negative: frontend <= guard.negative_threshold && visualWork <= guard.negative_threshold,
+    }
+  const mainWork = answers?.[guard.main_work_question]
+  if (typeof mainWork !== "number") throw new RangeError("Missing visual policy evidence")
   return {
-    positive: frontend >= guard.positive_threshold || visualWork >= guard.positive_threshold,
+    positive: mainWork >= guard.main_work_threshold,
+    // The task touches UI code, but UI is not its main work: another class fits better than the visual one.
+    mixed: mainWork < guard.main_work_threshold && frontend >= guard.positive_threshold,
     negative: frontend <= guard.negative_threshold && visualWork <= guard.negative_threshold,
   }
 }
@@ -265,6 +298,8 @@ export function applyJevDecisionRule(
       const escalated = "open_decision" in rule ? escalateOpenDecision(rule.open_decision, answers) : undefined
       if (escalated) return escalated
       if (!guard || !evidence) return selected
+      const next = evidence.mixed ? ranking.find((row) => row.category !== selected) : undefined
+      if (next) return next.category
       throw new JevVisualDomainError(evidence.negative ? guard.conflict : guard.uncertain)
     }
     default: {

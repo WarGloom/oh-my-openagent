@@ -20,14 +20,16 @@ import * as ledger from "./jev-routing-ledger"
 
 type Work = (typeof OPTIONS)[number]
 const creativeQuestion = ALL_CATEGORIES_RULE.open_decision.creative_question
+const mainWorkQuestion = ALL_CATEGORIES_RULE.visual_domain.main_work_question
 const threshold = ALL_CATEGORIES_RULE.open_decision.threshold
 
-function answers(open: number, work: Work, creative = 0, frontend = 0) {
+function answers(open: number, work: Work, creative = 0, frontend = 0, mainUi = 0) {
   return {
     how_settled: [0, 0, 0, 1 - open, open],
     kind_of_work: OPTIONS.map((option) => (option === work ? 1 : 0)),
     requires_frontend_ui_expertise: frontend,
     [creativeQuestion]: creative,
+    [mainWorkQuestion]: mainUi,
   }
 }
 const routine = [
@@ -56,7 +58,35 @@ describe("all-categories decision rule", () => {
   })
 
   test("positive visual evidence wins over an open decision", () => {
-    expect(applyJevDecisionRule(visual, ALL_CATEGORIES_ARTIFACT.rule, answers(0.9, "visual_ui", 0, 0.9))).toBe(
+    expect(applyJevDecisionRule(visual, ALL_CATEGORIES_ARTIFACT.rule, answers(0.9, "visual_ui", 0, 0.9, 0.9))).toBe(
+      "visual-engineering",
+    )
+  })
+
+  test.each([
+    { frontend: 0.95, mainUi: 0.49, work: "code_change", expected: "unspecified-low" },
+    { frontend: 0.95, mainUi: 0.5, work: "review_judgment", expected: "visual-engineering" },
+    { frontend: 0.1, mainUi: 0.9, work: "code_change", expected: "visual-engineering" },
+  ] as const)(
+    "a visual top class with frontend $frontend and UI share $mainUi selects $expected",
+    ({ frontend, mainUi, work, expected }) => {
+      // given: the classifier ranks visual first and the decision is settled
+      // when: the answer about UI being the main work decides whether the task is visual
+      // then: a task that merely touches UI code takes the next class, and a UI review stays visual
+      expect(
+        applyJevDecisionRule(visual, ALL_CATEGORIES_ARTIFACT.rule, answers(0, work, 0, frontend, mainUi)),
+      ).toBe(expected)
+    },
+  )
+
+  test("a mixed task with an open decision escalates before it takes the next class", () => {
+    expect(applyJevDecisionRule(visual, ALL_CATEGORIES_ARTIFACT.rule, answers(0.5, "code_change", 0, 0.95))).toBe(
+      "deep-high",
+    )
+  })
+
+  test("the earlier visual guard still accepts frontend expertise alone", () => {
+    expect(applyJevDecisionRule(visual, VISUAL_GUARDED_ARTIFACT.rule, answers(0, "code_change", 0, 0.95))).toBe(
       "visual-engineering",
     )
   })
@@ -124,7 +154,14 @@ describe("all-categories routing", () => {
       return Promise.resolve()
     })
     fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json({ ...reply, answers: { ...reply.answers, [creativeQuestion]: { type: "noul", noul: 0.1 } } }),
+      Response.json({
+        ...reply,
+        answers: {
+          ...reply.answers,
+          [creativeQuestion]: { type: "noul", noul: 0.1 },
+          [mainWorkQuestion]: { type: "noul", noul: 0.05 },
+        },
+      }),
     )
   })
   afterEach(() => {
@@ -148,7 +185,7 @@ describe("all-categories routing", () => {
     expect(await routeCategoryWithJev(input())).toBe("deep-high")
     // then: the request carries the frozen questions plus the artifact's question
     const asked = Object.keys(JSON.parse(fetchSpy.mock.calls[0]?.[1]?.body).questions)
-    expect(asked).toEqual([...Object.keys(questions()), creativeQuestion])
+    expect(asked).toEqual([...Object.keys(questions()), creativeQuestion, mainWorkQuestion])
     const decision = records[0]
     if (!decision || decision.event !== "decision") throw new RangeError("Missing routing decision")
     expect(decision).toMatchObject({
