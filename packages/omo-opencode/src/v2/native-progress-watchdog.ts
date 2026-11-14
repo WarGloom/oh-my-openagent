@@ -150,6 +150,24 @@ export function createNativeProgressWatchdog(deps: {
         } else arm(sessionID, request)
         return
       }
+      if (
+        event.type === "session.tool.called" ||
+        event.type === "session.tool.success" ||
+        event.type === "session.tool.failed"
+      ) {
+        // A running tool emits no model progress, so its run time is a wait and not a stall.
+        request.unsafe = true
+        request.progressed = true
+        if (typeof data.id !== "string") return
+        if (event.type === "session.tool.called") {
+          request.waits.set(`tool:${data.id}`, "pending")
+          pause(request)
+          return
+        }
+        request.waits.set(`tool:${data.id}`, "settled")
+        arm(sessionID, request)
+        return
+      }
       if (event.type.startsWith("session.tool.")) request.unsafe = true
       if (
         event.type.startsWith("session.text.") ||

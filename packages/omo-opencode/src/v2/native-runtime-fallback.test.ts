@@ -453,7 +453,7 @@ describe("native runtime fallback", () => {
     expect(getNativeFallbackModel("ses_main")?.model).toEqual({ providerID: "anthropic", modelID: "second" })
   })
 
-  test("times out a request with no progress but never replays stalled tools or permission waits", async () => {
+  test("times out a request with no progress but never replays a request that ran a tool or waits for permission", async () => {
     const clock = installRuntimeFallbackTestClock()
     cleanups.push(clock.restore)
     const f = fixture({
@@ -467,6 +467,9 @@ describe("native runtime fallback", () => {
     expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["interrupt", "switchModel", "synthetic"])
     await f.fake.triggerModelRequest({ ...request, sessionID: "tool" })
     await installed.beforeEvent({ type: "session.tool.called", data: { sessionID: "tool", id: "call" } })
+    await clock.advanceBy(60_000)
+    expect(f.fake.sessionCalls).toHaveLength(3)
+    await installed.beforeEvent({ type: "session.tool.success", data: { sessionID: "tool", id: "call" } })
     await clock.advanceBy(4_000)
     expect(f.fake.sessionCalls.at(-1)).toEqual({ kind: "interrupt", sessionID: "tool" })
     expect(f.fake.sessionCalls.filter((call) => call.kind === "synthetic")).toHaveLength(1)
