@@ -45,7 +45,11 @@ export async function deliverLive(
           config,
         })
       } catch (error) {
-        log("[team-mailbox] V2 live delivery failed", { teamRunId, recipientName, error })
+        log("[team-mailbox] V2 live delivery failed", {
+          teamRunId,
+          recipientName,
+          error: error instanceof Error ? `${error.name}: ${error.message}` : error,
+        })
       }
       continue
     }

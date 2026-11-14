@@ -16,7 +16,11 @@ export async function registerNativeTeamMailbox(
         await admitNativeTeamMessage(context, message, { teamRunId: member.teamRunId, memberName: member.memberName })
       })
     } catch (error) {
-      log("[v2] team mailbox admission failed", { sessionID: event.sessionID, error })
+      // An Error serializes to {} in the log, which hid the cause of every failed delivery.
+      log("[v2] team mailbox admission failed", {
+        sessionID: event.sessionID,
+        error: error instanceof Error ? `${error.name}: ${error.message}` : error,
+      })
     }
   })
 }
