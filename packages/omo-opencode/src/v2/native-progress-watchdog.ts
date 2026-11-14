@@ -13,6 +13,9 @@ type Request = {
   backoff?: ReturnType<typeof setTimeout>
 }
 
+const STALL_RESUME_TEXT =
+  "The previous model request stalled and the progress watchdog interrupted it. Continue the task from the current state. Tool calls that already completed are in the transcript; do not repeat them unless a result is missing."
+
 export function createNativeProgressWatchdog(deps: {
   readonly context: V2PluginContext
   readonly timeouts: { readonly firstProgressMs: number; readonly stallMs: number; readonly hardMs: number }
@@ -21,9 +24,13 @@ export function createNativeProgressWatchdog(deps: {
     request: { readonly agent: string; readonly model: V2ModelRef },
     ownership: { readonly current: () => boolean; readonly signal: AbortSignal },
   ) => Promise<boolean>
+  /** A request that already ran a tool stalled again after its one automatic resume. */
+  readonly stalledAgain: (sessionID: string) => void
   readonly warn: (error: unknown) => void
 }) {
   const requests = new Map<string, Request>()
+  // One automatic resume per user turn: "pending" until the resumed run starts, then "used".
+  const resumes = new Map<string, "pending" | "used">()
   const recovering = new Map<
     string,
     {
@@ -46,15 +53,25 @@ export function createNativeProgressWatchdog(deps: {
     clear(sessionID)
     const recovery = { request, settled: Promise.withResolvers<boolean>(), abort: new AbortController() }
     recovering.set(sessionID, recovery)
-    if (!request.unsafe) interruptions.set(sessionID, recovery.settled.promise)
+    const resumable = request.unsafe && !resumes.has(sessionID)
+    if (!request.unsafe || resumable) interruptions.set(sessionID, recovery.settled.promise)
     let recovered = false
     try {
-      if (request.unsafe) await deps.context.experimental.session.interrupt({ sessionID })
-      else
+      if (!request.unsafe)
         recovered = await deps.recover(sessionID, request, {
           current: () => !disposed && recovering.get(sessionID) === recovery,
           signal: recovery.abort.signal,
         })
+      else {
+        await deps.context.experimental.session.interrupt({ sessionID })
+        if (!resumable) deps.stalledAgain(sessionID)
+        else if (!disposed && recovering.get(sessionID) === recovery) {
+          // Executed tools cannot be replayed on another model, so the same session continues from its transcript.
+          await deps.context.session.synthetic({ sessionID, text: STALL_RESUME_TEXT, delivery: "steer", resume: true })
+          resumes.set(sessionID, "pending")
+          recovered = true
+        }
+      }
     } finally {
       recovery.settled.resolve(recovered)
       if (!recovered && interruptions.get(sessionID) === recovery.settled.promise) interruptions.delete(sessionID)
@@ -117,6 +134,14 @@ export function createNativeProgressWatchdog(deps: {
       if (event.type === "session.execution.started" || event.type === "session.deleted")
         interruptions.delete(sessionID)
       if (event.type === "session.deleted") recovering.delete(sessionID)
+      if (event.type === "session.execution.started" && resumes.get(sessionID) === "pending")
+        resumes.set(sessionID, "used")
+      else if (
+        event.type === "session.execution.started" ||
+        event.type === "session.execution.succeeded" ||
+        event.type === "session.deleted"
+      )
+        resumes.delete(sessionID)
       if (
         event.type.startsWith("session.execution.") ||
         event.type === "session.deleted" ||
@@ -185,6 +210,7 @@ export function createNativeProgressWatchdog(deps: {
       for (const recovery of recovering.values()) recovery.abort.abort()
       recovering.clear()
       interruptions.clear()
+      resumes.clear()
     },
   }
 }

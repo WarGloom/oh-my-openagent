@@ -471,16 +471,18 @@ describe("native runtime fallback", () => {
     expect(f.fake.sessionCalls).toHaveLength(3)
     await installed.beforeEvent({ type: "session.tool.success", data: { sessionID: "tool", id: "call" } })
     await clock.advanceBy(4_000)
-    expect(f.fake.sessionCalls.at(-1)).toEqual({ kind: "interrupt", sessionID: "tool" })
-    expect(f.fake.sessionCalls.filter((call) => call.kind === "synthetic")).toHaveLength(1)
+    expect(f.fake.sessionCalls.slice(3)).toEqual([
+      { kind: "interrupt", sessionID: "tool" },
+      { kind: "synthetic", input: expect.objectContaining({ sessionID: "tool", resume: true }) },
+    ])
     await f.fake.triggerModelRequest({ ...request, sessionID: "permission" })
     await installed.beforeEvent({ type: "permission.asked", data: { sessionID: "permission", id: "per" } })
     await clock.advanceBy(10_000)
-    expect(f.fake.sessionCalls).toHaveLength(4)
+    expect(f.fake.sessionCalls).toHaveLength(5)
     await installed.beforeEvent({ type: "permission.replied", data: { sessionID: "permission", requestID: "per" } })
     await installed.dispose()
     await clock.advanceBy(10_000)
-    expect(f.fake.sessionCalls).toHaveLength(4)
+    expect(f.fake.sessionCalls).toHaveLength(5)
   })
   test.each([
     { type: "provider.rate-limit", message: "slow down", status: 429 },
