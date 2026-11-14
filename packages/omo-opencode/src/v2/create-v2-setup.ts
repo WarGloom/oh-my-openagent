@@ -44,13 +44,15 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
   const warn = deps.warn ?? warnOnce()
   return async (unboundContext) => {
     if (!unboundContext.storage) throw new Error("Native background jobs require host storage")
-    const background = new V2BackgroundLifecycle(unboundContext, unboundContext.storage)
     const context = bindNativeExecutorRequirements(
       unboundContext,
       async (sessionID, parentSessionID) =>
         (await background.findRetainedTask(sessionID, parentSessionID)) ??
         findRegisteredBackgroundTaskBySession(sessionID, parentSessionID),
     )
+    // The lifecycle registers the manager under its context, and team mailbox and command jobs look it up
+    // under the context handed to the hooks, so both must be this one object.
+    const background: V2BackgroundLifecycle = new V2BackgroundLifecycle(context, unboundContext.storage)
     if (!context.experimental.subagent) throw new Error("Native background jobs require the host subagent domain")
     const tracker = createSessionTracker()
     const bridge = startEventBridge(context, { tracker, warn })
