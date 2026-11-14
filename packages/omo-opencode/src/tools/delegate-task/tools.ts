@@ -273,7 +273,7 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
         if (!routingHint) return routingNotice ? `${text}\n${routingNotice}` : text
         // A foreground child outlasts the observation; a background launch waits for it only briefly.
         const budget = Promise.withResolvers<undefined>()
-        const timer = setTimeout(budget.resolve, Math.min(options.jevRouting?.timeout_ms ?? 0, 750))
+        const timer = setTimeout(budget.resolve, Math.min(modelOptions.jevRouting?.timeout_ms ?? 0, 750))
         const hint = await Promise.race([routingHint, budget.promise])
         clearTimeout(timer)
         return [text, routingNotice, hint].filter(Boolean).join("\n")

@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto"
 import type { Hooks } from "@opencode-ai/plugin"
 import { getRuntimeFallbackRetryAfterMs } from "@oh-my-opencode/model-core"
 import type { RuntimeFallbackHook } from "../hooks/runtime-fallback/types"
@@ -9,7 +8,7 @@ import { filterProvidersServingModel } from "../features/background-agent/fallba
 import { log } from "../shared/logger"
 import type { V2Event, V2ModelRef, V2PluginContext, V2SessionRequestKind, V2StructuredError } from "./context-types"
 import { createNativeProgressWatchdog } from "./native-progress-watchdog"
-import { recoverNativeFailure } from "./native-recovery-state"
+import { recoverNativeFailure, recoveryMessageID } from "./native-recovery-state"
 
 const controllers = new WeakMap<Hooks, NativeFallbackController>()
 
@@ -20,11 +19,6 @@ function isRateLimit(error: V2StructuredError): boolean {
     error.type === "rate_limit_error" ||
     /\brate_limit_error\b/i.test(`${error.message} ${error.response?.body ?? ""}`)
   )
-}
-
-// Stable per failure, so a replayed or concurrent admission of the same failure is a host duplicate.
-function recoveryMessageID(failureID: string): string {
-  return `msg_${createHash("sha256").update(`omo-native-recovery:${failureID}`).digest("hex").slice(0, 26)}`
 }
 
 export function bindNativeRuntimeFallback(hooks: Hooks, runtime: RuntimeFallbackHook | null): void {

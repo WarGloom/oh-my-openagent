@@ -1,5 +1,6 @@
 import type { V2Event, V2ModelRef, V2PluginContext } from "./context-types"
 import { isRecord } from "../shared/record-type-guard"
+import { recoverNativeFailure, recoveryMessageID } from "./native-recovery-state"
 
 type Request = {
   readonly agent: string
@@ -62,17 +63,25 @@ export function createNativeProgressWatchdog(deps: {
           current: () => !disposed && recovering.get(sessionID) === recovery,
           signal: recovery.abort.signal,
         })
-      else {
+      else if (!resumable) {
         await deps.context.experimental.session.interrupt({ sessionID })
-        if (!resumable) deps.stalledAgain(sessionID)
-        else if (!disposed && recovering.get(sessionID) === recovery) {
-          // Executed tools cannot be replayed on another model, so the same session continues from its transcript.
-          await deps.context.session.synthetic({ sessionID, text: STALL_RESUME_TEXT, delivery: "steer", resume: true })
-          resumes.set(sessionID, "pending")
-          recovered = true
-        }
+        deps.stalledAgain(sessionID)
+      } else {
+        resumes.set(sessionID, "pending")
+        recovered = await deps.context.experimental.session.recover(
+          { sessionID },
+          ({ boundaryID }) => recoverNativeFailure(sessionID, boundaryID, async () => {
+            if (disposed || recovering.get(sessionID) !== recovery) return false
+            const outcome = await deps.context.experimental.session.continueAfterFailure({
+              sessionID, boundaryID, id: recoveryMessageID(boundaryID), text: STALL_RESUME_TEXT,
+            })
+            return outcome !== "stale"
+          }),
+          { signal: recovery.abort.signal },
+        )
       }
     } finally {
+      if (resumable && !recovered && resumes.get(sessionID) === "pending") resumes.delete(sessionID)
       recovery.settled.resolve(recovered)
       if (!recovered && interruptions.get(sessionID) === recovery.settled.promise) interruptions.delete(sessionID)
       if (recovering.get(sessionID) === recovery) recovering.delete(sessionID)
@@ -184,6 +193,10 @@ export function createNativeProgressWatchdog(deps: {
         request.unsafe = true
         request.progressed = true
         if (typeof data.id !== "string") return
+        if (event.type === "session.tool.called" && data.executed === true) {
+          arm(sessionID, request)
+          return
+        }
         if (event.type === "session.tool.called") {
           request.waits.set(`tool:${data.id}`, "pending")
           pause(request)
