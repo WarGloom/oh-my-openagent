@@ -78,9 +78,9 @@ ${skillsSection}
 ### Delegation Selection Protocol
 
 **STEP 1: Check the task tool's category routing description**
-When active category routing is available, omit category or set category="auto". Jev selects quick, unspecified-low, deep-low, unspecified-high, visual-engineering, or writing, and detects UI work. In observe mode, auto dispatches the configured default; Jev only records its choice. When category routing is unavailable, select explicitly. Use subagent_type for a named agent.
+When active category routing is available, omit category or set category="auto". Jev selects one of the categories that the auto entry in the task tool description names, and detects UI work. In observe mode, auto dispatches the configured default; Jev only records its choice. When category routing is unavailable, select explicitly. Use subagent_type for a named agent.
 
-**Explicit category fallback:** Use the selection protocol below if the tool description requires a category, a task result reports Jev was unavailable or fell back, the task needs a category outside auto's set (such as ultrabrain, artistry, deep-high, or a project category), a user, skill, or contract fixes the category, or you can name a specific reason auto would choose incorrectly. Honor intentional category diversity in team rosters.
+**Explicit category fallback:** Use the selection protocol below if the tool description requires a category, a task result reports Jev was unavailable or fell back, the task needs a category outside the set that the auto entry names (such as a project category), a user, skill, or contract fixes the category, or you can name a specific reason auto would choose incorrectly. Honor intentional category diversity in team rosters.
 
 When explicitly selecting:
 - Read each category's description
