@@ -267,9 +267,16 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
       let fallbackChain: import("../../shared/model-requirements").FallbackEntry[] | undefined
       let maxPromptTokens: number | undefined
       let routingNotice: string | undefined
+      let routingHint: Promise<string | undefined> | undefined
       const withRoutingNotice = async (result: Promise<string>) => {
         const text = await result
-        return routingNotice ? `${text}\n${routingNotice}` : text
+        if (!routingHint) return routingNotice ? `${text}\n${routingNotice}` : text
+        // A foreground child outlasts the observation; a background launch waits for it only briefly.
+        const budget = Promise.withResolvers<undefined>()
+        const timer = setTimeout(budget.resolve, Math.min(options.jevRouting?.timeout_ms ?? 0, 750))
+        const hint = await Promise.race([routingHint, budget.promise])
+        clearTimeout(timer)
+        return [text, routingNotice, hint].filter(Boolean).join("\n")
       }
 
       if (delegateTaskArgs.category) {
@@ -293,6 +300,7 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
         fallbackChain = resolution.fallbackChain
         maxPromptTokens = resolution.maxPromptTokens
         routingNotice = resolution.routingNotice
+        routingHint = resolution.routingHint
 
         const isRunInBackgroundExplicitlyFalse = isExplicitSyncRun(delegateTaskArgs.run_in_background)
 

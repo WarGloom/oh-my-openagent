@@ -434,6 +434,24 @@ describe("Jev task dispatch", () => {
     }
   })
 
+  test("an explicit category gets a routing hint only when Jev confidently picks another category", async () => {
+    // given: the classifier rates this brief as visual-engineering with 0.95
+    const { options } = setup()
+    const context = unsafeTestValue<ExecutorContext>(options)
+    const args = { prompt: "Implement feature", description: "Feature", run_in_background: false, load_skills: [] }
+    // when: the orchestrator names another category, then the same one
+    const other = await resolveCategoryExecution({ ...args, category: "unspecified-low" }, context, undefined, undefined)
+    const same = await resolveCategoryExecution(
+      { ...args, category: "visual-engineering" },
+      context,
+      undefined,
+      undefined,
+    )
+    // then: only the disagreement produces a hint, and it names Jev's category
+    expect(await other.routingHint).toContain('"visual-engineering"')
+    expect(await same.routingHint).toBeUndefined()
+  })
+
   test("category resolution retains the full cross-provider fallback chain and category team wiring", async () => {
     const { options } = setup()
     const context = unsafeTestValue<ExecutorContext>(options)
