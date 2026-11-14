@@ -69,6 +69,8 @@ function mergeConfiguredAndRequiredFallbackChains(
   return merged
 }
 
+// 0.8: in 605 recorded explicit delegations Jev disagreed with at least this confidence 36 times (6%).
+const JEV_OPINION_CONFIDENCE = 0.8
 
 
 export async function resolveCategoryExecution(
@@ -85,6 +87,7 @@ export async function resolveCategoryExecution(
   const enabledCategories = mergeCategories(userCategories)
   const routing = executorCtx.jevRouting
   let routingNotice: string | undefined
+  let routingHint: Promise<string | undefined> | undefined
   const decision = routing && routing.mode !== "off" ? beginJevDecision(args) : undefined
   const jevInput = {
     brief: args.prompt,
@@ -130,11 +133,23 @@ export async function resolveCategoryExecution(
     if (!selected) return categoryResolutionError("Invalid Jev routing default for category auto")
     args.category = selected
   } else if (decision) {
+    const requested = args.category
+    const hint = Promise.withResolvers<string | undefined>()
+    routingHint = hint.promise
+    let opinion: string | undefined
     queueMicrotask(() => {
-      void selectCategoryTierWithJev(jevInput).catch((error: unknown) => {
-        if (!executorCtx.abortSignal?.aborted)
-          log("[jev-routing] observation failed", { error: error instanceof Error ? error.name : "unknown" })
+      void selectCategoryTierWithJev({
+        ...jevInput,
+        onOpinion: ({ category, probability }) => {
+          if (probability >= JEV_OPINION_CONFIDENCE)
+            opinion = `Routing note: Jev rated this brief as "${category}" (${probability.toFixed(2)}); it ran as "${requested}" as requested. Omit category or pass category="auto" unless a rule, skill or roster fixes the category.`
+        },
       })
+        .catch((error: unknown) => {
+          if (!executorCtx.abortSignal?.aborted)
+            log("[jev-routing] observation failed", { error: error instanceof Error ? error.name : "unknown" })
+        })
+        .finally(() => hint.resolve(opinion))
     })
   }
   const requestedCategoryName = args.category!
@@ -421,5 +436,6 @@ Available categories: ${categoryNames.join(", ")}`)
     isUnstableAgent,
     fallbackChain: runtimeFallbackChain,
     routingNotice,
+    routingHint,
   }
 }

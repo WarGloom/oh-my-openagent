@@ -13,6 +13,8 @@ export interface CategoryResolutionResult {
   fallbackChain?: FallbackEntry[] // For runtime retry on model errors
   error?: string
   routingNotice?: string
+  /** Settles after the background Jev observation of an explicit category; undefined when Jev agrees or is unsure. */
+  routingHint?: Promise<string | undefined>
 }
 
 export function categoryResolutionError(error: string): CategoryResolutionResult {

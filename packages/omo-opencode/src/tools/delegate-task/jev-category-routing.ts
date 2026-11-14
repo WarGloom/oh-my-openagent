@@ -27,6 +27,8 @@ export type JevCategoryInput = {
   readonly surface?: "task" | "team"
   readonly configGeneration?: string
   readonly onFallback?: (reason: string, category: string) => void
+  /** Jev's own pick when it differs from an explicit category. The explicit category still runs. */
+  readonly onOpinion?: (opinion: { readonly category: string; readonly probability: number }) => void
 }
 
 export class JevIncompleteInputError extends Error {
@@ -173,6 +175,10 @@ export async function routeCategoryWithJev(input: JevCategoryInput): Promise<str
       return chosen
     }
     error = null
+    if (explicit && selected !== input.orchestratorCategory) {
+      const probability = result.ranking.find((row) => row.category === selected)?.probability
+      if (probability !== undefined) input.onOpinion?.({ category: selected, probability })
+    }
     if (mode === "active") chosen = selected
     return chosen
   } catch (cause) {
