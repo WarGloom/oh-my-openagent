@@ -1,5 +1,18 @@
-import { describe, expect, it, mock } from "bun:test"
+import { describe, expect, it, mock, spyOn } from "bun:test"
 import type { Hooks, PluginInput, PluginOptions } from "@opencode-ai/plugin"
+import { randomUUID } from "node:crypto"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import path from "node:path"
+import { createRuntimeState, transitionRuntimeState } from "@oh-my-opencode/team-core/team-state-store/store"
+import { sendMessage } from "@oh-my-opencode/team-core/team-mailbox/send"
+import type { TeamSpec } from "@oh-my-opencode/team-core/types"
+import { unsafeTestValue } from "../../../../test-support/unsafe-test-value"
+import { TeamModeConfigSchema } from "../config/schema/team-mode"
+import type { BackgroundTask } from "../features/background-agent/types"
+import { clearTeamSessionRegistry, registerTeamSession } from "../features/team-mode/team-session-registry"
+import { createTeamMailboxInjector } from "../hooks/team-mailbox-injector/hook"
+import { createMessagesTransformHandler } from "../plugin/messages-transform"
 import type { V2PluginContext } from "./context-types"
 import { createV2Setup } from "./create-v2-setup"
 import { createFakePluginContext } from "./fake-plugin-context"
@@ -78,6 +91,105 @@ describe("createV2Setup", () => {
       } finally {
         await cleanup()
       }
+    }
+  })
+
+  it("#given a team member with unread mail #when V2 builds its context after setup #then the mailbox resumes it through the connected manager", async () => {
+    // given: a team whose member session has a parent and one unread message from the lead
+    const baseDir = await mkdtemp(path.join(tmpdir(), "v2-setup-team-mailbox-"))
+    const config = TeamModeConfigSchema.parse({ enabled: true, base_dir: baseDir })
+    const member = (name: string) => ({
+      kind: "subagent_type" as const,
+      name,
+      backendType: "in-process" as const,
+      subagent_type: "general-purpose",
+      isActive: true,
+    })
+    const spec = {
+      version: 1,
+      name: "team",
+      createdAt: 1,
+      leadAgentId: "lead",
+      members: [member("lead"), member("worker")],
+    } satisfies TeamSpec
+    const state = await createRuntimeState(spec, "session-lead", "project", config)
+    await transitionRuntimeState(
+      state.teamRunId,
+      (current) => ({
+        ...current,
+        members: current.members.map((entry) => ({
+          ...entry,
+          sessionId: entry.name === "lead" ? "session-lead" : "session-worker",
+        })),
+      }),
+      config,
+    )
+    registerTeamSession("session-worker", { teamRunId: state.teamRunId, memberName: "worker", role: "member" })
+    await sendMessage(
+      { version: 1, messageId: randomUUID(), from: "lead", to: "worker", kind: "message", body: "hello", timestamp: 1 },
+      state.teamRunId,
+      config,
+      { isLead: true, activeMembers: ["lead", "worker"] },
+    )
+    const fake = createFakePluginContext()
+    const task = unsafeTestValue<BackgroundTask>({
+      id: "bg_worker",
+      sessionId: "session-worker",
+      teamRunId: state.teamRunId,
+      nativeProvisioningAdmissionID: "provisioning",
+      skillContent: "system",
+    })
+    const resumed: string[] = []
+    const setup = createV2Setup({
+      serverPlugin: async (input) => {
+        const lifecycle = getV2BackgroundLifecycle(input)
+        const manager = new BackgroundManager({
+          pluginContext: input,
+          nativeJobs: getV2BackgroundJobs(input),
+          nativeLifecycle: lifecycle,
+        })
+        spyOn(manager, "findBySession").mockImplementation((sessionID) =>
+          sessionID === "session-worker" ? task : undefined,
+        )
+        spyOn(manager, "resume").mockImplementation(async (resume) => {
+          resumed.push(resume.sessionId)
+          return task
+        })
+        lifecycle?.connect(manager)
+        return unsafeTestValue<Hooks>({
+          "experimental.chat.messages.transform": createMessagesTransformHandler({
+            hooks: { teamMailboxInjector: createTeamMailboxInjector({}, config) },
+          }),
+          dispose: () => manager.shutdown(),
+        })
+      },
+    })
+    const cleanup = await setup({
+      ...fake.context,
+      session: {
+        ...fake.context.session,
+        get: async (input) => ({
+          ...(await fake.context.session.get(input)),
+          ...(input.sessionID === "session-worker" ? { parentID: "session-lead" } : {}),
+        }),
+      },
+    })
+    try {
+      // when: the host builds the member's context
+      await fake.triggerContext({
+        sessionID: "session-worker",
+        agent: "sisyphus",
+        model: { providerID: "openai", id: "test" },
+        system: [],
+        messages: [{ id: "msg_1", role: "user", content: "prompt" }],
+        options: {},
+      })
+      // then: the unread message resumes the member through the manager the setup connected
+      expect(resumed).toEqual(["session-worker"])
+    } finally {
+      await cleanup()
+      clearTeamSessionRegistry()
+      await rm(baseDir, { recursive: true, force: true })
     }
   })
 
