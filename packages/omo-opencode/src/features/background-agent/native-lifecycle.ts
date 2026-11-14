@@ -11,6 +11,8 @@ export interface NativeBackgroundJobs {
   readonly prepare: (task: BackgroundTask, input: LaunchInput | ResumeInput, maxDepth: number) => Promise<void>
   readonly start: (task: BackgroundTask, body: TaskPromptBody) => Promise<"started" | "suspended">
   readonly cancel: (task: BackgroundTask) => Promise<void>
+  /** Tells the parent which child session an interrupted foreground wait left behind. Never resumes the parent. */
+  readonly noteForegroundInterrupted?: (task: BackgroundTask) => Promise<void>
   readonly revokeProvisioning: (task: BackgroundTask) => Promise<void>
   readonly wait: (task: BackgroundTask) => Promise<NativeSubagentReceipt>
   readonly restore: (

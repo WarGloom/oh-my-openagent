@@ -21,6 +21,11 @@ export type NativeDelegationSkills = {
   readonly selections: readonly NativeSubagentSkillSelection[]
 }
 
+function foregroundInterruptionNoteID(task: BackgroundTask): string {
+  const run = `${task.nativeAdmissionID ?? task.id}:${task.nativeRun?.generation ?? ""}`
+  return `msg_${createHash("sha256").update(`foreground-interrupted:${run}`).digest("hex").slice(0, 26)}`
+}
+
 export type NativeSubagentJobsDeps = {
   readonly load?: (sessionID: string, parentSessionID: string) => Promise<BackgroundTask | undefined>
   readonly activateSkills: (task: BackgroundTask) => Promise<NativeDelegationSkills>
@@ -193,6 +198,18 @@ export class V2NativeSubagentJobs implements NativeBackgroundJobs {
   async cancel(task: BackgroundTask): Promise<void> {
     if (!task.nativeAdmissionID) throw new Error("Native task was not prepared")
     await this.domain.cancel(task.nativeRun ? { run: task.nativeRun } : { admissionID: task.nativeAdmissionID })
+  }
+
+  async noteForegroundInterrupted(task: BackgroundTask): Promise<void> {
+    if (this.stopped || !task.sessionId) return
+    await this.context.session.synthetic({
+      sessionID: task.parentSessionId,
+      id: foregroundInterruptionNoteID(task),
+      text: `Foreground task "${task.description}" was cancelled because this session was interrupted while it waited for the task. The child session ${task.sessionId} keeps its transcript, and its file changes stay in the working tree. To continue that work, call task(task_id="${task.sessionId}", prompt="...") instead of starting a new task or redoing the work. Inspect the working tree first: the child may have left partial edits.`,
+      description: task.description,
+      delivery: "steer",
+      resume: false,
+    })
   }
 
   async revokeProvisioning(task: BackgroundTask): Promise<void> {

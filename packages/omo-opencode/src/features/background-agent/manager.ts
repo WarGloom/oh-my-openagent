@@ -1998,11 +1998,27 @@ export class BackgroundManager {
     }
   }
 
+  private async cancelInterruptedForegroundTask(taskID: string): Promise<void> {
+    const task = this.getTask(taskID)
+    // A child that never started has no transcript to continue.
+    const started = task?.status === "running" && task.sessionId !== undefined
+    const cancelled = await this.cancelTask(taskID, { source: "native-sync-interrupt", skipNotification: true })
+    if (!cancelled || !task || !started) return
+    try {
+      await this.nativeJobs?.noteForegroundInterrupted?.(task)
+    } catch (error) {
+      log("[background-agent] Failed to note the interrupted foreground task for its parent", {
+        taskID,
+        error: String(error),
+      })
+    }
+  }
+
   async waitForNativeTask(taskID: string, signal: AbortSignal): Promise<BackgroundTask> {
     const task = this.getTask(taskID)
     if (!task) throw new Error(`Task not found: ${taskID}`)
     if (signal.aborted) {
-      await this.cancelTask(taskID, { source: "native-sync-interrupt", skipNotification: true })
+      await this.cancelInterruptedForegroundTask(taskID)
       signal.throwIfAborted()
     }
     if ((task.status === "pending" || task.status === "running") && !this.nativeSettlements.has(taskID)) {
@@ -2011,7 +2027,7 @@ export class BackgroundManager {
       listeners.add(started.resolve)
       this.nativeStartWaiters.set(taskID, listeners)
       const abort = () => {
-        void this.cancelTask(taskID, { source: "native-sync-interrupt", skipNotification: true }).then(
+        void this.cancelInterruptedForegroundTask(taskID).then(
           () => started.reject(signal.reason),
           started.reject,
         )
@@ -2027,7 +2043,7 @@ export class BackgroundManager {
     }
     const interrupted = Promise.withResolvers<void>()
     const abort = () => {
-      void this.cancelTask(taskID, { source: "native-sync-interrupt", skipNotification: true }).then(
+      void this.cancelInterruptedForegroundTask(taskID).then(
         () => interrupted.reject(signal.reason),
         interrupted.reject,
       )

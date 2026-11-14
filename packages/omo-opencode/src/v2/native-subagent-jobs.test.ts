@@ -206,6 +206,15 @@ describe("native subagent consumer", () => {
       if (resumed) await resumed
       expect(f.rows.get(task.nativeAdmissionID ?? "")?.status).toBe("cancelled")
       expect(f.starts).toEqual(status === "pending" ? [first.sessionId] : [first.sessionId, pending.sessionId])
+      // then: the parent learns which child session to continue, without being resumed
+      const notes = f.fake.sessionCalls.flatMap((call) => (call.kind === "synthetic" ? [call.input] : []))
+      expect(
+        notes.map((note) => ({
+          sessionID: note.sessionID,
+          resume: note.resume,
+          namesContinuation: note.text.includes(`task_id="${task.sessionId}"`),
+        })),
+      ).toEqual(status === "running" ? [{ sessionID: "parent", resume: false, namesContinuation: true }] : [])
     },
   )
 
