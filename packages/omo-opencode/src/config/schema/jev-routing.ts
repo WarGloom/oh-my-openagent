@@ -1,11 +1,13 @@
 import { z } from "zod"
 
+export const JEV_CATEGORY_LADDER_MAX = 12
+
 export const JevRoutingConfigSchema = z
   .object({
     mode: z.enum(["off", "observe", "active"]).default("off"),
     timeout_ms: z.number().int().min(100).max(5000).default(2000),
     min_suitability: z.number().min(0).max(1).default(0.6),
-    ladder: z.array(z.string().trim().min(1)).min(2).max(8).optional(),
+    ladder: z.array(z.string().trim().min(1)).min(2).max(JEV_CATEGORY_LADDER_MAX).optional(),
     default: z.string().trim().min(1).optional(),
     agent_ladders: z
       .record(

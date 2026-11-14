@@ -1,5 +1,10 @@
 import { z } from "zod"
-import type { AgentOverrides, CategoriesConfig, JevRoutingConfig } from "../../config/schema"
+import {
+  JEV_CATEGORY_LADDER_MAX,
+  type AgentOverrides,
+  type CategoriesConfig,
+  type JevRoutingConfig,
+} from "../../config/schema"
 import { log } from "../../shared/logger"
 import { CATEGORY_DESCRIPTIONS } from "./constants"
 import { mergeCategories } from "../../shared/merge-categories"
@@ -11,7 +16,7 @@ import { getAgentConfigKey } from "../../shared/agent-display-names"
 const JEV_URL = "https://opencode.ai/zen/v1/systemone"
 const JEV_MODEL = "jev-1.13-free"
 const MAX_BRIEF_BYTES = 8192
-const MAX_REQUEST_BYTES = 16384
+const MAX_REQUEST_BYTES = 32768
 const MAX_RESPONSE_BYTES = 65536
 
 const JevResponseSchema = z.object({
@@ -148,7 +153,7 @@ export function getJevRoutingEligibility({
     categories.auto.description?.trim() &&
     validDefault &&
     ladder.length >= 2 &&
-    ladder.length <= 8 &&
+    ladder.length <= JEV_CATEGORY_LADDER_MAX &&
     new Set(ladder).size === ladder.length &&
     ladder.every(validTier),
   )

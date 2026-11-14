@@ -85,7 +85,7 @@ export function createDelegateTaskPresentation(options: DelegateTaskPresentation
     .join("\n")
 
   const description = `Spawn agent task with category-based or direct agent selection.
-${showTierRouting ? `TIER ROUTING: if the right tier is unclear, use task(category="auto"); Jev picks the cheapest suitable tier (${routing.ladder?.map((tier) => JSON.stringify(tier)).join(" → ")}) and falls back to ${JSON.stringify(routing.default)}.` : ""}
+${showTierRouting ? `TIER ROUTING: if the right tier is unclear, use task(category="auto"); Jev picks the first suitable category in this order (${routing.ladder?.map((tier) => JSON.stringify(tier)).join(" → ")}) and falls back to ${JSON.stringify(routing.default)}.` : ""}
 
   ⚠️  CRITICAL: You MUST provide EITHER category OR subagent_type. Omitting BOTH will FAIL.
 
