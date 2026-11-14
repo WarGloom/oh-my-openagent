@@ -129,7 +129,10 @@ test.each([
     try {
       await ready.promise
       await fake.triggerModelRequest({ sessionID: "timed", agent, model, kind: "primary", headers: {} })
-      if (unsafe) await installed.beforeEvent({ type: "session.tool.called", data: { sessionID: "timed", id: "call" } })
+      if (unsafe) {
+        await installed.beforeEvent({ type: "session.tool.called", data: { sessionID: "timed", id: "call" } })
+        await installed.beforeEvent({ type: "session.tool.success", data: { sessionID: "timed", id: "call" } })
+      }
       await clock.advanceBy(1_000)
       expect(fake.sessionCalls.filter((call) => call.kind === "interrupt")).toHaveLength(unsafe || chain ? 1 : 0)
       if (delayed) fake.emit({ type: "session.execution.interrupted", data: { sessionID: "timed", reason: "user" } })
@@ -174,6 +177,7 @@ test.each([false, true])(
       type: "form.replied",
       data: { sessionID: "question", id: "form_a", answer: { q0: "Proceed" } },
     })
+    if (tool) f.watchdog.observe({ type: "session.tool.success", data: { sessionID: "question", id: "call_question" } })
     await f.clock.advanceBy(tool ? 1_999 : 999)
     expect(f.fake.sessionCalls).toEqual([])
     await f.clock.advanceBy(1)
@@ -201,6 +205,7 @@ test("overlapping forms and permission waits release only their own IDs", async 
   await f.clock.advanceBy(10_000)
   expect(f.fake.sessionCalls).toEqual([])
   f.watchdog.observe({ type: "form.replied", data: { sessionID: "question", id: "b" } })
+  f.watchdog.observe({ type: "session.tool.success", data: { sessionID: "question", id: "call_question" } })
   await f.clock.advanceBy(1_000)
   f.watchdog.observe({ type: "form.replied", data: { sessionID: "question", id: "b" } })
   f.watchdog.observe(f.form("a"))
@@ -271,4 +276,39 @@ test.each(["other", "global"])("a %s form cannot postpone an unrelated model tim
   // then
   expect(f.fake.sessionCalls).toEqual([])
   expect(f.recover).toHaveBeenCalledTimes(1)
+})
+
+test("a running tool pauses both watchdog deadlines until it settles", async () => {
+  // given: the request called a tool, such as a foreground task, that runs far past every deadline
+  const f = questionFixture()
+  f.watchdog.observe({ type: "session.tool.called", data: { sessionID: "question", id: "call_task" } })
+  // when: the tool runs without any further session event
+  await f.clock.advanceBy(3_600_000)
+  // then: neither an interrupt nor a fallback happens
+  expect(f.fake.sessionCalls).toEqual([])
+  expect(f.recover).not.toHaveBeenCalled()
+  // when: the tool settles and the model then stalls
+  f.watchdog.observe({ type: "session.tool.success", data: { sessionID: "question", id: "call_task" } })
+  await f.clock.advanceBy(1_999)
+  expect(f.fake.sessionCalls).toEqual([])
+  await f.clock.advanceBy(1)
+  // then: the stall deadline applies again and cannot replay the executed tool
+  expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["interrupt"])
+  expect(f.recover).not.toHaveBeenCalled()
+})
+
+test("parallel tools keep the deadlines paused until the last one settles", async () => {
+  // given
+  const f = questionFixture()
+  f.watchdog.observe({ type: "session.tool.called", data: { sessionID: "question", id: "call_a" } })
+  f.watchdog.observe({ type: "session.tool.called", data: { sessionID: "question", id: "call_b" } })
+  // when: one tool settles and progress events arrive for the other
+  f.watchdog.observe({ type: "session.tool.success", data: { sessionID: "question", id: "call_a" } })
+  f.watchdog.observe({ type: "session.tool.progress", data: { sessionID: "question", id: "call_b" } })
+  await f.clock.advanceBy(3_600_000)
+  // then
+  expect(f.fake.sessionCalls).toEqual([])
+  f.watchdog.observe({ type: "session.tool.failed", data: { sessionID: "question", id: "call_b" } })
+  await f.clock.advanceBy(2_000)
+  expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["interrupt"])
 })
