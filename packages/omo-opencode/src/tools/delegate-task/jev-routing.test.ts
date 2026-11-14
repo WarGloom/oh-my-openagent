@@ -70,6 +70,24 @@ describe("Jev auto tier routing", () => {
     expect(init.body).not.toContain("other/backup")
   })
 
+  test("scores a ladder that lists nine categories and takes the first qualifying one", async () => {
+    // given: nine enabled categories in the declared order, where only the eighth and ninth qualify
+    const ladder = ["visual", "prose", "t1", "t2", "t3", "t4", "t5", "brain", "art"]
+    const nine = Object.fromEntries(ladder.map((name) => [name, { description: `About ${name}` }]))
+    fetchSpy.mockResolvedValue(reply([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.8, 0.9]))
+    // when: Jev scores the ladder
+    const chosen = await selectCategoryTierWithJev(
+      input({
+        config: { ...config, ladder, default: "t2" },
+        categories: { auto: categories.auto, ...nine },
+        enabledCategories: nine,
+      }),
+    )
+    // then: every entry is scored and the first qualifying entry wins
+    expect(Object.keys(JSON.parse(fetchSpy.mock.calls[0]?.[1]?.body).questions)).toHaveLength(9)
+    expect(chosen).toBe("brain")
+  })
+
   test("uses builtin tier descriptions unless a category config overrides them", async () => {
     // given: a builtin tier without a configured description
     const tierConfig = { ...config, ladder: ["quick", "strong"] }
@@ -226,12 +244,14 @@ test("Jev schema validates bounds and rejects the former per-model configuration
   })
   for (const invalid of [
     { ladder: ["quick"], default: "quick" },
-    { ladder: Array(9).fill("quick"), default: "quick" },
+    { ladder: Array(13).fill("quick"), default: "quick" },
     { ladder: ["quick", "deep"], default: "quick", timeout_ms: 99 },
     { ladder: ["quick", "deep"], default: "quick", min_suitability: 1.1 },
     { ladder: ["quick", "deep"], default: "quick", categories: {} },
   ])
     expect(JevRoutingConfigSchema.safeParse(invalid).success).toBe(false)
+  const nine = ["a", "b", "c", "d", "e", "f", "g", "h", "i"]
+  expect(JevRoutingConfigSchema.parse({ ladder: nine, default: "a" }).ladder).toEqual(nine)
 })
 
 test("global [opencode] tier settings survive the unified loader", () => {
