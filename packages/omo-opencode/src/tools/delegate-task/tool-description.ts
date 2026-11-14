@@ -5,6 +5,7 @@ import { formatAvailableAgentTypesSection } from "./builtin-subagent-types"
 import { CATEGORY_DESCRIPTIONS } from "./constants"
 import type { DelegateTaskToolOptions } from "./types"
 import { getJevRoutingEligibility } from "./jev-routing"
+import { listJevArtifactCategories, PG_ARTIFACT, selectJevArtifact } from "./jev-router-artifacts"
 
 export interface DelegateTaskPresentation {
   availableCategories: AvailableCategory[]
@@ -36,7 +37,7 @@ export function createDelegateTaskPresentation(options: DelegateTaskPresentation
     userCategories?.auto?.description ||
     (routing?.mode === "observe"
       ? `Observe mode: dispatch configured default ${routing.default}; Jev records its choice`
-      : "Default delegation: Jev selects quick, unspecified-low, deep-low, unspecified-high, visual-engineering, or writing")
+      : `Default delegation: Jev selects ${new Intl.ListFormat("en", { type: "disjunction" }).format(listJevArtifactCategories(selectJevArtifact(routing?.artifact_id) ?? PG_ARTIFACT))}`)
   const allCategories: ReturnType<typeof mergeCategories> = {
     ...mergeCategories(userCategories),
     ...(showTierRouting ? { auto: { description: autoDescription } } : {}),

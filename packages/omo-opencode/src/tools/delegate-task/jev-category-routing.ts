@@ -1,7 +1,12 @@
 import { createHash, randomUUID } from "node:crypto"
 import type { CategoryConfig, JevRoutingConfig } from "../../config/schema"
-import { MODEL, parseJevCategoryResponse, questions } from "./jev-router-model"
-import { applyJevDecisionRule, JevVisualDomainError, selectJevArtifact } from "./jev-router-artifacts"
+import { MODEL, questions } from "./jev-router-model"
+import {
+  applyJevDecisionRule,
+  JevVisualDomainError,
+  parseJevArtifactResponse,
+  selectJevArtifact,
+} from "./jev-router-artifacts"
 import { buildJevState } from "./jev-router-state"
 import { recordJevRouting, type JevDecisionRecord } from "./jev-routing-ledger"
 import { warnJevRouting } from "../../shared/jev-routing-health"
@@ -91,7 +96,7 @@ export async function routeCategoryWithJev(input: JevCategoryInput): Promise<str
   const started = performance.now()
   let chosen = explicit ? input.orchestratorCategory : fallback
   let error: JevDecisionRecord["error"] = "state_error"
-  let result: ReturnType<typeof parseJevCategoryResponse> | undefined
+  let result: ReturnType<typeof parseJevArtifactResponse> | undefined
   let answeredModel: string | null = null
   let briefStatus: JevDecisionRecord["brief_status"] = "none"
   const reasons: JevDecisionRecord["reason_codes"] = input.brief.trim() ? [] : ["empty_prompt"]
@@ -124,7 +129,11 @@ export async function routeCategoryWithJev(input: JevCategoryInput): Promise<str
       }
       return chosen
     }
-    const body = JSON.stringify({ model, state: built.state, questions: questions() })
+    const body = JSON.stringify({
+      model,
+      state: built.state,
+      questions: { ...questions(), ...artifact.extraQuestions },
+    })
     if (Buffer.byteLength(body) + 2048 > 65536) {
       error = "oversized_request"
       return chosen
@@ -148,7 +157,7 @@ export async function routeCategoryWithJev(input: JevCategoryInput): Promise<str
       return chosen
     }
     error = "malformed"
-    const parsed = parseJevCategoryResponse(await readJevResponse(response), artifact.router)
+    const parsed = parseJevArtifactResponse(await readJevResponse(response), artifact)
     if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(parsed.model)) throw new RangeError("Invalid response model identifier")
     answeredModel = parsed.model
     if (parsed.model !== model) {

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
-import { FROZEN_ROUTER, questions, type JevRouterWeights } from "./jev-router-model"
+import { z } from "zod"
+import { FROZEN_ROUTER, parseJevCategoryResponse, questions, type JevRouterWeights } from "./jev-router-model"
 import { JEV_STATE_BUILDER_VERSION } from "./jev-brief-resolver"
 
 export const PG_ROUTER = {
@@ -98,7 +99,46 @@ export const VISUAL_GUARD_RULE = {
     action: "abstain",
   },
 } as const
-type DecisionRule = { readonly kind: "top1" } | typeof PG_RULE | typeof VISUAL_GUARD_RULE
+export const CREATIVE_APPROACH_QUESTION = {
+  asks_for_unconventional_approach: {
+    type: "noul",
+    instructions: "Does `task` explicitly ask for an unconventional or creative approach beyond standard patterns?",
+    criteria: {
+      true: "The task asks for novel, unconventional, or creative solutions or alternative framings, or states that conventional approaches failed or are not acceptable.",
+      false:
+        "A standard engineering approach is acceptable. Hard problems solved by established methods, routine design, diagnosis, implementation, and review count here.",
+    },
+  },
+} as const
+export const ALL_CATEGORIES_RULE = {
+  ...VISUAL_GUARD_RULE,
+  open_decision: {
+    settled_question: "how_settled",
+    open_level: 4,
+    // 0.2: over 749 recorded live decisions it escalates about 3 of 730 ordinary delegations and every hard-decision panel brief; 0.3 misses the one recorded explicit deep-high delegation (0.23).
+    threshold: 0.2,
+    work_question: "kind_of_work",
+    reasoning_work: ["investigation_only", "review_judgment"],
+    reasoning_mass: 0.5,
+    reasoning_category: "ultrabrain",
+    implementation_category: "deep-high",
+    creative_question: "asks_for_unconventional_approach",
+    creative_threshold: 0.7,
+    creative_category: "artistry",
+  },
+} as const
+type DecisionRule = { readonly kind: "top1" } | typeof PG_RULE | typeof VISUAL_GUARD_RULE | typeof ALL_CATEGORIES_RULE
+type ExtraQuestions = Readonly<
+  Record<
+    string,
+    {
+      readonly type: "noul"
+      readonly instructions: string
+      readonly criteria: { readonly true: string; readonly false: string }
+    }
+  >
+>
+type Answers = Readonly<Record<string, number | readonly number[]>> | undefined
 
 export class JevVisualDomainError extends Error {
   readonly name = "JevVisualDomainError"
@@ -119,22 +159,87 @@ function canonical(value: unknown): string {
     .join(",")}}`
 }
 
-function artifact(router: JevRouterWeights, rule: DecisionRule) {
-  const content = { questions: questions(), state_builder_version: JEV_STATE_BUILDER_VERSION, router, rule }
-  return { artifact_id: createHash("sha256").update(canonical(content)).digest("hex"), router, rule }
+function artifact(router: JevRouterWeights, rule: DecisionRule, extraQuestions?: ExtraQuestions) {
+  const content = {
+    questions: questions(),
+    state_builder_version: JEV_STATE_BUILDER_VERSION,
+    router,
+    rule,
+    ...(extraQuestions ? { extra_questions: extraQuestions } : {}),
+  }
+  return {
+    artifact_id: createHash("sha256").update(canonical(content)).digest("hex"),
+    router,
+    rule,
+    extraQuestions: extraQuestions ?? {},
+  }
 }
+type JevArtifact = ReturnType<typeof artifact>
 export const PG_ARTIFACT = artifact(PG_ROUTER, PG_RULE)
 export const VISUAL_GUARDED_ARTIFACT = artifact(PG_ROUTER, VISUAL_GUARD_RULE)
+export const ALL_CATEGORIES_ARTIFACT = artifact(PG_ROUTER, ALL_CATEGORIES_RULE, CREATIVE_APPROACH_QUESTION)
 export const ROLLBACK_ARTIFACT = artifact(FROZEN_ROUTER, { kind: "top1" })
 
 export function selectJevArtifact(id: string = PG_ARTIFACT.artifact_id) {
-  return [PG_ARTIFACT, VISUAL_GUARDED_ARTIFACT, ROLLBACK_ARTIFACT].find((artifact) => artifact.artifact_id === id)
+  return [PG_ARTIFACT, VISUAL_GUARDED_ARTIFACT, ALL_CATEGORIES_ARTIFACT, ROLLBACK_ARTIFACT].find(
+    (artifact) => artifact.artifact_id === id,
+  )
+}
+
+export function listJevArtifactCategories({ router, rule }: JevArtifact): readonly string[] {
+  if (!("open_decision" in rule)) return router.classes
+  const { implementation_category, reasoning_category, creative_category } = rule.open_decision
+  return [...router.classes, implementation_category, reasoning_category, creative_category]
+}
+
+const extraAnswerSchema = z.object({ type: z.literal("noul"), noul: z.number().min(0).max(1) }).strict()
+const extraResponseSchema = z.object({ answers: z.record(z.string(), z.unknown()) }).passthrough()
+
+export function parseJevArtifactResponse(raw: unknown, { router, extraQuestions }: JevArtifact) {
+  const names = Object.keys(extraQuestions)
+  if (names.length === 0) return parseJevCategoryResponse(raw, router)
+  const response = extraResponseSchema.parse(raw)
+  const extra = Object.fromEntries(names.map((name) => [name, extraAnswerSchema.parse(response.answers[name]).noul]))
+  const frozen = Object.fromEntries(Object.entries(response.answers).filter(([name]) => !names.includes(name)))
+  const parsed = parseJevCategoryResponse({ ...response, answers: frozen }, router)
+  return { ...parsed, answers: { ...parsed.answers, ...extra } }
+}
+
+function workProbability(answers: Answers, question: string, option: string): number | undefined {
+  const work = answers?.[question]
+  const index = Object.keys(questions().kind_of_work.criteria).indexOf(option)
+  return work !== undefined && typeof work !== "number" ? work[index] : undefined
+}
+
+function readVisualEvidence(guard: typeof VISUAL_GUARD_RULE.visual_domain, answers: Answers) {
+  const frontend = answers?.[guard.frontend_question]
+  const visualWork = workProbability(answers, guard.work_question, guard.work_option)
+  if (typeof frontend !== "number" || typeof visualWork !== "number")
+    throw new RangeError("Missing visual policy evidence")
+  return {
+    positive: frontend >= guard.positive_threshold || visualWork >= guard.positive_threshold,
+    negative: frontend <= guard.negative_threshold && visualWork <= guard.negative_threshold,
+  }
+}
+
+function escalateOpenDecision(policy: typeof ALL_CATEGORIES_RULE.open_decision, answers: Answers): string | undefined {
+  const settled = answers?.[policy.settled_question]
+  const open = settled !== undefined && typeof settled !== "number" ? settled[policy.open_level] : undefined
+  const creative = answers?.[policy.creative_question]
+  const reasoning = policy.reasoning_work.map((option) => workProbability(answers, policy.work_question, option))
+  if (typeof open !== "number" || typeof creative !== "number" || reasoning.includes(undefined))
+    throw new RangeError("Missing open decision evidence")
+  if (open < policy.threshold) return undefined
+  if (creative >= policy.creative_threshold) return policy.creative_category
+  return reasoning.reduce<number>((sum, value) => sum + (value ?? 0), 0) >= policy.reasoning_mass
+    ? policy.reasoning_category
+    : policy.implementation_category
 }
 
 export function applyJevDecisionRule(
   ranking: readonly { readonly category: string; readonly probability: number }[],
   rule: DecisionRule,
-  answers?: Readonly<Record<string, number | readonly number[]>>,
+  answers?: Answers,
 ): string {
   const top = ranking[0]
   if (!top) throw new RangeError("Missing classifier ranking")
@@ -154,20 +259,13 @@ export function applyJevDecisionRule(
         !strongest || mass < rule.threshold || (rule.preserve_stronger_ladder_top1 && from >= 0 && to >= 0 && to < from)
           ? top.category
           : strongest.category
-      if (selected !== "visual-engineering" || !("visual_domain" in rule)) return selected
-      const guard = rule.visual_domain
-      const frontend = answers?.[guard.frontend_question]
-      const work = answers?.[guard.work_question]
-      const option = Object.keys(questions().kind_of_work.criteria).indexOf(guard.work_option)
-      const visualWork = work !== undefined && typeof work !== "number" ? work[option] : undefined
-      if (typeof frontend !== "number" || typeof visualWork !== "number")
-        throw new RangeError("Missing visual policy evidence")
-      if (frontend >= guard.positive_threshold || visualWork >= guard.positive_threshold) return selected
-      throw new JevVisualDomainError(
-        frontend <= guard.negative_threshold && visualWork <= guard.negative_threshold
-          ? guard.conflict
-          : guard.uncertain,
-      )
+      const guard = "visual_domain" in rule ? rule.visual_domain : undefined
+      const evidence = guard && selected === "visual-engineering" ? readVisualEvidence(guard, answers) : undefined
+      if (evidence?.positive) return selected
+      const escalated = "open_decision" in rule ? escalateOpenDecision(rule.open_decision, answers) : undefined
+      if (escalated) return escalated
+      if (!guard || !evidence) return selected
+      throw new JevVisualDomainError(evidence.negative ? guard.conflict : guard.uncertain)
     }
     default: {
       const exhaustive: never = rule
