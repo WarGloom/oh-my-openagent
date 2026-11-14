@@ -300,6 +300,13 @@ test("a running tool pauses both watchdog deadlines until it settles", async () 
   expect(f.recover).not.toHaveBeenCalled()
 })
 
+test("a provider-executed tool does not pause the stall deadline", async () => {
+  const f = questionFixture()
+  f.watchdog.observe({ type: "session.tool.called", data: { sessionID: "question", id: "hosted", executed: true } })
+  await f.clock.advanceBy(2_000)
+  expect(f.fake.sessionCalls.length).toBeGreaterThan(0)
+})
+
 test("parallel tools keep the deadlines paused until the last one settles", async () => {
   // given
   const f = questionFixture()
@@ -324,9 +331,10 @@ test("a stall after an executed tool resumes the session once per turn and repor
     f.watchdog.observe({ type: "session.tool.success", data: { sessionID: "question", id: "call" } })
     await f.clock.advanceBy(2_000)
   }
-  const nextRun = () => {
+  const nextRun = async () => {
     f.watchdog.observe({ type: "session.execution.started", data: { sessionID: "question" } })
     f.watchdog.start("question", "sisyphus", { providerID: "qa", id: "gpt-fake" })
+    await f.fake.triggerModelRequest({ sessionID: "question", agent: "sisyphus", model: { providerID: "qa", id: "gpt-fake" }, kind: "primary", headers: {} })
   }
   // when: the first stall expires
   await stallAfterTool()
@@ -339,7 +347,7 @@ test("a stall after an executed tool resumes the session once per turn and repor
     await f.watchdog.observe({ type: "session.execution.interrupted", data: { sessionID: "question", reason: "user" } }),
   ).toBe(true)
   // when: the resumed run stalls again
-  nextRun()
+  await nextRun()
   await stallAfterTool()
   // then: it is interrupted without another resume and the stall is reported
   expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["interrupt", "synthetic", "interrupt"])
@@ -348,7 +356,7 @@ test("a stall after an executed tool resumes the session once per turn and repor
     f.watchdog.observe({ type: "session.execution.interrupted", data: { sessionID: "question", reason: "user" } }),
   ).toBeUndefined()
   // when: the user starts a new turn and it stalls
-  nextRun()
+  await nextRun()
   await stallAfterTool()
   // then: the new turn has its own resume
   expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual([
@@ -359,4 +367,45 @@ test("a stall after an executed tool resumes the session once per turn and repor
     "synthetic",
   ])
   expect(f.recover).not.toHaveBeenCalled()
+})
+
+test("a child resumes through a held recovery boundary without cancelling its job", async () => {
+  const clock = installRuntimeFallbackTestClock()
+  const fake = createFakePluginContext({ sessionInfo: { parentID: "parent" } })
+  let cancelled = false
+  let repeatedStalls = 0
+  const continuations: Array<{ boundaryID: string; id: string; model?: unknown }> = []
+  const context = {
+    ...fake.context,
+    experimental: { ...fake.context.experimental, session: {
+      ...fake.context.experimental.session,
+      interrupt: async () => { cancelled = true; return { interrupted: true } },
+      recover: async (_input: { sessionID: string }, callback: (input: { boundaryID: string }) => Promise<boolean>) =>
+        callback({ boundaryID: "msg_boundary" }),
+      continueAfterFailure: async (input: { boundaryID: string; id: string; model?: unknown }) => {
+        continuations.push(input)
+        watchdog.observe({ type: "session.execution.started", data: { sessionID: "child" } })
+        watchdog.start("child", "sisyphus", { providerID: "qa", id: "model" })
+        return "admitted" as const
+      },
+    } },
+  }
+  const watchdog = createNativeProgressWatchdog({
+    context, timeouts: { firstProgressMs: 1000, stallMs: 2000, hardMs: 0 },
+    recover: async () => false, stalledAgain: () => { repeatedStalls++ }, warn: (error) => { throw error },
+  })
+  cleanups.push(clock.restore, () => watchdog.dispose())
+  watchdog.start("child", "sisyphus", { providerID: "qa", id: "model" })
+  watchdog.observe({ type: "session.tool.called", data: { sessionID: "child", id: "tool" } })
+  watchdog.observe({ type: "session.tool.success", data: { sessionID: "child", id: "tool" } })
+  await clock.advanceBy(2000)
+  expect(cancelled).toBe(false)
+  expect(continuations).toEqual([expect.objectContaining({ boundaryID: "msg_boundary", id: expect.stringMatching(/^msg_[0-9a-f]{26}$/) })])
+  expect(continuations[0]?.model).toBeUndefined()
+  watchdog.observe({ type: "session.tool.called", data: { sessionID: "child", id: "tool2" } })
+  watchdog.observe({ type: "session.tool.success", data: { sessionID: "child", id: "tool2" } })
+  await clock.advanceBy(2000)
+  expect(cancelled).toBe(true)
+  expect(repeatedStalls).toBe(1)
+  expect(continuations).toHaveLength(1)
 })

@@ -24,6 +24,7 @@ import type { ExecutorContext } from "./executor-types"
 import { bindAttemptSession, startAttempt } from "../../features/background-agent/attempt-lifecycle"
 import type { BackgroundTask, LaunchInput } from "../../features/background-agent/types"
 import * as ledger from "./jev-routing-ledger"
+import { installRuntimeFallbackTestClock } from "../../hooks/runtime-fallback/test-timeout-clock.test-support"
 
 describe("Jev task dispatch", () => {
   let root: string
@@ -398,6 +399,44 @@ describe("Jev task dispatch", () => {
       })
     } finally {
       watched.close()
+    }
+  })
+
+  test("a routing hint uses the reloaded timeout rather than the startup timeout", async () => {
+    const { options, ctx, launch } = setup()
+    const response = Promise.withResolvers<Response>()
+    const budgetArmed = Promise.withResolvers<void>()
+    fetchSpy.mockReturnValue(response.promise)
+    const clock = installRuntimeFallbackTestClock()
+    const setTimer = globalThis.setTimeout
+    let launched = false
+    const timerSpy = spyOn(globalThis, "setTimeout").mockImplementation((callback, delay, ...args) => {
+      if (launched && (delay === 0 || delay === 700)) budgetArmed.resolve()
+      return setTimer(callback, delay, ...args)
+    })
+    launch.mockImplementation(async (input: LaunchInput) => {
+      const task: BackgroundTask = { ...input, id: "bg_worker", status: "pending" }
+      const attempt = startAttempt(task, input.model)
+      bindAttemptSession(task, attempt.attemptId, "ses_worker", input.model)
+      launched = true
+      return task
+    })
+    const delegate = createDelegateTask(unsafeTestValue({
+      ...options,
+      jevRouting: { ...routing, timeout_ms: 0 },
+      loadCurrentModelConfig: () => ({ agents: {}, categories, jev_routing: { ...routing, timeout_ms: 700 } }),
+    }))
+    try {
+      const result = delegate.execute(
+        { category: "unspecified-low", prompt: "Implement feature", run_in_background: true, load_skills: [] }, ctx,
+      )
+      await budgetArmed.promise
+      await clock.advanceBy(0)
+      response.resolve(Response.json(categoryReply()))
+      expect(await result).toContain('"visual-engineering"')
+    } finally {
+      timerSpy.mockRestore()
+      clock.restore()
     }
   })
 

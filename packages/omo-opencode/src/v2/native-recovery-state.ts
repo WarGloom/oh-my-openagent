@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import type { FallbackState } from "../hooks/runtime-fallback/types"
 import type { buildRetryModelPayload } from "../hooks/runtime-fallback/retry-model-payload"
 
@@ -24,6 +25,10 @@ export const nativeRecoveryState: NativeRecoveryState = processState.__omoNative
   promptParams: new Set(),
 }
 processState.__omoNativeRecovery = nativeRecoveryState
+
+export function recoveryMessageID(failureID: string): string {
+  return `msg_${createHash("sha256").update(`omo-native-recovery:${failureID}`).digest("hex").slice(0, 26)}`
+}
 
 export function isNativeRecoveryPending(sessionID: string): boolean {
   return nativeRecoveryState.inFlight.has(sessionID) || nativeRecoveryState.failures.get(sessionID)?.pending === true
