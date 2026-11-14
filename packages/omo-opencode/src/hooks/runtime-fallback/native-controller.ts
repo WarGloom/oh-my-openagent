@@ -156,6 +156,19 @@ export function createNativeFallbackController(deps: HookDeps) {
     setCurrentConnections: (read: () => Promise<ReadonlyMap<string, string>>) => {
       currentConnections = read
     },
+    notifyStalledAgain(): void {
+      // Best effort, not awaited: a toast that never settles must not hold the watchdog.
+      void deps.ctx.client.tui
+        .showToast({
+          body: {
+            title: "Model Stalled",
+            message: "The model stalled again after one automatic resume. Send a message to continue.",
+            variant: "warning",
+            duration: 8000,
+          },
+        })
+        .catch(() => {})
+    },
     forget(sessionID: string) {
       snapshots.delete(sessionID)
       deps.sessionStates.delete(sessionID)

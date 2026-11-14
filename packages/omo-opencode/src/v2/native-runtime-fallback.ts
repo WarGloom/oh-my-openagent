@@ -138,6 +138,10 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
   const watchdog = createNativeProgressWatchdog({
     context,
     timeouts: controller.timeouts,
+    stalledAgain: (sessionID) => {
+      log("[runtime-fallback] Native watchdog stopped after a repeated stall", { sessionID })
+      controller.notifyStalledAgain()
+    },
     warn: (error) =>
       log("[runtime-fallback] Native watchdog failed", {
         error: error instanceof Error ? error.message : String(error),
