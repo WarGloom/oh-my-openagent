@@ -1,5 +1,5 @@
 import type { Hooks } from "@opencode-ai/plugin"
-import { getRuntimeFallbackRetryAfterMs } from "@oh-my-opencode/model-core"
+import { getRuntimeFallbackErrorEvidence, getRuntimeFallbackRetryAfterMs } from "@oh-my-opencode/model-core"
 import type { RuntimeFallbackHook } from "../hooks/runtime-fallback/types"
 import type { NativeFallbackController } from "../hooks/runtime-fallback/native-controller"
 import { classifyErrorType, extractErrorName, isRetryableError } from "../hooks/runtime-fallback/error-classifier"
@@ -13,11 +13,11 @@ import { recoverNativeFailure, recoveryMessageID } from "./native-recovery-state
 const controllers = new WeakMap<Hooks, NativeFallbackController>()
 
 function isRateLimit(error: V2StructuredError): boolean {
-  if (error.type === "provider.quota") return false
+  if (error.type === "provider.quota" || classifyErrorType(classifierError(error)) === "quota_exceeded") return false
   return (
     error.type === "provider.rate-limit" ||
     error.type === "rate_limit_error" ||
-    /\brate_limit_error\b/i.test(`${error.message} ${error.response?.body ?? ""}`)
+    /\brate_limit_error\b/i.test(getRuntimeFallbackErrorEvidence(classifierError(error)))
   )
 }
 

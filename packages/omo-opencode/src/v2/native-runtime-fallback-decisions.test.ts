@@ -14,17 +14,28 @@ const first = { providerID: "openai", id: "gpt-6.1-sol" }
 const second = { providerID: "anthropic", id: "claude-sonnet-5-5" }
 const cleanups: Array<() => void | Promise<void>> = []
 
-test.each(["retry", "terminal"])(
-  "uses configured fallback for explicit quota with rate-limit compatibility body on %s",
-  async (source) => {
-    const error = {
-      type: "provider.quota",
-      status: 200,
-      message: "rate_limit_error: Claude Max rate limit reached",
-      response: {
-        body: '{"type":"error","error":{"type":"rate_limit_error","code":"insufficient_quota","retry_after":55907}}',
-      },
-    }
+test.each(["retry", "terminal"].flatMap((source) => [
+  { source, error: {
+    type: "provider.quota", status: 200, message: "rate_limit_error: Claude Max rate limit reached",
+    response: { body: '{"type":"error","error":{"type":"rate_limit_error","code":"insufficient_quota","retry_after":55907}}' },
+  } },
+  { source, error: { type: "provider.rate-limit", status: 429, message: "Rate limit exhausted" } },
+  { source, error: {
+    type: "provider.internal", status: 200, message: "rate_limit_error: Claude Max rate limit reached",
+    response: { body: '{"error":{"type":"rate_limit_error","retry_after":86400}}' },
+  } },
+  { source, error: {
+    type: "provider.rate-limit", status: 429,
+    message: "Claude reported a model usage limit. Switch to another model or manage usage credits.",
+  } },
+  { source, error: {
+    type: "provider.internal", status: 200, message: "stream failed",
+    response: { body: '{"error":{"type":"rate_limit_error","message":"Claude reported a model usage limit. Switch to another model or manage usage credits."}}' },
+  } },
+  { source, error: { type: "provider.rate-limit", status: 429, message: "Rate limit reached", retryAfterMs: 86_400_000 } },
+]))(
+  "uses configured fallback for quota refusal on $source",
+  async ({ source, error }) => {
     const model = { ...first, variant: "high" }
     const f = await fixture(error, undefined, 60, model)
     if (source === "retry") {
@@ -52,13 +63,24 @@ test.each(["retry", "terminal"])(
 
 test.each([
   { type: "provider.rate-limit", message: "Rate limit reached", response: undefined },
+  { type: "provider.rate-limit", message: "An error occurred while processing your request", response: undefined },
+  ...["usage limit", "weekly limit", "An error occurred while processing your request"].map((note) => ({
+    type: "provider.rate-limit",
+    message: "Please retry",
+    response: { body: JSON.stringify({ error: { type: "rate_limit_error", message: "Please retry" }, metadata: { note } }) },
+  })),
   {
     type: "provider.internal",
     message: "rate_limit_error: limit reached",
-    response: { body: '{"error":{"type":"rate_limit_error","retry_after":86400}}' },
+    response: { body: '{"error":{"type":"rate_limit_error","retry_after":30}}' },
+  },
+  {
+    type: "provider.internal",
+    message: "Please retry",
+    response: { body: '{"error":{"type":"rate_limit_error","message":"Please retry"}}' },
   },
 ])("rate-limit policy preserves host retry and terminal failure for $type", async ({ type, message, response }) => {
-  const error = { type, message, response, status: 429, retryAfterMs: 86_400_000 }
+  const error = { type, message, response, status: 429, retryAfterMs: 10_000 }
   const model = { ...first, variant: "high" }
   const f = await fixture(error, undefined, 60, model)
   const event: V2RetryHookEvent = {
@@ -67,10 +89,10 @@ test.each([
     model,
     error,
     attempt: 5,
-    decision: { retry: true, delay: 86_400_000 },
+    decision: { retry: true, delay: 10_000 },
   }
   await f.fake.triggerRetry(event)
-  expect(event.decision).toEqual({ retry: true, delay: 86_400_000 })
+  expect(event.decision).toEqual({ retry: true, delay: 10_000 })
   expect(f.fake.sessionCalls).toEqual([])
   expect((await f.fake.context.session.get({ sessionID: "ses_decision" })).model).toEqual(model)
   expect(
@@ -83,19 +105,20 @@ test.each([
 test("rate-limit policy keeps watchdog from switching during provider backoff", async () => {
   const clock = installRuntimeFallbackTestClock()
   cleanups.push(clock.restore)
-  const error = { type: "provider.rate-limit", status: 429, message: "Rate limit reached", retryAfterMs: 10_000 }
-  const f = await fixture(error, undefined, 1)
+  const error = { type: "provider.rate-limit", status: 429, message: "Too many requests. Please retry later.", retryAfterMs: 10_000 }
+  const model = { ...first, variant: "high" }
+  const f = await fixture(error, undefined, 1, model)
   await f.fake.triggerModelRequest({
     sessionID: "ses_decision",
     agent: "sisyphus",
-    model: first,
+    model,
     kind: "primary",
     headers: {},
   })
   const event: V2RetryHookEvent = {
     sessionID: "ses_decision",
     agent: "sisyphus",
-    model: first,
+    model,
     error,
     attempt: 5,
     decision: { retry: true, delay: 10_000 },
@@ -104,6 +127,7 @@ test("rate-limit policy keeps watchdog from switching during provider backoff", 
   await clock.advanceBy(9_000)
   expect(f.fake.sessionCalls).toEqual([])
   expect(event.decision).toEqual({ retry: true, delay: 10_000 })
+  expect((await f.fake.context.session.get({ sessionID: "ses_decision" })).model).toEqual(model)
 })
 
 afterEach(async () => {
@@ -251,10 +275,10 @@ test.each([
     name: "provider.internal",
   },
   {
-    error: { type: "provider.rate-limit", status: 429, message: "Rate limit exhausted" },
+    error: { type: "provider.rate-limit", status: 429, message: "Rate limit reached" },
     attempt: 1,
     fallback: false,
-    classification: "quota_exceeded",
+    classification: undefined,
     name: "provider.rate-limit",
   },
   {
@@ -262,11 +286,11 @@ test.each([
       type: "provider.rate-limit",
       status: 429,
       message: "rate_limit_error: Claude Max rate limit reached",
-      response: { body: '{"error":{"type":"rate_limit_error","retry_after":86400}}' },
+      response: { body: '{"error":{"type":"rate_limit_error","retry_after":30}}' },
     },
     attempt: 2,
     fallback: false,
-    classification: "quota_exceeded",
+    classification: undefined,
     name: "provider.rate-limit",
   },
   {
@@ -435,10 +459,10 @@ test.each([
       type: "provider.internal",
       status: 200,
       message: "rate_limit_error: Claude Max rate limit reached",
-      response: { body: '{"error":{"type":"rate_limit_error","retry_after":86400}}' },
+      response: { body: '{"error":{"type":"rate_limit_error","retry_after":30}}' },
     },
     fallback: false,
-    classification: "quota_exceeded",
+    classification: undefined,
     name: "provider.internal",
   },
 ])(
@@ -517,8 +541,8 @@ test.each(["retry", "terminal"])(
   },
 )
 
-test("retains transient throttling Retry-After when the configured chain is exhausted", async () => {
-  const error = { type: "provider.rate-limit", status: 429, message: "Too many requests. Please retry later." }
+test.each(["Too many requests. Please retry later.", "An error occurred while processing your request"])("retains transient throttling Retry-After when the configured chain is exhausted", async (message) => {
+  const error = { type: "provider.rate-limit", status: 429, message }
   const f = await fixture(error, ["openai/gpt-6.1-sol"])
   const event: V2RetryHookEvent = {
     sessionID: "ses_decision",
@@ -584,12 +608,12 @@ test("stops the exact weekly provider quota retry when no configured fallback re
   expect(f.fake.sessionCalls).toEqual([])
 })
 
-test("preserves Claude Max same-model retries when its reset window exceeds the chain", async () => {
+test("preserves Claude Max same-model retries for a temporary reset window", async () => {
   const error = {
     type: "provider.rate-limit",
     status: 429,
     message: "rate_limit_error: Claude Max rate limit reached",
-    response: { body: '{"error":{"type":"rate_limit_error","retry_after":86400}}' },
+    response: { body: '{"error":{"type":"rate_limit_error","retry_after":30}}' },
   }
   const f = await fixture(error, ["openai/gpt-6.1-sol"])
   const event: V2RetryHookEvent = {
