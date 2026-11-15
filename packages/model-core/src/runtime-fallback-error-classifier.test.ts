@@ -12,6 +12,54 @@ const DEFAULT_RETRY_CODES = [429, 500, 502, 503, 504] as const
 
 describe("runtime fallback error classifier", () => {
   test.each([
+    (message: string) => ({ statusCode: 429, message }),
+    (message: string) => ({ statusCode: 429, data: { message } }),
+    (message: string) => ({ statusCode: 429, cause: new Error(message) }),
+  ])("uses provider fields, not metadata, from serialized error messages", (wrap) => {
+    for (const payload of [
+      { error: { message: "Please retry" }, metadata: { note: "weekly limit" } },
+      { metadata: { note: "usage limit" } },
+    ]) {
+      const error = wrap(JSON.stringify(payload))
+      expect(classifyRuntimeFallbackError(error)).toBeUndefined()
+      expect(isRuntimeFallbackRetryableError(error, DEFAULT_RETRY_CODES)).toBe(true)
+    }
+    expect(classifyRuntimeFallbackError(wrap(JSON.stringify({ error: { code: "insufficient_quota" } })))).toBe("quota_exceeded")
+    expect(classifyRuntimeFallbackError(wrap(JSON.stringify({ error: { message: "usage limit reached" } })))).toBe("quota_exceeded")
+    const terminal = wrap(JSON.stringify({ error: { type: "terminal_quota_exhausted" } }))
+    const context = wrap(JSON.stringify({ error: { message: "prompt is too long" } }))
+    expect(classifyRuntimeFallbackError(terminal)).toBe("abort")
+    expect(isRuntimeFallbackRetryableError(terminal, DEFAULT_RETRY_CODES)).toBe(false)
+    expect(classifyRuntimeFallbackError(context)).toBe("context_overflow")
+    expect(isRuntimeFallbackRetryableError(context, DEFAULT_RETRY_CODES)).toBe(false)
+  })
+
+  test.each([
+    { name: "provider.rate-limit", statusCode: 429, message: "An error occurred while processing your request" },
+    ...["usage limit", "weekly limit", "An error occurred while processing your request"].map((note) => ({
+      name: "provider.rate-limit",
+      statusCode: 429,
+      responseBody: JSON.stringify({ error: { type: "rate_limit_error", message: "Please retry" }, metadata: { note } }),
+    })),
+  ])("keeps generic failures retryable without treating metadata as quota", (error) => {
+    expect(classifyRuntimeFallbackError(error)).toBeUndefined()
+    expect(isRuntimeFallbackRetryableError(error, DEFAULT_RETRY_CODES)).toBe(true)
+  })
+
+  test("keeps a generic server failure retryable without a quota classification", () => {
+    const error = { message: "An error occurred while processing your request" }
+    expect(classifyRuntimeFallbackError(error)).toBeUndefined()
+    expect(isRuntimeFallbackRetryableError(error, DEFAULT_RETRY_CODES)).toBe(true)
+  })
+
+  test.each([
+    { message: "request failed", responseBody: JSON.stringify({ error: { code: "insufficient_quota" } }) },
+    { error: { code: "insufficient_quota" } },
+  ])("recognizes quota evidence inside provider error fields", (error) => {
+    expect(classifyRuntimeFallbackError(error)).toBe("quota_exceeded")
+  })
+
+  test.each([
     { retryAfter: 86_400, expected: "quota_exceeded" },
     { retryAfter: 901, expected: "quota_exceeded" },
     { retryAfter: 900, expected: undefined },

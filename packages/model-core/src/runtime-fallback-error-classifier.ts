@@ -11,6 +11,7 @@ export {
 } from "./runtime-fallback-error-shape"
 
 import {
+  getRuntimeFallbackErrorEvidence,
   getRuntimeFallbackErrorMessage,
   getRuntimeFallbackErrorName,
   getRuntimeFallbackRetryAfterMs,
@@ -82,7 +83,7 @@ function isTerminalQuotaMessage(message: string): boolean {
 export function isTerminalQuotaError(error: unknown): boolean {
   return (
     getDetailErrorType(error) === "terminal_quota_exhausted" ||
-    isTerminalQuotaMessage(getRuntimeFallbackErrorMessage(error))
+    isTerminalQuotaMessage(getRuntimeFallbackErrorEvidence(error).replace(/_/g, " "))
   )
 }
 
@@ -101,7 +102,7 @@ export function classifyRuntimeFallbackError(error: unknown): RuntimeFallbackErr
     return "abort"
   }
 
-  const message = getRuntimeFallbackErrorMessage(error)
+  const message = getRuntimeFallbackErrorEvidence(error)
 
   const errorName = getRuntimeFallbackErrorName(error)?.toLowerCase().replace(/[_-]/g, "")
 
@@ -193,8 +194,7 @@ export function classifyRuntimeFallbackError(error: unknown): RuntimeFallbackErr
     /余额.*不足/.test(message) ||
     /已耗尽/.test(message) ||
     isLocalizedQuotaExhaustionMessage(message) ||
-    hasProviderResetWindowSignal(message) ||
-    message.includes("an error occurred while processing your request")
+    hasProviderResetWindowSignal(message)
   ) {
     return "quota_exceeded"
   }
@@ -235,5 +235,6 @@ export function isRuntimeFallbackRetryableError(
     options.onUnsafeRetryableSignalRejected?.({ statusCode, retryOnErrors })
   }
 
-  return RUNTIME_FALLBACK_RETRYABLE_ERROR_PATTERNS.some((pattern) => pattern.test(message))
+  return message.includes("an error occurred while processing your request") ||
+    RUNTIME_FALLBACK_RETRYABLE_ERROR_PATTERNS.some((pattern) => pattern.test(message))
 }

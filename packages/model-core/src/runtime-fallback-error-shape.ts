@@ -24,7 +24,7 @@ function getNestedRecord(
   return isRecord(value) ? value : undefined
 }
 
-export function getRuntimeFallbackErrorMessage(error: unknown): string {
+function readRuntimeFallbackErrorMessage(error: unknown, stringifyFallback: boolean): string {
   if (!error) return ""
   if (typeof error === "string") return error.toLowerCase()
 
@@ -59,6 +59,7 @@ export function getRuntimeFallbackErrorMessage(error: unknown): string {
     if (nameColonMatch) return nameColonMatch[1]?.trim().toLowerCase() ?? ""
   }
 
+  if (!stringifyFallback) return ""
   try {
     return JSON.stringify(error).toLowerCase()
   } catch (error) {
@@ -67,6 +68,51 @@ export function getRuntimeFallbackErrorMessage(error: unknown): string {
     }
     return ""
   }
+}
+
+export function getRuntimeFallbackErrorMessage(error: unknown): string {
+  return readRuntimeFallbackErrorMessage(error, true)
+}
+
+function parseRuntimeFallbackPayload(value: unknown): unknown {
+  if (typeof value !== "string") return value
+  try {
+    return JSON.parse(value)
+  } catch (cause) {
+    if (!(cause instanceof SyntaxError)) throw cause
+    return value
+  }
+}
+
+function getResponsePayload(record: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  const response = getNestedRecord(record, "response")
+  const body = parseRuntimeFallbackPayload(getRecordValue(record, "responseBody") ?? getRecordValue(response, "body"))
+  return isRecord(body) ? body : undefined
+}
+
+export function getRuntimeFallbackErrorEvidence(error: unknown): string {
+  const root = isRecord(error) ? error : undefined
+  const data = getNestedRecord(root, "data")
+  const records = [root, data, getNestedRecord(root, "error"), getNestedRecord(data, "error"), getNestedRecord(root, "cause")]
+  const fields: string[] = []
+  const sources: Array<Record<string, unknown> | undefined> = [{ message: readRuntimeFallbackErrorMessage(error, false) }]
+  for (const record of records) {
+    const payload = getResponsePayload(record)
+    sources.push(record, payload, getNestedRecord(payload, "error"))
+  }
+  for (const source of sources) {
+    for (const key of ["message", "type", "code"]) {
+      const value = getRecordValue(source, key)
+      if (typeof value !== "string") continue
+      if (key === "message") {
+        const parsed = parseRuntimeFallbackPayload(value)
+        if (isRecord(parsed)) sources.push(parsed, getNestedRecord(parsed, "error"))
+        if (parsed !== value) continue
+      }
+      fields.push(value.toLowerCase())
+    }
+  }
+  return fields.join(" ")
 }
 
 export function getRuntimeFallbackStatusCode(error: unknown, retryOnErrors?: readonly number[]): number | undefined {
@@ -151,16 +197,7 @@ export function getRuntimeFallbackRetryAfterMs(error: unknown): number | undefin
   let duration: number | undefined
   for (const record of records) {
     const response = getNestedRecord(record, "response")
-    let body = getRecordValue(record, "responseBody") ?? getRecordValue(response, "body")
-    if (typeof body === "string") {
-      try {
-        body = JSON.parse(body)
-      } catch (cause) {
-        if (!(cause instanceof SyntaxError)) throw cause
-        body = undefined
-      }
-    }
-    const payload = isRecord(body) ? body : undefined
+    const payload = getResponsePayload(record)
     for (const source of [record, response, payload, getNestedRecord(payload, "error")]) {
       const milliseconds = getRecordValue(source, "retryAfterMs")
       const seconds = getRecordValue(source, "retry_after")
