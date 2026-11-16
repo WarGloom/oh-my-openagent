@@ -109,6 +109,12 @@ const unusedNativeJobs: NativeBackgroundJobs = {
   start: async () => {
     throw new Error("native jobs are not exercised by this test")
   },
+  steer: async () => {
+    throw new Error("native jobs are not exercised by this test")
+  },
+  reconcileAdmission: async () => {
+    throw new Error("native jobs are not exercised by this test")
+  },
   cancel: async () => {
     throw new Error("native jobs are not exercised by this test")
   },

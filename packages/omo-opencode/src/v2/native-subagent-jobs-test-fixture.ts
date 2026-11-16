@@ -57,11 +57,26 @@ export async function fixture(
   let generation = 0
   const anchors = new Set<string>()
   const revoked = new Set<string>()
+  const steered = new Map<string, { readonly run: NonNullable<NativeSubagentReceipt["run"]>; readonly promptID: string }>()
   const current = (target: Parameters<NativeSubagentDomain["get"]>[0]) =>
     [...rows.values()].find((row) =>
       "admissionID" in target ? row.admissionID === target.admissionID : row.run?.generation === target.run.generation,
     )
   const domain: NativeSubagentDomain = {
+    steer: async (input) => {
+      if (options.denied) throw new Error("permission denied")
+      const key = JSON.stringify([input.run.childSessionID, input.invocation.messageID, input.invocation.toolCallID])
+      const prior = steered.get(key)
+      if (prior) return { kind: "joined-existing-run", ...prior }
+      const receipt = rows.get(input.admissionID)
+      if (!receipt?.run || receipt.run.generation !== input.run.generation || receipt.status !== "running") {
+        return { kind: "closed-before-admission" }
+      }
+      const admitted = { run: receipt.run, promptID: `steer-${steered.size + 1}` }
+      steered.set(key, admitted)
+      prompts.push(input.prompt)
+      return { kind: "joined-existing-run", ...admitted }
+    },
     prepare: async (input) => {
       if (options.denied) throw new Error("permission denied")
       if (input.invocation.kind === "team" && revoked.has(input.invocation.provisioningAdmissionID))

@@ -50,6 +50,10 @@ export async function executeNativeDelegate(input: {
       assertRequiredModel(requiredModel, existing.model && `${existing.model.providerID}/${existing.model.modelID}`)
     } else assertRequiredModel(requiredModel, input.model && `${input.model.providerID}/${input.model.modelID}`)
     const nativeMetadata = requiredModel ? { ...existing?.nativeMetadata, requiredModel } : existing?.nativeMetadata
+    const runningBackground =
+      existing?.status === "running" && existing.nativeCompletion !== "none" && existing.nativeRun
+        ? { ...existing.nativeRun }
+        : undefined
     const task = existing
       ? await executor.manager.resume({
           sessionId: args.task_id ?? "",
@@ -112,7 +116,11 @@ export async function executeNativeDelegate(input: {
     const metadata = task.sessionId
       ? buildTaskMetadataBlock({ sessionId: task.sessionId, backgroundTaskId: task.id, agent, category: task.category })
       : ""
-    if (args.run_in_background)
+    const joinedBackground =
+      runningBackground &&
+      task.nativeRun?.childSessionID === runningBackground.childSessionID &&
+      task.nativeRun.generation === runningBackground.generation
+    if (args.run_in_background || joinedBackground)
       return `Background Task ID: ${task.id}\nDescription: ${task.description}\nAgent: ${agent}\nStatus: ${task.status}\nInspect the delivered completion result. Use background_output only if output is missing or truncated, or for history or diagnostics.\n${metadata}`
     try {
       const completed = await executor.manager.waitForNativeTask(task.id, ctx.abort)

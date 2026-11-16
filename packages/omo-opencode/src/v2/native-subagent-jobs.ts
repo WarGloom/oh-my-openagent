@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import type { BackgroundTask, LaunchInput, ResumeInput } from "../features/background-agent/types"
 import type { NativeBackgroundJobs, NativeRestoredTask } from "../features/background-agent/native-lifecycle"
 import type { TaskPromptBody } from "../features/background-agent/spawner/task-prompt-body"
+import { createInternalAgentTextPart } from "../shared"
 import { applySessionPromptParams } from "../shared/session-prompt-params-helpers"
 import { setSessionTools } from "../shared/session-tools-store"
 import { log } from "../shared/logger"
@@ -193,6 +194,26 @@ export class V2NativeSubagentJobs implements NativeBackgroundJobs {
     if (!task.nativeRun) throw new Error("Native start returned no execution generation")
     await this.deps.save(task)
     return "started"
+  }
+
+  async steer(task: BackgroundTask, input: ResumeInput) {
+    if (!task.nativeAdmissionID || !task.nativeRun) throw new Error("Native task has no running admission")
+    if (input.nativeInvocation?.kind !== "tool") throw new Error("Native steer requires a tool invocation")
+    return this.domain.steer({
+      admissionID: task.nativeAdmissionID,
+      run: task.nativeRun,
+      invocation: input.nativeInvocation,
+      prompt: input.nativePrompt ?? { text: createInternalAgentTextPart(input.prompt).text },
+      metadata: input.nativeMetadata,
+    }, { signal: input.nativeSignal })
+  }
+
+  async reconcileAdmission(task: BackgroundTask): Promise<void> {
+    if (!task.nativeAdmissionID || !task.nativeRun) throw new Error("Native task has no running admission")
+    const receipt = await this.domain.get({ admissionID: task.nativeAdmissionID })
+    if (!receipt?.run || receipt.run.generation !== task.nativeRun.generation || receipt.childSessionID !== task.sessionId) {
+      throw new Error("Native continuation admission could not be reconciled")
+    }
   }
 
   async cancel(task: BackgroundTask): Promise<void> {
