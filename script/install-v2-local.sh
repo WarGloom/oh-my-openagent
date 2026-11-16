@@ -8,8 +8,8 @@ repo=$ws/.omo/worktrees/omo-v2-dev
 host=$ws/opencode-wt/v2
 binary=$host/packages/cli/dist/cli-linux-x64/bin/opencode
 launcher=/home/nikita/.local/bin/opencode-v2-lab
-host_oid=1a97d176b8713bca1a602cbc16937c6742b845ab
-host_hash=69fe82fae6d5eacb0ccaa53b1528240f18a802122cfe938f49ebe264b3f9ef07
+host_oid=0dd40480ca504a12c40de27f4e25f8ee16d903ad
+host_hash=067d836c124dcf250bc5b1c6fe45a3e3b570c3de0a5bed0cbdd2005765dd3a39
 paths=(dist packages/lsp-tools-mcp/dist packages/lsp-daemon/dist packages/git-bash-mcp/dist packages/shared-skills/skills)
 
 fail() {
@@ -37,6 +37,16 @@ grep -Fxq "  port|dev) omo=\$ws/.omo/worktrees/omo-v2-dev ;;" "$launcher" ||
 for tool in bun node git tar cp bwrap unshare jq flock; do
 	command -v "$tool" >/dev/null || fail "Missing existing tool: $tool"
 done
+bun_bin=/home/nikita/.local/lib/node_modules/bun/bin/bun.exe
+node_bin=/home/nikita/.nvm/versions/node/v24.16.0/bin/node
+npm_dir=/home/nikita/.nvm/versions/node/v24.16.0/lib/node_modules/npm
+for file in "$bun_bin" "$node_bin"; do
+	[[ -x $file ]] || fail "Missing executable: $file"
+done
+[[ -d $npm_dir && -f $npm_dir/bin/npm-cli.js ]] || fail "Missing npm: $npm_dir"
+for file in /etc/ld.so.cache /etc/ssl/certs/ca-certificates.crt /etc/hosts /etc/nsswitch.conf /etc/resolv.conf; do
+	[[ -f $file && -r $file ]] || fail "Missing runtime input: $file"
+done
 
 stamp=$(date -u +%Y%m%dT%H%M%S.%NZ)
 evidence=$repo/.omo/evidence/v2-install-$stamp
@@ -61,11 +71,20 @@ printf 'omo_commit=%s\nhost_commit=%s\nhost_sha256=%s\nbuild_copy=%s\n' \
 	"$omo_oid" "$host_oid" "$host_hash" "$copy" >"$evidence/provenance"
 
 # The source bind is a real directory: materialization must rename entire directories.
-TMPDIR="$work/tmp" unshare -r bwrap --ro-bind / / --dev /dev --unshare-pid --proc /proc \
+TMPDIR="$work/tmp" unshare -r bwrap --ro-bind /usr /usr \
+	--symlink usr/bin /bin --symlink usr/lib /lib --symlink usr/lib64 /lib64 \
+	--dir /etc/ssl/certs --ro-bind /etc/ld.so.cache /etc/ld.so.cache \
+	--ro-bind /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt \
+	--ro-bind /etc/hosts /etc/hosts --ro-bind /etc/nsswitch.conf /etc/nsswitch.conf \
+	--ro-bind /etc/resolv.conf /etc/resolv.conf \
+	--dir /tools --ro-bind "$bun_bin" /tools/bun --ro-bind "$node_bin" /tools/node \
+	--ro-bind "$npm_dir" /opt/npm --symlink /opt/npm/bin/npm-cli.js /tools/npm \
+	--dev /dev --unshare-pid --proc /proc \
 	--bind "$work" "$work" \
 	--bind "$copy" "$repo" --overlay-src "$common" --tmp-overlay "$common" \
 	--clearenv \
-	--setenv PATH "/home/nikita/.local/bin:/home/nikita/.nvm/versions/node/v24.16.0/bin:/usr/bin:/bin:$repo/node_modules/.bin" \
+	--setenv PATH "/tools:$repo/node_modules/.bin:/usr/bin:/bin" \
+	--setenv SSL_CERT_FILE /etc/ssl/certs/ca-certificates.crt \
 	--setenv HOME "$work/home" --setenv TMPDIR "$work/tmp" \
 	--setenv XDG_CONFIG_HOME "$work/home/config" --setenv XDG_DATA_HOME "$work/home/data" \
 	--setenv XDG_CACHE_HOME "$work/home/cache" --setenv XDG_STATE_HOME "$work/home/state" \

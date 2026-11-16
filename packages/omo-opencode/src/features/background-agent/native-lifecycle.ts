@@ -1,6 +1,6 @@
 import type { BackgroundTask, LaunchInput, ResumeInput } from "./types"
 import type { TaskPromptBody } from "./spawner/task-prompt-body"
-import type { NativeSubagentReceipt } from "../../v2/native-subagent-types"
+import type { NativeSubagentReceipt, NativeSubagentSteerResult } from "../../v2/native-subagent-types"
 
 export interface NativeBackgroundJobs {
   readonly recover?: (
@@ -10,6 +10,8 @@ export interface NativeBackgroundJobs {
   ) => Promise<BackgroundTask | undefined>
   readonly prepare: (task: BackgroundTask, input: LaunchInput | ResumeInput, maxDepth: number) => Promise<void>
   readonly start: (task: BackgroundTask, body: TaskPromptBody) => Promise<"started" | "suspended">
+  readonly steer: (task: BackgroundTask, input: ResumeInput) => Promise<NativeSubagentSteerResult>
+  readonly reconcileAdmission: (task: BackgroundTask) => Promise<void>
   readonly cancel: (task: BackgroundTask) => Promise<void>
   /** Tells the parent which child session an interrupted foreground wait left behind. Never resumes the parent. */
   readonly noteForegroundInterrupted?: (task: BackgroundTask) => Promise<void>

@@ -359,6 +359,9 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
           start: async () => {
             throw new Error("Native subagent owner is not configured")
           },
+          steer: async () => {
+            throw new Error("Native subagent owner is not configured")
+          },
           get: async () => undefined,
           wait: async () => {
             throw new Error("Native subagent owner is not configured")

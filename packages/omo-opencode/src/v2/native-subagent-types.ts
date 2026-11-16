@@ -37,6 +37,9 @@ export type NativeSubagentPrompt = {
 }
 
 export type NativeSubagentRun = { readonly childSessionID: string; readonly generation: string }
+export type NativeSubagentSteerResult =
+  | { readonly kind: "joined-existing-run"; readonly run: NativeSubagentRun; readonly promptID: string }
+  | { readonly kind: "closed-before-admission" }
 export type NativeSubagentTarget = { readonly admissionID: string } | { readonly run: NativeSubagentRun }
 export type NativeSubagentReceipt = {
   readonly admissionID: string
@@ -53,6 +56,16 @@ export type NativeSubagentReceipt = {
 }
 
 export type NativeSubagentDomain = {
+  readonly steer: (
+    input: {
+      readonly admissionID: string
+      readonly run: NativeSubagentRun
+      readonly invocation: Extract<NativeSubagentInvocation, { kind: "tool" }>
+      readonly prompt: NativeSubagentPrompt
+      readonly metadata?: Readonly<Record<string, unknown>>
+    },
+    options?: { readonly signal?: AbortSignal },
+  ) => Promise<NativeSubagentSteerResult>
   readonly prepare: (
     input: {
       readonly admissionID: string

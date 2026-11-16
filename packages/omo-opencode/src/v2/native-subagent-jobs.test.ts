@@ -4,6 +4,7 @@ import type { NativeDelegationSkills } from "./native-subagent-jobs"
 import { backgroundTaskRecord } from "./background-task-record"
 import { cleanupNativeFixtures, cleanups, fixture } from "./native-subagent-jobs-test-fixture"
 import { V2NativeSubagentJobs } from "./native-subagent-jobs"
+import { createDelegateTask } from "../tools/delegate-task/tools"
 import { subscribeTaskLifecycle, type TaskLifecycleEvent } from "../features/background-agent/task-lifecycle"
 import * as ledger from "../tools/delegate-task/jev-routing-ledger"
 import "../tools/delegate-task/jev-routing-context"
@@ -446,6 +447,272 @@ describe("native subagent consumer", () => {
       .start(completed, { agent: completed.agent, tools: {}, parts: [{ type: "text", text: completed.prompt }] })
     expect(authorizations).toBe(1)
     expect(f.starts).toEqual(["child-1"])
+  })
+
+  it("admits a task continuation to the running child and retains its completion", async () => {
+    const f = await fixture()
+    const observing = Promise.withResolvers<void>()
+    const waitNative = f.domain.wait
+    const wait = spyOn(f.domain, "wait").mockImplementation(async (input) => {
+      observing.resolve()
+      return waitNative(input)
+    })
+    const task = await f.manager.launch({
+      ...f.launch("initial"),
+      nativePrompt: { text: "initial native prompt" },
+      nativeCompletion: "parent",
+    })
+    await observing.promise
+    const originalRun = f.rows.get(task.nativeAdmissionID ?? "")?.run
+    const originalAdmission = task.nativeAdmissionID
+    const originalRecord = backgroundTaskRecord.parse(f.stored.get(task.id))
+    const put = spyOn(f.context.session.instructions.entry, "put")
+    const update = spyOn(f.context.session, "update")
+    const steer = spyOn(f.domain, "steer")
+    const completion = f.manager.waitForNativeTask(task.id, new AbortController().signal)
+    const result = await createDelegateTask({ manager: f.manager, client: f.input.client, directory: f.input.directory }).execute(
+      { task_id: task.sessionId ?? "", prompt: "clarification", description: "continue", run_in_background: true, load_skills: [] },
+      {
+        sessionID: "parent", messageID: "followup-message", agent: "parent-agent", callID: "followup",
+        abort: new AbortController().signal, directory: f.input.directory, worktree: f.input.directory,
+        ask: async () => {}, metadata: async () => {},
+      },
+    )
+    expect(result).toContain(task.id)
+    expect(f.prompts).toHaveLength(2)
+    expect(f.prompts[1]?.text).toContain("clarification")
+    expect(f.prompts[1]?.text).not.toContain("initial native prompt")
+    const continued = f.manager.getTask(task.id)
+    expect(continued?.nativeRun).toEqual(originalRun)
+    expect(continued?.nativeAdmissionID).toBe(originalAdmission)
+    expect(f.rows.get(continued?.nativeAdmissionID ?? "")?.completion).toBe("parent")
+    expect(f.starts).toEqual([task.sessionId])
+    expect(wait).toHaveBeenCalledTimes(1)
+    expect(f.rows.size).toBe(1)
+    expect(steer).toHaveBeenCalledTimes(1)
+    expect(steer.mock.calls[0]?.[0]).toMatchObject({
+      admissionID: originalAdmission,
+      run: originalRun,
+      invocation: { kind: "tool", messageID: "followup-message", toolCallID: "followup" },
+    })
+    expect(backgroundTaskRecord.parse(f.stored.get(task.id))).toEqual(originalRecord)
+    expect(put).not.toHaveBeenCalled()
+    expect(update).not.toHaveBeenCalled()
+    const pending = await f.manager.launch(f.launch("other"))
+    expect(pending.status).toBe("pending")
+    f.finish(continued?.nativeAdmissionID ?? "")
+    expect(await completion).toMatchObject({ status: "completed", result: "child result" })
+  })
+
+  it("returns a background receipt for a foreground steer interrupted after admission", async () => {
+    const f = await fixture()
+    const observing = Promise.withResolvers<void>()
+    const wait = f.domain.wait
+    spyOn(f.domain, "wait").mockImplementation(async (input) => {
+      observing.resolve()
+      return wait(input)
+    })
+    const task = await f.manager.launch({ ...f.launch("foreground-steer"), nativeCompletion: "parent" })
+    await observing.promise
+    const originalRun = structuredClone(f.manager.getTask(task.id)?.nativeRun)
+    const originalAdmission = task.nativeAdmissionID ?? ""
+    const caller = new AbortController()
+    const cancel = spyOn(f.domain, "cancel")
+    const steer = f.domain.steer
+    spyOn(f.domain, "steer").mockImplementation(async (input, options) => {
+      const admitted = await steer(input, options)
+      caller.abort(new Error("caller interrupted"))
+      return admitted
+    })
+
+    const receipt = await createDelegateTask({ manager: f.manager, client: f.input.client, directory: f.input.directory }).execute(
+      { task_id: task.sessionId ?? "", prompt: "clarify", description: "continue", run_in_background: false, load_skills: [] },
+      {
+        sessionID: "parent", messageID: "foreground-message", agent: "parent-agent", callID: "foreground-steer",
+        abort: caller.signal, directory: f.input.directory, worktree: f.input.directory,
+        ask: async () => {}, metadata: async () => {},
+      },
+    )
+
+    expect(receipt).toContain(`Background Task ID: ${task.id}`)
+    expect(receipt).not.toContain("child result")
+    expect(cancel).not.toHaveBeenCalled()
+    expect(f.manager.getTask(task.id)?.status).toBe("running")
+    expect(f.manager.getTask(task.id)?.nativeRun).toEqual(originalRun)
+    expect(f.rows.get(originalAdmission)).toMatchObject({ status: "running", completion: "parent" })
+    const completion = f.manager.waitForNativeTask(task.id, new AbortController().signal)
+    f.finish(originalAdmission)
+    expect(await completion).toMatchObject({ status: "completed", result: "child result" })
+    expect(f.starts).toEqual([task.sessionId])
+    expect(cancel).not.toHaveBeenCalled()
+  })
+
+  it("waits for a foreground successor when the original generation closes before steer", async () => {
+    const f = await fixture()
+    const observing = Promise.withResolvers<void>()
+    const wait = f.domain.wait
+    spyOn(f.domain, "wait").mockImplementation(async (input) => {
+      observing.resolve()
+      return wait(input)
+    })
+    const task = await f.manager.launch({ ...f.launch("foreground-successor"), nativeCompletion: "parent" })
+    await observing.promise
+    const originalAdmission = task.nativeAdmissionID ?? ""
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const steer = f.domain.steer
+    spyOn(f.domain, "steer").mockImplementation(async (input, options) => {
+      entered.resolve()
+      await release.promise
+      return steer(input, options)
+    })
+    const nextStart = f.nextStart()
+    const reply = createDelegateTask({ manager: f.manager, client: f.input.client, directory: f.input.directory }).execute(
+      { task_id: task.sessionId ?? "", prompt: "clarify", description: "continue", run_in_background: false, load_skills: [] },
+      {
+        sessionID: "parent", messageID: "successor-message", agent: "parent-agent", callID: "successor",
+        abort: new AbortController().signal, directory: f.input.directory, worktree: f.input.directory,
+        ask: async () => {}, metadata: async () => {},
+      },
+    )
+    await entered.promise
+    f.finish(originalAdmission)
+    release.resolve()
+    await nextStart
+    const successorAdmission = f.manager.getTask(task.id)?.nativeAdmissionID ?? ""
+    expect(successorAdmission).not.toBe(originalAdmission)
+    expect(f.rows.get(successorAdmission)?.completion).toBe("none")
+    f.finish(successorAdmission)
+    const result = await reply
+    expect(result).toContain("child result")
+    expect(result).not.toContain("Background Task ID:")
+  })
+
+  it("cancels the running child while steer authorization is pending", async () => {
+    const f = await fixture()
+    const observing = Promise.withResolvers<void>()
+    const wait = f.domain.wait
+    spyOn(f.domain, "wait").mockImplementation(async (input) => {
+      observing.resolve()
+      return wait(input)
+    })
+    const task = await f.manager.launch(f.launch("cancel-steer"))
+    await observing.promise
+    const admission = task.nativeAdmissionID ?? ""
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const steer = f.domain.steer
+    spyOn(f.domain, "steer").mockImplementation(async (input, options) => {
+      entered.resolve()
+      await release.promise
+      return steer(input, options)
+    })
+    const caller = new AbortController()
+    const steering = f.manager.resume({
+      sessionId: task.sessionId ?? "", parentSessionId: "parent", parentMessageId: "next",
+      prompt: "clarify", nativeSignal: caller.signal,
+      nativeInvocation: { kind: "tool", agent: "parent-agent", messageID: "next", toolCallID: "steer" },
+    })
+    const settledSteering = steering.then(() => "started", () => "aborted")
+    await entered.promise
+    const cancellation = f.manager.cancelTask(task.id)
+    const deadline = AbortSignal.timeout(2000)
+    try {
+      await Promise.race([
+        cancellation,
+        new Promise<never>((_, reject) => deadline.addEventListener("abort", () => reject(new Error("Cancellation did not abort steer admission")), { once: true })),
+      ])
+      expect(f.rows.get(admission)?.status).toBe("cancelled")
+      expect(f.starts).toEqual([task.sessionId])
+    } finally {
+      release.resolve()
+      await Promise.allSettled([steering, cancellation])
+    }
+    expect(await settledSteering).toBe("aborted")
+  })
+
+  it("reconciles a lost steer response without changing durable ownership", async () => {
+    const f = await fixture()
+    const observing = Promise.withResolvers<void>()
+    const wait = f.domain.wait
+    spyOn(f.domain, "wait").mockImplementation(async (input) => {
+      observing.resolve()
+      return wait(input)
+    })
+    const task = await f.manager.launch(f.launch("failed-steer"))
+    await observing.promise
+    const original = backgroundTaskRecord.parse(f.stored.get(task.id))
+    const steer = f.domain.steer
+    let lost = true
+    spyOn(f.domain, "steer").mockImplementation(async (input, options) => {
+      const result = await steer(input, options)
+      if (lost) {
+        lost = false
+        throw new Error("steer response lost")
+      }
+      return result
+    })
+    const resume = {
+      sessionId: task.sessionId ?? "", parentSessionId: "parent", parentMessageId: "next", prompt: "clarify",
+      nativeInvocation: { kind: "tool" as const, agent: "parent-agent", messageID: "next", toolCallID: "steer" },
+    }
+    await expect(f.manager.resume(resume)).rejects.toThrow("steer response lost")
+    await f.manager.resume(resume)
+    expect(f.prompts).toHaveLength(2)
+    expect(f.starts).toEqual([task.sessionId])
+    const restored = backgroundTaskRecord.parse(f.stored.get(task.id))
+    await f.createJobs().restore([restored], async () => {})
+    expect(restored).toMatchObject({ status: "running", nativeAdmissionID: original.nativeAdmissionID, nativeRun: original.nativeRun })
+    const completion = f.manager.waitForNativeTask(task.id, new AbortController().signal)
+    f.finish(original.nativeAdmissionID ?? "")
+    await completion
+    await f.manager.resume(resume)
+    expect(f.prompts).toHaveLength(2)
+    expect(f.starts).toEqual([task.sessionId])
+  })
+
+  it("releases a closed steer reservation before settling and starting a continuation", async () => {
+    const f = await fixture()
+    const observing = Promise.withResolvers<void>()
+    const observingNext = Promise.withResolvers<void>()
+    const wait = f.domain.wait
+    let observed = 0
+    spyOn(f.domain, "wait").mockImplementation(async (input) => {
+      observed += 1
+      if (observed === 1) observing.resolve()
+      if (observed === 2) observingNext.resolve()
+      return wait(input)
+    })
+    const task = await f.manager.launch(f.launch("close-before-steer"))
+    await observing.promise
+    const originalAdmission = task.nativeAdmissionID ?? ""
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const steer = f.domain.steer
+    spyOn(f.domain, "steer").mockImplementation(async (input, options) => {
+      entered.resolve()
+      await release.promise
+      return steer(input, options)
+    })
+    const nextStart = f.nextStart()
+    const input = {
+      sessionId: task.sessionId ?? "", parentSessionId: "parent", parentMessageId: "next", prompt: "clarify",
+      nativeInvocation: { kind: "tool" as const, agent: "parent-agent", messageID: "next", toolCallID: "steer" },
+    }
+    const continuation = f.manager.resume(input)
+    await entered.promise
+    const duplicate = f.manager.resume(input)
+    f.finish(originalAdmission)
+    release.resolve()
+    const resumed = await continuation
+    expect(await duplicate).toBe(resumed)
+    await nextStart
+    await observingNext.promise
+    expect(resumed.nativeAdmissionID).not.toBe(originalAdmission)
+    expect(f.starts).toEqual([task.sessionId, task.sessionId])
+    expect(f.prompts).toHaveLength(2)
+    await f.manager.resume(input)
+    expect(f.prompts).toHaveLength(2)
   })
 
   it("steers a team member without replacing its session or acquiring a second permit", async () => {

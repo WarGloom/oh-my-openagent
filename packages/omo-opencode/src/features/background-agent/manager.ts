@@ -453,7 +453,7 @@ export class BackgroundManager {
   readonly nativeJobs?: NativeBackgroundJobs
   private nativeRestoring = false
   private readonly nativeSettlements = new Map<string, Promise<void>>()
-  private readonly nativeSteers = new Map<string, Promise<void>>()
+  private readonly nativeSteers = new Map<string, { key: string; promise: Promise<void>; result?: Promise<BackgroundTask> }>()
   private readonly nativeLaunches = new Map<string, Promise<BackgroundTask>>()
   private readonly nativeStartWaiters = new Map<string, Set<() => void>>()
   private config?: BackgroundTaskConfig
@@ -2099,7 +2099,7 @@ export class BackgroundManager {
     if (!jobs || !task.nativeRun) return
     const generation = task.nativeRun.generation
     const settlement = jobs.wait({ ...task }).then(async (receipt: NativeSubagentReceipt) => {
-      const steering = this.nativeSteers.get(task.id)
+      const steering = this.nativeSteers.get(task.id)?.promise
       if (steering) await Promise.allSettled([steering])
       if (this.shutdownTriggered || task.nativeRun?.generation !== generation || task.status !== "running") return
       switch (receipt.status) {
@@ -2165,6 +2165,54 @@ export class BackgroundManager {
       throw new Error(`Task ${existingTask.id} already has an active sync continuation`)
     }
 
+    if (
+      this.nativeJobs && input.nativeInvocation?.kind === "tool" && existingTask.nativeAdmissionID &&
+      existingTask.nativeRun && existingTask.status !== "pending"
+    ) {
+      const previous = existingTask.nativeInvocation
+      if (
+        existingTask.nativeContinued && previous?.kind === "tool" &&
+        previous.agent === input.nativeInvocation.agent && previous.messageID === input.nativeInvocation.messageID &&
+        previous.toolCallID === input.nativeInvocation.toolCallID && existingTask.parentSessionId === input.parentSessionId
+      ) {
+        await this.nativeJobs.reconcileAdmission(existingTask)
+        return existingTask
+      }
+      const key = JSON.stringify([
+        input.parentSessionId, input.nativeInvocation, input.prompt, input.system, input.skills,
+        input.nativePrompt, input.nativeMetadata, input.nativeCompletion, input.nativeMode,
+      ])
+      const active = this.nativeSteers.get(existingTask.id)
+      if (active) {
+        if (active.key !== key) throw new Error(`Task ${existingTask.id} already has a continuation being admitted`)
+        if (active.result) return active.result
+        throw new Error(`Task ${existingTask.id} already has a continuation being admitted`)
+      }
+      if (this.resumesAwaitingAdmission.has(existingTask.id)) throw new Error(`Task ${existingTask.id} is already being resumed`)
+      const jobs = this.nativeJobs
+      const wasRunning = existingTask.status === "running"
+      const admission = jobs.steer(existingTask, input)
+      const promise = admission.then(() => {}, () => {})
+      const result = (async () => {
+        try {
+          const outcome = await admission
+          if (outcome.kind === "joined-existing-run") return existingTask
+        } finally {
+          this.nativeSteers.delete(existingTask.id)
+        }
+        this.resumesAwaitingAdmission.add(existingTask.id)
+        try {
+          await this.nativeSettlements.get(existingTask.id)
+          if (wasRunning && existingTask.status === "cancelled") throw new Error(`Task ${existingTask.id} was cancelled`)
+          return await this.queueNativeResume(existingTask, input)
+        } finally {
+          this.resumesAwaitingAdmission.delete(existingTask.id)
+        }
+      })()
+      this.nativeSteers.set(existingTask.id, { key, promise, result })
+      return result
+    }
+
     if (existingTask.status === "running") {
       if (this.nativeJobs && input.nativeInvocation?.kind === "team") {
         const jobs = this.nativeJobs
@@ -2189,7 +2237,7 @@ export class BackgroundManager {
           )
           if (outcome === "started") this.observeNativeTask(existingTask)
         })()
-        this.nativeSteers.set(existingTask.id, steering)
+        this.nativeSteers.set(existingTask.id, { key: "team", promise: steering })
         try {
           await steering
         } finally {
