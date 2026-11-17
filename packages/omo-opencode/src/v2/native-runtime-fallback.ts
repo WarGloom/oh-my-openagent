@@ -255,12 +255,13 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
       kind?: V2SessionRequestKind
       error: V2StructuredError
       attempt?: number
+      hostExhausted?: boolean
       readonly onExhausted?: () => void
       readonly onProviderWindow?: (delay: number) => void
     },
     apply: (model: V2ModelRef) => Promise<void | "declined" | "duplicate">,
   ): Promise<boolean> => {
-    if ((input.kind !== undefined && input.kind !== "primary") || isRateLimit(input.error)) return false
+    if ((input.kind !== undefined && input.kind !== "primary") || (isRateLimit(input.error) && !input.hostExhausted)) return false
     const error = classifierError(input.error)
     const errorType = classifyErrorType(error)
     const retryable = isRetryableError(error, controller.retryOnErrors)
@@ -308,6 +309,7 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
     }
     const host = await hostModels(context)
     if (disposed) return false
+    if (input.hostExhausted && isRateLimit(input.error) && !host.isAvailable) return false
     let superseded = false
     const recovered = await controller.recover(
       {
@@ -341,6 +343,11 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
   const registration = await context.session.hook("retry", async (event) => {
     if ((event.kind === undefined || event.kind === "primary") && isRateLimit(event.error) && event.decision.retry)
       watchdog.defer(event.sessionID, event.decision.delay)
+    if (event.exhausted && isRateLimit(event.error)) {
+      if (!event.switchModel) return
+      const session = await context.session.get({ sessionID: event.sessionID })
+      if (session.model?.providerID !== event.model.providerID || session.model.id !== event.model.id) return
+    }
     let exhausted = false
     const recovered = await recover(
       {
@@ -351,6 +358,7 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
         variant: event.model.variant,
         error: event.error,
         attempt: event.attempt,
+        hostExhausted: event.exhausted,
         onExhausted: () => {
           exhausted = true
         },
@@ -361,6 +369,10 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
           : undefined,
       },
       async (model) => {
+        if (event.exhausted && isRateLimit(event.error)) {
+          if (!event.switchModel || !(await event.switchModel(model))) return "declined"
+          return
+        }
         await context.session.switchModel({ sessionID: event.sessionID, model })
       },
     )
