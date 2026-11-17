@@ -136,6 +136,30 @@ async function triggerQuotaResponse(f: ReturnType<typeof fixture>, event: V2Http
 }
 
 describe("native runtime fallback", () => {
+  test("keeps the host retry for a strict-pool 429 after a configured Mythos fallback", async () => {
+    const mythos = { providerID: "anthropic", id: "claude-mythos-5-2" }
+    const daybreak = { providerID: "openai", id: "gpt-daybreak-blue-latest" }
+    const f = fixture({ agents: { mythos: { models: ["anthropic/claude-mythos-5-2", "openai/gpt-daybreak-blue-latest(high)"] } } }, [], mythos)
+    await install(f)
+
+    const firstAttempt = await f.fake.triggerRetry(retry(
+      { type: "provider.quota", message: "fake quota unavailable" },
+      { agent: "mythos", model: mythos, attempt: 2 },
+    ))
+    expect(firstAttempt.decision).toEqual({ retry: true, delay: 0 })
+    expect(f.fake.sessionCalls).toEqual([
+      { kind: "switchModel", sessionID: "ses_main", model: { ...daybreak, variant: "high" } },
+    ])
+
+    const message = "Account exclusions: #1=outside-pool; #2=quota-exhausted; #3=token-bucket-empty; #4=quota-exhausted,outside-pool. Strict account pool unavailable for gpt-daybreak-blue-latest. Try again in 9s. No fresh eligible Codex credit balance is known to be available."
+    const limited = await f.fake.triggerRetry(retry(
+      { type: "provider.rate-limit", status: 429, message, retryAfterMs: 9981, response: { body: JSON.stringify({ error: { code: "strict_pool_unavailable", message } }) } },
+      { agent: "mythos", model: { ...daybreak, variant: "high" }, attempt: 7, decision: { retry: true, delay: 9981 } },
+    ))
+    expect(limited.decision).toEqual({ retry: true, delay: 9981 })
+    expect(f.fake.sessionCalls).toHaveLength(1)
+  })
+
   test("admits only one concurrent recovery after deferred connection lookups", async () => {
     const f = fixture()
     const controller = f.runtime.native

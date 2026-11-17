@@ -8,10 +8,16 @@ import { createPluginInput } from "./create-plugin-input"
 import { createFakePluginContext } from "./fake-plugin-context"
 import { bindNativeRuntimeFallback, installNativeRuntimeFallback } from "./native-runtime-fallback"
 import { createSessionTracker } from "./session-tracker"
-import type { V2RetryHookEvent, V2StructuredError } from "./context-types"
+import type { V2ModelInfo, V2RetryHookEvent, V2StructuredError } from "./context-types"
 
 const first = { providerID: "openai", id: "gpt-6.1-sol" }
 const second = { providerID: "anthropic", id: "claude-sonnet-5-5" }
+const hostPrimary: V2ModelInfo = {
+  ...first, modelID: first.id, name: first.id, status: "active", enabled: true,
+  capabilities: { tools: true, input: ["text"], output: ["text"] }, variants: [],
+  limit: { context: 200_000, output: 32_000 },
+}
+const hostAlternate: V2ModelInfo = { ...hostPrimary, ...second, modelID: second.id, name: second.id }
 const cleanups: Array<() => void | Promise<void>> = []
 
 test.each(["retry", "terminal"].flatMap((source) => [
@@ -102,6 +108,51 @@ test.each([
   expect((await f.fake.context.session.get({ sessionID: "ses_decision" })).model).toEqual(model)
 })
 
+test("rate-limit policy switches only when the host retry budget is exhausted", async () => {
+  const error = { type: "provider.rate-limit", status: 429, message: "Too many requests. Please retry later." }
+  const f = await fixture(error, ["openai/gpt-6.1-sol", "anthropic/claude-sonnet-5-5", "anthropic/another"], 60, first, [hostAlternate])
+  const event: V2RetryHookEvent = {
+    sessionID: "ses_decision",
+    agent: "sisyphus",
+    model: first,
+    error,
+    attempt: 12,
+    exhausted: true,
+    decision: { retry: false },
+  }
+
+  await f.fake.triggerRetry(event)
+
+  expect(event.decision).toEqual({ retry: true, delay: 0 })
+  await f.fake.triggerRetry({ ...event, decision: { retry: false } })
+  expect(f.fake.sessionCalls).toEqual([
+    { kind: "switchModel", sessionID: "ses_decision", model: { ...second, variant: undefined } },
+  ])
+})
+
+test.each([
+  { reason: "no fallback is configured", models: ["openai/gpt-6.1-sol"], registry: [hostPrimary] },
+  { reason: "the host model list is empty", models: ["openai/gpt-6.1-sol", "anthropic/claude-sonnet-5-5"], registry: [] },
+  { reason: "the configured fallback is unavailable", models: ["openai/gpt-6.1-sol", "anthropic/claude-sonnet-5-5"], registry: [hostPrimary] },
+])("rate-limit exhaustion leaves the failure terminal when $reason", async ({ models, registry }) => {
+  const error = { type: "provider.rate-limit", status: 429, message: "Too many requests. Please retry later." }
+  const f = await fixture(error, [...models], 60, first, registry)
+  const event: V2RetryHookEvent = {
+    sessionID: "ses_decision",
+    agent: "sisyphus",
+    model: first,
+    error,
+    attempt: 12,
+    exhausted: true,
+    decision: { retry: false },
+  }
+
+  await f.fake.triggerRetry(event)
+
+  expect(event.decision).toEqual({ retry: false })
+  expect(f.fake.sessionCalls).toEqual([])
+})
+
 test("rate-limit policy keeps watchdog from switching during provider backoff", async () => {
   const clock = installRuntimeFallbackTestClock()
   cleanups.push(clock.restore)
@@ -139,10 +190,12 @@ async function fixture(
   models = ["openai/gpt-6.1-sol", "anthropic/claude-sonnet-5-5"],
   firstProgressSeconds = 60,
   model = first,
+  registry: ReadonlyArray<V2ModelInfo> = [],
 ) {
   const fake = createFakePluginContext({
     sessionAgent: "sisyphus",
     sessionInfo: { model },
+    models: registry,
     sessionMessages: [{ type: "idle", id: "msg_failed", outcome: "failed", error, time: { created: 1 } }],
   })
   const input = createPluginInput(fake.context, { tracker: createSessionTracker(), warn: () => {} })
@@ -211,12 +264,12 @@ test("gate repair: ignores another directory before capturing fallback configura
   const error = { type: "provider.quota", status: 429, message: "balance unavailable" }
   const f = await fixture(error)
   const get = f.fake.context.session.get
-  f.fake.context.session.get = async (input) => {
+  using getSpy = spyOn(f.fake.context.session, "get").mockImplementation(async (input) => {
     const session = await get(input)
     return { ...session, location: { ...session.location, directory: `${session.location.directory}/other` } }
-  }
+  })
   await f.fake.triggerPrompt({ sessionID: "ses_decision", messageID: "msg_other", prompt: { text: "other directory" } })
-  f.fake.context.session.get = get
+  getSpy.mockRestore()
   if (!f.pluginConfig.agents) throw new Error("Fixture agents missing")
   // when
   f.pluginConfig.agents.sisyphus = { models: ["openai/gpt-6.1-sol", "anthropic/reloaded"] }
@@ -564,11 +617,11 @@ test("does not treat an in-flight fallback as hard-quota chain exhaustion", asyn
   const applying = Promise.withResolvers<void>()
   const release = Promise.withResolvers<void>()
   const switchModel = f.fake.context.session.switchModel
-  f.fake.context.session.switchModel = async (input) => {
+  using switchSpy = spyOn(f.fake.context.session, "switchModel").mockImplementation(async (input) => {
     applying.resolve()
     await release.promise
     return switchModel(input)
-  }
+  })
   const initial: V2RetryHookEvent = {
     sessionID: "ses_decision",
     agent: "sisyphus",
