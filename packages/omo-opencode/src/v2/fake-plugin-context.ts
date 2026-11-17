@@ -771,7 +771,25 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
       return event
     },
     triggerRetry: async (event) => {
-      for (const hook of retryHooks) await hook(event)
+      let open = true
+      let used = false
+      const retry: V2RetryHookEvent = {
+        ...event,
+        switchModel: event.switchModel ?? (event.exhausted ? async (model) => {
+          if (!open || used) return false
+          used = true
+          const session = await context.session.get({ sessionID: event.sessionID })
+          if (!open || session.model?.providerID !== event.model.providerID || session.model.id !== event.model.id) return false
+          await context.session.switchModel({ sessionID: event.sessionID, model })
+          return true
+        } : undefined),
+      }
+      try {
+        for (const hook of retryHooks) await hook(retry)
+      } finally {
+        open = false
+        event.decision = retry.decision
+      }
       return event
     },
     triggerIdle: async (event) => {
