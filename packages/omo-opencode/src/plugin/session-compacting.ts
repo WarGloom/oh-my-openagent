@@ -123,6 +123,7 @@ export function createCompactionAutocontinueHandler(
   hooks: CompactionHookDependencies,
   options: CompactionAutocontinueHandlerOptions = {},
 ): CompactionAutocontinueHook {
+  const restore = createCompactionRestoreHandler(hooks)
   const duplicateGuardMs = options.duplicateGuardMs ?? DEFAULT_AUTOCONTINUE_DUPLICATE_GUARD_MS
   const guardedSessions = new Map<string, TimerHandleWithOptionalUnref>()
 
@@ -155,17 +156,21 @@ export function createCompactionAutocontinueHandler(
 
     markAutocontinueAllowed(input.sessionID)
 
+    await restore(input, output)
+  }
+}
+
+export function createCompactionRestoreHandler(hooks: CompactionHookDependencies): CompactionAutocontinueHook {
+  return async (input, output) => {
+    if (isCompactionAgent(input.agent)) {
+      output.enabled = false
+      return
+    }
     await runCompactionStep("compactionContextInjector.restore", input.sessionID, async () => {
-      const restore = hooks.compactionContextInjector?.restore
-      if (restore) {
-        await restore(input.sessionID)
-      }
+      await hooks.compactionContextInjector?.restore?.(input.sessionID)
     })
     await runCompactionStep("compactionTodoPreserver.restore", input.sessionID, async () => {
-      const restore = hooks.compactionTodoPreserver?.restore
-      if (restore) {
-        await restore(input.sessionID)
-      }
+      await hooks.compactionTodoPreserver?.restore?.(input.sessionID)
     })
   }
 }

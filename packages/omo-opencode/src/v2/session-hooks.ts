@@ -182,14 +182,13 @@ async function registerSystemTransform(
 async function registerCompaction(
   context: V2PluginContext,
   handler: NonNullable<V1SessionHooks["experimental.session.compacting"]>,
+  warn: (message: string) => void,
 ): Promise<V2Registration> {
   return context.session.hook("compaction", async (event) => {
     const output: V1CompactingOutput = { context: [] }
     await handler({ sessionID: event.sessionID }, output)
     if (output.prompt !== undefined && output.prompt.length > 0) {
-      const summary = [output.prompt, ...output.context].filter((part) => part.length > 0).join("\n\n")
-      if (summary.length > 0) event.result = { summary }
-      return
+      warn("V2 does not support a custom legacy compaction prompt; it was ignored.")
     }
     // 2.x has no separate sink for extra compaction context, so it rides on the compaction request's
     // system prompt, the closest faithful destination.
@@ -254,7 +253,7 @@ export async function installSessionHooks(
     )
   }
   if (v1["experimental.session.compacting"] !== undefined) {
-    registrations.push(await registerCompaction(context, v1["experimental.session.compacting"]))
+    registrations.push(await registerCompaction(context, v1["experimental.session.compacting"], deps.warn))
   }
 
   let disposed = false
