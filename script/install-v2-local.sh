@@ -9,6 +9,7 @@ host=$ws/opencode-wt/v2
 binary=$host/packages/cli/dist/cli-linux-x64/bin/opencode
 launcher=/home/nikita/.local/bin/opencode-v2-lab
 host_oid=1689f4cf502127fb2badd45e2b217242580ca1b2
+host_checkout_oid=a6d92f91c60d4f5d9bab41651c9ec725fbfbbceb
 host_hash=1288f9929e97adf5de5f987a84b53234cc872e8b4082ffb8401d62d5b31e1727
 old_host_hash=31b73921307bb09ded05572b878d6d910d217a16fd1aa2c46480dbf11c249c1b
 host_candidate=$ws/.omo/worktrees/incident-model/.omo/evidence/incident-model/sandbox.yDgYK3gD/host-output/cli-linux-x64/bin/opencode
@@ -36,7 +37,7 @@ case $installed_host_hash in
 esac
 identity() {
 	[[ $(g -C "$repo" rev-parse HEAD) == "$omo_oid" ]] || fail 'OMO HEAD changed; build the latest commit again.'
-	[[ $(g -C "$host" rev-parse HEAD) == "$host_oid" ]] || fail 'Host source changed; a separately verified host build is required.'
+	[[ $(g -C "$host" rev-parse HEAD) == "$host_checkout_oid" ]] || fail 'Host checkout changed; verify its source against the host build.'
 	[[ $(digest "$binary") == "$installed_host_hash" ]] || fail 'Installed host differs from the verified baseline.'
 }
 identity
@@ -146,7 +147,7 @@ lab_config=/home/nikita/.local/share/opencode-v2-lab/port/config/opencode
 [[ -e /home/nikita/.local/share/opencode-v2-lab/port/.credentials-imported ]] || fail 'Port credential-import marker missing; refusing to modify credentials.'
 config_before=$(sha256sum "$lab_config/opencode.json" "$lab_config/cli.json")
 printf '\n- Install checkpoint: OMO commit `%s`, host commit `%s`, host SHA-256 `%s`; staged and rollback artifacts `%s`; build copy `%s`. Activation will replace both artifacts and restart port once.\n' \
-	"$omo_oid" "$host_oid" "$host_hash" "$evidence" "$copy" >>"$ws/.omo/worktrees/incident-model/.omo/incident-model-journal.md"
+	"$omo_oid" "$host_oid" "$host_hash" "$evidence" "$copy" >"$evidence/activation-checkpoint.md"
 
 activation=0
 host_swapped=0
