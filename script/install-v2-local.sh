@@ -8,8 +8,10 @@ repo=$ws/.omo/worktrees/omo-v2-dev
 host=$ws/opencode-wt/v2
 binary=$host/packages/cli/dist/cli-linux-x64/bin/opencode
 launcher=/home/nikita/.local/bin/opencode-v2-lab
-host_oid=527fc37a5b133ce06227a65e9d38300e03e8f64e
-host_hash=31b73921307bb09ded05572b878d6d910d217a16fd1aa2c46480dbf11c249c1b
+host_oid=1689f4cf502127fb2badd45e2b217242580ca1b2
+host_hash=1288f9929e97adf5de5f987a84b53234cc872e8b4082ffb8401d62d5b31e1727
+old_host_hash=31b73921307bb09ded05572b878d6d910d217a16fd1aa2c46480dbf11c249c1b
+host_candidate=$ws/.omo/worktrees/incident-model/.omo/evidence/incident-model/sandbox.yDgYK3gD/host-output/cli-linux-x64/bin/opencode
 paths=(dist packages/lsp-tools-mcp/dist packages/lsp-daemon/dist packages/git-bash-mcp/dist packages/shared-skills/skills)
 
 fail() {
@@ -26,24 +28,34 @@ lab() { env -u OPENCODE_V2_BIN HOME=/home/nikita "$launcher" port "$@" 9>&-; }
 omo_oid=$(g -C "$repo" rev-parse HEAD)
 g -C "$repo" show "$omo_oid:script/install-v2-local.sh" | cmp -s - "$0" || fail 'Commit this helper before use.'
 
+installed_host_hash=$(digest "$binary")
+case $installed_host_hash in
+"$old_host_hash") ;;
+"$host_hash") host_candidate=$binary ;;
+*) fail 'Installed host differs from the verified baseline.' ;;
+esac
 identity() {
 	[[ $(g -C "$repo" rev-parse HEAD) == "$omo_oid" ]] || fail 'OMO HEAD changed; build the latest commit again.'
 	[[ $(g -C "$host" rev-parse HEAD) == "$host_oid" ]] || fail 'Host source changed; a separately verified host build is required.'
-	[[ $(digest "$binary") == "$host_hash" ]] || fail 'Installed host differs from the verified baseline.'
+	[[ $(digest "$binary") == "$installed_host_hash" ]] || fail 'Installed host differs from the verified baseline.'
 }
 identity
+[[ -x $host_candidate && $(digest "$host_candidate") == "$host_hash" ]] || fail 'Verified staged host missing or changed.'
+(cd "$repo" && sha256sum --status --check dist/v2-artifacts.sha256) || fail 'Installed prebuilt asset manifest mismatch.'
 grep -Fxq "  port|dev) omo=\$ws/.omo/worktrees/omo-v2-dev ;;" "$launcher" ||
 	fail 'Apply the canonical port/dev launcher mapping before installation.'
-for tool in bun node git tar cp bwrap unshare jq flock; do
+for tool in bun node git tar cp bwrap jq flock; do
 	command -v "$tool" >/dev/null || fail "Missing existing tool: $tool"
 done
 bun_bin=/home/nikita/.local/lib/node_modules/bun/bin/bun.exe
 node_bin=/home/nikita/.nvm/versions/node/v24.16.0/bin/node
-npm_dir=/home/nikita/.nvm/versions/node/v24.16.0/lib/node_modules/npm
 for file in "$bun_bin" "$node_bin"; do
 	[[ -x $file ]] || fail "Missing executable: $file"
 done
-[[ -d $npm_dir && -f $npm_dir/bin/npm-cli.js ]] || fail "Missing npm: $npm_dir"
+for asset in packages/lsp-tools-mcp/dist/cli.js packages/lsp-daemon/dist/cli.js packages/git-bash-mcp/dist/cli.js; do
+	[[ -s $repo/$asset ]] || fail "Missing existing prebuilt asset: $asset"
+done
+[[ -d $repo/packages/shared-skills/skills && -d $repo/node_modules ]] || fail 'Missing existing skills or dependencies.'
 for file in /etc/ld.so.cache /etc/ssl/certs/ca-certificates.crt /etc/hosts /etc/nsswitch.conf /etc/resolv.conf; do
 	[[ -f $file && -r $file ]] || fail "Missing runtime input: $file"
 done
@@ -66,20 +78,23 @@ for deps in "$repo/node_modules" "$repo"/packages/*/node_modules "$repo/packages
 	mkdir -p "$copy/$(dirname "$relative")"
 	cp -a --reflink=auto "$deps" "$copy/$relative"
 done
+for asset in packages/lsp-tools-mcp/dist packages/lsp-daemon/dist packages/git-bash-mcp/dist packages/shared-skills/skills; do
+	mkdir -p "$copy/$asset"
+	cp -a --reflink=auto "$repo/$asset/." "$copy/$asset/"
+done
 common=$(g -C "$repo" rev-parse --path-format=absolute --git-common-dir)
 printf 'omo_commit=%s\nhost_commit=%s\nhost_sha256=%s\nbuild_copy=%s\n' \
 	"$omo_oid" "$host_oid" "$host_hash" "$copy" >"$evidence/provenance"
 
 # The source bind is a real directory: materialization must rename entire directories.
-TMPDIR="$work/tmp" unshare -r bwrap --ro-bind /usr /usr \
+TMPDIR="$work/tmp" bwrap --unshare-all --die-with-parent --tmpfs / --ro-bind /usr /usr \
 	--symlink usr/bin /bin --symlink usr/lib /lib --symlink usr/lib64 /lib64 \
 	--dir /etc/ssl/certs --ro-bind /etc/ld.so.cache /etc/ld.so.cache \
 	--ro-bind /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt \
 	--ro-bind /etc/hosts /etc/hosts --ro-bind /etc/nsswitch.conf /etc/nsswitch.conf \
 	--ro-bind /etc/resolv.conf /etc/resolv.conf \
 	--dir /tools --ro-bind "$bun_bin" /tools/bun --ro-bind "$node_bin" /tools/node \
-	--ro-bind "$npm_dir" /opt/npm --symlink /opt/npm/bin/npm-cli.js /tools/npm \
-	--dev /dev --unshare-pid --proc /proc \
+	--dev /dev --proc /proc \
 	--bind "$work" "$work" \
 	--bind "$copy" "$repo" --overlay-src "$common" --tmp-overlay "$common" \
 	--clearenv \
@@ -89,9 +104,21 @@ TMPDIR="$work/tmp" unshare -r bwrap --ro-bind /usr /usr \
 	--setenv XDG_CONFIG_HOME "$work/home/config" --setenv XDG_DATA_HOME "$work/home/data" \
 	--setenv XDG_CACHE_HOME "$work/home/cache" --setenv XDG_STATE_HOME "$work/home/state" \
 	--setenv CI true --setenv GIT_MASTER 1 --setenv GIT_TERMINAL_PROMPT 0 \
+	--setenv OMO_SKIP_MATERIALIZE 1 \
 	--setenv GIT_CONFIG_NOSYSTEM 1 --setenv GIT_CONFIG_GLOBAL /dev/null \
 	--setenv GIT_CONFIG_COUNT 1 --setenv GIT_CONFIG_KEY_0 safe.directory --setenv GIT_CONFIG_VALUE_0 '*' \
-	--chdir "$repo" bash -Eeuo pipefail -c "git read-tree \"\$1\"; bun install --frozen-lockfile --ignore-scripts; bun run build" bash "$omo_oid" \
+	--chdir "$repo" bash -Eeuo pipefail -c '
+		git read-tree "$1"
+		bun build packages/omo-opencode/src/index.ts --outdir dist --target bun --format esm --external zod
+		bun build packages/omo-opencode/src/tui.ts --outdir dist --target bun --format esm --external @opentui/core --external @opentui/keymap --external @opentui/solid --external solid-js
+		bun run build:shared-skills-assets
+		bun run build:node-require-shim
+		tsc --emitDeclarationOnly
+		bun build packages/omo-opencode/src/cli/index.ts --outdir dist/cli --target bun --format esm
+		bun run build:cli-node
+		bun run build:schema
+		bun run build:omo-schema
+	' bash "$omo_oid" \
 	2>&1 | tee "$evidence/build.log"
 
 for path in "${paths[@]}"; do
@@ -112,8 +139,17 @@ printf 'archive_sha256=%s\n' "$(digest "$evidence/artifacts.tar.gz")" >>"$eviden
 cp -p "$evidence/provenance" "$evidence/candidate/dist/v2-provenance"
 cp -p "$evidence/artifacts.sha256" "$evidence/candidate/dist/v2-artifacts.sha256"
 identity
+cp -p "$binary" "$evidence/previous/host-opencode"
+cp -p "$host_candidate" "$evidence/candidate/host-opencode"
+[[ $(digest "$evidence/previous/host-opencode") == "$installed_host_hash" && $(digest "$evidence/candidate/host-opencode") == "$host_hash" ]] || fail 'Host backup or candidate hash mismatch.'
+lab_config=/home/nikita/.local/share/opencode-v2-lab/port/config/opencode
+[[ -e /home/nikita/.local/share/opencode-v2-lab/port/.credentials-imported ]] || fail 'Port credential-import marker missing; refusing to modify credentials.'
+config_before=$(sha256sum "$lab_config/opencode.json" "$lab_config/cli.json")
+printf '\n- Install checkpoint: OMO commit `%s`, host commit `%s`, host SHA-256 `%s`; staged and rollback artifacts `%s`; build copy `%s`. Activation will replace both artifacts and restart port once.\n' \
+	"$omo_oid" "$host_oid" "$host_hash" "$evidence" "$copy" >>"$ws/.omo/worktrees/incident-model/.omo/incident-model-journal.md"
 
 activation=0
+host_swapped=0
 moved=()
 rollback() {
 	result=$?
@@ -133,6 +169,9 @@ rollback() {
 			fi
 			mv -T "$evidence/previous/$path" "$repo/$path" || restored=0
 		done
+		if ((host_swapped)); then
+			cp -p "$evidence/previous/host-opencode" "$binary.rollback.$stamp" && mv -T "$binary.rollback.$stamp" "$binary" || restored=0
+		fi
 		if ((restored)); then
 			lab service restart >>"$evidence/rollback.log" 2>&1 || restored=0
 		fi
@@ -146,6 +185,14 @@ trap 'exit 143' TERM
 activation=1
 lab service stop >"$evidence/stop.log" 2>&1
 identity
+[[ $(sha256sum "$lab_config/opencode.json" "$lab_config/cli.json") == "$config_before" ]] || fail 'Launcher changed port configuration.'
+if [[ $installed_host_hash != "$host_hash" ]]; then
+	[[ ! -e $binary.staged.$stamp && ! -L $binary.staged.$stamp ]] || fail 'Host staging path already exists.'
+	cp -p "$evidence/candidate/host-opencode" "$binary.staged.$stamp"
+	host_swapped=1
+	mv -T "$binary.staged.$stamp" "$binary"
+	installed_host_hash=$host_hash
+fi
 for path in "${paths[@]}"; do
 	moved+=("$path")
 	mv -T "$repo/$path" "$evidence/previous/$path"
@@ -158,12 +205,9 @@ running_matches() {
 	pid=$(jq -er '.pid | select(type == "number" and . > 0 and floor == .)' "$registration") || return 1
 	[[ $(digest "/proc/$pid/exe") == "$host_hash" ]]
 }
-# An older mapped client has raced service startup before; force the installed image once.
-if ! running_matches; then
-	lab service restart >>"$evidence/restart.log" 2>&1
-	running_matches || fail 'Running V2 executable does not match the installed host.'
-fi
+running_matches || fail 'Running V2 executable does not match the installed host.'
 identity
+[[ $(sha256sum "$lab_config/opencode.json" "$lab_config/cli.json") == "$config_before" ]] || fail 'Launcher changed port configuration.'
 (
 	cd "$repo"
 	sha256sum --check "$evidence/artifacts.sha256"
@@ -182,6 +226,10 @@ try {
 	const url = new URL("http://127.0.0.1:49375/api/agent")
 	url.searchParams.set("location[directory]", process.env.OMO_INSTALL_WORKSPACE)
 	const catalog = z.object({ data: z.array(z.object({ id: z.string().min(1) })) })
+	const pluginUrl = new URL("http://127.0.0.1:49375/api/plugin")
+	pluginUrl.searchParams.set("location[directory]", process.env.OMO_INSTALL_WORKSPACE)
+	const plugins = z.object({ data: z.array(z.object({ source: z.object({ type: z.string(), path: z.string().optional() }), state: z.object({ status: z.string() }) })) })
+	const requiredPaths = ["/.omo/worktrees/omo-v2-dev", "/.omo/worktrees/owc-v2-tui", "/oc-codex-multi-auth"]
 	const primary = [/sisyphus/i, /hephaestus/i, /prometheus/i, /atlas/i]
 	// Catalogs can be partial during async activation; use the CLI startup polling interval on the client.
 	for (;;) {
@@ -192,16 +240,21 @@ try {
 			process.exit(1)
 		}
 		const body = catalog.parse(await response.json())
+		const pluginResponse = await fetch(pluginUrl, { headers: { authorization }, signal, redirect: "error" })
+		if (pluginResponse.status !== 200) throw new Error(`Plugin inventory HTTP ${pluginResponse.status}`)
+		const inventory = plugins.parse(await pluginResponse.json())
 		signal.throwIfAborted()
-		if (primary.every((name) => body.data.some((agent) => name.test(agent.id)))) break
+		if (primary.every((name) => body.data.some((agent) => name.test(agent.id))) &&
+			requiredPaths.every((path) => inventory.data.some((plugin) => plugin.state.status === "active" && plugin.source.type === "local" && plugin.source.path?.includes(path)))) break
 		await setTimeout(25, undefined, { signal })
 	}
-	console.log(`OMO activation check: HTTP 200; primary agents ${primary.length}`)
+	console.log(`OMO activation check: HTTP 200; primary agents ${primary.length}; OMO/OWC/oc-codex plugins active`)
 } catch {
 	console.error("OMO activation check failed: credential, request, response, or primary agents invalid")
 	process.exit(1)
 }
 ' || fail 'OMO plugin activation was not verified.'
 unset password
+[[ $(sha256sum "$lab_config/opencode.json" "$lab_config/cli.json") == "$config_before" ]] || fail 'Launcher changed port configuration.'
 activation=0
 printf 'Installed OMO %s using host %s; receipt and rollback: %s\n' "$omo_oid" "$host_oid" "$evidence"
