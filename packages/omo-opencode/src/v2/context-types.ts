@@ -546,6 +546,8 @@ export type V2RetryHookEvent = {
   readonly kind?: V2SessionRequestKind
   readonly error: V2StructuredError
   readonly attempt: number
+  readonly exhausted?: boolean
+  readonly switchModel?: (model: V2ModelRef) => Promise<boolean>
   decision: { retry: false } | { retry: true; delay: number }
 }
 
