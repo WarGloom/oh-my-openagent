@@ -288,20 +288,28 @@ describe("installSessionHooks", () => {
       expect(event.system).toEqual([{ type: "text", text: "preserve the todo list" }])
     })
 
-    it("#when it replaces the prompt #then the compaction result summary is set and the model request is skipped", async () => {
+    it("#when a legacy prompt is supplied #then context is appended without replacing the native result", async () => {
       // given
       const fake = createFakePluginContext()
       const hook: NonNullable<Hooks["experimental.session.compacting"]> = async (_input, output) => {
         output.prompt = "Summarize everything."
         output.context.push("keep the plan")
       }
-      await installSessionHooks(fake.context, { "experimental.session.compacting": hook } as Hooks, { warn: () => {} })
+      const warnings: string[] = []
+      await installSessionHooks(fake.context, { "experimental.session.compacting": hook } as Hooks, { warn: (message) => warnings.push(message) })
 
       // when
       const event = await fake.triggerCompaction(compactionEvent())
+      const existing = { summary: "native result" }
+      const withResult = await fake.triggerCompaction(compactionEvent({ result: existing }))
 
       // then
-      expect(event.result).toEqual({ summary: "Summarize everything.\n\nkeep the plan" })
+      expect(event.result).toBeUndefined()
+      expect(withResult.result).toBe(existing)
+      expect(event.system).toEqual([{ type: "text", text: "keep the plan" }])
+      expect(withResult.system).toEqual([{ type: "text", text: "keep the plan" }])
+      expect(warnings.length).toBe(2)
+      expect(warnings.every((message) => !message.includes("Summarize everything."))).toBe(true)
     })
   })
 

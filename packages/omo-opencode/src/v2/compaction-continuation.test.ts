@@ -2,6 +2,7 @@ import { expect, it } from "bun:test"
 import type { V2CompactionContinueEvent } from "./context-types"
 import { createFakePluginContext } from "./fake-plugin-context"
 import { registerCompactionContinuation, settleCompactionRestore } from "./compaction-continuation"
+import { createCompactionRestoreHandler } from "../plugin/session-compacting"
 
 const continuation = (compactionID = "compact_1"): V2CompactionContinueEvent => ({
   sessionID: "ses_compact",
@@ -10,6 +11,23 @@ const continuation = (compactionID = "compact_1"): V2CompactionContinueEvent => 
   enabled: true,
   agent: "Sisyphus",
   model: { providerID: "test", id: "model" },
+})
+
+it("restores distinct compactions without suppressing a prior veto", async () => {
+  const fake = createFakePluginContext()
+  let restores = 0
+  const handler = createCompactionRestoreHandler({ compactionTodoPreserver: { restore: async () => { restores++ } } })
+  const registration = await registerCompactionContinuation(fake.context, handler)
+  try {
+    const first = await fake.triggerCompactionContinue(continuation())
+    const duplicate = await fake.triggerCompactionContinue(continuation())
+    const second = await fake.triggerCompactionContinue(continuation("compact_2"))
+    const veto = await fake.triggerCompactionContinue({ ...continuation("compact_3"), enabled: false })
+    expect([first.enabled, duplicate.enabled, second.enabled, veto.enabled]).toEqual([true, true, true, false])
+    expect(restores).toBe(3)
+  } finally {
+    await registration.dispose()
+  }
 })
 
 it("awaits one restoration across duplicate native callbacks and the idle barrier", async () => {

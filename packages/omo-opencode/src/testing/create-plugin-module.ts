@@ -16,6 +16,7 @@ import { loadPluginConfig } from "../plugin-config"
 import { createModelCacheState } from "../plugin-state"
 import {
   createCompactionAutocontinueHandler,
+  createCompactionRestoreHandler,
   createSessionCompactingHandler,
   type CompactionAutocontinueHook,
 } from "../plugin/session-compacting"
@@ -370,7 +371,9 @@ export function createPluginModule(overrides: Partial<PluginModuleDeps> = {}): D
 
       "experimental.session.compacting": createSessionCompactingHandler(hooks),
 
-      "experimental.compaction.autocontinue": createCompactionAutocontinueHandler(hooks),
+      "experimental.compaction.autocontinue": isV2PluginInput(input)
+        ? createCompactionRestoreHandler(hooks)
+        : createCompactionAutocontinueHandler(hooks),
 
       dispose: async (): Promise<void> => {
         runtimeSkillSource?.stop()
