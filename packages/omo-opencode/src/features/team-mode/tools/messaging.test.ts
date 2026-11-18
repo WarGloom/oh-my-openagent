@@ -812,9 +812,11 @@ describe("createTeamSendMessageTool", () => {
     let currentTime = Date.now()
     const dateNowSpy = spyOn(Date, "now").mockImplementation(() => currentTime)
     let promptCalls = 0
+    const promptTexts: string[] = []
     const client = {
       session: {
-        promptAsync: async () => {
+        promptAsync: async (input: Parameters<LiveDeliveryClient["session"]["promptAsync"]>[0]) => {
+          promptTexts.push(input.body.parts.map((part) => part.text ?? "").join("\n"))
           promptCalls += 1
           if (promptCalls === 2) fallbackWakeDispatched.resolve(undefined)
         },
@@ -847,18 +849,12 @@ describe("createTeamSendMessageTool", () => {
       // when
       currentTime += DEFAULT_PROMPT_ASYNC_POST_DISPATCH_HOLD_MS
       await waitForEvent(fallbackWakeDispatched.promise, "pending-delivery fallback mailbox wake")
-      const injection = await pollAndBuildInjection(
-        fixture.memberTwoSessionId,
-        "m2",
-        fixture.teamRunId,
-        fixture.config,
-        "turn-after-pending-fallback-wake",
-      )
 
       // then
       expect(promptCalls).toBe(2)
-      expect(injection.injected).toBe(true)
-      expect(injection.content).toContain("waiting ping")
+      expect(promptTexts[1]).toContain("waiting ping")
+      expect(promptTexts[1]).toContain(unread[0]!.messageId)
+      expect(await listUnreadMessages(fixture.teamRunId, "m2", fixture.config)).toEqual([])
     } finally {
       dateNowSpy.mockRestore()
     }
@@ -895,6 +891,7 @@ describe("createTeamSendMessageTool", () => {
       fixture.teamRunId,
       fixture.config,
       "turn-before-fallback-wake",
+      { resolvedSessionID: fixture.memberTwoSessionId, insertContent: () => {} },
     )
     expect(injection.injected).toBe(true)
     expect(injection.content).toContain("already injected")
@@ -953,6 +950,7 @@ describe("createTeamSendMessageTool", () => {
       fixture.teamRunId,
       fixture.config,
       "turn-with-pending-ack",
+      { resolvedSessionID: fixture.memberTwoSessionId, insertContent: () => {} },
     )
     expect(injection.injected).toBe(true)
 
@@ -978,7 +976,7 @@ describe("createTeamSendMessageTool", () => {
     expect(promptTexts).toEqual(["blocker", "pending-ack queue probe"])
   })
 
-  test("#given generic fallback wakes cover two messages #when the first is acknowledged #then the second message still wakes", async () => {
+  test("#given fallback delivery covers two messages #when the first is acknowledged #then the second payload is delivered", async () => {
     // given
     const fixture = await createTeamFixture()
     const secondWakeDispatched = createDeferred<void>()
@@ -988,7 +986,7 @@ describe("createTeamSendMessageTool", () => {
         promptAsync: async (input: { body: { parts: Array<{ text?: string }> } }) => {
           const text = input.body.parts[0]?.text ?? ""
           promptTexts.push(text)
-          if (text.includes("You have a new team message")) secondWakeDispatched.resolve(undefined)
+          if (text.includes("second fallback")) secondWakeDispatched.resolve(undefined)
         },
       },
     }
@@ -1009,6 +1007,7 @@ describe("createTeamSendMessageTool", () => {
       fixture.teamRunId,
       fixture.config,
       "turn-before-second-message",
+      { resolvedSessionID: fixture.memberTwoSessionId, insertContent: () => {} },
     )
     expect(firstInjection.injected).toBe(true)
 
@@ -1027,18 +1026,12 @@ describe("createTeamSendMessageTool", () => {
     // when
     expect(blocker.release()).toBe(true)
     await waitForEvent(secondWakeDispatched.promise, "second message fallback wake")
-    const secondInjection = await pollAndBuildInjection(
-      fixture.memberTwoSessionId,
-      "m2",
-      fixture.teamRunId,
-      fixture.config,
-      "turn-after-second-message",
-    )
 
     // then
     expect(promptTexts).toHaveLength(2)
-    expect(secondInjection.injected).toBe(true)
-    expect(secondInjection.content).toContain("second fallback")
+    expect(promptTexts[1]).toContain("second fallback")
+    expect(promptTexts[1]).toContain(unreadBeforeWake[0]!.messageId)
+    expect(await listUnreadMessages(fixture.teamRunId, "m2", fixture.config)).toEqual([])
   })
 
   test("#given a queued fallback recipient shut down #when the prompt gate clears #then the obsolete wake is cancelled", async () => {
@@ -1526,19 +1519,21 @@ describe("createTeamSendMessageTool", () => {
     expect(inboxEntries).toHaveLength(1)
   })
 
-  test("inbox stays intact when live delivery fails so the fallback path still works", async () => {
+  test("fallback delivers the payload after pre-send live delivery failures", async () => {
     // given
     const fixture = await createTeamFixture()
     const fallbackDispatched = createDeferred<void>()
     let promptCalls = 0
+    const acceptedTexts: string[] = []
     const failingClient = {
       session: {
-        promptAsync: async () => {
+        promptAsync: async (input: Parameters<LiveDeliveryClient["session"]["promptAsync"]>[0]) => {
           promptCalls += 1
           if (promptCalls < 5) {
             const code = promptCalls % 2 === 0 ? "EHOSTUNREACH" : "ENETUNREACH"
             throw Object.assign(new Error(`connect ${code}`), { code })
           }
+          acceptedTexts.push(input.body.parts.map((part) => part.text ?? "").join("\n"))
           fallbackDispatched.resolve(undefined)
         },
       },
@@ -1555,21 +1550,14 @@ describe("createTeamSendMessageTool", () => {
       fixture.toolContext(fixture.memberOneSessionId),
     )
     await waitForEvent(fallbackDispatched.promise, "fallback wake after pre-send transport failure")
-    const injection = await pollAndBuildInjection(
-      fixture.memberTwoSessionId,
-      "m2",
-      fixture.teamRunId,
-      fixture.config,
-      "turn-after-transport-retry",
-    )
 
     // then
     expect(promptCalls).toBe(5)
-    expect(injection.injected).toBe(true)
-    expect(injection.content).toContain("ping")
+    expect(acceptedTexts).toHaveLength(1)
+    expect(acceptedTexts[0]).toContain("ping")
     const inboxDir = getInboxDir(resolveBaseDir(fixture.config), fixture.teamRunId, "m2")
     const inboxEntries = (await readdir(inboxDir)).filter((entry) => entry.endsWith(".json") && !entry.startsWith("."))
-    expect(inboxEntries).toHaveLength(1)
+    expect(inboxEntries).toHaveLength(0)
   })
 
   test("#given live delivery promptAsync fails ambiguously #when delivery handles the accepted-like failure #then it marks pending without inbox retry", async () => {
