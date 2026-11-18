@@ -48,7 +48,7 @@ identity() {
 }
 identity
 [[ -x $host_candidate && $(digest "$host_candidate") == "$host_hash" ]] || fail 'Verified staged host missing or changed.'
-(cd "$repo" && sha256sum --status --check dist/v2-artifacts.sha256) || fail 'Installed prebuilt asset manifest mismatch.'
+(cd "$repo" && grep -v '  packages/shared-skills/skills/' dist/v2-artifacts.sha256 | sha256sum --status --check) || fail 'Installed prebuilt asset manifest mismatch.'
 grep -Fxq "  port|dev) omo=\$ws/.omo/worktrees/omo-v2-dev ;;" "$launcher" ||
 	fail 'Apply the canonical port/dev launcher mapping before installation.'
 for tool in bun node git tar cp bwrap jq flock; do
@@ -86,7 +86,7 @@ if [[ $operation != --activate-built ]]; then
 		mkdir -p "$copy/$(dirname "$relative")"
 		cp -a --reflink=auto "$deps" "$copy/$relative"
 	done
-	for asset in packages/lsp-tools-mcp/dist packages/lsp-daemon/dist packages/git-bash-mcp/dist packages/shared-skills/skills; do
+	for asset in packages/lsp-tools-mcp/dist packages/lsp-daemon/dist packages/git-bash-mcp/dist; do
 		mkdir -p "$copy/$asset"
 		cp -a --reflink=auto "$repo/$asset/." "$copy/$asset/"
 	done
