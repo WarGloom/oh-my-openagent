@@ -8,11 +8,11 @@ repo=$ws/.omo/worktrees/omo-v2-dev
 host=$ws/opencode-wt/v2
 binary=$host/packages/cli/dist/cli-linux-x64/bin/opencode
 launcher=/home/nikita/.local/bin/opencode-v2-lab
-host_oid=1689f4cf502127fb2badd45e2b217242580ca1b2
-host_checkout_oid=a6d92f91c60d4f5d9bab41651c9ec725fbfbbceb
-host_hash=1288f9929e97adf5de5f987a84b53234cc872e8b4082ffb8401d62d5b31e1727
-old_host_hash=31b73921307bb09ded05572b878d6d910d217a16fd1aa2c46480dbf11c249c1b
-host_candidate=$ws/.omo/worktrees/incident-model/.omo/evidence/incident-model/sandbox.yDgYK3gD/host-output/cli-linux-x64/bin/opencode
+host_oid=7ffc25614c0624973d82013e437980cbef702f7b
+host_checkout_oid=7ffc25614c0624973d82013e437980cbef702f7b
+host_hash=d7c24c9a44af45ad89250a6013efbd7cd01d4b94c4f13bff9fcf05ef8e0cbcd1
+old_host_hash=1288f9929e97adf5de5f987a84b53234cc872e8b4082ffb8401d62d5b31e1727
+host_candidate=/tmp/opencode/v2-bin-20261118-readiness/cli-linux-x64/bin/opencode
 paths=(dist packages/lsp-tools-mcp/dist packages/lsp-daemon/dist packages/git-bash-mcp/dist packages/shared-skills/skills)
 
 fail() {
@@ -23,7 +23,13 @@ g() { GIT_MASTER=1 GIT_OPTIONAL_LOCKS=0 command git "$@"; }
 digest() { sha256sum "$1" | cut -d ' ' -f 1; }
 lab() { env -u OPENCODE_V2_BIN HOME=/home/nikita "$launcher" port "$@" 9>&-; }
 
-[[ $# == 0 ]] || fail 'Usage: script/install-v2-local.sh (build, install, restart port V2)'
+operation=${1:-install}
+case $operation in
+install) [[ $# == 0 ]] || fail 'Default installation takes no arguments.' ;;
+--build-only) [[ $# == 1 ]] || fail '--build-only takes no additional arguments.' ;;
+--activate-built) [[ $# == 2 ]] || fail '--activate-built requires a build evidence directory.' ;;
+*) fail 'Usage: script/install-v2-local.sh [--build-only | --activate-built EVIDENCE]' ;;
+esac
 [[ $(realpath -- "$0") == "$repo/script/install-v2-local.sh" ]] || fail 'Use the canonical dev helper.'
 [[ $(g -C "$repo" branch --show-current) == local/opencode-v2-dev ]] || fail 'Canonical dev branch required.'
 omo_oid=$(g -C "$repo" rev-parse HEAD)
@@ -62,53 +68,54 @@ for file in /etc/ld.so.cache /etc/ssl/certs/ca-certificates.crt /etc/hosts /etc/
 done
 
 stamp=$(date -u +%Y%m%dT%H%M%S.%NZ)
-evidence=$repo/.omo/evidence/v2-install-$stamp
-mkdir -p "$evidence/candidate" "$evidence/previous" "$evidence/failed"
 exec 9>"$repo/.omo/v2-install.lock"
 flock -n 9 || fail 'Another canonical V2 installation is active.'
-[[ -d $ws/.tmp ]] || fail 'Workspace .tmp directory required.'
-work=$(mktemp -d "$ws/.tmp/omo-v2-build.XXXXXXXX")
-copy=$work/source
-mkdir "$copy" "$work/home" "$work/tmp"
-# Archive committed bytes, never the dirty port tree or generated Senpi working files.
-g -C "$repo" archive "$omo_oid" | tar -xf - -C "$copy"
-cp -p "$repo/.git" "$copy/.git"
-for deps in "$repo/node_modules" "$repo"/packages/*/node_modules "$repo/packages/omo-codex/plugin/node_modules"; do
-	[[ -d $deps ]] || continue
-	relative=${deps#"$repo/"}
-	mkdir -p "$copy/$(dirname "$relative")"
-	cp -a --reflink=auto "$deps" "$copy/$relative"
-done
-for asset in packages/lsp-tools-mcp/dist packages/lsp-daemon/dist packages/git-bash-mcp/dist packages/shared-skills/skills; do
-	mkdir -p "$copy/$asset"
-	cp -a --reflink=auto "$repo/$asset/." "$copy/$asset/"
-done
-common=$(g -C "$repo" rev-parse --path-format=absolute --git-common-dir)
-printf 'omo_commit=%s\nhost_commit=%s\nhost_sha256=%s\nbuild_copy=%s\n' \
-	"$omo_oid" "$host_oid" "$host_hash" "$copy" >"$evidence/provenance"
+if [[ $operation != --activate-built ]]; then
+	evidence=$repo/.omo/evidence/v2-install-$stamp
+	mkdir -p "$evidence/candidate" "$evidence/previous" "$evidence/failed"
+	[[ -d $ws/.tmp ]] || fail 'Workspace .tmp directory required.'
+	work=$(mktemp -d "$ws/.tmp/omo-v2-build.XXXXXXXX")
+	copy=$work/source
+	mkdir "$copy" "$work/home" "$work/tmp"
+	# Archive committed bytes, never the dirty port tree or generated Senpi working files.
+	g -C "$repo" archive "$omo_oid" | tar -xf - -C "$copy"
+	cp -p "$repo/.git" "$copy/.git"
+	for deps in "$repo/node_modules" "$repo"/packages/*/node_modules "$repo/packages/omo-codex/plugin/node_modules"; do
+		[[ -d $deps ]] || continue
+		relative=${deps#"$repo/"}
+		mkdir -p "$copy/$(dirname "$relative")"
+		cp -a --reflink=auto "$deps" "$copy/$relative"
+	done
+	for asset in packages/lsp-tools-mcp/dist packages/lsp-daemon/dist packages/git-bash-mcp/dist packages/shared-skills/skills; do
+		mkdir -p "$copy/$asset"
+		cp -a --reflink=auto "$repo/$asset/." "$copy/$asset/"
+	done
+	common=$(g -C "$repo" rev-parse --path-format=absolute --git-common-dir)
+	printf 'omo_commit=%s\nhost_commit=%s\nhost_sha256=%s\nbuild_copy=%s\n' \
+		"$omo_oid" "$host_oid" "$host_hash" "$copy" >"$evidence/provenance"
 
-# The source bind is a real directory: materialization must rename entire directories.
-TMPDIR="$work/tmp" bwrap --unshare-all --die-with-parent --tmpfs / --ro-bind /usr /usr \
-	--symlink usr/bin /bin --symlink usr/lib /lib --symlink usr/lib64 /lib64 \
-	--dir /etc/ssl/certs --ro-bind /etc/ld.so.cache /etc/ld.so.cache \
-	--ro-bind /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt \
-	--ro-bind /etc/hosts /etc/hosts --ro-bind /etc/nsswitch.conf /etc/nsswitch.conf \
-	--ro-bind /etc/resolv.conf /etc/resolv.conf \
-	--dir /tools --ro-bind "$bun_bin" /tools/bun --ro-bind "$node_bin" /tools/node \
-	--dev /dev --proc /proc \
-	--bind "$work" "$work" \
-	--bind "$copy" "$repo" --overlay-src "$common" --tmp-overlay "$common" \
-	--clearenv \
-	--setenv PATH "/tools:$repo/node_modules/.bin:/usr/bin:/bin" \
-	--setenv SSL_CERT_FILE /etc/ssl/certs/ca-certificates.crt \
-	--setenv HOME "$work/home" --setenv TMPDIR "$work/tmp" \
-	--setenv XDG_CONFIG_HOME "$work/home/config" --setenv XDG_DATA_HOME "$work/home/data" \
-	--setenv XDG_CACHE_HOME "$work/home/cache" --setenv XDG_STATE_HOME "$work/home/state" \
-	--setenv CI true --setenv GIT_MASTER 1 --setenv GIT_TERMINAL_PROMPT 0 \
-	--setenv OMO_SKIP_MATERIALIZE 1 \
-	--setenv GIT_CONFIG_NOSYSTEM 1 --setenv GIT_CONFIG_GLOBAL /dev/null \
-	--setenv GIT_CONFIG_COUNT 1 --setenv GIT_CONFIG_KEY_0 safe.directory --setenv GIT_CONFIG_VALUE_0 '*' \
-	--chdir "$repo" bash -Eeuo pipefail -c '
+	# The source bind is a real directory: materialization must rename entire directories.
+	TMPDIR="$work/tmp" bwrap --unshare-all --die-with-parent --tmpfs / --ro-bind /usr /usr \
+		--symlink usr/bin /bin --symlink usr/lib /lib --symlink usr/lib64 /lib64 \
+		--dir /etc/ssl/certs --ro-bind /etc/ld.so.cache /etc/ld.so.cache \
+		--ro-bind /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt \
+		--ro-bind /etc/hosts /etc/hosts --ro-bind /etc/nsswitch.conf /etc/nsswitch.conf \
+		--ro-bind /etc/resolv.conf /etc/resolv.conf \
+		--dir /tools --ro-bind "$bun_bin" /tools/bun --ro-bind "$node_bin" /tools/node \
+		--dev /dev --proc /proc \
+		--bind "$work" "$work" \
+		--bind "$copy" "$repo" --overlay-src "$common" --tmp-overlay "$common" \
+		--clearenv \
+		--setenv PATH "/tools:$repo/node_modules/.bin:/usr/bin:/bin" \
+		--setenv SSL_CERT_FILE /etc/ssl/certs/ca-certificates.crt \
+		--setenv HOME "$work/home" --setenv TMPDIR "$work/tmp" \
+		--setenv XDG_CONFIG_HOME "$work/home/config" --setenv XDG_DATA_HOME "$work/home/data" \
+		--setenv XDG_CACHE_HOME "$work/home/cache" --setenv XDG_STATE_HOME "$work/home/state" \
+		--setenv CI true --setenv GIT_MASTER 1 --setenv GIT_TERMINAL_PROMPT 0 \
+		--setenv OMO_SKIP_MATERIALIZE 1 \
+		--setenv GIT_CONFIG_NOSYSTEM 1 --setenv GIT_CONFIG_GLOBAL /dev/null \
+		--setenv GIT_CONFIG_COUNT 1 --setenv GIT_CONFIG_KEY_0 safe.directory --setenv GIT_CONFIG_VALUE_0 '*' \
+		--chdir "$repo" bash -Eeuo pipefail -c '
 		git read-tree "$1"
 		bun build packages/omo-opencode/src/index.ts --outdir dist --target bun --format esm --external zod
 		bun build packages/omo-opencode/src/tui.ts --outdir dist --target bun --format esm --external @opentui/core --external @opentui/keymap --external @opentui/solid --external solid-js
@@ -120,29 +127,50 @@ TMPDIR="$work/tmp" bwrap --unshare-all --die-with-parent --tmpfs / --ro-bind /us
 		bun run build:schema
 		bun run build:omo-schema
 	' bash "$omo_oid" \
-	2>&1 | tee "$evidence/build.log"
+		2>&1 | tee "$evidence/build.log"
 
-for path in "${paths[@]}"; do
-	[[ -d $copy/$path && -d $repo/$path && ! -L $repo/$path ]] || fail "Missing or linked runtime directory: $path"
-	mkdir -p "$evidence/candidate/$(dirname "$path")" "$evidence/previous/$(dirname "$path")" "$evidence/failed/$(dirname "$path")"
-	cp -a --reflink=auto "$copy/$path" "$evidence/candidate/$path"
-done
-[[ -s $evidence/candidate/dist/index.js && -s $evidence/candidate/dist/tui.js ]] || fail 'Missing plugin entrypoints.'
-(
-	cd "$evidence/candidate"
-	find "${paths[@]}" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
-) >"$evidence/artifacts.sha256"
-(
-	cd "$evidence/candidate"
-	tar -czf "$evidence/artifacts.tar.gz" "${paths[@]}"
-)
-printf 'archive_sha256=%s\n' "$(digest "$evidence/artifacts.tar.gz")" >>"$evidence/provenance"
-cp -p "$evidence/provenance" "$evidence/candidate/dist/v2-provenance"
-cp -p "$evidence/artifacts.sha256" "$evidence/candidate/dist/v2-artifacts.sha256"
-identity
-cp -p "$binary" "$evidence/previous/host-opencode"
-cp -p "$host_candidate" "$evidence/candidate/host-opencode"
-[[ $(digest "$evidence/previous/host-opencode") == "$installed_host_hash" && $(digest "$evidence/candidate/host-opencode") == "$host_hash" ]] || fail 'Host backup or candidate hash mismatch.'
+	for path in "${paths[@]}"; do
+		[[ -d $copy/$path && -d $repo/$path && ! -L $repo/$path ]] || fail "Missing or linked runtime directory: $path"
+		mkdir -p "$evidence/candidate/$(dirname "$path")" "$evidence/previous/$(dirname "$path")" "$evidence/failed/$(dirname "$path")"
+		cp -a --reflink=auto "$copy/$path" "$evidence/candidate/$path"
+	done
+	[[ -s $evidence/candidate/dist/index.js && -s $evidence/candidate/dist/tui.js ]] || fail 'Missing plugin entrypoints.'
+	(
+		cd "$evidence/candidate"
+		find "${paths[@]}" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
+	) >"$evidence/artifacts.sha256"
+	(
+		cd "$evidence/candidate"
+		tar -czf "$evidence/artifacts.tar.gz" "${paths[@]}"
+	)
+	printf 'archive_sha256=%s\n' "$(digest "$evidence/artifacts.tar.gz")" >>"$evidence/provenance"
+	cp -p "$evidence/provenance" "$evidence/candidate/dist/v2-provenance"
+	cp -p "$evidence/artifacts.sha256" "$evidence/candidate/dist/v2-artifacts.sha256"
+	identity
+	cp -p "$binary" "$evidence/previous/host-opencode"
+	cp -p "$host_candidate" "$evidence/candidate/host-opencode"
+	[[ $(digest "$evidence/previous/host-opencode") == "$installed_host_hash" && $(digest "$evidence/candidate/host-opencode") == "$host_hash" ]] || fail 'Host backup or candidate hash mismatch.'
+else
+	evidence=$(realpath -e -- "$2") || fail 'Build evidence directory is missing.'
+	[[ $evidence == "$repo/.omo/evidence/v2-install-"* ]] || fail 'Use a canonical V2 build receipt.'
+	for binding in "omo_commit=$omo_oid" "host_commit=$host_oid" "host_sha256=$host_hash"; do
+		grep -Fxq "$binding" "$evidence/provenance" || fail 'Build receipt does not match current committed source and host.'
+	done
+	copy=
+	while IFS='=' read -r key value; do
+		[[ $key != build_copy ]] || copy=$value
+	done <"$evidence/provenance"
+	[[ -n $copy ]] || fail 'Build receipt has no source identity.'
+	for path in "${paths[@]}"; do
+		[[ -d $evidence/candidate/$path && ! -L $evidence/candidate/$path ]] || fail 'Built runtime candidate is missing or linked.'
+	done
+	(cd "$evidence/candidate" && sha256sum --status --check "$evidence/artifacts.sha256") || fail 'Built runtime candidate changed.'
+	[[ $(digest "$evidence/previous/host-opencode") == "$installed_host_hash" && $(digest "$evidence/candidate/host-opencode") == "$host_hash" ]] || fail 'Build receipt host baseline or candidate changed.'
+fi
+if [[ $operation == --build-only ]]; then
+	printf 'Built OMO %s; candidate and receipt: %s; smoke source: %s\n' "$omo_oid" "$evidence" "$copy"
+	exit 0
+fi
 lab_config=/home/nikita/.local/share/opencode-v2-lab/port/config/opencode
 [[ -e /home/nikita/.local/share/opencode-v2-lab/port/.credentials-imported ]] || fail 'Port credential-import marker missing; refusing to modify credentials.'
 config_before=$(sha256sum "$lab_config/opencode.json" "$lab_config/cli.json")
