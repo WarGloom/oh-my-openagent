@@ -66,30 +66,7 @@ function mergeConfiguredAndRequiredFallbackChains(
   return merged
 }
 
-export interface CategoryResolutionResult {
-  agentToUse: string
-  categoryModel: DelegatedModelConfig | undefined
-  categoryPromptAppend: string | undefined
-  maxPromptTokens?: number
-  modelInfo: ModelFallbackInfo | undefined
-  actualModel: string | undefined
-  isUnstableAgent: boolean
-  fallbackChain?: FallbackEntry[]
-  error?: string
-}
 
-function categoryResolutionError(error: string): CategoryResolutionResult {
-  return {
-    agentToUse: "",
-    categoryModel: undefined,
-    categoryPromptAppend: undefined,
-    maxPromptTokens: undefined,
-    modelInfo: undefined,
-    actualModel: undefined,
-    isUnstableAgent: false,
-    error,
-  }
-}
 
 export async function resolveCategoryExecution(
   args: DelegateTaskArgs,

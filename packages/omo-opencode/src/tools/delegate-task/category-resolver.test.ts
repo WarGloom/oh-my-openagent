@@ -178,7 +178,7 @@ describe("resolveCategoryExecution", () => {
     const cacheSpy = spyOn(connectedProvidersCache, "readProviderModelsCache").mockReturnValue({
       models: {
         "github-copilot": ["gemini-3.1-pro-preview"],
-        openai: ["gpt-6.1-sol"],
+        openai: ["gpt-6.2-sol"],
         anthropic: ["claude-opus-4-8"],
         opencode: ["qwen3.6-plus", "nemotron-3-super-free"],
       },
@@ -221,7 +221,7 @@ describe("resolveCategoryExecution", () => {
     expect(result.error).toBeUndefined()
     expect(result.actualModel).toBe("github-copilot/gemini-3.1-pro-preview")
     const gptIndex = result.fallbackChain?.findIndex(
-      (entry) => entry.providers.includes("openai") && entry.model === "gpt-6.1-sol",
+      (entry) => entry.providers.includes("openai") && entry.model === "gpt-6.2-sol",
     )
     const freeIndex = result.fallbackChain?.findIndex(
       (entry) => entry.providers.includes("opencode") && entry.model === "qwen3.6-plus-free",
