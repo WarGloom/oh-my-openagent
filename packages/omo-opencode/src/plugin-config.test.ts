@@ -57,4 +57,22 @@ describe("plugin config", () => {
 
     expect(config.agents?.oracle).toMatchObject({ model: "user/model", prompt: "user prompt", temperature: 0.4 })
   })
+
+  it.each([
+    { override: true, expected: { enabled: true, timeout_seconds: 300, stall_timeout_seconds: 900 } },
+    { override: false, expected: false },
+    { override: { enabled: true, stall_timeout_seconds: 1200 }, expected: { enabled: true, timeout_seconds: 300, stall_timeout_seconds: 1200 } },
+  ])("merges runtime fallback across user and project layers: $override", ({ override, expected }) => {
+    const root = mkdtempSync(join(tmpdir(), "omo-plugin-config-"))
+    temporaryDirectories.push(root)
+    const project = join(root, "project")
+    homeDirectory = process.env.HOME
+    process.env.HOME = root
+    writeOmoConfig(join(root, ".omo", "omo.jsonc"), {
+      "[opencode]": { runtime_fallback: { enabled: false, timeout_seconds: 300, stall_timeout_seconds: 900 } },
+    })
+    writeOmoConfig(join(project, ".omo", "omo.jsonc"), { "[opencode]": { runtime_fallback: override } })
+
+    expect(loadPluginConfig(project, { command: "run" }).runtime_fallback).toEqual(expected)
+  })
 })

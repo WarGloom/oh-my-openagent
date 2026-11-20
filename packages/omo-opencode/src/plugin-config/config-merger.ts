@@ -5,6 +5,12 @@ export function mergeConfigs(base: OhMyOpenCodeConfig, override: Partial<OhMyOpe
   return {
     ...base,
     ...override,
+    runtime_fallback:
+      override.runtime_fallback === true && typeof base.runtime_fallback === "object"
+        ? { ...base.runtime_fallback, enabled: true }
+        : typeof override.runtime_fallback === "object" && typeof base.runtime_fallback === "object"
+          ? deepMerge(base.runtime_fallback, override.runtime_fallback)
+          : override.runtime_fallback ?? base.runtime_fallback,
     agents: deepMerge(base.agents, override.agents),
     categories: deepMerge(base.categories, override.categories),
     team_mode: deepMerge(base.team_mode, override.team_mode),
