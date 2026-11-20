@@ -160,8 +160,8 @@ export function createNativeFallbackController(deps: HookDeps) {
       void deps.ctx.client.tui
         .showToast({
           body: {
-            title: "Model Stalled",
-            message: "The model stalled again after one automatic resume. Send a message to continue.",
+            title: "Model Request Slow",
+            message: "The model request is slow after one automatic resume. It is still running.",
             variant: "warning",
             duration: 8000,
           },

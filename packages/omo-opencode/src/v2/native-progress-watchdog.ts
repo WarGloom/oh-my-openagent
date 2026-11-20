@@ -24,7 +24,7 @@ export function createNativeProgressWatchdog(deps: {
 }) {
   const requests = new Map<string, Request>()
   // One automatic resume per user turn: "pending" until the resumed run starts, then "used".
-  const resumes = new Map<string, "pending" | "used">()
+  const resumes = new Map<string, "pending" | "used" | "warned">()
   const recovering = new Map<
     string,
     {
@@ -46,38 +46,39 @@ export function createNativeProgressWatchdog(deps: {
     if (requests.get(sessionID) !== request || disposed) return
     clear(sessionID)
     log("[runtime-fallback] Native watchdog deadline expired", { sessionID, timer, progressed: request.progressed })
+    if (resumes.has(sessionID)) {
+      if (resumes.get(sessionID) !== "warned") {
+        resumes.set(sessionID, "warned")
+        deps.stalledAgain(sessionID)
+      }
+      return
+    }
     const recovery = { request, settled: Promise.withResolvers<boolean>(), abort: new AbortController() }
     recovering.set(sessionID, recovery)
     // A stall carries no provider error, so it never selects another model: the resume keeps the session's model.
-    const resumable = !resumes.has(sessionID)
-    if (resumable) interruptions.set(sessionID, recovery.settled.promise)
+    interruptions.set(sessionID, recovery.settled.promise)
     let recovered = false
     let declineReason = "recovery did not commit a continuation"
     try {
-      if (!resumable) {
-        await deps.context.experimental.session.interrupt({ sessionID })
-        deps.stalledAgain(sessionID)
-      } else {
-        resumes.set(sessionID, "pending")
-        recovered = await deps.context.experimental.session.recover(
-          { sessionID },
-          ({ boundaryID }) => recoverNativeFailure(sessionID, boundaryID, async () => {
-            if (disposed || recovering.get(sessionID) !== recovery) {
-              declineReason = "ownership lost during admission"
-              return false
-            }
-            const outcome = await deps.context.experimental.session.continueAfterFailure({
-              sessionID, boundaryID, id: recoveryMessageID(boundaryID), text: STALL_RESUME_TEXT,
-            })
-            if (outcome === "stale") declineReason = "continuation boundary stale"
-            return outcome !== "stale"
-          }),
-          { signal: recovery.abort.signal },
-        )
-        if (!recovered) log("[runtime-fallback] Native watchdog recovery declined", { sessionID, reason: declineReason })
-      }
+      resumes.set(sessionID, "pending")
+      recovered = await deps.context.experimental.session.recover(
+        { sessionID },
+        ({ boundaryID }) => recoverNativeFailure(sessionID, boundaryID, async () => {
+          if (disposed || recovering.get(sessionID) !== recovery) {
+            declineReason = "ownership lost during admission"
+            return false
+          }
+          const outcome = await deps.context.experimental.session.continueAfterFailure({
+            sessionID, boundaryID, id: recoveryMessageID(boundaryID), text: STALL_RESUME_TEXT,
+          })
+          if (outcome === "stale") declineReason = "continuation boundary stale"
+          return outcome !== "stale"
+        }),
+        { signal: recovery.abort.signal },
+      )
+      if (!recovered) log("[runtime-fallback] Native watchdog recovery declined", { sessionID, reason: declineReason })
     } finally {
-      if (resumable && !recovered && resumes.get(sessionID) === "pending") resumes.delete(sessionID)
+      if (!recovered && resumes.get(sessionID) === "pending") resumes.delete(sessionID)
       recovery.settled.resolve(recovered)
       if (!recovered && interruptions.get(sessionID) === recovery.settled.promise) interruptions.delete(sessionID)
       if (recovering.get(sessionID) === recovery) recovering.delete(sessionID)

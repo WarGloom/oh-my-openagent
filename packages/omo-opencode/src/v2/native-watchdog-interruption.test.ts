@@ -358,12 +358,14 @@ test("a stall after an executed tool resumes the session once per turn and repor
   // when: the resumed run stalls again
   await nextRun()
   await stallAfterTool()
-  // then: it is interrupted without another resume and the stall is reported
-  expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["interrupt", "synthetic", "interrupt"])
+  // then: it remains running without another resume and the stall is reported once
+  expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["interrupt", "synthetic"])
   expect(f.stalledAgain).toHaveBeenCalledTimes(1)
-  expect(
-    f.watchdog.observe({ type: "session.execution.interrupted", data: { sessionID: "question", reason: "user" } }),
-  ).toBeUndefined()
+  f.watchdog.observe({ type: "session.step.ended", data: { sessionID: "question" } })
+  f.watchdog.start("question")
+  await stallAfterTool()
+  expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["interrupt", "synthetic"])
+  expect(f.stalledAgain).toHaveBeenCalledTimes(1)
   // when: the user starts a new turn and it stalls
   await nextRun()
   await stallAfterTool()
@@ -371,7 +373,6 @@ test("a stall after an executed tool resumes the session once per turn and repor
   expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual([
     "interrupt",
     "synthetic",
-    "interrupt",
     "interrupt",
     "synthetic",
   ])
@@ -413,7 +414,7 @@ test("a child resumes through a held recovery boundary without cancelling its jo
   watchdog.observe({ type: "session.tool.called", data: { sessionID: "child", id: "tool2" } })
   watchdog.observe({ type: "session.tool.success", data: { sessionID: "child", id: "tool2" } })
   await clock.advanceBy(2000)
-  expect(cancelled).toBe(true)
+  expect(cancelled).toBe(false)
   expect(repeatedStalls).toBe(1)
   expect(continuations).toHaveLength(1)
 })

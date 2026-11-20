@@ -133,7 +133,7 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
     context,
     timeouts: controller.timeouts,
     stalledAgain: (sessionID) => {
-      log("[runtime-fallback] Native watchdog stopped after a repeated stall", { sessionID })
+      log("[runtime-fallback] Native watchdog observed a repeated stall; request continues", { sessionID })
       controller.notifyStalledAgain()
     },
     warn: (error) =>
