@@ -3,6 +3,7 @@ import { COMPACTION_WATCHDOG_BUDGET_MS, HOOK_NAME } from "./constants"
 import { log } from "../../shared/logger"
 import { getFallbackModelsForSession } from "./fallback-models"
 import { canPrepareFallback, prepareFallback } from "./fallback-state"
+import { isInternalPromptFenced } from "../shared/prompt-async-gate"
 import { restoreFallbackState, snapshotFallbackState } from "./fallback-state-snapshot"
 import { subagentSessions } from "../../features/claude-code-session-state"
 import { getCompaction, recordCompactionEnd } from "../../shared/compaction-in-flight"
@@ -154,6 +155,7 @@ export function createFallbackTimeoutHelpers(
   const scheduleSessionFallbackTimeout = (sessionID: string, resolvedAgent?: string, delayOverride?: number) => {
     const effectiveResolvedAgent = resolvedAgent ?? sessionResolvedAgents.get(sessionID)
     clearSessionFallbackTimeout(sessionID)
+    if (isInternalPromptFenced(sessionID)) return
     if (effectiveResolvedAgent) {
       sessionResolvedAgents.set(sessionID, effectiveResolvedAgent)
     }
@@ -191,6 +193,7 @@ export function createFallbackTimeoutHelpers(
       }
       sessionFallbackTimeouts.delete(sessionID)
       sessionFallbackTimeoutKinds.delete(sessionID)
+      if (isInternalPromptFenced(sessionID)) return
 
       if (wasSubagentSession && !subagentSessions.has(sessionID)) {
         log(`[${HOOK_NAME}] Session fallback timeout skipped for completed subagent`, { sessionID })
@@ -316,6 +319,7 @@ export function createFallbackTimeoutHelpers(
         currentModel: state.currentModel,
       })
 
+      if (isInternalPromptFenced(sessionID)) return
       const result = prepareFallback(sessionID, state, fallbackModels, config)
       if (!result.success || !result.newModel) {
         await failSessionFallbackTerminally(

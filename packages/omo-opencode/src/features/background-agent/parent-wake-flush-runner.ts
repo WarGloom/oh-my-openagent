@@ -1,4 +1,5 @@
 import { log } from "../../shared"
+import { isInternalPromptFenced } from "../../hooks/shared/prompt-async-gate"
 import {
   isSessionActive as isOpenCodeSessionActive,
   settleAfterSessionIdle,
@@ -29,6 +30,7 @@ export class ParentWakeFlushRunner {
   constructor(private readonly deps: ParentWakeFlushRunnerDeps) {}
 
   async flushPendingParentWake(sessionID: string): Promise<void> {
+    if (this.dropStoppedWake(sessionID)) return
     if (!this.deps.pendingQueue.hasWake(sessionID)) {
       this.clearPendingParentWakeTimer(sessionID)
       return
@@ -199,6 +201,7 @@ export class ParentWakeFlushRunner {
   }
 
   schedulePendingParentWakeFlush(sessionID: string, delayMs?: number): void {
+    if (this.dropStoppedWake(sessionID)) return
     this.deps.pendingQueue.scheduleFlush(
       sessionID,
       async () => {
@@ -210,6 +213,14 @@ export class ParentWakeFlushRunner {
       },
       delayMs,
     )
+  }
+
+  private dropStoppedWake(sessionID: string): boolean {
+    if (!isInternalPromptFenced(sessionID)) return false
+    this.deps.pendingQueue.deleteWake(sessionID)
+    this.deps.dispatchedTracker.clearWake(sessionID)
+    this.clearPendingParentWakeTimer(sessionID)
+    return true
   }
 
   // Reply-required wakes must never be consumed by an admit-only noReply

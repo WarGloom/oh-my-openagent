@@ -1,12 +1,14 @@
 import type { HookDeps } from "./types"
 import { HOOK_NAME } from "./constants"
 import { log } from "../../shared/logger"
-import { releasePromptAsyncReservation } from "../shared/prompt-async-gate"
+import { isInternalPromptFenced, releasePromptAsyncReservation } from "../shared/prompt-async-gate"
 
 export function createAbortSessionRequest(deps: HookDeps) {
   const { ctx } = deps
 
   return async (sessionID: string, source: string): Promise<void> => {
+    if (isInternalPromptFenced(sessionID)) return
+
     if (
       source === "session.status.retry-signal" ||
       source === "message.updated.retry-signal" ||

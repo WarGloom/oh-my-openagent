@@ -51,26 +51,11 @@ export function createBackgroundCancel(manager: BackgroundManager, _client: Back
             )
             .join("\n")
 
-          const resumableTasks = cancelledInfo.filter((t) => t.sessionID)
-          const resumeSection =
-            resumableTasks.length > 0
-              ? `\n## Continue Instructions
-
-To continue a cancelled task, use:
-\`\`\`
-task(task_id="<task_id>", prompt="Continue: <your follow-up>")
-\`\`\`
-
-Continuable sessions:
-${resumableTasks.map((t) => `- \`${t.sessionID}\` (${t.description})`).join("\n")}`
-              : ""
-
           return `Cancelled ${cancelledInfo.length} background task(s):
 
 | Task ID | Description | Status | Session ID |
 |---------|-------------|--------|------------|
-${tableRows}
-${resumeSection}`
+${tableRows}`
         }
 
         const taskId = args.taskId
@@ -95,6 +80,9 @@ Only running or pending tasks can be cancelled.`
           abortSession: task.status === "running",
         })
         if (!cancelled) {
+          if (manager.getTask(taskId)?.status === "cancelled") {
+            return `[ERROR] Blocked further prompts for ${task.id}, but could not confirm the session stopped.`
+          }
           return `[ERROR] Failed to cancel task: ${task.id}`
         }
 

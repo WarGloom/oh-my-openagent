@@ -8,6 +8,7 @@ import { createPromptTimeoutContext, PROMPT_TIMEOUT_MS, type PromptRetryOptions 
 import {
   dispatchInternalPrompt,
   isInternalPromptDispatchAccepted,
+  isInternalPromptFenced,
   releasePromptAsyncReservation,
 } from "./prompt-async-gate"
 import { isAmbiguousPostDispatchPromptFailure } from "./prompt-failure-classifier"
@@ -143,6 +144,7 @@ export async function promptWithModelSuggestionRetry(
   try {
     await dispatchAsyncPromptWithTimeout(client, args, timeoutMs, "model-suggestion-retry", options)
   } catch (error) {
+    if (isInternalPromptFenced(args.path.id)) throw error
     const suggestion = parseModelSuggestionFromCore(error)
     const requestedModel = args.body.model
     if (!suggestion || !requestedModel || !suggestionMatchesRequestedModel(suggestion, requestedModel)) {
@@ -226,6 +228,7 @@ export async function promptSyncWithModelSuggestionRetry(
       timeoutContext.cleanup()
     }
   } catch (error) {
+    if (isInternalPromptFenced(args.path.id)) throw error
     const requestedModel = args.body.model
     const suggestion = parseModelSuggestionFromCore(error)
     if (!suggestion || !requestedModel || !suggestionMatchesRequestedModel(suggestion, requestedModel)) {

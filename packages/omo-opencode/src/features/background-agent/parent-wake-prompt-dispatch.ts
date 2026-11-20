@@ -4,7 +4,11 @@ import {
   log,
   withInternalNoReplyMarker,
 } from "../../shared"
-import { dispatchInternalPrompt, isInternalPromptDispatchAccepted } from "../../hooks/shared/prompt-async-gate"
+import {
+  dispatchInternalPrompt,
+  isInternalPromptDispatchAccepted,
+  isInternalPromptFenced,
+} from "../../hooks/shared/prompt-async-gate"
 import { getLiveParentPromptSelection } from "../../shared/session-model-state"
 import type { PromptDispatchClient } from "@oh-my-opencode/utils/prompt-async-gate/types"
 import { getErrorText } from "./error-classifier"
@@ -67,6 +71,7 @@ export async function sendParentWakePrompt(input: ParentWakePromptDispatchInput)
         query: { directory: input.directory },
       },
     })
+    if (isInternalPromptFenced(input.sessionID)) return
     if (promptResult.status === "failed") {
       if (isAmbiguousPostDispatchPromptFailure(promptResult)) {
         const dispatchedWake = cloneParentWake(input.latestWake)
@@ -117,6 +122,7 @@ export async function sendParentWakePrompt(input: ParentWakePromptDispatchInput)
     markRetainedNoReplyAdmission(input, dispatchStartedAt)
     input.trackDispatchedWake(createTrackedDispatchedWake(input.latestWake, input.forceNoReply), dispatchStartedAt)
   } catch (error) {
+    if (isInternalPromptFenced(input.sessionID)) return
     const errorText = error instanceof Error ? `${error.name}: ${error.message}` : getErrorText(error) || String(error)
     input.requeueWake(input.latestWake)
     input.scheduleFlush()

@@ -4,7 +4,8 @@ import { COMPACTION_WATCHDOG_BUDGET_MS, DEFAULT_CONFIG } from "./constants"
 import { createEventHandler } from "./event-handler"
 import { createFirstPromptWatchdog, observeEventForWatchdog } from "./first-prompt-watchdog"
 import { createMessageUpdateHandler } from "./message-update-handler"
-import { resolveSessionEventID } from "../../shared/event-session-id"
+import { resolveMessageEventSessionID, resolveSessionEventID } from "../../shared/event-session-id"
+import { isInternalPromptFenced } from "../shared/prompt-async-gate"
 import { clearAllCompactions, getCompaction, observeCompactionEvent } from "../../shared/compaction-in-flight"
 import { log } from "../../shared/logger"
 import {
@@ -148,6 +149,10 @@ export function createRuntimeFallbackHook(
   }
 
   const handleEvent = async ({ event }: { event: { type: string; properties?: unknown } }) => {
+    const properties = event.properties as Record<string, unknown> | undefined
+    const eventSessionID = resolveSessionEventID(properties) ?? resolveMessageEventSessionID(properties)
+    if (event.type !== "session.deleted" && eventSessionID && isInternalPromptFenced(eventSessionID)) return
+
     ensureInterval()
     observeCompactionEvent(event)
 
@@ -251,7 +256,7 @@ export function createRuntimeFallbackHook(
     input: { tool: string; sessionID: string; callID?: string },
     source: "tool.execute.before" | "tool.execute.after",
   ): Promise<void> => {
-    if (!config.enabled || !input.sessionID) return
+    if (!config.enabled || !input.sessionID || isInternalPromptFenced(input.sessionID)) return
 
     helpers.refreshSessionFallbackTimeout(input.sessionID, `${source}:${input.tool}`)
     firstPromptWatchdog.onAssistantProgress(input.sessionID)

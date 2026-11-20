@@ -1,11 +1,14 @@
 import { join } from "node:path"
 import { assertTeamSessionCanContinue, isTeamSessionDenied } from "../team-mode/team-session-registry"
 import { isProviderExhaustionFallbackEligible } from "@oh-my-opencode/model-core"
+import { withDispatchTimeout } from "@oh-my-opencode/utils/prompt-async-gate/timing"
 import type { PluginInput } from "@opencode-ai/plugin"
 import type { BackgroundTaskConfig, TmuxConfig } from "../../config/schema"
 import type { ModelFallbackControllerAccessor } from "../../hooks/model-fallback"
 import {
   dispatchInternalPrompt,
+  fenceInternalPrompts,
+  isInternalPromptFenced,
   releasePromptAsyncReservation,
   type PromptAsyncGateResult,
 } from "../../hooks/shared/prompt-async-gate"
@@ -428,6 +431,7 @@ export class BackgroundManager {
   private completionTimers: Map<string, ReturnType<typeof setTimeout>> = new Map()
   private readonly syncAttachedSessions = new Set<string>()
   private readonly resumesAwaitingAdmission = new Set<string>()
+  private readonly launchingSessions = new WeakMap<BackgroundTask, string>()
   private activeSyncClaims: Map<string, symbol> = new Map()
   private completedTaskArchive: Map<string, BackgroundTask> = new Map()
   private completedTaskSummaries: Map<string, BackgroundTaskNotificationTask[]> = new Map()
@@ -910,6 +914,10 @@ export class BackgroundManager {
         } catch (error) {
           log("[background-agent] Error starting task:", error)
           this.rollbackPreStartDescendantReservation(item.task)
+          if (this.getTask(item.task.id)?.status === "cancelled") {
+            this.concurrencyManager.release(key)
+            continue
+          }
 
           // Mark task as error so the parent polling loop detects the failure
           // instead of leaving it in a zombie "running" state with no prompt sent
@@ -1008,6 +1016,12 @@ export class BackgroundManager {
         ? lowerReasoningForModel(input.model.reasoning, input.model).variant
         : input.model?.variant
 
+    const isCancelled = () => task.status === "cancelled"
+    if (isCancelled()) {
+      this.concurrencyManager.release(concurrencyKey)
+      return
+    }
+
     const createResult = await this.client.session.create({
       body: {
         parentID: input.parentSessionId,
@@ -1038,20 +1052,27 @@ export class BackgroundManager {
 
     const sessionID = createResult.data.id
 
-    if (task.status === "cancelled") {
+    if (isCancelled()) {
+      void fenceInternalPrompts(sessionID)
       clearDelegatedChildSessionBootstrap(sessionID)
       await this.abortSessionWithLogging(sessionID, "cancelled pre-start cleanup")
       this.concurrencyManager.release(concurrencyKey)
       return
     }
 
-    await input.onSessionCreated?.(sessionID, input.model)
+    this.launchingSessions.set(task, sessionID)
+    try {
+      await input.onSessionCreated?.(sessionID, input.model)
+    } finally {
+      this.launchingSessions.delete(task)
+    }
     this.settlePreStartDescendantReservation(task)
     subagentSessions.add(sessionID)
     delegatedTaskSessions.add(sessionID)
     setSessionAgent(sessionID, input.agent)
 
-    if (this.tasks.get(task.id)?.status === "cancelled") {
+    if (isCancelled()) {
+      void fenceInternalPrompts(sessionID)
       clearDelegatedChildSessionBootstrap(sessionID)
       clearSessionAgent(sessionID)
       await this.abortSessionWithLogging(sessionID, "cancelled during launch setup")
@@ -1149,6 +1170,7 @@ export class BackgroundManager {
       },
       childDirectory,
     ).catch(async (error) => {
+      if (isInternalPromptFenced(sessionID)) return
       // Retry with fallback agent if the original agent was unregistered (e.g., after a model switch)
       if (isAgentNotFoundError(error) && input.agent !== FALLBACK_AGENT) {
         log("[background-agent] Agent not found, retrying with fallback agent", {
@@ -1204,7 +1226,10 @@ export class BackgroundManager {
           message: extractErrorMessage(error),
           statusCode: extractErrorStatusCode(error),
         }
-        if (await this.tryFallbackRetry(existingTask, errorInfo, "promptAsync.launch")) {
+        if (
+          (await this.tryFallbackRetry(existingTask, errorInfo, "promptAsync.launch")) ||
+          isInternalPromptFenced(sessionID)
+        ) {
           return
         }
 
@@ -1261,6 +1286,7 @@ export class BackgroundManager {
   }
 
   claimSyncContinuation(sessionID: string, parentSessionID: string): (() => void) | undefined {
+    if (isInternalPromptFenced(sessionID)) throw new Error(`Session ${sessionID} is stopped`)
     assertTeamSessionCanContinue(sessionID)
     const task = this.findBySession(sessionID)
     if (!task) {
@@ -1715,6 +1741,7 @@ export class BackgroundManager {
   }
 
   async resume(input: ResumeInput): Promise<BackgroundTask> {
+    if (isInternalPromptFenced(input.sessionId)) throw new Error(`Session ${input.sessionId} is stopped`)
     assertTeamSessionCanContinue(input.sessionId)
     const existingTask = this.findBySession(input.sessionId)
     if (!existingTask) {
@@ -1832,7 +1859,7 @@ export class BackgroundManager {
     resumeSnapshot: ResumeTaskSnapshot,
     concurrencyKey: string,
   ): Promise<BackgroundTask> {
-    if (this.shutdownTriggered) {
+    if (this.shutdownTriggered || isInternalPromptFenced(input.sessionId)) {
       this.concurrencyManager.release(concurrencyKey)
       return existingTask
     }
@@ -1940,6 +1967,7 @@ export class BackgroundManager {
       },
     })
       .then((promptResult) => {
+        if (isInternalPromptFenced(input.sessionId)) return
         if (promptResult.status === "failed") {
           if (isAmbiguousPostDispatchPromptFailure(promptResult)) {
             log(
@@ -1978,7 +2006,10 @@ export class BackgroundManager {
           message: extractErrorMessage(error),
           statusCode: extractErrorStatusCode(error),
         }
-        if (await this.tryFallbackRetry(existingTask, errorInfo, "promptAsync.resume")) {
+        if (
+          (await this.tryFallbackRetry(existingTask, errorInfo, "promptAsync.resume")) ||
+          isInternalPromptFenced(input.sessionId)
+        ) {
           return
         }
 
@@ -2652,7 +2683,7 @@ export class BackgroundManager {
     errorMessage: string | undefined,
     source: string,
   ): Promise<void> {
-    if (await this.tryFallbackRetry(task, errorInfo, source)) {
+    if ((await this.tryFallbackRetry(task, errorInfo, source)) || task.status !== "running") {
       return
     }
 
@@ -2713,6 +2744,8 @@ export class BackgroundManager {
         await this.abortSessionWithLogging(sessionId, `${source} without fallback`)
       }
     }
+
+    if (task.status !== "running") return
 
     if (task.currentAttemptID) {
       finalizeAttempt(task, task.currentAttemptID, "error", errorMsg)
@@ -2794,6 +2827,7 @@ export class BackgroundManager {
     errorInfo: { name?: string; message?: string; statusCode?: number },
     source: string,
   ): Promise<boolean> {
+    if (task.status === "cancelled") return false
     if (task.sessionId && isTeamSessionDenied(task.sessionId)) return false
     if (this.shouldWaitForFallbackRetryOutput(task, source)) {
       return true
@@ -3132,6 +3166,7 @@ export class BackgroundManager {
     }
 
     const source = options?.source ?? "cancel"
+    const terminalCancellation = source === "background_cancel"
     const abortSession = options?.abortSession !== false
     const reason = options?.reason
 
@@ -3154,7 +3189,17 @@ export class BackgroundManager {
     }
 
     const wasRunning = task.status === "running"
-    if (wasRunning && abortSession && task.sessionId) {
+    const sessionID = task.sessionId ?? this.launchingSessions.get(task)
+    const stoppedSessions = new Set<string>()
+    if (terminalCancellation) {
+      if (sessionID) stoppedSessions.add(sessionID)
+      for (const attempt of task.attempts ?? []) {
+        if (attempt.sessionId) stoppedSessions.add(attempt.sessionId)
+      }
+    }
+    const dispatchDrain = Promise.all([...stoppedSessions].map(fenceInternalPrompts))
+
+    if (!terminalCancellation && wasRunning && abortSession && task.sessionId) {
       const aborted = await this.abortSessionWithLogging(task.sessionId, `task cancellation (${source})`)
       if (!aborted) return false
 
@@ -3171,6 +3216,7 @@ export class BackgroundManager {
       }
     }
     this.clearFallbackRetryResultsForTask(task)
+    clearProviderAutoRetryDeferral(task)
     if (wasRunning && task.rootSessionId) {
       this.unregisterRootDescendant(task.rootSessionId)
     }
@@ -3209,12 +3255,29 @@ export class BackgroundManager {
       this.updateBackgroundTaskMarker(task.parentSessionId)
     }
 
+    let stopped = true
+    if (stoppedSessions.size > 0) {
+      const drained = await withDispatchTimeout(dispatchDrain, 10_000, "background cancellation dispatch drain").then(
+        () => true,
+        (error: unknown) => {
+          log("[background-agent] Failed to drain prompts during cancellation:", { taskId, error })
+          return false
+        },
+      )
+      const aborted = sessionID ? await this.abortSessionWithLogging(sessionID, `task cancellation (${source})`) : true
+      stopped = drained && aborted
+      for (const id of stoppedSessions) {
+        clearDelegatedChildSessionBootstrap(id)
+        SessionCategoryRegistry.remove(id)
+      }
+    }
+
     if (options?.skipNotification) {
       this.recordTerminalOutcome(task)
       this.cleanupPendingByParent(task)
       this.scheduleTaskRemoval(task.id)
       log(`[background-agent] Task cancelled via ${source} (notification skipped):`, task.id)
-      return true
+      return stopped
     }
 
     this.markForNotification(task)
@@ -3226,7 +3289,7 @@ export class BackgroundManager {
       log("[background-agent] Error in notifyParentSession for cancelled task:", { taskId: task.id, error: err })
     }
 
-    return true
+    return stopped
   }
 
   /**
@@ -3795,6 +3858,8 @@ export class BackgroundManager {
   }
 
   private async failCrashedTask(task: BackgroundTask, errorMessage: string): Promise<void> {
+    if (task.status === "cancelled") return
+
     if (task.currentAttemptID) {
       finalizeAttempt(task, task.currentAttemptID, "error", errorMessage)
     } else {

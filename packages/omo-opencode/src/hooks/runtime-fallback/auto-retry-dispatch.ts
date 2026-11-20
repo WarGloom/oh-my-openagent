@@ -14,6 +14,7 @@ import { hasInternalInitiatorMarker } from "../../shared/internal-initiator-mark
 import {
   dispatchInternalPrompt,
   isInternalPromptDispatchAccepted,
+  isInternalPromptFenced,
   type InternalPromptDispatchResult,
 } from "../shared/prompt-async-gate"
 import { isAmbiguousPostDispatchPromptFailure } from "../../shared/prompt-failure-classifier"
@@ -56,6 +57,9 @@ export function createAutoRetryDispatcher(
       onPromptAccepted?: () => Promise<void> | void
     },
   ): Promise<AutoRetryDispatchOutcome> => {
+    if (isInternalPromptFenced(sessionID)) {
+      return { accepted: false, status: "blocked", reason: "session stopped" }
+    }
     if (sessionRetryInFlight.has(sessionID)) {
       log(`[${HOOK_NAME}] Retry already in flight, skipping (${source})`, { sessionID })
       return { accepted: false, status: "superseded", reason: "retry already in flight" }
@@ -82,7 +86,8 @@ export function createAutoRetryDispatcher(
     const hadAwaitingFallbackResult = sessionAwaitingFallbackResult.has(sessionID)
     const shouldBypassPromptStateChecks = source === "session.status" && !hadAwaitingFallbackResult
     const fallbackState = sessionStates.get(sessionID)
-    const isCurrentFallbackGeneration = () => sessionStates.get(sessionID) === fallbackState
+    const isCurrentFallbackGeneration = () =>
+      !isInternalPromptFenced(sessionID) && sessionStates.get(sessionID) === fallbackState
     const staleGenerationOutcome = (): AutoRetryDispatchOutcome => {
       log(`[${HOOK_NAME}] Auto-retry skipped for stale fallback generation (${source})`, {
         sessionID,

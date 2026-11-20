@@ -1,6 +1,8 @@
 import { tmpdir } from "node:os"
 import type { PluginInput } from "@opencode-ai/plugin"
 import { afterEach, describe, expect, test } from "bun:test"
+import { dispatchInternalPrompt } from "../../shared/prompt-async-gate"
+import { withDispatchTimeout } from "@oh-my-opencode/utils/prompt-async-gate/timing"
 import { ConcurrencyManager } from "./concurrency"
 import { BackgroundManager } from "./manager"
 import type { BackgroundTask, LaunchInput } from "./types"
@@ -101,6 +103,52 @@ function runScheduledCleanup(manager: BackgroundManager, taskId: string): void {
 }
 
 describe("BackgroundManager.cancelTask cleanup", () => {
+  test("public cancellation blocks internal prompts during abort and after task cleanup", async () => {
+    const enteredAbort = Promise.withResolvers<void>()
+    const finishAbort = Promise.withResolvers<{ data: boolean }>()
+    const manager = createBackgroundManager(undefined, () => {
+      enteredAbort.resolve()
+      return finishAbort.promise
+    })
+    const task = createMockTask({
+      id: "task-terminal-cancel",
+      parentSessionId: "parent-terminal-cancel",
+      sessionId: "child-terminal-cancel",
+    })
+    getTaskMap(manager).set(task.id, task)
+    const promptCalls: string[] = []
+    const dispatch = (source: string) => dispatchInternalPrompt({
+      mode: "async",
+      client: {
+        session: {
+          promptAsync: async () => {
+            promptCalls.push(source)
+          },
+        },
+      },
+      sessionID: "child-terminal-cancel",
+      input: { path: { id: "child-terminal-cancel" } },
+      source,
+      checkStatus: false,
+      checkToolState: false,
+      settleMs: 0,
+    })
+
+    const cancelled = manager.cancelTask(task.id, { source: "background_cancel", skipNotification: true })
+    let duringAbort: Awaited<ReturnType<typeof dispatch>>
+    try {
+      await withDispatchTimeout(enteredAbort.promise, 1000, "test host abort started")
+      duringAbort = await dispatch("model-suggestion-retry")
+    } finally {
+      finishAbort.resolve({ data: true })
+    }
+    expect(await cancelled).toBe(true)
+    runScheduledCleanup(manager, task.id)
+    const afterCleanup = await dispatch("background-agent-parent-wake")
+
+    expect([duringAbort.status, afterCleanup.status, promptCalls]).toEqual(["cancelled", "cancelled", []])
+  })
+
   test("#given a running task in BackgroundManager #when cancelTask called with skipNotification=true #then task is eventually removed from this.tasks Map", async () => {
     // given
     const manager = createBackgroundManager()

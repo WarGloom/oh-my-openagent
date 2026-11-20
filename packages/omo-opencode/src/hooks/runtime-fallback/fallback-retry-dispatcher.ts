@@ -3,6 +3,7 @@ import type { AutoRetryDispatchOutcome, HookDeps, FallbackState } from "./types"
 import { HOOK_NAME } from "./constants"
 import { log } from "../../shared/logger"
 import { prepareFallback } from "./fallback-state"
+import { isInternalPromptFenced } from "../shared/prompt-async-gate"
 import { restoreFallbackState, snapshotFallbackState } from "./fallback-state-snapshot"
 
 export type SuppressUnsafeAutoReplayOptions = {
@@ -79,7 +80,7 @@ export async function dispatchFallbackRetry(
     deps.sessionRetryInFlight.delete(options.sessionID)
     helpers.clearSessionFallbackTimeout(options.sessionID)
   }
-  if (suppressUnsafeAutoReplay(deps, helpers, options)) return
+  if (isInternalPromptFenced(options.sessionID) || suppressUnsafeAutoReplay(deps, helpers, options)) return
 
   const snapshot = snapshotFallbackState(options.state)
   const result = prepareFallback(options.sessionID, options.state, options.fallbackModels, deps.config)

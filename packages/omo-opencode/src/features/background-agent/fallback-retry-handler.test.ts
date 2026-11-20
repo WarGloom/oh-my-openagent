@@ -322,6 +322,36 @@ describe("tryFallbackRetry", () => {
       })
     })
 
+    test("does not restore running status if cancellation wins while the retry prompt settles", async () => {
+      const promptStarted = createDeferredPromise()
+      const promptSettled = createDeferredPromise()
+      const args = createDefaultArgs({
+        sessionId: "cancelled-retry-session",
+        status: "running",
+        concurrencyKey: "provider-a/original-model",
+      })
+      const retry = tryFallbackRetry({
+        ...args,
+        onSameSessionRetry: async () => {
+          promptStarted.resolve()
+          await promptSettled.promise
+          return true
+        },
+      })
+
+      await Promise.race([
+        promptStarted.promise,
+        retry.then(() => {
+          throw new Error("Fallback finished before the prompt started")
+        }),
+      ])
+      args.task.status = "cancelled"
+      promptSettled.resolve()
+
+      expect([await retry, args.task.status]).toEqual([false, "cancelled"])
+      expect(args.concurrencyManager.release).toHaveBeenCalledWith("provider-a/fallback-model-1")
+    })
+
     test("fails closed, releases the fallback slot, and preserves task state when same-session abort fails", async () => {
       // given
       const sameSessionRetry = mock(async () => true)

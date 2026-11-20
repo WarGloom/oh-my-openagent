@@ -4,6 +4,7 @@ import type { ConcurrencyManager } from "./concurrency"
 import type { QueueItem } from "./constants"
 import { isProviderExhaustionFallbackEligible } from "@oh-my-opencode/model-core"
 import { log, readConnectedProvidersCache, readProviderModelsCache } from "../../shared"
+import { isInternalPromptFenced } from "../../shared/prompt-async-gate"
 import {
   shouldRetryError,
   getNextFallback,
@@ -191,6 +192,10 @@ export async function tryFallbackRetry(args: {
     processKey,
     onRetrying,
   } = args
+  const previousSessionID = task.sessionId
+  const isStopped = () => task.status === "cancelled" || (!!previousSessionID && isInternalPromptFenced(previousSessionID))
+  if (isStopped()) return false
+
   const deps = { ...defaultFallbackRetryHandlerDeps, ...args.deps }
   const fallbackChain = task.fallbackChain
   const canUseProviderExhaustionFallback = deps.isProviderExhaustionFallbackEligible(errorInfo)
@@ -276,7 +281,6 @@ export async function tryFallbackRetry(args: {
     nextModel: `${providerID}/${nextFallback.model}`,
   })
 
-  const previousSessionID = task.sessionId
   const previousModel = task.model
 
   const transformedModelId = deps.transformModelForProvider(providerID, nextFallback.model)
@@ -331,6 +335,7 @@ export async function tryFallbackRetry(args: {
   }
 
   const retryPromise = Promise.resolve().then(async (): Promise<boolean> => {
+    if (isStopped()) return false
     const nextConcurrencyKey = `${nextModel.providerID}/${nextModel.modelID}`
     const previousConcurrencyKey = task.concurrencyKey
     const shouldAcquireNextSlot =
@@ -352,6 +357,10 @@ export async function tryFallbackRetry(args: {
 
       if (shouldAcquireNextSlot) {
         await concurrencyManager.acquire(nextConcurrencyKey)
+        if (isStopped()) {
+          concurrencyManager.release(nextConcurrencyKey)
+          return false
+        }
       }
     }
 
@@ -378,7 +387,7 @@ export async function tryFallbackRetry(args: {
       }
     }
 
-    if (task.sessionId !== previousSessionID || task.attemptCount !== attemptCount) {
+    if (isStopped() || task.sessionId !== previousSessionID || task.attemptCount !== attemptCount) {
       if (shouldAcquireNextSlot) {
         concurrencyManager.release(nextConcurrencyKey)
       }
@@ -409,6 +418,11 @@ export async function tryFallbackRetry(args: {
         return false
       }
 
+      if (isStopped()) {
+        if (shouldAcquireNextSlot) concurrencyManager.release(nextConcurrencyKey)
+        return false
+      }
+
       const sameSessionRetried = await args
         .onSameSessionRetry({
           task,
@@ -427,6 +441,11 @@ export async function tryFallbackRetry(args: {
           })
           return false
         })
+
+      if (isStopped()) {
+        if (shouldAcquireNextSlot) concurrencyManager.release(nextConcurrencyKey)
+        return false
+      }
 
       if (sameSessionRetried) {
         if (previousConcurrencyKey && previousConcurrencyKey !== nextConcurrencyKey) {
@@ -576,6 +595,7 @@ export async function tryFallbackRetry(args: {
       })
     }
 
+    if (isStopped() || task.currentAttemptID !== nextAttempt.attemptId) return false
     queue.push({ task, input: retryInput, attemptID: nextAttempt.attemptId, rawConcurrencyKey: rawKey })
     queuesByKey.set(key, queue)
     processKey(key)
