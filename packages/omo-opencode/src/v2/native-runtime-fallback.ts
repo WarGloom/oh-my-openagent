@@ -140,88 +140,11 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
       log("[runtime-fallback] Native watchdog failed", {
         error: error instanceof Error ? error.message : String(error),
       }),
-    recover: async (sessionID, request, ownership) => {
-      const watermark = (await context.session.context({ sessionID })).at(-1)?.id
-      const host = await hostModels(context)
-      if (!ownership.current()) {
-        log("[runtime-fallback] Native watchdog recovery declined", {
-          sessionID,
-          reason: "ownership lost before selection",
-        })
-        return false
-      }
-      let declineReason: string | undefined
-      const recovered = await controller.recover(
-        {
-          sessionID,
-          agent: request.agent,
-          model: `${request.model.providerID}/${request.model.id}`,
-          variant: request.model.variant === "default" ? undefined : request.model.variant,
-          reason: "timeout",
-          error: {
-            name: "RequestTimeoutError",
-            data: { message: "Native request made no progress before its configured deadline" },
-          },
-          isAvailable: host.isAvailable,
-        },
-        async (payload) => {
-          const model = host.modelRef(sessionID, payload)
-          const newest = (await context.session.context({ sessionID })).at(-1)?.id
-          if (!ownership.current() || newest !== watermark) {
-            declineReason = ownership.current() ? "history advanced past watermark" : "ownership lost before admission"
-            return "declined"
-          }
-          let duplicate = true
-          const committed = await context.experimental.session.recover(
-            { sessionID },
-            ({ boundaryID }) =>
-              recoverNativeFailure(sessionID, boundaryID, async () => {
-                if (!ownership.current()) {
-                  declineReason = "ownership lost during admission"
-                  return false
-                }
-                // Only a selected candidate may interrupt; admission still requires that exact captured boundary.
-                const outcome = await context.experimental.session.continueAfterFailure({
-                  sessionID,
-                  boundaryID,
-                  id: recoveryMessageID(boundaryID),
-                  model,
-                  text: "Continue the existing task after the model timeout. Preserve completed work.",
-                })
-                switch (outcome) {
-                  case "stale":
-                    declineReason = "continuation boundary stale"
-                    return false
-                  case "duplicate":
-                    return true
-                  case "admitted":
-                    duplicate = false
-                    return true
-                  default:
-                    return outcome satisfies never
-                }
-              }),
-            { signal: ownership.signal },
-          )
-          if (!committed) {
-            declineReason ??= "recovery did not commit a continuation"
-            return "declined"
-          }
-          return duplicate ? "duplicate" : { ...payload, variant: model.variant }
-        },
-      )
-      if (!recovered)
-        log("[runtime-fallback] Native watchdog recovery declined", {
-          sessionID,
-          reason: declineReason ?? "no fallback admitted",
-        })
-      return recovered
-    },
   })
   const watchdogRegistration = await context.session.hook("model.request", (event) => {
     if (event.kind === "primary") {
       controller.capture(event.sessionID)
-      watchdog.start(event.sessionID, event.agent, event.model)
+      watchdog.start(event.sessionID)
     }
   })
   const promptRegistration = await context.session.hook("prompt", async (event) => {

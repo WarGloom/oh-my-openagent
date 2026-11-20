@@ -452,7 +452,7 @@ describe("native runtime fallback", () => {
     ])
   })
 
-  test("uses configured first-progress and stall limits to interrupt and resume with a native fallback", async () => {
+  test("uses configured first-progress and stall limits to interrupt and resume on the same model", async () => {
     const clock = installRuntimeFallbackTestClock()
     cleanups.push(clock.restore)
     const f = fixture({
@@ -473,11 +473,12 @@ describe("native runtime fallback", () => {
     await clock.advanceBy(3_999)
     expect(f.fake.sessionCalls).toEqual([])
     await clock.advanceBy(1)
-    expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["interrupt", "switchModel", "synthetic"])
-    expect(getNativeFallbackModel("ses_main")?.model).toEqual({ providerID: "anthropic", modelID: "second" })
+    expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["interrupt", "synthetic"])
+    expect(getNativeFallbackModel("ses_main")).toBeUndefined()
+    expect((await f.fake.context.session.get({ sessionID: "ses_main" })).model).toEqual(first)
   })
 
-  test("times out a request with no progress but never replays a request that ran a tool or waits for permission", async () => {
+  test("times out a request with no progress but never while it waits for a running tool or a permission", async () => {
     const clock = installRuntimeFallbackTestClock()
     cleanups.push(clock.restore)
     const f = fixture({
@@ -488,25 +489,25 @@ describe("native runtime fallback", () => {
     const request = { sessionID: "ses_main", agent: "sisyphus", model: first, kind: "primary" as const, headers: {} }
     await f.fake.triggerModelRequest(request)
     await clock.advanceBy(2_000)
-    expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["interrupt", "switchModel", "synthetic"])
+    expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["interrupt", "synthetic"])
     await f.fake.triggerModelRequest({ ...request, sessionID: "tool" })
     await installed.beforeEvent({ type: "session.tool.called", data: { sessionID: "tool", id: "call" } })
     await clock.advanceBy(60_000)
-    expect(f.fake.sessionCalls).toHaveLength(3)
+    expect(f.fake.sessionCalls).toHaveLength(2)
     await installed.beforeEvent({ type: "session.tool.success", data: { sessionID: "tool", id: "call" } })
     await clock.advanceBy(4_000)
-    expect(f.fake.sessionCalls.slice(3)).toEqual([
+    expect(f.fake.sessionCalls.slice(2)).toEqual([
       { kind: "interrupt", sessionID: "tool" },
       { kind: "synthetic", input: expect.objectContaining({ sessionID: "tool", resume: true }) },
     ])
     await f.fake.triggerModelRequest({ ...request, sessionID: "permission" })
     await installed.beforeEvent({ type: "permission.asked", data: { sessionID: "permission", id: "per" } })
     await clock.advanceBy(10_000)
-    expect(f.fake.sessionCalls).toHaveLength(5)
+    expect(f.fake.sessionCalls).toHaveLength(4)
     await installed.beforeEvent({ type: "permission.replied", data: { sessionID: "permission", requestID: "per" } })
     await installed.dispose()
     await clock.advanceBy(10_000)
-    expect(f.fake.sessionCalls).toHaveLength(5)
+    expect(f.fake.sessionCalls).toHaveLength(4)
   })
   test.each([
     { type: "provider.rate-limit", message: "slow down", status: 429 },

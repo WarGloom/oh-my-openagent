@@ -53,7 +53,6 @@ export type NativeFallbackInput = {
   readonly model: string | undefined
   readonly variant?: string
   readonly error: unknown
-  readonly reason?: "timeout"
   /** Host model availability; a model it rejects is skipped like an unreachable V1 fallback. */
   readonly isAvailable?: (model: { providerID: string; modelID: string }) => boolean
   readonly onExhausted?: () => void
@@ -232,11 +231,7 @@ export function createNativeFallbackController(deps: HookDeps) {
       input: NativeFallbackInput,
       apply: (model: RetryModel) => Promise<RetryModel | "declined" | "duplicate" | void>,
     ): Promise<boolean> {
-      if (
-        !deps.config.enabled ||
-        (input.reason !== "timeout" && !isRetryableError(input.error, deps.config.retry_on_errors))
-      )
-        return false
+      if (!deps.config.enabled || !isRetryableError(input.error, deps.config.retry_on_errors)) return false
       const blocked = await unavailable()
       if (deps.sessionRetryInFlight.has(input.sessionID) || nativeRecoveryState.inFlight.has(input.sessionID))
         return false

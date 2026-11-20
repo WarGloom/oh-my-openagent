@@ -1,12 +1,10 @@
-import type { V2Event, V2ModelRef, V2PluginContext } from "./context-types"
+import type { V2Event, V2PluginContext } from "./context-types"
 import { isRecord } from "../shared/record-type-guard"
+import { log } from "../shared/logger"
 import { recoverNativeFailure, recoveryMessageID } from "./native-recovery-state"
 
 type Request = {
-  readonly agent: string
-  readonly model: V2ModelRef
   progressed: boolean
-  unsafe: boolean
   readonly waits: Map<string, "pending" | "settled">
   cancelled: boolean
   timer?: ReturnType<typeof setTimeout>
@@ -20,12 +18,7 @@ const STALL_RESUME_TEXT =
 export function createNativeProgressWatchdog(deps: {
   readonly context: V2PluginContext
   readonly timeouts: { readonly firstProgressMs: number; readonly stallMs: number; readonly hardMs: number }
-  readonly recover: (
-    sessionID: string,
-    request: { readonly agent: string; readonly model: V2ModelRef },
-    ownership: { readonly current: () => boolean; readonly signal: AbortSignal },
-  ) => Promise<boolean>
-  /** A request that already ran a tool stalled again after its one automatic resume. */
+  /** A request stalled again after its one automatic resume. */
   readonly stalledAgain: (sessionID: string) => void
   readonly warn: (error: unknown) => void
 }) {
@@ -49,21 +42,19 @@ export function createNativeProgressWatchdog(deps: {
     clearTimeout(request?.backoff)
     requests.delete(sessionID)
   }
-  const expire = async (sessionID: string, request: Request) => {
+  const expire = async (sessionID: string, request: Request, timer: "first-progress" | "stall" | "hard") => {
     if (requests.get(sessionID) !== request || disposed) return
     clear(sessionID)
+    log("[runtime-fallback] Native watchdog deadline expired", { sessionID, timer, progressed: request.progressed })
     const recovery = { request, settled: Promise.withResolvers<boolean>(), abort: new AbortController() }
     recovering.set(sessionID, recovery)
-    const resumable = request.unsafe && !resumes.has(sessionID)
-    if (!request.unsafe || resumable) interruptions.set(sessionID, recovery.settled.promise)
+    // A stall carries no provider error, so it never selects another model: the resume keeps the session's model.
+    const resumable = !resumes.has(sessionID)
+    if (resumable) interruptions.set(sessionID, recovery.settled.promise)
     let recovered = false
+    let declineReason = "recovery did not commit a continuation"
     try {
-      if (!request.unsafe)
-        recovered = await deps.recover(sessionID, request, {
-          current: () => !disposed && recovering.get(sessionID) === recovery,
-          signal: recovery.abort.signal,
-        })
-      else if (!resumable) {
+      if (!resumable) {
         await deps.context.experimental.session.interrupt({ sessionID })
         deps.stalledAgain(sessionID)
       } else {
@@ -71,14 +62,19 @@ export function createNativeProgressWatchdog(deps: {
         recovered = await deps.context.experimental.session.recover(
           { sessionID },
           ({ boundaryID }) => recoverNativeFailure(sessionID, boundaryID, async () => {
-            if (disposed || recovering.get(sessionID) !== recovery) return false
+            if (disposed || recovering.get(sessionID) !== recovery) {
+              declineReason = "ownership lost during admission"
+              return false
+            }
             const outcome = await deps.context.experimental.session.continueAfterFailure({
               sessionID, boundaryID, id: recoveryMessageID(boundaryID), text: STALL_RESUME_TEXT,
             })
+            if (outcome === "stale") declineReason = "continuation boundary stale"
             return outcome !== "stale"
           }),
           { signal: recovery.abort.signal },
         )
+        if (!recovered) log("[runtime-fallback] Native watchdog recovery declined", { sessionID, reason: declineReason })
       }
     } finally {
       if (resumable && !recovered && resumes.get(sessionID) === "pending") resumes.delete(sessionID)
@@ -90,10 +86,11 @@ export function createNativeProgressWatchdog(deps: {
   const arm = (sessionID: string, request: Request) => {
     clearTimeout(request.timer)
     if (request.cancelled || [...request.waits.values()].includes("pending")) return
+    const timer = request.progressed ? "stall" : "first-progress"
     const ms = request.progressed ? deps.timeouts.stallMs : deps.timeouts.firstProgressMs
-    if (ms > 0) request.timer = setTimeout(() => expire(sessionID, request).catch(deps.warn), ms)
+    if (ms > 0) request.timer = setTimeout(() => expire(sessionID, request, timer).catch(deps.warn), ms)
     if (deps.timeouts.hardMs > 0 && !request.hard) {
-      request.hard = setTimeout(() => expire(sessionID, request).catch(deps.warn), deps.timeouts.hardMs)
+      request.hard = setTimeout(() => expire(sessionID, request, "hard").catch(deps.warn), deps.timeouts.hardMs)
     }
   }
   const pause = (request: Request) => {
@@ -121,11 +118,11 @@ export function createNativeProgressWatchdog(deps: {
       }
       resume()
     },
-    start(sessionID: string, agent: string, model: V2ModelRef) {
+    start(sessionID: string) {
       clear(sessionID)
       recovering.delete(sessionID)
       if (disposed || !Object.values(deps.timeouts).some((value) => value > 0)) return
-      const request: Request = { agent, model, progressed: false, unsafe: false, waits: new Map(), cancelled: false }
+      const request: Request = { progressed: false, waits: new Map(), cancelled: false }
       requests.set(sessionID, request)
       arm(sessionID, request)
     },
@@ -190,7 +187,6 @@ export function createNativeProgressWatchdog(deps: {
         event.type === "session.tool.failed"
       ) {
         // A running tool emits no model progress, so its run time is a wait and not a stall.
-        request.unsafe = true
         request.progressed = true
         if (typeof data.id !== "string") return
         if (event.type === "session.tool.called" && data.executed === true) {
@@ -206,7 +202,6 @@ export function createNativeProgressWatchdog(deps: {
         arm(sessionID, request)
         return
       }
-      if (event.type.startsWith("session.tool.")) request.unsafe = true
       if (
         event.type.startsWith("session.text.") ||
         event.type.startsWith("session.reasoning.") ||

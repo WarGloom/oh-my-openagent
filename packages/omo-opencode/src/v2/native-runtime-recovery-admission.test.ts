@@ -229,7 +229,7 @@ test("a missing terminal boundary leaves recovery available for a later durable 
   expect(getNativeFallbackModel(f.sessionID)?.model).toEqual({ providerID: "anthropic", modelID: "second" })
 })
 
-test("watchdog admits only the exact interrupted boundary produced and journaled by its call", async () => {
+test("a stall without a provider error resumes on the same model even when a fallback chain exists", async () => {
   // given
   const clock = installRuntimeFallbackTestClock()
   cleanups.push(clock.restore)
@@ -251,54 +251,10 @@ test("watchdog admits only the exact interrupted boundary produced and journaled
   expect(boundary?.id).not.toBe(f.boundaryID)
   expect(admission).toHaveBeenCalledTimes(1)
   expect(admission.mock.calls[0]?.[0].boundaryID).toBe(boundary?.id)
-  expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["interrupt", "switchModel", "synthetic"])
-})
-
-test("watchdog reserves recovery through model lookup and releases a stale admission", async () => {
-  // given
-  const clock = installRuntimeFallbackTestClock()
-  cleanups.push(clock.restore)
-  const f = await fixture({ watchdog: true })
-  const listing = Promise.withResolvers<void>()
-  const release = Promise.withResolvers<void>()
-  const original = f.context.model.list
-  using lookup = spyOn(f.context.model, "list").mockImplementation(async () => {
-    listing.resolve()
-    await release.promise
-    return original()
-  })
-  await f.fake.triggerModelRequest({
-    sessionID: f.sessionID,
-    agent: "sisyphus",
-    model: first,
-    kind: "primary",
-    headers: {},
-  })
-  const expiring = clock.advanceBy(1_000)
-  await listing.promise
-  // when
-  try {
-    expect(isNativeRecoveryPending(f.sessionID)).toBe(true)
-    await f.context.session.prompt({ sessionID: f.sessionID, text: "New direction", resume: false })
-  } finally {
-    release.resolve()
-    await expiring
-  }
-  // then
-  expect(f.fake.sessionCalls.filter((call) => call.kind === "switchModel" || call.kind === "synthetic")).toEqual([])
+  expect(admission.mock.calls[0]?.[0].model).toBeUndefined()
+  expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["interrupt", "synthetic"])
+  expect(getNativeFallbackModel(f.sessionID)).toBeUndefined()
   expect(f.toasts).toEqual([])
-  expect(isNativeRecoveryPending(f.sessionID)).toBe(false)
-  lookup.mockRestore()
-  await f.fake.triggerModelRequest({
-    sessionID: f.sessionID,
-    agent: "sisyphus",
-    model: first,
-    kind: "primary",
-    headers: {},
-  })
-  await clock.advanceBy(1_000)
-  expect(getNativeFallbackModel(f.sessionID)?.model).toEqual({ providerID: "anthropic", modelID: "second" })
-  expect(f.toasts).toHaveLength(1)
 })
 
 test("a lost admission acknowledgement is a stable-ID duplicate after reload without another effect or toast", async () => {

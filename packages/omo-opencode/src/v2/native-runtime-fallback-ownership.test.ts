@@ -153,57 +153,6 @@ test.each(["interrupted", "user input"] as const)(
   },
 )
 
-test.each(["user input", "new execution"] as const)(
-  "a session that moves past the watchdog abort (%s) while timeout recovery awaits host models gets no switch or resume",
-  async (move) => {
-    // given: the watchdog aborted a stalled request, and its recovery is suspended inside the async gap
-    const clock = installRuntimeFallbackTestClock()
-    cleanups.push(clock.restore)
-    const f = fixture()
-    const log = spyOn(logger, "log")
-    cleanups.push(() => log.mockRestore())
-    const listing = Promise.withResolvers<void>()
-    const release = Promise.withResolvers<void>()
-    const context = {
-      ...f.fake.context,
-      model: {
-        ...f.fake.context.model,
-        list: async () => {
-          listing.resolve()
-          await release.promise
-          return f.fake.context.model.list()
-        },
-      },
-    }
-    await observer(context, f.sessionID, { first_progress_timeout_seconds: 1 })
-    await f.fake.triggerModelRequest({
-      sessionID: f.sessionID,
-      agent: "sisyphus",
-      model: first,
-      kind: "primary",
-      headers: {},
-    })
-    const expiring = clock.advanceBy(1_000)
-    await listing.promise
-    // when: the session advances before recovery resumes
-    f.history.push(
-      move === "user input"
-        ? { type: "user", id: `${f.sessionID}_user`, text: "new direction", time: { created: 2 } }
-        : { type: "idle", id: `${f.sessionID}_next`, outcome: "succeeded", time: { created: 2 } },
-    )
-    release.resolve()
-    await expiring
-    // then
-    expect(f.fake.sessionCalls.filter((call) => call.kind === "switchModel" || call.kind === "synthetic")).toEqual([])
-    expect((await f.fake.context.session.get({ sessionID: f.sessionID })).model).toEqual(first)
-    expect(
-      log.mock.calls
-        .filter(([message]) => message === "[runtime-fallback] Native watchdog recovery declined")
-        .map(([, details]) => details),
-    ).toEqual([{ sessionID: f.sessionID, reason: "history advanced past watermark" }])
-  },
-)
-
 test.each(["stale", "uncommitted"] as const)("logs one watchdog decline when host admission is %s", async (outcome) => {
   const clock = installRuntimeFallbackTestClock()
   cleanups.push(clock.restore)

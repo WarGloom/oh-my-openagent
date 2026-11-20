@@ -1220,6 +1220,8 @@ Auto-switches to backup models on API errors.
 | `notify_on_fallback`             | `true`                 | Toast notification on model switch                                                                                                                                   |
 | `restore_primary_after_cooldown` | `false`                | Return to the primary model after its cooldown expires                                                                                                               |
 
+On OpenCode 2.x, `first_progress_timeout_seconds`, `stall_timeout_seconds` and `hard_timeout_seconds` never switch models. A stall carries no provider error, so the watchdog interrupts the request and resumes the session once per user turn on the same model and variant. A second stall in the same turn interrupts the request and reports it. Model fallback there follows provider errors only.
+
 #### Speeding Up Fallback (Proxy APIs)
 
 If you are using a proxy API provider, they may return different error codes (e.g., `401`, `403`, `404`) for quota exhaustion or model unavailability. To make fallback trigger instantly without waiting for long timeouts:

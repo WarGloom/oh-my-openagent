@@ -18,19 +18,17 @@ afterEach(() => {
 function questionFixture() {
   const clock = installRuntimeFallbackTestClock()
   const fake = createFakePluginContext()
-  const recover = mock(async () => false)
   const stalledAgain = mock((_sessionID: string) => {})
   const watchdog = createNativeProgressWatchdog({
     context: fake.context,
     timeouts: { firstProgressMs: 1_000, stallMs: 2_000, hardMs: 3_000 },
-    recover,
     stalledAgain,
     warn: (error) => {
       throw error
     },
   })
   cleanups.push(clock.restore, () => watchdog.dispose())
-  watchdog.start("question", "sisyphus", { providerID: "qa", id: "gpt-fake" })
+  watchdog.start("question")
   const form = (id: string, sessionID = "question") => ({
     type: "form.created",
     data: {
@@ -43,28 +41,27 @@ function questionFixture() {
       },
     },
   })
-  return { clock, fake, recover, stalledAgain, watchdog, form }
+  return { clock, fake, stalledAgain, watchdog, form }
 }
 
 test("provider backoff pauses both watchdog deadlines and rearms afterward", async () => {
   const f = questionFixture()
   f.watchdog.defer("question", 10_000)
   await f.clock.advanceBy(10_999)
-  expect(f.recover).not.toHaveBeenCalled()
   expect(f.fake.sessionCalls).toEqual([])
   await f.clock.advanceBy(1)
-  expect(f.recover).toHaveBeenCalledTimes(1)
+  expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["interrupt", "synthetic"])
 })
 
 test.each([
-  { agent: "sisyphus", unsafe: false, chain: true, suppressed: true, delayed: false },
-  { agent: "sisyphus", unsafe: false, chain: true, suppressed: true, delayed: true },
-  { agent: "sisyphus", unsafe: true, chain: true, suppressed: true, delayed: true },
-  { agent: "sisyphus", unsafe: false, chain: false, suppressed: false, delayed: true },
-  { agent: "general", unsafe: false, chain: false, suppressed: false, delayed: true },
+  { agent: "sisyphus", tool: false, chain: true, delayed: false },
+  { agent: "sisyphus", tool: false, chain: true, delayed: true },
+  { agent: "sisyphus", tool: true, chain: true, delayed: true },
+  { agent: "sisyphus", tool: false, chain: false, delayed: true },
+  { agent: "general", tool: false, chain: false, delayed: true },
 ])(
-  "watchdog interrupts only for a candidate or unsafe tools and suppresses idle only after admission: $agent / $unsafe / $chain / delayed=$delayed",
-  async ({ agent, unsafe, chain, suppressed, delayed }) => {
+  "a stall resumes the session whatever its fallback chain and suppresses the interruption only after admission: $agent / tool=$tool / chain=$chain / delayed=$delayed",
+  async ({ agent, tool, chain, delayed }) => {
     const clock = installRuntimeFallbackTestClock()
     const fake = createFakePluginContext({ sessionAgent: agent })
     const ready = Promise.withResolvers<void>()
@@ -131,24 +128,24 @@ test.each([
     try {
       await ready.promise
       await fake.triggerModelRequest({ sessionID: "timed", agent, model, kind: "primary", headers: {} })
-      if (unsafe) {
+      if (tool) {
         await installed.beforeEvent({ type: "session.tool.called", data: { sessionID: "timed", id: "call" } })
         await installed.beforeEvent({ type: "session.tool.success", data: { sessionID: "timed", id: "call" } })
       }
       await clock.advanceBy(1_000)
-      expect(fake.sessionCalls.filter((call) => call.kind === "interrupt")).toHaveLength(unsafe || chain ? 1 : 0)
+      expect(fake.sessionCalls.filter((call) => call.kind === "interrupt")).toHaveLength(1)
       if (delayed) fake.emit({ type: "session.execution.interrupted", data: { sessionID: "timed", reason: "user" } })
       fake.emit({ type: "session.execution.interrupted", data: { sessionID: "other", reason: "user" } })
       await drained.promise
       expect(seen.filter((event) => event.sessionID === "timed").map((event) => event.type)).toEqual(
-        suppressed ? [] : ["session.error", "session.status", "session.idle"],
+        [],
       )
       expect(seen.filter((event) => event.sessionID === "other").map((event) => event.type)).toEqual([
         "session.error",
         "session.status",
         "session.idle",
       ])
-      expect(fake.sessionCalls.filter((call) => call.kind === "synthetic")).toHaveLength(suppressed ? 1 : 0)
+      expect(fake.sessionCalls.filter((call) => call.kind === "synthetic")).toHaveLength(1)
       expect(
         await installed.beforeEvent({
           type: "session.execution.interrupted",
@@ -183,8 +180,7 @@ test.each([false, true])(
     await f.clock.advanceBy(tool ? 1_999 : 999)
     expect(f.fake.sessionCalls).toEqual([])
     await f.clock.advanceBy(1)
-    expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(tool ? ["interrupt", "synthetic"] : [])
-    expect(f.recover).toHaveBeenCalledTimes(tool ? 0 : 1)
+    expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["interrupt", "synthetic"])
   },
 )
 
@@ -213,7 +209,6 @@ test("overlapping forms and permission waits release only their own IDs", async 
   f.watchdog.observe(f.form("a"))
   await f.clock.advanceBy(1_000)
   expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["interrupt", "synthetic"])
-  expect(f.recover).not.toHaveBeenCalled()
 })
 
 test("form cancellation never rearms or replays that request, but a later real request retains its timeout", async () => {
@@ -229,10 +224,9 @@ test("form cancellation never rearms or replays that request, but a later real r
   await f.clock.advanceBy(10_000)
   // then
   expect(f.fake.sessionCalls).toEqual([])
-  f.watchdog.start("question", "sisyphus", { providerID: "qa", id: "gpt-fake" })
+  f.watchdog.start("question")
   await f.clock.advanceBy(1_000)
-  expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual([])
-  expect(f.recover).toHaveBeenCalledTimes(1)
+  expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["interrupt", "synthetic"])
 })
 
 test.each([
@@ -254,7 +248,6 @@ test.each([
       ? createNativeProgressWatchdog({
           context: f.fake.context,
           timeouts: { firstProgressMs: 1_000, stallMs: 2_000, hardMs: 3_000 },
-          recover: f.recover,
           stalledAgain: f.stalledAgain,
           warn: (error) => {
             throw error
@@ -267,7 +260,6 @@ test.each([
   await f.clock.advanceBy(10_000)
   // then
   expect(f.fake.sessionCalls).toEqual([])
-  expect(f.recover).not.toHaveBeenCalled()
 })
 
 test.each(["other", "global"])("a %s form cannot postpone an unrelated model timeout", async (sessionID) => {
@@ -277,8 +269,7 @@ test.each(["other", "global"])("a %s form cannot postpone an unrelated model tim
   f.watchdog.observe(f.form("foreign", sessionID))
   await f.clock.advanceBy(1_000)
   // then
-  expect(f.fake.sessionCalls).toEqual([])
-  expect(f.recover).toHaveBeenCalledTimes(1)
+  expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["interrupt", "synthetic"])
 })
 
 test("a running tool pauses both watchdog deadlines until it settles", async () => {
@@ -289,7 +280,6 @@ test("a running tool pauses both watchdog deadlines until it settles", async () 
   await f.clock.advanceBy(3_600_000)
   // then: neither an interrupt nor a fallback happens
   expect(f.fake.sessionCalls).toEqual([])
-  expect(f.recover).not.toHaveBeenCalled()
   // when: the tool settles and the model then stalls
   f.watchdog.observe({ type: "session.tool.success", data: { sessionID: "question", id: "call_task" } })
   await f.clock.advanceBy(1_999)
@@ -297,7 +287,26 @@ test("a running tool pauses both watchdog deadlines until it settles", async () 
   await f.clock.advanceBy(1)
   // then: the stall deadline applies again and cannot replay the executed tool
   expect(f.fake.sessionCalls.map((call) => call.kind)).toEqual(["interrupt", "synthetic"])
-  expect(f.recover).not.toHaveBeenCalled()
+})
+
+test("the request after a finished tool has its own first-progress deadline and resumes on the same model", async () => {
+  // given: a tool that runs far past every deadline inside one request
+  const f = questionFixture()
+  f.watchdog.observe({ type: "session.tool.called", data: { sessionID: "question", id: "call" } })
+  await f.clock.advanceBy(3_600_000)
+  expect(f.fake.sessionCalls).toEqual([])
+  // when: the tool settles, the step ends and the next model request produces nothing
+  f.watchdog.observe({ type: "session.tool.success", data: { sessionID: "question", id: "call" } })
+  f.watchdog.observe({ type: "session.step.ended", data: { sessionID: "question" } })
+  f.watchdog.start("question")
+  await f.clock.advanceBy(999)
+  expect(f.fake.sessionCalls).toEqual([])
+  await f.clock.advanceBy(1)
+  // then: the first-progress deadline, not the stall deadline, resumes the session without choosing a model
+  expect(f.fake.sessionCalls).toEqual([
+    { kind: "interrupt", sessionID: "question" },
+    { kind: "synthetic", input: expect.objectContaining({ sessionID: "question", delivery: "steer", resume: true }) },
+  ])
 })
 
 test("a provider-executed tool does not pause the stall deadline", async () => {
@@ -333,7 +342,7 @@ test("a stall after an executed tool resumes the session once per turn and repor
   }
   const nextRun = async () => {
     f.watchdog.observe({ type: "session.execution.started", data: { sessionID: "question" } })
-    f.watchdog.start("question", "sisyphus", { providerID: "qa", id: "gpt-fake" })
+    f.watchdog.start("question")
     await f.fake.triggerModelRequest({ sessionID: "question", agent: "sisyphus", model: { providerID: "qa", id: "gpt-fake" }, kind: "primary", headers: {} })
   }
   // when: the first stall expires
@@ -366,7 +375,6 @@ test("a stall after an executed tool resumes the session once per turn and repor
     "interrupt",
     "synthetic",
   ])
-  expect(f.recover).not.toHaveBeenCalled()
 })
 
 test("a child resumes through a held recovery boundary without cancelling its job", async () => {
@@ -385,17 +393,17 @@ test("a child resumes through a held recovery boundary without cancelling its jo
       continueAfterFailure: async (input: { boundaryID: string; id: string; model?: unknown }) => {
         continuations.push(input)
         watchdog.observe({ type: "session.execution.started", data: { sessionID: "child" } })
-        watchdog.start("child", "sisyphus", { providerID: "qa", id: "model" })
+        watchdog.start("child")
         return "admitted" as const
       },
     } },
   }
   const watchdog = createNativeProgressWatchdog({
     context, timeouts: { firstProgressMs: 1000, stallMs: 2000, hardMs: 0 },
-    recover: async () => false, stalledAgain: () => { repeatedStalls++ }, warn: (error) => { throw error },
+    stalledAgain: () => { repeatedStalls++ }, warn: (error) => { throw error },
   })
   cleanups.push(clock.restore, () => watchdog.dispose())
-  watchdog.start("child", "sisyphus", { providerID: "qa", id: "model" })
+  watchdog.start("child")
   watchdog.observe({ type: "session.tool.called", data: { sessionID: "child", id: "tool" } })
   watchdog.observe({ type: "session.tool.success", data: { sessionID: "child", id: "tool" } })
   await clock.advanceBy(2000)
