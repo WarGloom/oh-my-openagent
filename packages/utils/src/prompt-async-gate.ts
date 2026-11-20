@@ -1,6 +1,10 @@
 import { log } from "./logger"
-import { clearInternalPromptFencesForTesting } from "./prompt-async-gate/session-stop-fence"
-export { configureInternalPromptAdmissionGuard, fenceInternalPrompts } from "./prompt-async-gate/session-stop-fence"
+import { clearInternalPromptFencesForTesting, isInternalPromptFenced } from "./prompt-async-gate/session-stop-fence"
+export {
+  configureInternalPromptAdmissionGuard,
+  fenceInternalPrompts,
+  isInternalPromptFenced,
+} from "./prompt-async-gate/session-stop-fence"
 import {
   LIVE_ROUTE_DISPATCH_LOG,
   LIVE_ROUTE_UNAVAILABLE_LOG,
@@ -102,11 +106,12 @@ function isObjectPathTypeError(error: unknown): boolean {
 async function dispatchWithPathCompatibility<TInput>(
   dispatch: (dispatchInput: TInput) => Promise<unknown>,
   input: TInput,
+  sessionID: string,
 ): Promise<unknown> {
   try {
     return await dispatch(input)
   } catch (error) {
-    if (!isObjectPathTypeError(error) || !hasObjectSessionPath(input)) {
+    if (isInternalPromptFenced(sessionID) || !isObjectPathTypeError(error) || !hasObjectSessionPath(input)) {
       throw error
     }
 
@@ -122,6 +127,7 @@ export async function dispatchInternalPrompt<TInput = PromptAsyncInput>(
   args: InternalPromptDispatchArgs<TInput>,
 ): Promise<InternalPromptDispatchResult> {
   const { client, sessionID, input, source, settleMs = DEFAULT_SESSION_IDLE_SETTLE_MS } = args
+  if (isInternalPromptFenced(sessionID)) return { status: "cancelled" }
   const dedupeKey = args.dedupeKey ?? createSemanticPromptDedupeKey(input)
   const queueRetryMs = args.queueRetryMs ?? DEFAULT_PROMPT_QUEUE_RETRY_MS
   const postDispatchHoldMs = args.postDispatchHoldMs ?? DEFAULT_PROMPT_ASYNC_POST_DISPATCH_HOLD_MS
@@ -131,6 +137,7 @@ export async function dispatchInternalPrompt<TInput = PromptAsyncInput>(
   const sessionName = args.mode === "async" ? "promptAsync" : "prompt"
   const resolved =
     tryResolveDispatchClientSync(args.client, sessionID) ?? (await resolveDispatchClient(args.client, sessionID))
+  if (isInternalPromptFenced(sessionID)) return { status: "cancelled" }
   const dispatch = (() => {
     if (args.mode === "async") {
       const resolvedAsAsync = resolved.client as PromptAsyncClient<TInput>
@@ -146,7 +153,7 @@ export async function dispatchInternalPrompt<TInput = PromptAsyncInput>(
           try {
             return await dispatchPromptAsync(dispatchInput)
           } catch (error) {
-            if (isPreSendConnectionFailure(error)) {
+            if (!isInternalPromptFenced(sessionID) && isPreSendConnectionFailure(error)) {
               markLiveRouteUnavailable(`dispatch:${error instanceof Error ? error.message : String(error)}`)
               if (typeof originalSession?.promptAsync === "function") {
                 const fallbackDispatch = originalSession.promptAsync.bind(originalSession)
@@ -176,7 +183,7 @@ export async function dispatchInternalPrompt<TInput = PromptAsyncInput>(
         try {
           return await dispatchPrompt(dispatchInput)
         } catch (error) {
-          if (isPreSendConnectionFailure(error)) {
+          if (!isInternalPromptFenced(sessionID) && isPreSendConnectionFailure(error)) {
             markLiveRouteUnavailable(`dispatch:${error instanceof Error ? error.message : String(error)}`)
             if (typeof originalSession?.prompt === "function") {
               const fallbackDispatch = originalSession.prompt.bind(originalSession)
@@ -234,7 +241,7 @@ export async function dispatchInternalPrompt<TInput = PromptAsyncInput>(
       checkToolState: args.checkToolState !== false,
       shouldDispatch: args.shouldDispatch,
       retryDispatchFailure: args.retryDispatchFailure,
-      dispatch: (dispatchInput) => dispatchWithPathCompatibility(dispatch, dispatchInput),
+      dispatch: (dispatchInput) => dispatchWithPathCompatibility(dispatch, dispatchInput, sessionID),
     })
     if (
       deferResult.status === "failed" &&
@@ -273,7 +280,7 @@ export async function dispatchInternalPrompt<TInput = PromptAsyncInput>(
       onDispatchResult: args.onDispatchResult,
       shouldDispatch: args.shouldDispatch,
       retryDispatchFailure: args.retryDispatchFailure,
-      dispatch: async (_dispatchInput: unknown) => dispatchWithPathCompatibility(dispatch, input),
+      dispatch: async (_dispatchInput: unknown) => dispatchWithPathCompatibility(dispatch, input, sessionID),
     })
   }
 
@@ -297,7 +304,7 @@ export async function dispatchInternalPrompt<TInput = PromptAsyncInput>(
     checkToolState: args.checkToolState !== false,
     shouldDispatch: args.shouldDispatch,
     retryDispatchFailure: args.retryDispatchFailure,
-    dispatch: (dispatchInput) => dispatchWithPathCompatibility(dispatch, dispatchInput),
+    dispatch: (dispatchInput) => dispatchWithPathCompatibility(dispatch, dispatchInput, sessionID),
   })
   if (
     directResult.status === "failed" &&

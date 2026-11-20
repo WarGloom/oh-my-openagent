@@ -1,5 +1,5 @@
 import { log } from "../logger"
-import { canAdmitInternalPrompt, trackAdmittedPrompt } from "./session-stop-fence"
+import { canAdmitInternalPrompt, isInternalPromptFenced, trackAdmittedPrompt } from "./session-stop-fence"
 import { isSessionActive, settleAfterSessionIdle } from "../session-idle-settle"
 import { sessionLatestAssistantBlocksInternalPrompt } from "./pending-tool-turn"
 import { rememberRecentPromptDispatch } from "./recent-dispatches"
@@ -51,6 +51,8 @@ export async function dispatchAfterSessionIdle<TInput>(args: {
     retryDispatchFailure,
     dispatch,
   } = args
+
+  if (isInternalPromptFenced(sessionID)) return { status: "cancelled" }
 
   const existing = getActiveReservation(sessionID)
   if (existing) {

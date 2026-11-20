@@ -80,3 +80,35 @@ test("final admission rejects a predicate which resolves after fencing", async (
   expect(result.status).toBe("cancelled")
   expect(sends).toBe(0)
 })
+
+test("fencing an admitted request prevents a legacy path replay", async () => {
+  const firstSend = Promise.withResolvers<void>()
+  const firstResponse = Promise.withResolvers<void>()
+  const paths: Array<string | { id: string }> = []
+  const sessionID = "stop-path-replay"
+  const dispatching = dispatchInternalPrompt({
+    mode: "async",
+    sessionID,
+    source: "test",
+    input: { path: { id: sessionID } },
+    settleMs: 0,
+    client: {
+      session: {
+        promptAsync: async (input: { path: string | { id: string } }) => {
+          paths.push(input.path)
+          if (typeof input.path === "string") return
+          firstSend.resolve()
+          await firstResponse.promise
+          throw new TypeError('The "path" property must be of type string; got object')
+        },
+      },
+    },
+  })
+  await withDispatchTimeout(firstSend.promise, 1000, "test first send")
+
+  const drained = fenceInternalPrompts(sessionID)
+  firstResponse.resolve()
+  await withDispatchTimeout(Promise.all([drained, dispatching]), 1000, "test fenced replay")
+
+  expect(paths).toEqual([{ id: sessionID }])
+})

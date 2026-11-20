@@ -7,7 +7,11 @@ export function configureInternalPromptAdmissionGuard(guard: (sessionID: string)
 }
 
 export function canAdmitInternalPrompt(sessionID: string): boolean {
-  return !fencedSessions.has(sessionID) && admissionGuard?.(sessionID) !== false
+  return !isInternalPromptFenced(sessionID) && admissionGuard?.(sessionID) !== false
+}
+
+export function isInternalPromptFenced(sessionID: string): boolean {
+  return fencedSessions.has(sessionID)
 }
 
 export function trackAdmittedPrompt(sessionID: string, request: Promise<unknown>): void {
