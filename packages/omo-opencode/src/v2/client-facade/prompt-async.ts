@@ -74,9 +74,14 @@ async function targetModel(
 async function switchIfNeeded(context: V2PluginContext, sessionID: string, body: PromptBody): Promise<void> {
   if (body.agent === undefined && body.model === undefined && body.variant === undefined) return
   const current = await context.session.get({ sessionID })
-  if (body.agent !== undefined && body.agent !== current.agent)
-    await context.session.switchAgent({ sessionID, agent: body.agent })
-  const target = await targetModel(context, body, current.model, body.agent ?? current.agent)
+  const agent = body.agent ?? current.agent
+  const keepsCurrentModel =
+    body.model &&
+    current.model?.providerID === body.model.providerID &&
+    current.model.id === body.model.modelID
+  if (keepsCurrentModel && agent === current.agent && body.variant === undefined) return
+  if (agent !== undefined && agent !== current.agent) await context.session.switchAgent({ sessionID, agent })
+  const target = await targetModel(context, body, current.model, agent)
   if (target !== undefined && !sameModel(target, current.model))
     await context.session.switchModel({ sessionID, model: target })
 }

@@ -63,6 +63,27 @@ describe("createSessionNamespace", () => {
       expect(fake.sessionCalls.map((call) => call.kind)).toEqual(["prompt"])
     })
 
+    it("admits deferred compaction recovery without resetting the child's launch variant", async () => {
+      // given
+      const model = { providerID: "openai", modelID: "daybreak", variant: "high" }
+      const { fake, session } = setup({
+        sessionAgent: "worker",
+        sessionInfo: { parentID: "ses_parent", model: { providerID: model.providerID, id: model.modelID, variant: "high" } },
+      })
+      const part = withInternalNoReplyMarker(createInternalAgentTextPart("restore checkpoint"))
+
+      // when
+      await session.promptAsync({
+        path: { id: "ses_1" },
+        body: { noReply: true, agent: "worker", model, parts: [part] },
+      })
+
+      // then
+      expect(fake.sessionCalls).toEqual([
+        { kind: "prompt", input: { sessionID: "ses_1", text: part.text, delivery: "steer", resume: false } },
+      ])
+    })
+
     it("uses the requested agent's variant only when its model matches and the host offers it", async () => {
       const configured = { providerID: "openai", id: "sol", variant: "xhigh" }
       for (const [target, variants, expected] of [
