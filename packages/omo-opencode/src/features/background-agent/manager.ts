@@ -162,6 +162,8 @@ type ResumeTaskSnapshot = {
 }
 
 type FallbackRetryResultRecord = {
+  dispatchGeneration?: number
+  dispatchFailure?: string
   readonly promise: Promise<boolean>
   cleanupTimer?: ReturnType<typeof setTimeout>
   waitForOutputUntil?: number
@@ -241,6 +243,14 @@ function isTerminalProviderModelOrAuthError(errorInfo: {
 
   const message = errorInfo.message ?? ""
   return TERMINAL_PROVIDER_ERROR_MESSAGE_PATTERNS.some((pattern) => pattern.test(message))
+}
+
+function isFallbackProviderRejection(errorInfo: { name?: string; message?: string; statusCode?: number }): boolean {
+  return (
+    isTerminalProviderModelOrAuthError(errorInfo) ||
+    errorInfo.name === "ProviderUnavailableError" ||
+    /\b(?:provider (?:is )?unavailable|no provider available)\b/i.test(errorInfo.message ?? "")
+  )
 }
 
 interface EventProperties {
@@ -1483,14 +1493,13 @@ export class BackgroundManager {
     }
     const record: FallbackRetryResultRecord = {
       promise: result,
-      waitForOutputUntil: Date.now() + FALLBACK_RETRY_OUTPUT_SETTLE_MS,
     }
     this.fallbackRetryResultsBySession.set(sessionID, record)
     void result.then(
       (retried) => {
         record.result = retried
         if (retried) {
-          record.waitForOutputUntil = Date.now() + FALLBACK_RETRY_OUTPUT_SETTLE_MS
+          record.waitForOutputUntil = (task.fallbackDispatchedAt ?? Date.now()) + FALLBACK_RETRY_OUTPUT_SETTLE_MS
         } else {
           record.waitForOutputUntil = undefined
         }
@@ -2683,11 +2692,27 @@ export class BackgroundManager {
     errorMessage: string | undefined,
     source: string,
   ): Promise<void> {
+    const sessionID = task.sessionId
+    const fallbackProviderRejection = task.fallbackDispatchedAt !== undefined && isFallbackProviderRejection(errorInfo)
+    const pendingRetry = sessionID ? this.fallbackRetryResultsBySession.get(sessionID) : undefined
+    if (sessionID && fallbackProviderRejection && pendingRetry && pendingRetry.result === undefined) {
+      // OpenCode may publish the error before promptAsync returns. Let the dispatch commit its cursor first.
+      const generation = pendingRetry.dispatchGeneration
+      if (generation === undefined || !(await pendingRetry.promise)) return
+      if (
+        task.status !== "running" ||
+        task.sessionId !== sessionID ||
+        task.fallbackDispatchGeneration !== generation
+      ) {
+        return
+      }
+    }
     if ((await this.tryFallbackRetry(task, errorInfo, source)) || task.status !== "running") {
       return
     }
 
-    const errorMsg = errorMessage ?? "Session error"
+    const dispatchFailure = sessionID ? this.fallbackRetryResultsBySession.get(sessionID)?.dispatchFailure : undefined
+    const errorMsg = dispatchFailure ?? errorMessage ?? "Session error"
     const canRetry =
       shouldRetryError(errorInfo) &&
       !!task.fallbackChain &&
@@ -2701,7 +2726,7 @@ export class BackgroundManager {
     })
 
     const sessionId = task.sessionId
-    const terminalProviderErrorWithoutRetry = isTerminalProviderModelOrAuthError(errorInfo)
+    const terminalProviderErrorWithoutRetry = fallbackProviderRejection || isTerminalProviderModelOrAuthError(errorInfo)
     const retryStatusWithoutFallback = errorInfo.name === "SessionRetry"
     const fallbackEligibleErrorWithoutFallback =
       shouldRetryError(errorInfo) || isProviderExhaustionFallbackEligible(errorInfo)
@@ -2814,7 +2839,11 @@ export class BackgroundManager {
   }
 
   private async failNoOutputTask(task: BackgroundTask, source: string): Promise<void> {
+    const dispatchFailure = task.sessionId
+      ? this.fallbackRetryResultsBySession.get(task.sessionId)?.dispatchFailure
+      : undefined
     const errorMessage =
+      dispatchFailure ??
       "Subagent session became idle without assistant/tool output and no fallback retry was available."
     if (task.sessionId) {
       await this.abortSessionWithLogging(task.sessionId, `${source} without output`)
@@ -2829,11 +2858,13 @@ export class BackgroundManager {
   ): Promise<boolean> {
     if (task.status === "cancelled") return false
     if (task.sessionId && isTeamSessionDenied(task.sessionId)) return false
-    if (this.shouldWaitForFallbackRetryOutput(task, source)) {
+    const previousSessionID = task.sessionId
+    const existing = previousSessionID ? this.fallbackRetryResultsBySession.get(previousSessionID) : undefined
+    if (existing && existing.result === undefined) return true
+    if (!isFallbackProviderRejection(errorInfo) && this.shouldWaitForFallbackRetryOutput(task, source)) {
       return true
     }
 
-    const previousSessionID = task.sessionId
     const sameSessionRetry = async ({
       task,
       sessionID,
@@ -2870,6 +2901,11 @@ export class BackgroundManager {
       })
 
       task.fallbackDispatchGeneration = (task.fallbackDispatchGeneration ?? 0) + 1
+      const record = this.fallbackRetryResultsBySession.get(sessionID)
+      if (record) {
+        record.dispatchGeneration = task.fallbackDispatchGeneration
+        record.dispatchFailure = undefined
+      }
       task.fallbackDispatchedAt = Date.now()
       this.clearSessionOutputObserved(sessionID)
       await promptWithRetryInDirectory(
@@ -2884,13 +2920,20 @@ export class BackgroundManager {
           checkStatus: false,
           checkToolState: false,
         },
-      )
+      ).catch((error: unknown) => {
+        if (record) {
+          const message = extractErrorMessage(error) ?? "OpenCode rejected the retry prompt."
+          record.dispatchFailure = `Fallback dispatch failed for ${nextModel.providerID}/${nextModel.modelID}: ${message}`
+        }
+        throw error
+      })
 
       return true
     }
     const result = tryFallbackRetry({
       task,
       errorInfo,
+      confirmedProviderRejection: task.fallbackDispatchedAt !== undefined && isFallbackProviderRejection(errorInfo),
       source,
       concurrencyManager: this.concurrencyManager,
       client: this.client,
@@ -2989,7 +3032,9 @@ export class BackgroundManager {
           )
         })
         if (!hasAttributableOutput) {
-          return "awaiting-dispatch-output"
+          return Date.now() - fallbackDispatchedAt < FALLBACK_RETRY_OUTPUT_SETTLE_MS
+            ? "awaiting-dispatch-output"
+            : "no-output"
         }
       }
 
@@ -4032,7 +4077,8 @@ export class BackgroundManager {
             case "ready":
               break
             case "no-output": {
-              const stoppedError = await this.readStoppedSessionError(sessionID)
+              const stoppedError =
+                task.fallbackDispatchedAt === undefined ? await this.readStoppedSessionError(sessionID) : undefined
               if (stoppedError) {
                 task.consecutiveErroredIdlePolls = (task.consecutiveErroredIdlePolls ?? 0) + 1
                 if (task.consecutiveErroredIdlePolls >= MIN_ERRORED_IDLE_POLLS) {
@@ -4057,16 +4103,18 @@ export class BackgroundManager {
 
                 task.consecutiveMissedPolls = 0
               }
-              if (sessionStatus?.type === "idle" || (sessionStatus && isTerminalSessionStatus(sessionStatus.type))) {
-                const retried = await this.tryNoOutputIdleFallback(
-                  task,
-                  `polling:session.${sessionStatus.type} no-output`,
-                )
+              if (
+                task.fallbackDispatchedAt !== undefined ||
+                sessionStatus?.type === "idle" ||
+                (sessionStatus && isTerminalSessionStatus(sessionStatus.type))
+              ) {
+                const source = `polling:session.${sessionStatus?.type ?? "missing"} no-output`
+                const retried = await this.tryNoOutputIdleFallback(task, source)
                 if (retried) {
                   log("[background-agent] Polling no-output fallback retry started:", task.id)
                   continue
                 }
-                await this.failNoOutputTask(task, `polling:session.${sessionStatus.type} no-output`)
+                await this.failNoOutputTask(task, source)
                 continue
               }
               log("[background-agent] Polling idle/gone but no output yet, waiting:", task.id)

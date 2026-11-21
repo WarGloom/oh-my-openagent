@@ -155,6 +155,7 @@ const fallbackRetryInFlight = new WeakMap<BackgroundTask, { token: string; promi
 export async function tryFallbackRetry(args: {
   task: BackgroundTask
   errorInfo: { name?: string; message?: string; statusCode?: number }
+  confirmedProviderRejection?: boolean
   source: string
   concurrencyManager: ConcurrencyManager
   client: FallbackRetryClient
@@ -200,7 +201,7 @@ export async function tryFallbackRetry(args: {
   const fallbackChain = task.fallbackChain
   const canUseProviderExhaustionFallback = deps.isProviderExhaustionFallbackEligible(errorInfo)
   const canRetry =
-    (deps.shouldRetryError(errorInfo) || canUseProviderExhaustionFallback) &&
+    (args.confirmedProviderRejection || deps.shouldRetryError(errorInfo) || canUseProviderExhaustionFallback) &&
     fallbackChain &&
     fallbackChain.length > 0 &&
     deps.hasMoreFallbacks(fallbackChain, task.attemptCount ?? 0)
@@ -423,6 +424,7 @@ export async function tryFallbackRetry(args: {
         return false
       }
 
+      let dispatchRejected = false
       const sameSessionRetried = await args
         .onSameSessionRetry({
           task,
@@ -433,6 +435,7 @@ export async function tryFallbackRetry(args: {
           nextModel,
         })
         .catch((error) => {
+          dispatchRejected = true
           deps.log("[background-agent] Same-session fallback retry failed:", {
             taskId: task.id,
             previousSessionID,
@@ -502,6 +505,10 @@ export async function tryFallbackRetry(args: {
 
       if (shouldAcquireNextSlot) {
         concurrencyManager.release(nextConcurrencyKey)
+      }
+      if (dispatchRejected) {
+        task.attemptCount = selectedAttemptCount
+        return tryFallbackRetry(args)
       }
       task.failedFallbackRetryToken = retryToken
       return false

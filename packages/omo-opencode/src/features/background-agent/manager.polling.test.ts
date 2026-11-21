@@ -1,8 +1,9 @@
 /// <reference types="bun-types" />
 
-import { describe, test, expect, mock } from "bun:test"
+import { describe, test, expect, mock, spyOn } from "bun:test"
 import { tmpdir } from "node:os"
 import type { PluginInput } from "@opencode-ai/plugin"
+import { buildFallbackChainFromModels } from "@oh-my-opencode/model-core"
 import { BackgroundManager } from "./manager"
 import { getProviderAutoRetryDeferral } from "./provider-auto-retry-deferral"
 import { MIN_SESSION_GONE_POLLS } from "./session-existence"
@@ -501,6 +502,75 @@ describe("BackgroundManager pollRunningTasks", () => {
 
       await manager.shutdown()
     })
+
+    test.each(["dispatch rejection", "session.error", "early session.error", "no output"] as const)(
+      "#when a correctly routed same-session fallback fails via %s #then advances the chain",
+      async (failure) => {
+        const sessionID = `ses-fallback-${failure.replaceAll(/[^a-z]/g, "-")}`
+        const rejection = "Model not found: github-copilot/claude-opus-4.8. Did you mean: claude-opus-4.8?"
+        let pendingRejection: Promise<void> | undefined
+        const promptAsync = mock(async (input: { body: { model: { providerID: string; modelID: string } } }) => {
+          if (failure === "early session.error" && input.body.model.providerID === "github-copilot") {
+            pendingRejection = rejectWithModelNotFound()
+          }
+          return {}
+        })
+        if (failure === "dispatch rejection") {
+          promptAsync.mockRejectedValueOnce(new Error(rejection))
+        }
+        const manager = createManagerWithClient({
+          status: async () => ({ data: { [sessionID]: { type: "idle" } } }),
+          messages: async () => ({ data: [] }),
+          promptAsync,
+        })
+        const task = createRunningTask(sessionID, {
+          model: { providerID: "openai", modelID: "original" },
+          attemptCount: 0,
+          fallbackChain: buildFallbackChainFromModels(
+            [{ model: "github-copilot/claude-opus-4.8" }, "openai/backup"],
+            "openai",
+          ),
+        })
+        injectTask(manager, task)
+        const rejectWithModelNotFound = () => {
+          const errorInfo = { name: "ProviderModelNotFoundError", message: rejection }
+          return manager["handleSessionErrorEvent"]({
+            task,
+            errorInfo,
+            errorName: errorInfo.name,
+            errorMessage: rejection,
+          })
+        }
+        const clock = spyOn(Date, "now")
+        try {
+          await manager["pollRunningTasks"]()
+          if (failure === "session.error") await rejectWithModelNotFound()
+          await pendingRejection
+          if (failure === "no output") {
+            clock.mockReturnValue(Date.now() + 16_000)
+            await manager["pollRunningTasks"]()
+          }
+          expect(promptAsync.mock.calls.map(([input]) => input.body.model)).toEqual([
+            { providerID: "github-copilot", modelID: "claude-opus-4.8" },
+            { providerID: "openai", modelID: "backup" },
+          ])
+          expect(task.attemptCount).toBe(2)
+
+          const unavailable = { name: "ProviderUnavailableError", message: "no provider available" }
+          await manager["handleSessionErrorEvent"]({
+            task,
+            errorInfo: unavailable,
+            errorName: unavailable.name,
+            errorMessage: unavailable.message,
+          })
+          expect(task.status).toBe("error")
+          expect(task.error).toBe(unavailable.message)
+        } finally {
+          clock.mockRestore()
+          await manager.shutdown()
+        }
+      },
+    )
 
     test("#when polling sees only historical output after same-session fallback #then waits until attributable output arrives", async () => {
       //#given
