@@ -130,10 +130,13 @@ describe("resolveSubagentExecution claude_code.agents toggle", () => {
   test.each([
     { label: "unset", claudeCodeAgentsEnabled: undefined },
     { label: "true", claudeCodeAgentsEnabled: true },
-  ])("merges .claude/agents when claude_code.agents is $label", async ({ claudeCodeAgentsEnabled }) => {
+  ])("loads .claude/agents without a server catalog when claude_code.agents is $label", async ({ claudeCodeAgentsEnabled }) => {
     //#given
     const args = createBaseArgs()
-    const executorCtx = createExecutorContext({ claudeCodeAgentsEnabled })
+    const executorCtx = createExecutorContext({
+      claudeCodeAgentsEnabled,
+      client: { app: { agents: async () => [] } },
+    })
 
     //#when
     const result = await resolveSubagentExecution(args, executorCtx, "sisyphus", "deep")

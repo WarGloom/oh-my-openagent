@@ -7,6 +7,7 @@ const TEAM_TOOL_DENIALS = {
   team_shutdown_request: false,
   team_approve_shutdown: false,
   team_reject_shutdown: false,
+  team_remove_member: false,
   team_send_message: false,
   team_task_create: false,
   team_task_list: false,

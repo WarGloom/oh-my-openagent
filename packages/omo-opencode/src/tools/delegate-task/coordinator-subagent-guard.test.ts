@@ -64,7 +64,7 @@ describe("coordinator subagent guard (#4027)", () => {
     expect(result.error).toContain("prometheus")
     expect(result.error).toContain("coordinator")
     expect(result.error).toContain("duplicate")
-    expect(result.error).toContain('category="deep"')
+    expect(result.error).toContain('category="deep-low"')
     expect(result.error).toContain('subagent_type="oracle"')
     expect(result.error).not.toContain("hephaestus")
     expect(result.agentToUse).toBe("")

@@ -708,7 +708,7 @@ describe("sisyphus-task", () => {
     )
 
     test(
-      "prefers category over subagent_type when both are provided",
+      "rejects a category combined with an explicit oracle executor before launch",
       async () => {
         //#given
         const { createDelegateTask } = require("./tools")
@@ -764,17 +764,15 @@ describe("sisyphus-task", () => {
           load_skills: [],
         }
 
-        //#when
-        await tool.execute(args, toolContext)
-
-        //#then - category takes precedence, subagent_type is overridden to sisyphus-junior
-        expect(requireCapturedLaunchInput(launchInput).agent).toBe("Sisyphus-Junior")
+        //#when / #then
+        await expect(tool.execute(args, toolContext)).rejects.toMatchObject({ reason: "agent_conflict" })
+        expect(launchInput).toBeUndefined()
       },
       { timeout: 10000 },
     )
 
     test(
-      "category overrides stale plan subagent during tool execution",
+      "rejects a custom category combined with a registered plan executor before launch",
       async () => {
         //#given
         const { createDelegateTask } = require("./tools")
@@ -820,17 +818,11 @@ describe("sisyphus-task", () => {
           load_skills: [],
         }
 
-        //#when
-        await tool.execute(args, toolContext)
-
-        //#then
-        expect(args.subagent_type).toBe("Sisyphus-Junior")
+        //#when / #then
+        await expect(tool.execute(args, toolContext)).rejects.toMatchObject({ reason: "agent_conflict" })
+        expect(args.subagent_type).toBe("plan")
         expect(args.category).toBe("project_manager")
-        expect(requireCapturedLaunchInput(launchInput).agent).toBe("Sisyphus-Junior")
-        expect(requireCapturedLaunchInput(launchInput).model).toEqual({
-          providerID: "openai",
-          modelID: "gpt-5.5",
-        })
+        expect(launchInput).toBeUndefined()
       },
       { timeout: 10000 },
     )
