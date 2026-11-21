@@ -43,7 +43,7 @@ describe("V2 native tool definitions", () => {
         description: "late_mcp updated",
         input: { type: "object", required: ["todos"] },
       })
-      expect(seen).toEqual(["todowrite", "late_mcp"])
+      expect(seen).toEqual(["todowrite", "session_handoff", "late_mcp"])
     } finally {
       await dispose()
     }

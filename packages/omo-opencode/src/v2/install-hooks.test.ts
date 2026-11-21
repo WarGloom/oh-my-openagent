@@ -7,14 +7,16 @@ import { installHooks } from "./install-hooks"
 
 function createFakeContext() {
   const added: V2ToolInfo[] = []
-  const dispose = mock(async () => {})
+  const disposals: Array<ReturnType<typeof mock<() => Promise<void>>>> = []
   const transform = mock(async (callback: (editor: V2ToolEditor) => void): Promise<V2Registration> => {
     callback({ add: (info) => void added.push(info), list: () => [], update: () => {} })
+    const dispose = mock(async () => {})
+    disposals.push(dispose)
     return { dispose }
   })
   const fake = createFakePluginContext()
   const context: V2PluginContext = { ...fake.context, tool: { ...fake.context.tool, transform } }
-  return { context, added, transform, dispose }
+  return { context, added, transform, disposals }
 }
 
 const echo = tool({
@@ -34,14 +36,14 @@ describe("installHooks", () => {
       await installHooks(context, hooks, { warn: () => {} })
 
       // then
-      expect(transform).toHaveBeenCalledTimes(1)
-      expect(added.map((info) => info.name)).toEqual(["echo", "shout"])
-      expect(added[0]?.options).toEqual({ codemode: false })
+      expect(transform).toHaveBeenCalledTimes(2)
+      expect(added.map((info) => info.name)).toEqual(["session_handoff", "echo", "shout"])
+      expect(added[1]?.options).toEqual({ codemode: false })
     })
 
     it("#when the returned disposer runs #then the tool registration is disposed once", async () => {
       // given
-      const { context, dispose } = createFakeContext()
+      const { context, disposals } = createFakeContext()
       const uninstall = await installHooks(context, { tool: { echo } }, { warn: () => {} })
 
       // when
@@ -49,7 +51,7 @@ describe("installHooks", () => {
       await uninstall()
 
       // then
-      expect(dispose).toHaveBeenCalledTimes(1)
+      expect(disposals.map((dispose) => dispose.mock.calls.length)).toEqual([1, 1])
     })
   })
 
@@ -64,7 +66,7 @@ describe("installHooks", () => {
       await installHooks(context, { tool: { before: echo, broken, after: echo } }, { warn })
 
       // then
-      expect(added.map((info) => info.name)).toEqual(["before", "after"])
+      expect(added.map((info) => info.name)).toEqual(["session_handoff", "before", "after"])
       expect(warn).toHaveBeenCalledTimes(1)
       expect(warn.mock.calls[0]?.[0]).toContain('"broken"')
     })
@@ -126,15 +128,16 @@ describe("installHooks", () => {
   })
 
   describe("#given V1 hooks without tools", () => {
-    it("#when installed #then no tool transform is registered", async () => {
+    it("#when installed #then only the native handoff tool is registered", async () => {
       // given
-      const { context, transform } = createFakeContext()
+      const { context, added, transform } = createFakeContext()
 
       // when
       await installHooks(context, {}, { warn: () => {} })
 
       // then
-      expect(transform).not.toHaveBeenCalled()
+      expect(transform).toHaveBeenCalledTimes(1)
+      expect(added.map((info) => info.name)).toEqual(["session_handoff"])
     })
   })
 })
