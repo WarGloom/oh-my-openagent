@@ -44,6 +44,8 @@ function createDeps(pluginConfig: Record<string, unknown> = {}): HookDeps {
     sessionRetryInFlight: new Set(),
     sessionAwaitingFallbackResult: new Set(),
     sessionFallbackTimeouts: new Map(),
+    sessionFallbackAbortInFlight: new Set(),
+    sessionFallbackUnsafeToReplay: new Set(),
     sessionStatusRetryKeys: new Map(),
   }
 }

@@ -38,6 +38,12 @@ function createDeps(): HookDeps {
     sessionRetryInFlight: new Set(),
     sessionAwaitingFallbackResult: new Set(),
     sessionFallbackTimeouts: new Map(),
+    sessionFallbackAbortInFlight: new Set(),
+    sessionFallbackHardTimeouts: new Map(),
+    sessionFallbackTimeoutAgents: new Map(),
+    sessionFallbackTimeoutKinds: new Map(),
+    sessionFallbackProgressObserved: new Set(),
+    sessionFallbackUnsafeToReplay: new Set(),
     sessionStatusRetryKeys: new Map(),
     internallyAbortedSessions: new Set(),
   }
