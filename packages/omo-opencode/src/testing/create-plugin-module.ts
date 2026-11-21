@@ -382,7 +382,7 @@ export function createPluginModule(overrides: Partial<PluginModuleDeps> = {}): D
     }
 
     bindNativeRuntimeFallback(pluginHooks, hooks.runtimeFallback)
-    bindAgentModelOverrides(pluginHooks, pluginConfig.agents)
+    bindAgentModelOverrides(pluginHooks, pluginConfig.agents, pluginConfig.jev_routing)
     if (modelConfigReload && pluginHooks.config) bindModelConfigReload(pluginHooks.config, modelConfigReload)
     return pluginHooks
   }

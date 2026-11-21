@@ -13,6 +13,7 @@ import type {
   V2ToolAfterEvent,
   V2ToolBeforeEvent,
   V2PromptHookEvent,
+  V2NativeSubagentAdmitted,
   V2ContextHookEvent,
   V2ModelRequestHookEvent,
   V2HttpRequestHookEvent,
@@ -116,6 +117,7 @@ export type FakePluginContext = {
   readonly triggerToolAfter: (event: V2ToolAfterEvent) => Promise<V2ToolAfterEvent>
   readonly toolHookCount: () => number
   /** Runs the registered session hooks in registration order and returns the event they mutated. */
+  readonly triggerNativeSubagentAdmitted: (event: V2NativeSubagentAdmitted) => Promise<void>
   readonly triggerPrompt: (event: V2PromptHookEvent) => Promise<V2PromptHookEvent>
   readonly triggerContext: (event: V2ContextHookEvent) => Promise<V2ContextHookEvent>
   readonly triggerModelRequest: (event: V2ModelRequestHookEvent) => Promise<V2ModelRequestHookEvent>
@@ -219,6 +221,7 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
   const enders = new Set<() => void>()
   const beforeHooks: Array<(event: V2ToolBeforeEvent) => Promise<void> | void> = []
   const afterHooks: Array<(event: V2ToolAfterEvent) => Promise<void> | void> = []
+  const nativeSubagentAdmittedHooks: Array<(event: V2NativeSubagentAdmitted) => Promise<void> | void> = []
   const promptHooks: Array<(event: V2PromptHookEvent) => Promise<void> | void> = []
   const contextHooks: Array<(event: V2ContextHookEvent) => Promise<void> | void> = []
   const modelRequestHooks: Array<(event: V2ModelRequestHookEvent) => Promise<void> | void> = []
@@ -640,7 +643,8 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
           | "compaction"
           | "experimental.compaction.continue"
           | "retry"
-          | "experimental.idle",
+          | "experimental.idle"
+          | "experimental.subagent.admitted",
         callback: (event: never) => Promise<void> | void,
         options?: { providerID?: string },
       ) => {
@@ -671,8 +675,10 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
           })
         }
         const list = (
-          name === "prompt"
-            ? promptHooks
+          name === "experimental.subagent.admitted"
+            ? nativeSubagentAdmittedHooks
+            : name === "prompt"
+              ? promptHooks
             : name === "context"
               ? contextHooks
               : name === "model.request"
@@ -739,6 +745,9 @@ export function createFakePluginContext(options: FakeContextOptions = {}): FakeP
       return event
     },
     toolHookCount: () => beforeHooks.length + afterHooks.length,
+    triggerNativeSubagentAdmitted: async (event) => {
+      for (const hook of nativeSubagentAdmittedHooks) await hook(event)
+    },
     triggerPrompt: async (event) => {
       for (const hook of promptHooks) await hook(event)
       return event

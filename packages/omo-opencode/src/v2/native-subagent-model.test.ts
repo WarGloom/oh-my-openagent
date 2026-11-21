@@ -4,6 +4,11 @@ import type { Hooks } from "@opencode-ai/plugin"
 import { createFakePluginContext } from "./fake-plugin-context"
 import type { V2ModelInfo, V2ToolBeforeEvent } from "./context-types"
 import { bindAgentModelOverrides } from "./native-subagent-model"
+import { JevRoutingConfigSchema } from "../config/schema/jev-routing"
+import {
+  getDelegatedChildSessionBootstrap,
+  clearDelegatedChildSessionBootstrap,
+} from "../shared/delegated-child-session-bootstrap"
 import { installHooks } from "./install-hooks"
 import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -27,6 +32,74 @@ const hostModel: V2ModelInfo = {
 }
 
 describe("V2 native subagent OMO model overrides", () => {
+  test.each(["routed", "unavailable", "old-host", "explicit", "opt-out"] as const)(
+    "preserves native admission for %s",
+    async (scenario) => {
+      const other = "openai/gpt-6-luna"
+      const alternate = { ...hostModel, id: "luna", providerID: "openai", modelID: "gpt-6-luna" }
+      const fake = createFakePluginContext({
+        models: scenario === "unavailable" ? [alternate] : [hostModel, alternate],
+      })
+      const context = {
+        ...fake.context,
+        session: {
+          ...fake.context.session,
+          supportsNativeSubagentAdmission: scenario === "old-host" ? undefined : (true as const),
+        },
+      }
+      using fetchMock = spyOn(globalThis, "fetch").mockImplementation(async () =>
+        Response.json({
+          model: "jev-test",
+          answers: { tier_0: { type: "noul", noul: 0.4 }, tier_1: { type: "noul", noul: 0.95 } },
+        }),
+      )
+      const hooks: Hooks = {}
+      bindAgentModelOverrides(
+        hooks,
+        { [agent]: { model: primary, fallback_models: [other] } },
+        JevRoutingConfigSchema.parse({
+          mode: "active",
+          named_agent_models: { [agent]: { candidates: [primary, other] } },
+        }),
+      )
+      const dispose = await installHooks(context, hooks, { warn: () => {} })
+      const id = crypto.randomUUID()
+      try {
+        const event = await fake.triggerToolBefore({
+          tool: "subagent",
+          sessionID: "ses_parent",
+          messageID: "msg_parent",
+          id: "call_named",
+          agent: "controller",
+          input: {
+            agent,
+            prompt: "Compare the two source files.",
+            ...(scenario === "explicit" ? { model: other } : {}),
+            ...(scenario === "opt-out" ? { model_routing: false } : {}),
+          },
+        })
+        const model = scenario === "old-host" || scenario === "opt-out" ? primary : other
+        expect(event.input).toMatchObject({ model })
+        expect(fetchMock).toHaveBeenCalledTimes(scenario === "routed" ? 1 : 0)
+        await fake.triggerNativeSubagentAdmitted({
+          parentSessionID: event.sessionID,
+          childSessionID: id,
+          toolCallID: event.id,
+          messageID: event.messageID,
+          agent,
+          model: { providerID: alternate.providerID, id: alternate.modelID },
+        })
+        const plan = getDelegatedChildSessionBootstrap(id)
+        if (scenario === "routed" || scenario === "unavailable") {
+          expect(plan?.fallbackChain?.map((entry) => entry.model)).toEqual([hostModel.modelID])
+        } else expect(plan).toBeUndefined()
+      } finally {
+        clearDelegatedChildSessionBootstrap(id)
+        await dispose()
+      }
+    },
+  )
+
   test.each(["unknown-key", "pruned-value"])(
     "gate repair: reloads with an unchanged activation %s diagnostic",
     (kind) => {

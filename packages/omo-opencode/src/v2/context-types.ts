@@ -76,6 +76,15 @@ export type V2ToolEditor = {
 
 export type V2ToolContentPart = { type: string; text?: string; [key: string]: unknown }
 
+export type V2NativeSubagentAdmitted = {
+  readonly parentSessionID: string
+  readonly childSessionID: string
+  readonly messageID: string
+  readonly toolCallID: string
+  readonly agent: string
+  readonly model?: V2ModelRef
+}
+
 export type V2ToolBeforeEvent = {
   tool: string
   readonly sessionID: string
@@ -624,7 +633,9 @@ export type V2SessionDomain = {
   readonly synthetic: (input: V2SyntheticInput) => Promise<unknown>
   readonly switchAgent: (input: { readonly sessionID: string; readonly agent: string }) => Promise<void>
   readonly switchModel: (input: { readonly sessionID: string; readonly model: V2ModelRef }) => Promise<void>
+  readonly supportsNativeSubagentAdmission?: true
   readonly hook: {
+    (name: "experimental.subagent.admitted", callback: (event: V2NativeSubagentAdmitted) => Promise<void> | void): Promise<V2Registration>
     (name: "prompt", callback: (event: V2PromptHookEvent) => Promise<void> | void): Promise<V2Registration>
     (name: "context", callback: (event: V2ContextHookEvent) => Promise<void> | void): Promise<V2Registration>
     (name: "model.request", callback: (event: V2ModelRequestHookEvent) => Promise<void> | void): Promise<V2Registration>
