@@ -35,7 +35,7 @@ function createNotifier(messages: readonly SessionMessageStub[]): ParentWakeNoti
       pendingRetryMs: 1_000,
       acceptedMessageSkewMs: 100,
       toolCallDeferMaxMs: 5_000,
-      failureRequeueWindowMs: 10,
+      failureRequeueWindowMs: 10_000,
       userMessageInProgressWindowMs: 0,
     },
   )

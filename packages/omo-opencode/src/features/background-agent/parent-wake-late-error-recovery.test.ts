@@ -153,6 +153,7 @@ describe("ParentWakeNotifier late error recovery", () => {
       },
     ]
     const { notifier, promptAsyncCalls } = createNotifier({
+      failureRequeueWindowMs: 10_000,
       sessionMessagesImpl: async () => ({ data: sessionMessages }),
       promptAsyncImpl: async () => {
         sessionMessages.push({
@@ -196,6 +197,7 @@ describe("ParentWakeNotifier late error recovery", () => {
       },
     ]
     const { notifier, promptAsyncCalls } = createNotifier({
+      failureRequeueWindowMs: 10_000,
       sessionMessagesImpl: async () => ({ data: sessionMessages }),
     })
     const sessionID = "parent-late-error-assistant-error-history"

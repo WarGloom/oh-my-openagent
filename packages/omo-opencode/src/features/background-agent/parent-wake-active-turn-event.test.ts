@@ -70,9 +70,6 @@ function createManager(sessionStatuses: SessionStatusProvider): {
     },
     abort: async () => ({}),
   })
-    },
-    abort: async () => ({}),
-  })
   const ctx: PluginInput = {
     client,
     project: {} as PluginInput["project"],
