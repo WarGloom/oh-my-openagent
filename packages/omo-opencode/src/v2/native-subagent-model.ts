@@ -31,9 +31,14 @@ export async function installNativeSubagentModel(
   // The host's markdown-agent transform runs after external plugins; override new dispatches instead.
   const routing = routingConfigs.get(hooks)
   const maxPendingAdmissions = 256
+  const pendingAdmissionLifetimeMs = 30 * 60 * 1000
   const pending = new Map<
     string,
-    { readonly selected: string; readonly fallbacks: ReturnType<typeof buildFallbackChainFromModels> }
+    {
+      readonly selected: string
+      readonly expiresAt: number
+      readonly fallbacks: ReturnType<typeof buildFallbackChainFromModels>
+    }
   >()
   const callKey = (sessionID: string, messageID: string, callID: string) =>
     JSON.stringify([sessionID, messageID, callID])
@@ -48,6 +53,10 @@ export async function installNativeSubagentModel(
     )?.[1]
     if (!override?.model && !override?.models?.length) return
     const models = (await context.model.list()).data
+    if (pending.size >= maxPendingAdmissions) {
+      const now = Date.now()
+      for (const [key, pendingPlan] of pending) if (pendingPlan.expiresAt <= now) pending.delete(key)
+    }
     const plan =
       routing &&
       context.session.supportsNativeSubagentAdmission &&
@@ -87,6 +96,7 @@ export async function installNativeSubagentModel(
       const key = callKey(event.sessionID, event.messageID, event.id)
       pending.set(key, {
         selected: parsed.providerID + "/" + modelID,
+        expiresAt: Date.now() + pendingAdmissionLifetimeMs,
         fallbacks: buildFallbackChainFromModels(plan.models.slice(1), parsed.providerID),
       })
       await recordJevRouting(plan.decision)
