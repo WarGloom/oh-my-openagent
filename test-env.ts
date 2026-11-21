@@ -1,4 +1,6 @@
 /// <reference types="bun-types" />
+// OpenTUI needs Solid's reactive runtime, not the server export selected by Bun.
+import "@opentui/solid/preload"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
