@@ -30,6 +30,7 @@ export async function installNativeSubagentModel(
   if (!agentModelOverrides.has(hooks)) return undefined
   // The host's markdown-agent transform runs after external plugins; override new dispatches instead.
   const routing = routingConfigs.get(hooks)
+  const maxPendingAdmissions = 256
   const pending = new Map<
     string,
     { readonly selected: string; readonly fallbacks: ReturnType<typeof buildFallbackChainFromModels> }
@@ -50,6 +51,7 @@ export async function installNativeSubagentModel(
     const plan =
       routing &&
       context.session.supportsNativeSubagentAdmission &&
+      pending.size < maxPendingAdmissions &&
       "prompt" in input &&
       typeof input.prompt === "string" &&
       !("model_routing" in input && input.model_routing === false) &&
