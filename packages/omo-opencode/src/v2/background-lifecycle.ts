@@ -28,6 +28,7 @@ export class V2BackgroundLifecycle implements NativeBackgroundLifecycle {
   private readonly migrated: BackgroundTask[] = []
   private readonly removed = new Set<string>()
   private readonly delivered = new Map<string, string>()
+  private readonly delivering = new Map<string, Promise<void>>()
   private readonly idle = new Map<string, V2IdleHookEvent>()
   private stopped = false
   private readonly prefix: string
@@ -248,17 +249,32 @@ export class V2BackgroundLifecycle implements NativeBackgroundLifecycle {
   }
 
   async notify(task: BackgroundTask, text: string): Promise<void> {
+    if (task.nativeRun) return this.save(task)
+    const noticeID = messageID(task, "complete")
+    const pending = this.delivering.get(noticeID)
+    if (pending) return pending
+    if (this.delivered.get(task.id) === noticeID) return this.save(task)
+
+    const delivery = this.deliverNotice(task, noticeID, text)
+    this.delivering.set(noticeID, delivery)
+    try {
+      await delivery
+    } finally {
+      this.delivering.delete(noticeID)
+    }
+  }
+
+  private async deliverNotice(task: BackgroundTask, noticeID: string, text: string): Promise<void> {
     await this.save(task)
-    if (task.nativeRun) return
     await this.context.session.synthetic({
       sessionID: task.parentSessionId,
-      id: messageID(task, "complete"),
+      id: noticeID,
       text,
       description: task.description,
       delivery: "steer",
       resume: true,
     })
-    this.delivered.set(task.id, messageID(task, "complete"))
+    this.delivered.set(task.id, noticeID)
     await this.save(task)
   }
 

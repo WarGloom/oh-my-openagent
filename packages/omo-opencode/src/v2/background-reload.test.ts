@@ -121,7 +121,9 @@ describe("V2 background task reload", () => {
       expect(notification.sessionID).toBe("parent")
       expect(notification.text).toContain("bg_reload")
       expect(second.backgroundManager.getTask("bg_reload")?.status).toBe("completed")
-      expect(fake.sessionCalls.filter((call) => call.kind === "prompt" || call.kind === "synthetic")).toHaveLength(1)
+      expect(fake.sessionCalls.filter((call) => call.kind === "prompt" || call.kind === "synthetic")).toEqual([
+        expect.objectContaining({ input: expect.objectContaining({ sessionID: "parent" }) }),
+      ])
     } finally {
       await cleanup?.()
       for (const manager of cleanupManagers) await manager.shutdown()
