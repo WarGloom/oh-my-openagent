@@ -336,7 +336,7 @@ describe("createChatMessageHandler runtime fallback model override", () => {
     expect(deps.sessionStates.get(sessionID)?.currentModel).toBe("anthropic/claude-opus-4-7")
   })
 
-  test("#given retained variant retry keys #when the user changes only the variant #then the reset starts a fresh retry generation", async () => {
+  test("#given retained variant retry keys #when the user changes only the variant #then the base model's retry generation survives", async () => {
     // given
     const deps = createDeps()
     const sessionID = "session-manual-variant-reset"
@@ -367,11 +367,12 @@ describe("createChatMessageHandler runtime fallback model override", () => {
     )
 
     // then
-    expect(deps.sessionStatusRetryKeys.has(sessionID)).toBe(false)
-    expect(deps.sessionRetryInFlight.has(sessionID)).toBe(false)
-    expect(deps.sessionAwaitingFallbackResult.has(sessionID)).toBe(false)
-    expect(deps.sessionFallbackTimeouts.has(sessionID)).toBe(false)
-    expect(deps.sessionStates.get(sessionID)?.currentModel).toBe("openai/gpt-5.4(low)")
+    clearTimeout(fallbackTimeout)
+    expect(deps.sessionStatusRetryKeys.get(sessionID)).toEqual(new Set(["openai/gpt-5.4(low):1:quota exceeded"]))
+    expect(deps.sessionRetryInFlight.has(sessionID)).toBe(true)
+    expect(deps.sessionAwaitingFallbackResult.has(sessionID)).toBe(true)
+    expect(deps.sessionFallbackTimeouts.get(sessionID)).toBe(fallbackTimeout)
+    expect(deps.sessionStates.get(sessionID)).toBe(state)
   })
 
   test("#given session is on an accepted fallback #when a later user message is transformed after cooldown #then it stays on the fallback model", async () => {
@@ -439,6 +440,7 @@ describe("createChatMessageHandler runtime fallback model override", () => {
         variant: "high",
       },
       variant: "high",
+      runtimeFallbackModelOverride: true,
     })
   })
 

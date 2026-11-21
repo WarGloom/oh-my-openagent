@@ -964,7 +964,7 @@ describe("createEventHandler", () => {
     expect(created?.fallbackIndex).toBe(0)
   })
 
-  it("#given session.created has an agent and model #when the event fires #then the configured agent model is retained as original", async () => {
+  it("#given session.created has a model outside the configured chain #when the event fires #then the host model is retained as original", async () => {
     const sessionID = "session-created-agent-model"
     const deps = createDeps()
     deps.pluginConfig = {
@@ -997,8 +997,8 @@ describe("createEventHandler", () => {
 
     // then
     const created = deps.sessionStates.get(sessionID)
-    expect(created?.originalModel).toBe("anthropic/claude-opus-4-7")
+    expect(created?.originalModel).toBe("test-provider/test-model")
     expect(created?.currentModel).toBe("test-provider/test-model")
-    expect(created?.fallbackIndex).toBe(0)
+    expect(created?.fallbackIndex).toBe(-1)
   })
 })

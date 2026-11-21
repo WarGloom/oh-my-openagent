@@ -1760,7 +1760,7 @@ describe("runtime-fallback", () => {
       expect(timeoutLog).toBeDefined()
     })
 
-    test("should keep session timeout active after chat.message model override", async () => {
+    test("keeps the fallback timeout active when chat.message echoes the original model", async () => {
       const clock = installRuntimeFallbackTestClock()
       const retriedModels: string[] = []
 
@@ -1827,7 +1827,7 @@ describe("runtime-fallback", () => {
       await hook["chat.message"]?.(
         {
           sessionID,
-          model: { providerID: "github-copilot", modelID: "claude-opus-4-7" },
+          model: { providerID: "google", modelID: "gemini-2.5-pro" },
         },
         output,
       )
