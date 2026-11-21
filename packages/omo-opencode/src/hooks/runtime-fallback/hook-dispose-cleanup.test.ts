@@ -68,8 +68,8 @@ describe("createRuntimeFallbackHook dispose retry-key cleanup", () => {
           sessionID,
           status: {
             type: "retry",
-            attempt: 1,
-            message: "All credentials for model claude-opus-4-7 are cooling down [retrying in 7m 56s attempt #1]",
+            attempt: 2,
+            message: "All credentials for model claude-opus-4-7 are cooling down [retrying in 7m 56s attempt #2]",
           },
         },
       },

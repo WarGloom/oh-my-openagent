@@ -227,11 +227,12 @@ describe("createAutoRetryDispatcher reserved-session retry (#5109)", () => {
     expect(deps.sessionAwaitingFallbackResult.has(sessionID)).toBe(true)
   })
 
-  test("#given a session NOT internally aborted whose assistant turn is genuinely active #when auto retry runs #then the dispatch is still withheld (active-check preserved for live turns)", async () => {
+  test("#given an active fallback turn #when another session.status retry arrives #then dispatch is withheld while the turn stays active", async () => {
     // given
     const promptCalls = { count: 0 }
     const deps = createDeps(promptCalls)
     const sessionID = "session-genuinely-active-not-aborted"
+    deps.sessionAwaitingFallbackResult.add(sessionID)
     deps.ctx.client.session.messages = async () => ({
       data: [
         {
@@ -248,7 +249,6 @@ describe("createAutoRetryDispatcher reserved-session retry (#5109)", () => {
     const state = createFallbackState("openai/gpt-5.5")
     state.pendingFallbackModel = "anthropic/claude-opus-4-8"
     deps.sessionStates.set(sessionID, state)
-
     // when
     await helpers.autoRetryWithFallback(sessionID, "anthropic/claude-opus-4-8", undefined, "session.status")
 

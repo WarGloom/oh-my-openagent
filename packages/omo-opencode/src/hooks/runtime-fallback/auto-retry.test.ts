@@ -144,20 +144,22 @@ describe("createAutoRetryHelpers", () => {
 
   test("queues a newer fallback while a previous fallback result is pending", async () => {
     const promptRecorder = createPromptRecorder()
-    const deps = createDeps(createDefaultMessagesResponse(), promptRecorder)
-    const helpers = createAutoRetryHelpers(deps)
     const sessionID = "session-auto-retry-queued"
+    const messages = createDefaultMessagesResponse()
+    messages.data.push({ info: { role: "assistant" }, parts: [{ type: "reasoning", text: "still working" }] })
+    const deps = createDeps(messages, promptRecorder)
+    const helpers = createAutoRetryHelpers(deps)
     const state = createFallbackState("anthropic/claude-opus-4-7")
     state.pendingFallbackModel = "openai/gpt-5.4"
     deps.sessionStates.set(sessionID, state)
     deps.sessionAwaitingFallbackResult.add(sessionID)
 
     const outcome = await helpers.autoRetryWithFallback(sessionID, "google/gemini-2.5-pro", undefined, "session.status")
-
     expect(outcome).toEqual({ accepted: true, status: "queued" })
     expect(promptRecorder.count).toBe(0)
     expect(deps.sessionAwaitingFallbackResult.has(sessionID)).toBe(true)
     expect(state.pendingFallbackModel).toBe("google/gemini-2.5-pro")
+    helpers.clearSessionFallbackTimeout(sessionID)
   })
 
   it("marks an ambiguous prompt failure as possibly accepted", async () => {
