@@ -33,7 +33,19 @@ function addFromProviderModels(
   }
 }
 
-export async function getAvailableModelsForDelegateTask(client: OpencodeClient): Promise<Set<string>> {
+export async function getAvailableModelsForDelegateTask(
+  client: OpencodeClient,
+  preferLive = false,
+): Promise<Set<string>> {
+  if (preferLive && hasModelList(client)) {
+    try {
+      const rows = extractModelRows(await client.model.list())
+      if (rows.length) return new Set(rows.map(({ provider, id }) => provider + "/" + id))
+    } catch (error) {
+      if (!(error instanceof Error)) throw error
+      log("[delegate-task] could not read live model catalog", { message: error.message })
+    }
+  }
   const providerModelsCache = connectedProvidersCache.readProviderModelsCache()
 
   if (providerModelsCache?.models) {

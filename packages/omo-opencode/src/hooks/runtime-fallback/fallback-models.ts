@@ -58,8 +58,8 @@ function getRawFallbackModelsForSession(
       : !agentConfig?.model
         ? agentCategoryConfig?.models_distribution
         : undefined)
-  const bootstrap = distribution === "round_robin" ? getDelegatedChildSessionBootstrap(sessionID) : undefined
-  if (bootstrap) {
+  const bootstrap = getDelegatedChildSessionBootstrap(sessionID)
+  if (bootstrap && (bootstrap.namedModelPlan || distribution === "round_robin")) {
     return (
       bootstrap.fallbackChain?.flatMap(({ providers, model, ...settings }) =>
         providers.map((provider) => ({ ...settings, model: `${provider}/${model}` })),

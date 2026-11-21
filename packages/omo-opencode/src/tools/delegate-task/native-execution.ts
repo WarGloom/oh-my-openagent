@@ -49,7 +49,11 @@ export async function executeNativeDelegate(input: {
         throw new ExecutorRequirementError("agent_conflict")
       assertRequiredModel(requiredModel, existing.model && `${existing.model.providerID}/${existing.model.modelID}`)
     } else assertRequiredModel(requiredModel, input.model && `${input.model.providerID}/${input.model.modelID}`)
-    const nativeMetadata = requiredModel ? { ...existing?.nativeMetadata, requiredModel } : existing?.nativeMetadata
+    const nativeMetadata = requiredModel
+      ? { ...existing?.nativeMetadata, requiredModel }
+      : args.namedModelPlan
+        ? { namedModelPlan: true }
+        : existing?.nativeMetadata
     const runningBackground =
       existing?.status === "running" && existing.nativeCompletion !== "none" && existing.nativeRun
         ? { ...existing.nativeRun }

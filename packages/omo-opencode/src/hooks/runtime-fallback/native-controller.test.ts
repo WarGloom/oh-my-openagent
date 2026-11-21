@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import type { OhMyOpenCodeConfig } from "../../config"
+import {
+  registerDelegatedChildSessionBootstrap,
+  clearDelegatedChildSessionBootstrap,
+} from "../../shared/delegated-child-session-bootstrap"
 import { SessionCategoryRegistry } from "../../shared/session-category-registry"
 import { DEFAULT_CONFIG } from "./constants"
 import { createNativeFallbackController } from "./native-controller"
@@ -53,6 +57,23 @@ function fixture(pluginConfig: OhMyOpenCodeConfig) {
 afterEach(() => SessionCategoryRegistry.clear())
 
 describe("native controller configured primary recovery", () => {
+  test("uses the admitted named-agent plan instead of the global provider order on a quota error", async () => {
+    const f = fixture({ agents: { [agent]: { model: primary, fallback_models: [luna, copilot] } } })
+    registerDelegatedChildSessionBootstrap({
+      sessionID: "ses_child",
+      promptText: "Compare the audit.",
+      namedModelPlan: true,
+      fallbackChain: [{ providers: ["github-copilot"], model: "claude-haiku-4.5" }],
+    })
+    try {
+      expect(await f.recover(luna, { status: 429, message: "insufficient_quota" })).toBe(true)
+      expect(f.selected).toEqual([copilot])
+    } finally {
+      clearDelegatedChildSessionBootstrap("ses_child")
+      f.controller.forget("ses_child")
+    }
+  })
+
   test("preserves provider reset deadlines after a manual model switch", async () => {
     using clock = spyOn(Date, "now").mockReturnValue(1_000)
     const f = fixture({ agents: { [agent]: { ...chain, fallback_models: [...chain.fallback_models] } } })

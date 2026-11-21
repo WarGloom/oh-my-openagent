@@ -1,3 +1,4 @@
+import { recordJevRouting } from "./jev-routing-ledger"
 import { tool, type ToolDefinition } from "@opencode-ai/plugin"
 import type { DelegatedModelConfig, ToolContextWithMetadata, DelegateTaskToolOptions } from "./types"
 import { log } from "../../shared/logger"
@@ -360,7 +361,15 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
           { ...modelOptions, requiredModel: delegateTaskArgs.required_model },
           parentContext.agent,
           categoryExamples,
-          { defaultModel: systemDefaultModel ?? inheritedModel },
+          {
+            defaultModel: systemDefaultModel ?? inheritedModel,
+            namedModelRouting:
+              delegateTaskArgs.model_routing !== false &&
+              !delegateTaskArgs.required_model &&
+              delegateTaskArgs.requested_subagent_type === delegateTaskArgs.subagent_type
+                ? { brief: delegateTaskArgs.prompt, parentSessionID: ctx.sessionID, signal: ctx.abort }
+                : undefined,
+          },
         )
         if (resolution.error) {
           return resolution.error
@@ -373,6 +382,11 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
           categoryModel && `${categoryModel.providerID}/${categoryModel.modelID}`,
         )
         if (delegateTaskArgs.required_model) fallbackChain = []
+        if (resolution.namedModelDecision) {
+          delegateTaskArgs.decisionId = resolution.namedModelDecision.decision_id
+          delegateTaskArgs.namedModelPlan = true
+          await recordJevRouting(resolution.namedModelDecision)
+        }
       }
 
       const systemContent = buildSystemContent({

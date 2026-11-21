@@ -115,6 +115,76 @@ describe("Jev task dispatch", () => {
     return { launch, delegate, ctx, options }
   }
 
+  test.each([
+    { label: "selected an available model", expected: "backup", calls: 1 },
+    { label: "bypassed for a fixed executor", expected: "backup", calls: 0, required_model: "other/backup" },
+    { label: "bypassed by opt-out", expected: "default", calls: 0, model_routing: false },
+    { label: "undeclared", expected: "default", calls: 0, undeclared: true },
+    { label: "router unavailable", expected: "default", calls: 1, offline: true },
+    { label: "unavailable primary", expected: "backup", calls: 0, coldPrimary: true },
+  ] as const)("dispatches a fixed named worker: $label", async (row) => {
+    const { options, ctx, launch } = setup("active", true)
+    const worker = "named-auditor"
+    const models = ["example/default", "other/backup", "example/visual"]
+    fetchSpy.mockImplementation(async () =>
+      "offline" in row
+        ? new Response(null, { status: 503 })
+        : Response.json({
+            model: "jev-test",
+            answers: { tier_0: { type: "noul", noul: 0.71 }, tier_1: { type: "noul", noul: 0.95 } },
+          }),
+    )
+    if ("coldPrimary" in row)
+      cacheSpy.mockReturnValue({
+        connected: ["example", "other"],
+        models: { example: ["visual"], other: ["backup"] },
+        updatedAt: "2026-11-08",
+      })
+    const delegate = createDelegateTask(
+      unsafeTestValue({
+        ...options,
+        client: { ...options.client, app: { agents: async () => ({ data: [{ name: worker, mode: "subagent" }] }) } },
+        agentOverrides: { [worker]: { models } },
+        jevRouting: {
+          ...routing,
+          named_agent_models:
+            "undeclared" in row
+              ? undefined
+              : {
+                  [worker]: { candidates: models.slice(0, 2) },
+                },
+        },
+      }),
+    )
+    await delegate.execute(
+      {
+        subagent_type: worker,
+        prompt: "Compare the two audit results.",
+        run_in_background: true,
+        load_skills: [],
+        model_routing: "model_routing" in row ? row.model_routing : undefined,
+        required_model: "required_model" in row ? row.required_model : undefined,
+      },
+      ctx,
+    )
+    const request = launch.mock.calls[0]?.[0]
+    expect(request).toMatchObject({ agent: worker, model: { modelID: row.expected } })
+    expect(fetchSpy).toHaveBeenCalledTimes(row.calls)
+    if (row.label === "selected an available model") {
+      expect(request?.fallbackChain?.map((entry) => entry.model)).toEqual(["default", "visual"])
+      expect(ledgerRows()).toContainEqual(
+        expect.objectContaining({
+          named_model: {
+            agent: worker,
+            selected_model: "other/backup",
+            action: "automatic",
+            fallback_plan: ["example/default", "example/visual"],
+          },
+        }),
+      )
+    }
+  })
+
   test("rejects an exact model with no eligible category before classifier or child launch", async () => {
     const { delegate, ctx, launch } = setup("active", true)
     await expect(
@@ -421,14 +491,17 @@ describe("Jev task dispatch", () => {
       launched = true
       return task
     })
-    const delegate = createDelegateTask(unsafeTestValue({
-      ...options,
-      jevRouting: { ...routing, timeout_ms: 0 },
-      loadCurrentModelConfig: () => ({ agents: {}, categories, jev_routing: { ...routing, timeout_ms: 700 } }),
-    }))
+    const delegate = createDelegateTask(
+      unsafeTestValue({
+        ...options,
+        jevRouting: { ...routing, timeout_ms: 0 },
+        loadCurrentModelConfig: () => ({ agents: {}, categories, jev_routing: { ...routing, timeout_ms: 700 } }),
+      }),
+    )
     try {
       const result = delegate.execute(
-        { category: "unspecified-low", prompt: "Implement feature", run_in_background: true, load_skills: [] }, ctx,
+        { category: "unspecified-low", prompt: "Implement feature", run_in_background: true, load_skills: [] },
+        ctx,
       )
       await budgetArmed.promise
       await clock.advanceBy(0)
@@ -479,7 +552,12 @@ describe("Jev task dispatch", () => {
     const context = unsafeTestValue<ExecutorContext>(options)
     const args = { prompt: "Implement feature", description: "Feature", run_in_background: false, load_skills: [] }
     // when: the orchestrator names another category, then the same one
-    const other = await resolveCategoryExecution({ ...args, category: "unspecified-low" }, context, undefined, undefined)
+    const other = await resolveCategoryExecution(
+      { ...args, category: "unspecified-low" },
+      context,
+      undefined,
+      undefined,
+    )
     const same = await resolveCategoryExecution(
       { ...args, category: "visual-engineering" },
       context,

@@ -165,6 +165,7 @@ export class V2NativeSubagentJobs implements NativeBackgroundJobs {
       sessionID: task.sessionId,
       promptText: task.prompt,
       fallbackChain: task.fallbackChain,
+      namedModelPlan: task.nativeMetadata?.namedModelPlan === true ? true : undefined,
       category: task.category,
       system,
       tools: body.tools,

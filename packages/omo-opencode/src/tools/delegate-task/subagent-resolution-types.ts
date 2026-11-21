@@ -1,3 +1,5 @@
+import type { JevDecisionRecord } from "./jev-routing-ledger"
+import type { NamedAgentModelRequest } from "./named-agent-model-plan"
 import type { FallbackEntry } from "../../shared/model-requirements"
 import type { AgentInfo } from "./subagent-discovery"
 import type { DelegatedModelConfig } from "./types"
@@ -6,6 +8,7 @@ export interface ResolveSubagentExecutionOptions {
   allowSisyphusJuniorDirect?: boolean
   allowPrimaryAgentDelegation?: boolean
   defaultModel?: string
+  namedModelRouting?: NamedAgentModelRequest
 }
 
 export interface ResolveSubagentExecutionResult {
@@ -13,6 +16,7 @@ export interface ResolveSubagentExecutionResult {
   categoryModel: DelegatedModelConfig | undefined
   fallbackChain?: FallbackEntry[]
   error?: string
+  namedModelDecision?: JevDecisionRecord
 }
 
 export type SubagentRequestPreflight =
@@ -30,4 +34,5 @@ export type SubagentAgentMatch =
 export interface ResolvedSubagentModel {
   readonly categoryModel: DelegatedModelConfig | undefined
   readonly fallbackChain: FallbackEntry[] | undefined
+  readonly namedModelDecision?: JevDecisionRecord
 }

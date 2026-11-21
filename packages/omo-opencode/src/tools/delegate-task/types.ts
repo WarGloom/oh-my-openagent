@@ -61,6 +61,7 @@ export type OpencodeClient = OmoAgentClient
 
 export interface DelegateTaskArgs {
   decisionId?: string
+  namedModelPlan?: true
   description: string
   descriptionSource?: "explicit" | "generated"
   prompt: string

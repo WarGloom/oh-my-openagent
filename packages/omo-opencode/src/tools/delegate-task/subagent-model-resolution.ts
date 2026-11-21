@@ -16,6 +16,7 @@ import { resolveEffectiveFallbackEntry } from "./fallback-entry-resolution"
 import { resolveModelForDelegateTask } from "./model-selection"
 import type { AgentInfo } from "./subagent-discovery"
 import type { ResolvedSubagentModel } from "./subagent-resolution-types"
+import { configuredAgentModelChain, planNamedAgentModels, type NamedAgentModelRequest } from "./named-agent-model-plan"
 import { distributeTaskModels } from "./models-distribution"
 
 function findAgentOverride(agentOverrides: AgentOverrides | undefined, agentConfigKey: string) {
@@ -29,6 +30,7 @@ export async function resolveSubagentModel(
   agentToUse: string,
   matchedAgent: AgentInfo,
   executorCtx: ExecutorContext,
+  namedModelRouting?: NamedAgentModelRequest,
 ): Promise<ResolvedSubagentModel> {
   let categoryModel = undefined
   let fallbackChain = undefined
@@ -43,7 +45,7 @@ export async function resolveSubagentModel(
     : !agentOverride?.model
       ? agentCategoryConfig
       : undefined
-  const canonicalModels = !chainConfig?.models?.length
+  const configuredModels = !chainConfig?.models?.length
     ? undefined
     : chainConfig.models_distribution === "round_robin"
       ? [
@@ -54,6 +56,25 @@ export async function resolveSubagentModel(
           ),
         ]
       : [...chainConfig.models]
+  const declarations = executorCtx.jevRouting?.named_agent_models
+  const useNamedPlan = namedModelRouting && declarations && Object.hasOwn(declarations, agentConfigKey)
+  const available = await getAvailableModelsForDelegateTask(
+    executorCtx.client,
+    Boolean(useNamedPlan && executorCtx.manager.nativeJobs),
+  )
+  const unavailable = await getNativeUnavailableModels(executorCtx.client)
+  const plan =
+    namedModelRouting && !executorCtx.requiredModel && agentOverride?.models_distribution !== "round_robin"
+      ? await planNamedAgentModels({
+          ...namedModelRouting,
+          agent: agentConfigKey,
+          config: executorCtx.jevRouting,
+          chain: configuredAgentModelChain(agentOverride),
+          available,
+          unavailable,
+        })
+      : undefined
+  const canonicalModels = plan ? [...plan.models] : configuredModels
   const firstEntry = canonicalModels?.[0]
   const explicitModel =
     (typeof firstEntry === "string" ? firstEntry : firstEntry?.model) ??
@@ -64,7 +85,6 @@ export async function resolveSubagentModel(
     canonicalModels?.slice(1) ?? agentOverride?.fallback_models ?? agentCategoryConfig?.fallback_models,
   )
 
-  const available = await getAvailableModelsForDelegateTask(executorCtx.client)
   const availableModels = executorCtx.requiredModel
     ? new Set([...available].filter((model) => model === executorCtx.requiredModel))
     : available
@@ -83,7 +103,7 @@ export async function resolveSubagentModel(
         availableModels,
         systemDefaultModel: undefined,
       },
-      await getNativeUnavailableModels(executorCtx.client),
+      unavailable,
     )
 
     const resolutionSkipped = resolution && "skipped" in resolution
@@ -175,7 +195,7 @@ export async function resolveSubagentModel(
     categoryModel = { ...categoryModel, reasoning }
   }
 
-  return { categoryModel, fallbackChain }
+  return { categoryModel, fallbackChain, namedModelDecision: plan?.decision }
 }
 
 // Proactive, config-driven fallback chain for an already-resolved agent, using the same

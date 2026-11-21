@@ -1945,6 +1945,7 @@ export class BackgroundManager {
           sessionID: task.sessionId,
           promptText: task.prompt,
           fallbackChain: task.fallbackChain,
+          namedModelPlan: task.nativeMetadata?.namedModelPlan === true ? true : undefined,
           category: task.category,
           system: task.skillContent,
           tools: body.tools,
