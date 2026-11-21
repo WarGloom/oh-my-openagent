@@ -3,11 +3,11 @@ import { readFileSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 
 const installer = readFileSync(new URL("./install-v2-local.sh", import.meta.url), "utf8")
-const activation = installer.match(/^printf '%s' "\$password" \|[^\n]*\n[\s\S]*?^' \|\| fail [^\n]+/m)?.[0]
+const activation = installer.match(/^printf '%s' "\$password" \|[^\n]*\n[\s\S]*?^' [^\n]*\|\| fail [^\n]+/m)?.[0]
 const repo = resolve(import.meta.dir, "..")
 const bun = Bun.which("bun")
 
-type Reply = { readonly status: number; readonly body: string }
+type Reply = { readonly status: number; readonly body: string; readonly refused?: boolean }
 const agents = ["sisyphus", "hephaestus", "prometheus", "atlas"].map((id) => ({ id }))
 const ready = { status: 200, body: JSON.stringify({ data: agents }) }
 const credential = "fixture-private-credential"
@@ -19,6 +19,7 @@ async function runActivation(replies: readonly Reply[], cwd = repo) {
   const fixture = `
     const replies = ${JSON.stringify(replies)}
     let requests = 0
+    let agentRequests = 0
     let deadline
     let requestedDeadline
     const timeout = AbortSignal.timeout.bind(AbortSignal)
@@ -42,8 +43,12 @@ async function runActivation(replies: readonly Reply[], cwd = repo) {
       if (url.pathname.startsWith("/api/rpc/")) {
         return Response.json({ _tag: "RpcError", type: "rpc.unavailable" }, { status: 400 })
       }
+      if (url.pathname === "/api/plugin") return Response.json({ data: [
+        "/.omo/worktrees/omo-v2-dev", "/.omo/worktrees/owc-v2-tui", "/oc-codex-multi-auth",
+      ].map(path => ({ source: { type: "local", path }, state: { status: "active" } })) })
       if (url.pathname !== "/api/agent") throw new Error("Unexpected activation route")
-      const reply = replies[Math.min(requests - 1, replies.length - 1)]
+      const reply = replies[Math.min(agentRequests++, replies.length - 1)]
+      if (reply.refused) throw Object.assign(new TypeError("fixture"), { code: "ECONNREFUSED" })
       return new Response(reply.body, { status: reply.status })
     }
     process.on("exit", () => console.error("FIXTURE:" + JSON.stringify({
@@ -57,7 +62,10 @@ async function runActivation(replies: readonly Reply[], cwd = repo) {
       "/bin/bash",
       "-c",
       `
+    set -o pipefail
     repo=$1
+    evidence=$(mktemp -d)
+    trap 'rm -rf -- "$evidence"' EXIT
     ws=/fixture/workspace
     password=$(</dev/stdin)
     fail() { exit 1; }
@@ -68,7 +76,7 @@ async function runActivation(replies: readonly Reply[], cwd = repo) {
     ],
     {
       cwd,
-      env: { PATH: `${dirname(bun)}:/usr/bin:/bin` },
+      env: { PATH: `${dirname(bun)}:/usr/bin:/bin`, TMPDIR: process.env.TMPDIR },
       stdin: new Blob([credential]),
       stdout: "pipe",
       stderr: "pipe",
@@ -83,8 +91,8 @@ async function runActivation(replies: readonly Reply[], cwd = repo) {
   expect(stdout + stderr).not.toContain(credential)
   expect(stdout + stderr).not.toContain(btoa(`opencode:${credential}`))
   expect(child.signalCode).toBeNull()
-  expect(stderr).toContain('"requestedDeadline":120000')
-  return { code, stdout, stderr }
+  expect(stdout + stderr).toContain('"requestedDeadline":120000')
+  return { code, stdout: stdout.split("\n").filter((line) => line.startsWith("OMO activation check:")).join("\n"), stderr: stdout + stderr }
 }
 
 test("accepts cold delayed activation only after all four primary agents load", async () => {
@@ -99,13 +107,12 @@ test("accepts cold delayed activation only after all four primary agents load", 
   // then it accepts the complete catalog before the deadline
   expect(result.code).toBe(0)
   expect(result.stdout).toContain("primary agents 4")
-  expect(result.stderr).toContain('"requests":3')
+  expect(result.stderr).toContain('"requests":6')
   expect(result.stderr).toContain('"expired":false')
 })
 
 test.each([
   ["authentication rejection", { status: 401, body: credential }],
-  ["server failure", { status: 500, body: credential }],
   ["invalid JSON", { status: 200, body: credential }],
   ["invalid envelope", { status: 200, body: '{"data":{}}' }],
   ["invalid agent", { status: 200, body: '{"data":[null]}' }],
@@ -118,6 +125,13 @@ test.each([
   expect(result.stdout).toBe("")
   expect(result.stderr).toContain('"requests":1')
   expect(result.stderr).toContain('"expired":false')
+})
+
+test("recovers from connection refusal and a transient HTTP response", async () => {
+  const result = await runActivation([{ status: 0, body: "", refused: true }, { status: 503, body: credential }, ready])
+  expect(result.code).toBe(0)
+  expect(result.stdout).toContain("primary agents 4")
+  expect(result.stderr).toContain('"requests":4')
 })
 
 test("fails at the shared deadline when the plugin never loads", async () => {

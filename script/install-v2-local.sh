@@ -260,29 +260,45 @@ try {
 	const plugins = z.object({ data: z.array(z.object({ source: z.object({ type: z.string(), path: z.string().optional() }), state: z.object({ status: z.string() }) })) })
 	const requiredPaths = ["/.omo/worktrees/omo-v2-dev", "/.omo/worktrees/owc-v2-tui", "/oc-codex-multi-auth"]
 	const primary = [/sisyphus/i, /hephaestus/i, /prometheus/i, /atlas/i]
-	// Catalogs can be partial during async activation; use the CLI startup polling interval on the client.
-	for (;;) {
-		signal.throwIfAborted()
-		const response = await fetch(url, { headers: { authorization }, signal, redirect: "error" })
-		if (response.status !== 200) {
-			console.error(`OMO activation check failed: HTTP ${response.status}`)
-			process.exit(1)
+	let last = "catalog or plugin inventory incomplete"
+	async function request(endpoint, schema) {
+		let response
+		try {
+			response = await fetch(endpoint, { headers: { authorization }, signal, redirect: "error" })
+		} catch (error) {
+			if (error?.code !== "ECONNREFUSED") throw new Error(endpoint.pathname + ": request failed")
+			last = endpoint.pathname + ": connection refused"
+			return
 		}
-		const body = catalog.parse(await response.json())
-		const pluginResponse = await fetch(pluginUrl, { headers: { authorization }, signal, redirect: "error" })
-		if (pluginResponse.status !== 200) throw new Error(`Plugin inventory HTTP ${pluginResponse.status}`)
-		const inventory = plugins.parse(await pluginResponse.json())
-		signal.throwIfAborted()
-		if (primary.every((name) => body.data.some((agent) => name.test(agent.id))) &&
+		if (response.status !== 200) {
+			await response.body?.cancel()
+			last = endpoint.pathname + ": HTTP " + response.status
+			if ([408, 425, 429, 500, 502, 503, 504].includes(response.status)) return
+			throw new Error(last)
+		}
+		try {
+			return schema.parse(await response.json())
+		} catch {
+			throw new Error(endpoint.pathname + ": invalid response")
+		}
+	}
+	for (;;) {
+		if (signal.aborted) throw new Error("deadline expired; last observation: " + last)
+		const body = await request(url, catalog)
+		const inventory = body && await request(pluginUrl, plugins)
+		if (inventory && primary.every((name) => body.data.some((agent) => name.test(agent.id))) &&
 			requiredPaths.every((path) => inventory.data.some((plugin) => plugin.state.status === "active" && plugin.source.type === "local" && plugin.source.path?.includes(path)))) break
-		await setTimeout(25, undefined, { signal })
+		if (inventory) last = "catalog or plugin inventory incomplete"
+		try { await setTimeout(100, undefined, { signal }) } catch {
+			throw new Error("deadline expired; last observation: " + last)
+		}
 	}
 	console.log(`OMO activation check: HTTP 200; primary agents ${primary.length}; OMO/OWC/oc-codex plugins active`)
-} catch {
-	console.error("OMO activation check failed: credential, request, response, or primary agents invalid")
+} catch (error) {
+	console.error("OMO activation check failed: " + (error instanceof Error ? error.message : "unexpected error"))
 	process.exit(1)
 }
-' || fail 'OMO plugin activation was not verified.'
+' 2>&1 | tee "$evidence/activation-check.log" || fail 'OMO plugin activation was not verified.'
 unset password
 [[ $(sha256sum "$lab_config/opencode.json" "$lab_config/cli.json") == "$config_before" ]] || fail 'Launcher changed port configuration.'
 activation=0
