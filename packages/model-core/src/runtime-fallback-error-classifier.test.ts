@@ -253,6 +253,38 @@ describe("runtime fallback error classifier", () => {
     expect(retryable).toBe(true)
   })
 
+  test("#given Claude Code usage refusals streamed after HTTP 200 #when classified #then they are retryable quota exhaustion", () => {
+    // given
+    const messages = [
+      "api_error: Claude Code returned an error result: You're out of usage credits. Switch to another model, or manage usage credits at https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue.",
+      "api_error: Claude Code returned an error result: You're out of extra usage \u00b7 resets 3pm",
+      "api_error: Claude Code returned an error result: You've reached your Fable 5 limit. Switch to another model to continue.",
+    ]
+    const errors = messages.map((message) => ({
+      name: "provider.internal",
+      data: { message, statusCode: 200 },
+    }))
+
+    // when
+    const types = errors.map((error) => classifyRuntimeFallbackError(error))
+    const retryable = errors.map((error) => isRuntimeFallbackRetryableError(error, DEFAULT_RETRY_CODES))
+
+    // then
+    expect(types).toEqual(["quota_exceeded", "quota_exceeded", "quota_exceeded"])
+    expect(retryable).toEqual([true, true, true])
+  })
+
+  test("#given a configured non-quota limit #when classified #then it is not quota exhaustion", () => {
+    // given
+    const error = { name: "provider.internal", data: { message: "You have reached your configured tool call depth limit", statusCode: 200 } }
+
+    // when
+    const type = classifyRuntimeFallbackError(error)
+
+    // then
+    expect(type).toBeUndefined()
+  })
+
   test("leaves OpenCode context overflow to native compaction", () => {
     //#given
     const errors = [

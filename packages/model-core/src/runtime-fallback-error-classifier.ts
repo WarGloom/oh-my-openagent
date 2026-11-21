@@ -168,7 +168,8 @@ export function classifyRuntimeFallbackError(error: unknown): RuntimeFallbackErr
     /exhausted\s+your\s+capacity/i.test(message) ||
     /resource.?exhausted/i.test(message) ||
     /\bcapacity_limit\b/i.test(message) ||
-    /out\s+of\s+credits?/i.test(message) ||
+    /out\s+of\s+(?:usage\s+)?credits?/i.test(message) ||
+    /out\s+of\s+extra\s+usage\b/i.test(message) ||
     /payment.?required/i.test(message) ||
     /usage\s+limit/i.test(message) ||
     /weekly.?rate.?limit/i.test(message) ||
@@ -177,6 +178,7 @@ export function classifyRuntimeFallbackError(error: unknown): RuntimeFallbackErr
     /user_global_rate_limited(?::[a-z0-9_+-]+)?/i.test(message) ||
     /hit\s+your\s+limit/i.test(message) ||
     /reached\s+your\s+limit/i.test(message) ||
+    /reached\s+your\s+(?:claude\s+)?(?:fable|mythos|opus|sonnet|haiku)(?:\s+\d+(?:\.\d+)*)?\s+limit\b/i.test(message) ||
     /credit\s+balance.*too\s+low/i.test(message) ||
     /limit\s+exhausted/i.test(message) ||
     /使用上限/.test(message) ||
