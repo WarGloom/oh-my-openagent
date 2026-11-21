@@ -516,10 +516,10 @@ describe("native runtime fallback", () => {
     { type: "provider.content-filter", message: "response blocked" },
   ])("switches before native retry for $type without another user prompt", async (error) => {
     // given
-    const f = fixture()
+    const f = fixture(undefined, [], first, [hostModel("anthropic", "first"), hostModel("anthropic", "second")])
     await install(f)
     // when
-    const event = await f.fake.triggerRetry(retry(error))
+    const event = await f.fake.triggerRetry(retry(error, { exhausted: error.type === "provider.rate-limit" }))
     // then
     expect(event.decision).toEqual({ retry: true, delay: 0 })
     expect(f.fake.sessionCalls).toEqual([
@@ -555,7 +555,7 @@ describe("native runtime fallback", () => {
     await install(f)
     // when
     await f.fake.triggerRetry(
-      retry({ type: "provider.rate-limit", message: "rate limit", status: 429 }, { sessionID: "ses_child" }),
+      retry({ type: "provider.quota", message: "quota exceeded" }, { sessionID: "ses_child" }),
     )
     // then
     expect(f.fake.sessionCalls).toEqual([
@@ -575,7 +575,7 @@ describe("native runtime fallback", () => {
     })
     await install(f)
     // when
-    await f.fake.triggerRetry(retry({ type: "provider.rate-limit", message: "rate limit", status: 429 }))
+    await f.fake.triggerRetry(retry({ type: "provider.quota", message: "quota exceeded" }))
     // then
     expect(f.fake.sessionCalls).toEqual([
       {
@@ -595,7 +595,7 @@ describe("native runtime fallback", () => {
     })
     await install(f)
     // when
-    await f.fake.triggerRetry(retry({ type: "provider.rate-limit", message: "rate limit", status: 429 }))
+    await f.fake.triggerRetry(retry({ type: "provider.quota", message: "quota exceeded" }))
     // then
     expect(f.fake.sessionCalls).toEqual([
       { kind: "switchModel", sessionID: "ses_main", model: { ...second, variant: undefined } },
@@ -618,7 +618,7 @@ describe("native runtime fallback", () => {
     )
     await install(f)
     // when
-    await f.fake.triggerRetry(retry({ type: "provider.rate-limit", message: "rate limit", status: 429 }))
+    await f.fake.triggerRetry(retry({ type: "provider.quota", message: "quota exceeded" }))
     // then
     expect(f.fake.sessionCalls).toEqual([
       {
@@ -658,7 +658,7 @@ describe("native runtime fallback", () => {
     )
     // when
     await f.fake.triggerRetry(
-      retry({ type: "provider.rate-limit", message: "rate limit", status: 429 }, { sessionID: "ses_snapshot" }),
+      retry({ type: "provider.quota", message: "quota exceeded" }, { sessionID: "ses_snapshot" }),
     )
     // then
     expect(getNativeFallbackModel("ses_snapshot")).toMatchObject({
@@ -678,7 +678,7 @@ describe("native runtime fallback", () => {
     )
     await install(f)
     // when
-    const event = await f.fake.triggerRetry(retry({ type: "provider.rate-limit", message: "rate limit", status: 429 }))
+    const event = await f.fake.triggerRetry(retry({ type: "provider.quota", message: "quota exceeded" }))
     // then
     expect(event.decision).toEqual({ retry: true, delay: 0 })
     expect(f.fake.sessionCalls).toEqual([
@@ -690,7 +690,7 @@ describe("native runtime fallback", () => {
     // given
     const f = fixture()
     await install(f)
-    const error = { type: "provider.rate-limit", message: "rate limit", status: 429 }
+    const error = { type: "provider.quota", message: "quota exceeded" }
     await f.fake.triggerRetry(retry(error))
     // when
     const exhausted = await f.fake.triggerRetry(retry(error, { model: second, attempt: 3, decision: { retry: false } }))

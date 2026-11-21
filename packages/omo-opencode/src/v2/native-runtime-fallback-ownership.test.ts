@@ -11,7 +11,7 @@ import { bindNativeRuntimeFallback, installNativeRuntimeFallback } from "./nativ
 import { createSessionTracker } from "./session-tracker"
 
 const first = { providerID: "anthropic", id: "first" }
-const error = { type: "provider.rate-limit", message: "Rate limit reached", status: 429 }
+const error = { type: "provider.quota", message: "Quota exhausted", status: 402 }
 const cleanups: Array<() => void | Promise<void>> = []
 let nextSession = 0
 
