@@ -29608,7 +29608,7 @@
               "type": "string",
               "minLength": 1
             },
-            "named_agent_models": {
+            "named_agent_tiers": {
               "type": "object",
               "propertyNames": {
                 "type": "string"
@@ -29616,27 +29616,24 @@
               "additionalProperties": {
                 "type": "object",
                 "properties": {
-                  "candidates": {
-                    "minItems": 2,
-                    "maxItems": 8,
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "pattern": "^[^\\s/#]+\\/[^\\s#]+$"
-                    }
+                  "role": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 300
                   },
-                  "suitability": {
-                    "type": "object",
-                    "propertyNames": {
-                      "type": "string"
-                    },
-                    "additionalProperties": {
-                      "type": "string"
-                    }
+                  "lighter": {
+                    "type": "string",
+                    "pattern": "^[^\\s/#]+\\/[^\\s#]+$"
+                  },
+                  "stronger": {
+                    "type": "string",
+                    "pattern": "^[^\\s/#]+\\/[^\\s#]+$"
                   }
                 },
                 "required": [
-                  "candidates"
+                  "role",
+                  "lighter",
+                  "stronger"
                 ],
                 "additionalProperties": false
               }

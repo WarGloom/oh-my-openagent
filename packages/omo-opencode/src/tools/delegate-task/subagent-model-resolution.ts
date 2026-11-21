@@ -56,7 +56,7 @@ export async function resolveSubagentModel(
           ),
         ]
       : [...chainConfig.models]
-  const declarations = executorCtx.jevRouting?.named_agent_models
+  const declarations = executorCtx.jevRouting?.named_agent_tiers
   const useNamedPlan = namedModelRouting && declarations && Object.hasOwn(declarations, agentConfigKey)
   const available = await getAvailableModelsForDelegateTask(
     executorCtx.client,

@@ -50,7 +50,7 @@ describe("V2 native subagent OMO model overrides", () => {
       using fetchMock = spyOn(globalThis, "fetch").mockImplementation(async () =>
         Response.json({
           model: "jev-test",
-          answers: { tier_0: { type: "noul", noul: 0.4 }, tier_1: { type: "noul", noul: 0.95 } },
+          answers: { unknown_cause: { type: "noul", noul: 0.71 }, cross_component: { type: "noul", noul: 0.1 }, open_decision: { type: "noul", noul: 0.1 }, specified_method: { type: "noul", noul: 0.9 } },
         }),
       )
       const hooks: Hooks = {}
@@ -59,7 +59,7 @@ describe("V2 native subagent OMO model overrides", () => {
         { [agent]: { model: primary, fallback_models: [other] } },
         JevRoutingConfigSchema.parse({
           mode: "active",
-          named_agent_models: { [agent]: { candidates: [primary, other] } },
+          named_agent_tiers: { [agent]: { role: "Review Rust evidence.", lighter: primary, stronger: other } },
         }),
       )
       const dispose = await installHooks(context, hooks, { warn: () => {} })

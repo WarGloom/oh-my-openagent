@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto"
 import type { JevRoutingConfig } from "../../config/schema"
 import type { FallbackModelObject } from "../../config/schema/fallback-models"
 import { parseModelString } from "../../shared/model-string-parser"
-import { selectCandidateWithJev, type SuitabilityDecision } from "./jev-routing"
+import { briefTier, judgeNamedAgentBrief } from "./named-agent-brief-judgments"
 import type { JevDecisionRecord } from "./jev-routing-ledger"
 
 import type { AgentOverrides } from "../../config/schema"
@@ -42,7 +42,7 @@ export async function planNamedAgentModels(
   },
 ): Promise<{ readonly models: readonly Entry[]; readonly decision: JevDecisionRecord } | undefined> {
   const { agent, config, chain, available, unavailable, brief } = input
-  const declarations = config?.named_agent_models
+  const declarations = config?.named_agent_tiers
   if (!config || config.mode === "off" || !declarations || !Object.hasOwn(declarations, agent)) return undefined
   const declaration = declarations[agent]
   if (!declaration) return undefined
@@ -56,37 +56,17 @@ export async function planNamedAgentModels(
   const primary = chain[0] === undefined ? undefined : namedModelID(chain[0])
   const fallback = [...entries.keys()].find(isAvailable) ?? primary
   if (!fallback) return undefined
-  const valid = declaration.candidates.every((id) => entries.has(id))
-  const candidates = valid ? declaration.candidates.filter(isAvailable) : []
-  let result: SuitabilityDecision | undefined
+  const valid = entries.has(declaration.lighter) && entries.has(declaration.stronger)
+  const result =
+    valid && isAvailable(declaration.lighter) && isAvailable(declaration.stronger)
+      ? await judgeNamedAgentBrief({ role: declaration.role, brief, config, signal: input.signal })
+      : undefined
   const selected =
-    candidates.length > 1
-      ? await selectCandidateWithJev({
-          config,
-          kind: "model",
-          brief,
-          fallback,
-          signal: input.signal,
-          candidates: candidates.map((name) => ({
-            name,
-            description:
-              declaration.suitability?.[name] ??
-              "Configured for this agent; assess fit for this task's scope and reasoning demands.",
-          })),
-          onDecision: (decision) => {
-            result = decision
-          },
-        })
-      : fallback
+    result?.kind === "answer" && config.mode === "active" ? declaration[briefTier(result.scores)] : fallback
   const chosen = entries.get(selected)
   const models = chosen ? [chosen, ...chain.filter((entry) => namedModelID(entry) !== selected)] : chain
   const hash = (text: string) => createHash("sha256").update(text).digest("hex")
-  const status = result?.status
-  const error = !valid
-    ? "invalid_config"
-    : status === "oversized_request" || status === "http_error" || status === "malformed" || status === "unavailable"
-      ? status
-      : null
+  const error = !valid ? "invalid_config" : result?.kind === "error" ? result.error : null
   const decision: JevDecisionRecord = {
     schema_version: 1,
     event_id: randomUUID(),
@@ -102,14 +82,15 @@ export async function planNamedAgentModels(
     named_model: {
       agent,
       selected_model: selected,
-      action: status === "selected" ? "automatic" : "default",
+      action: result?.kind === "answer" && config.mode === "active" ? "automatic" : "default",
+      request_payload: result?.requestPayload,
       fallback_plan: models.slice(1).flatMap((entry) => namedModelID(entry) ?? []),
     },
     top1: null,
     top2: null,
-    answers: result?.scores ?? null,
+    answers: result?.kind === "answer" ? result.scores : null,
     artifact_id: null,
-    jev_model_id: result?.routerModel ?? null,
+    jev_model_id: result?.kind === "answer" ? result.model : null,
     latency_ms: result?.latencyMs ?? 0,
     input_tokens: null,
     backend: result?.backend ?? (process.env[config.api_key_env] ? "typesafe" : "zen"),

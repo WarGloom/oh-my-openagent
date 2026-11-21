@@ -102,7 +102,7 @@ export async function installNativeSubagentModel(
       await recordJevRouting(plan.decision)
     }
   })
-  if (!routing?.named_agent_models || !context.session.supportsNativeSubagentAdmission) return before
+  if (!routing?.named_agent_tiers || !context.session.supportsNativeSubagentAdmission) return before
   const admitted = await context.session.hook("experimental.subagent.admitted", (event) => {
     const key = callKey(event.parentSessionID, event.messageID, event.toolCallID)
     const plan = pending.get(key)

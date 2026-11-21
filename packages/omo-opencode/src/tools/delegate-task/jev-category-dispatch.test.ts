@@ -131,7 +131,7 @@ describe("Jev task dispatch", () => {
         ? new Response(null, { status: 503 })
         : Response.json({
             model: "jev-test",
-            answers: { tier_0: { type: "noul", noul: 0.71 }, tier_1: { type: "noul", noul: 0.95 } },
+            answers: { unknown_cause: { type: "noul", noul: 0.71 }, cross_component: { type: "noul", noul: 0.1 }, open_decision: { type: "noul", noul: 0.1 }, specified_method: { type: "noul", noul: 0.9 } },
           }),
     )
     if ("coldPrimary" in row)
@@ -147,11 +147,11 @@ describe("Jev task dispatch", () => {
         agentOverrides: { [worker]: { models } },
         jevRouting: {
           ...routing,
-          named_agent_models:
+          named_agent_tiers:
             "undeclared" in row
               ? undefined
               : {
-                  [worker]: { candidates: models.slice(0, 2) },
+                  [worker]: { role: "Audit evidence.", lighter: "example/default", stronger: "other/backup" },
                 },
         },
       }),
@@ -174,12 +174,12 @@ describe("Jev task dispatch", () => {
       expect(request?.fallbackChain?.map((entry) => entry.model)).toEqual(["default", "visual"])
       expect(ledgerRows()).toContainEqual(
         expect.objectContaining({
-          named_model: {
+          named_model: expect.objectContaining({
             agent: worker,
             selected_model: "other/backup",
             action: "automatic",
             fallback_plan: ["example/default", "example/visual"],
-          },
+          }),
         }),
       )
     }

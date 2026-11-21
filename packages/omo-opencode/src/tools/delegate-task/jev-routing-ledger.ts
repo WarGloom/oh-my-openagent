@@ -31,6 +31,7 @@ const DecisionSchema = z
         selected_model: identifier.nullable(),
         action: z.enum(["automatic", "default"]),
         fallback_plan: z.array(identifier),
+        request_payload: z.string().max(32768).optional(),
       })
       .strict()
       .optional(),
