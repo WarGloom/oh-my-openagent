@@ -8,11 +8,11 @@ repo=$ws/.omo/worktrees/omo-v2-dev
 host=$ws/opencode-wt/v2
 binary=$host/packages/cli/dist/cli-linux-x64/bin/opencode
 launcher=/home/nikita/.local/bin/opencode-v2-lab
-host_oid=8617addec741118b1b8b87fa019cd45ad371b119
-host_checkout_oid=8617addec741118b1b8b87fa019cd45ad371b119
-host_hash=cf2e2f6dcf1b99238bba6628c6dc206f73b92f82ca4c53059d1ae53a04493284
-old_host_hash=425694e57966170ce917025830314a21099530f005edb18a7c1569e9ec105120
-host_candidate=/tmp/opencode/v2-bin-20261121T022037Z/cli-linux-x64/bin/opencode
+host_oid=789d0697b9786d780caceeb69acbbf1c9821cfa6
+host_checkout_oid=789d0697b9786d780caceeb69acbbf1c9821cfa6
+host_hash=89d10a5c01bee698a93cd95f3f9f72844646f0402685c3bb7b87d997a67cf6d0
+old_host_hash=cf2e2f6dcf1b99238bba6628c6dc206f73b92f82ca4c53059d1ae53a04493284
+host_candidate=/home/nikita/work/Projects/adversa/.tmp/agent-models/native-host-dev/packages/cli/dist/cli-linux-x64/bin/opencode
 paths=(dist packages/lsp-tools-mcp/dist packages/lsp-daemon/dist packages/git-bash-mcp/dist packages/shared-skills/skills)
 
 fail() {
