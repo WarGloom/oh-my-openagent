@@ -13,6 +13,21 @@ export const JevRoutingConfigSchema = z
     min_suitability: z.number().min(0).max(1).default(0.6),
     ladder: z.array(z.string().trim().min(1)).min(2).max(JEV_CATEGORY_LADDER_MAX).optional(),
     default: z.string().trim().min(1).optional(),
+    named_agent_models: z
+      .record(
+        z.string(),
+        z
+          .object({
+            candidates: z
+              .array(z.string().regex(/^[^\s/#]+\/[^\s#]+$/))
+              .min(2)
+              .max(8)
+              .refine((models) => new Set(models).size === models.length, "Model candidates must be distinct"),
+            suitability: z.record(z.string(), z.string()).optional(),
+          })
+          .strict(),
+      )
+      .optional(),
     agent_ladders: z
       .record(
         z.string(),

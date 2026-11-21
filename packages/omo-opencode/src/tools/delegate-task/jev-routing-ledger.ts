@@ -21,10 +21,19 @@ const DecisionSchema = z
     event: z.literal("decision"),
     parent_session_id: identifier.nullable(),
     parent_decision_id: z.uuid().nullable(),
-    surface: z.enum(["task", "team", "ladder"]),
+    surface: z.enum(["task", "team", "ladder", "subagent"]),
     mode: z.enum(["active", "observe"]),
     orchestrator_category: category,
     chosen_category: category.nullable(),
+    named_model: z
+      .object({
+        agent: identifier,
+        selected_model: identifier.nullable(),
+        action: z.enum(["automatic", "default"]),
+        fallback_plan: z.array(identifier),
+      })
+      .strict()
+      .optional(),
     top1: ranking.nullable(),
     top2: ranking.nullable(),
     answers: z.record(z.string(), z.union([probability, z.array(probability)])).nullable(),

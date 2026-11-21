@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { MODEL } from "./jev-router-model"
 import type { AgentOverrides, CategoriesConfig, JevRoutingConfig } from "../../config/schema"
 import { log } from "../../shared/logger"
 import { mergeCategories } from "../../shared/merge-categories"
@@ -31,6 +32,22 @@ const JevResponseSchema = z.object({
 })
 
 type Candidate = { readonly name: string; readonly description: string }
+export type SuitabilityDecision = {
+  readonly status:
+    | "disabled"
+    | "oversized_request"
+    | "http_error"
+    | "malformed"
+    | "unavailable"
+    | "selected"
+    | "observed"
+    | "below_threshold"
+  readonly backend: "typesafe" | "zen"
+  readonly scores: Record<string, number>
+  readonly latencyMs: number
+  readonly routerModel: string | null
+}
+
 type SelectorInput = {
   readonly brief: string
   readonly config: JevRoutingConfig
@@ -38,7 +55,8 @@ type SelectorInput = {
   readonly fallback: string
   readonly modelRouting?: false
   readonly signal?: AbortSignal
-  readonly kind: "tier" | "agent" | "skill"
+  readonly kind: "tier" | "agent" | "skill" | "model"
+  readonly onDecision?: (decision: SuitabilityDecision) => void
 }
 
 export type AgentLadderContext = {
@@ -143,7 +161,8 @@ async function selectCandidatesWithJev(input: SelectorInput): Promise<string[]> 
   const ladder = candidates.map((candidate) => candidate.name)
   const apiKey = process.env[config.api_key_env]
   const backend = apiKey ? "typesafe" : "zen"
-  let status = "disabled"
+  let status: SuitabilityDecision["status"] = "disabled"
+  let routerModel: string | null = null
   let scores: Record<string, number> = {}
   let choice: string = fallback
   const fallbackResult = kind === "skill" ? [] : [fallback]
@@ -151,12 +170,12 @@ async function selectCandidatesWithJev(input: SelectorInput): Promise<string[]> 
     if (config.mode === "off" || modelRouting === false || (kind === "skill" && config.mode !== "active"))
       return fallbackResult
     if (new TextEncoder().encode(brief).length > MAX_BRIEF_BYTES) {
-      status = "oversized_brief"
+      status = "oversized_request"
       return fallbackResult
     }
     const questions = Object.fromEntries(
       candidates.map(({ name: tier, description }, index) => {
-        const label = kind === "tier" ? "tier" : kind === "skill" ? "skill" : "agent"
+        const label = kind === "tier" ? "tier" : kind === "skill" ? "skill" : kind === "model" ? "model" : "agent"
         return [
           `tier_${index}`,
           {
@@ -164,7 +183,7 @@ async function selectCandidatesWithJev(input: SelectorInput): Promise<string[]> 
             instructions:
               kind === "skill"
                 ? `Is skill ${tier} useful for this task? ${description}`
-                : `Score whether ${label} ${tier} is suitable for the current delegation brief. ${kind === "tier" ? "Category" : "Agent"} description: ${description}. Score suitability only, not price or model capability claims.`,
+                : `Score whether ${label} ${tier} is suitable for the current delegation brief. ${kind === "tier" ? "Category" : kind === "model" ? "Model" : "Agent"} description: ${description}. Score suitability only, not price or model capability claims.`,
             ...(kind === "skill"
               ? {}
               : {
@@ -177,7 +196,8 @@ async function selectCandidatesWithJev(input: SelectorInput): Promise<string[]> 
         ]
       }),
     )
-    const body = JSON.stringify({ model: apiKey ? config.model : JEV_MODEL, state: brief, questions })
+    const requestModel = kind === "model" && config.model === "jev-latest" ? MODEL : config.model
+    const body = JSON.stringify({ model: apiKey ? requestModel : JEV_MODEL, state: brief, questions })
     if (new TextEncoder().encode(body).length > (kind === "skill" ? 65536 : MAX_REQUEST_BYTES)) {
       status = "oversized_request"
       return fallbackResult
@@ -236,13 +256,16 @@ async function selectCandidatesWithJev(input: SelectorInput): Promise<string[]> 
       status = "malformed"
       return fallbackResult
     }
+    routerModel = parsed.data.model
     scores = Object.fromEntries(ladder.map((tier, index) => [tier, parsed.data.answers[`tier_${index}`]?.noul ?? 0]))
     if (kind === "skill") {
       status = "selected"
       return ladder.filter((name) => (scores[name] ?? 0) >= 0.7)
     }
-    choice = ladder.find((tier) => (scores[tier] ?? 0) >= config.min_suitability) ?? fallback
-    status = config.mode === "active" ? "selected" : "observed"
+    const ordered = kind === "model" ? ladder.toSorted((a, b) => (scores[b] ?? 0) - (scores[a] ?? 0)) : ladder
+    const eligible = ordered.find((tier) => (scores[tier] ?? 0) >= config.min_suitability)
+    choice = eligible ?? fallback
+    status = config.mode === "observe" ? "observed" : !eligible && kind === "model" ? "below_threshold" : "selected"
     return [config.mode === "active" ? choice : fallback]
   } catch {
     status = "unavailable"
@@ -256,5 +279,6 @@ async function selectCandidatesWithJev(input: SelectorInput): Promise<string[]> 
       latency_ms: Math.round(performance.now() - started),
     })
     signal?.throwIfAborted()
+    input.onDecision?.({ status, backend, scores, routerModel, latencyMs: performance.now() - started })
   }
 }

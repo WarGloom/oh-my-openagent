@@ -8952,6 +8952,39 @@
           "type": "string",
           "minLength": 1
         },
+        "named_agent_models": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "candidates": {
+                "minItems": 2,
+                "maxItems": 8,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[^\\s/#]+\\/[^\\s#]+$"
+                }
+              },
+              "suitability": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "candidates"
+            ],
+            "additionalProperties": false
+          }
+        },
         "agent_ladders": {
           "type": "object",
           "propertyNames": {
