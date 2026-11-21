@@ -3,7 +3,7 @@ import type { JevRoutingConfig } from "../../config/schema"
 import type { FallbackModelObject } from "../../config/schema/fallback-models"
 import { parseModelString } from "../../shared/model-string-parser"
 import { briefTier, judgeNamedAgentBrief } from "./named-agent-brief-judgments"
-import type { JevDecisionRecord } from "./jev-routing-ledger"
+import { recordNamedRoutingSkip, type NamedSkipReason, type JevDecisionRecord } from "./jev-routing-ledger"
 
 import type { AgentOverrides } from "../../config/schema"
 import { normalizeFallbackModels } from "../../shared/model-resolver"
@@ -43,9 +43,13 @@ export async function planNamedAgentModels(
 ): Promise<{ readonly models: readonly Entry[]; readonly decision: JevDecisionRecord } | undefined> {
   const { agent, config, chain, available, unavailable, brief } = input
   const declarations = config?.named_agent_tiers
-  if (!config || config.mode === "off" || !declarations || !Object.hasOwn(declarations, agent)) return undefined
-  const declaration = declarations[agent]
-  if (!declaration) return undefined
+  const declaration = declarations && Object.hasOwn(declarations, agent) ? declarations[agent] : undefined
+  const skip = (reason: NamedSkipReason) =>
+    recordNamedRoutingSkip({ agent, surface: input.surface ?? "task", parentSessionID: input.parentSessionID, reason })
+  if (!config || !declaration || config.mode === "off") {
+    await skip(declaration ? "pinned_by_rule" : "no_opt_in")
+    return undefined
+  }
   const entries = new Map(
     chain.flatMap((entry) => {
       const id = namedModelID(entry)
@@ -55,7 +59,10 @@ export async function planNamedAgentModels(
   const isAvailable = (id: string) => available.has(id) && !unavailable?.has(id)
   const primary = chain[0] === undefined ? undefined : namedModelID(chain[0])
   const fallback = [...entries.keys()].find(isAvailable) ?? primary
-  if (!fallback) return undefined
+  if (!fallback) {
+    await skip("no_available_pair")
+    return undefined
+  }
   const valid = entries.has(declaration.lighter) && entries.has(declaration.stronger)
   const result =
     valid && isAvailable(declaration.lighter) && isAvailable(declaration.stronger)
@@ -67,6 +74,15 @@ export async function planNamedAgentModels(
   const models = chosen ? [chosen, ...chain.filter((entry) => namedModelID(entry) !== selected)] : chain
   const hash = (text: string) => createHash("sha256").update(text).digest("hex")
   const error = !valid ? "invalid_config" : result?.kind === "error" ? result.error : null
+  const skipReason = !result
+    ? "no_available_pair"
+    : result.kind === "error"
+      ? result.error === "oversized_request"
+        ? "oversized_request"
+        : "router_failure"
+      : config.mode !== "active"
+        ? "pinned_by_rule"
+        : undefined
   const decision: JevDecisionRecord = {
     schema_version: 1,
     event_id: randomUUID(),
@@ -83,6 +99,7 @@ export async function planNamedAgentModels(
       agent,
       selected_model: selected,
       action: result?.kind === "answer" && config.mode === "active" ? "automatic" : "default",
+      skip_reason: skipReason,
       request_payload: result?.requestPayload,
       fallback_plan: models.slice(1).flatMap((entry) => namedModelID(entry) ?? []),
     },

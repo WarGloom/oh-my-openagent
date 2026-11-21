@@ -170,6 +170,18 @@ describe("Jev task dispatch", () => {
     const request = launch.mock.calls[0]?.[0]
     expect(request).toMatchObject({ agent: worker, model: { modelID: row.expected } })
     expect(fetchSpy).toHaveBeenCalledTimes(row.calls)
+    const reason = "required_model" in row ? "explicit_model" : "model_routing" in row ? "opt_out" : "undeclared" in row ? "no_opt_in" : undefined
+    if (reason) {
+      const skips = ledgerRows().filter((entry) => entry.event === "named_skip")
+      expect(skips).toEqual([expect.objectContaining({ surface: "task", agent: worker, reason })])
+      expect(JSON.stringify(skips)).not.toContain("Compare the two audit results.")
+    }
+    if ("offline" in row || "coldPrimary" in row) {
+      expect(ledgerRows()).toContainEqual(expect.objectContaining({
+        error: "offline" in row ? "http_error" : null,
+        named_model: expect.objectContaining({ skip_reason: "offline" in row ? "router_failure" : "no_available_pair" }),
+      }))
+    }
     if (row.label === "selected an available model") {
       expect(request?.fallbackChain?.map((entry) => entry.model)).toEqual(["default", "visual"])
       expect(ledgerRows()).toContainEqual(

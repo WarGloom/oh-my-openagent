@@ -1,3 +1,4 @@
+import { recordNamedRoutingSkip } from "./jev-routing-ledger"
 import type { DelegateTaskArgs, ToolContextWithMetadata } from "./types"
 import type { ExecutorContext, ParentContext } from "./executor-types"
 import { publishToolMetadata } from "../../features/tool-metadata-store"
@@ -90,6 +91,13 @@ export async function executeBackgroundContinuation(
       }
       task = await manager.resume(resumeInput)
     }
+    if (!task.category)
+      await recordNamedRoutingSkip({
+        agent: task.agent,
+        surface: "task",
+        parentSessionID: parentContext.sessionID,
+        reason: "continuation",
+      })
     const sessionId = task.sessionId
     const backgroundTaskId = task.id
     const resolvedModel = resolveMetadataModel(task.model, parentContext.model)

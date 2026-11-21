@@ -1,3 +1,4 @@
+import { recordNamedRoutingSkip } from "./jev-routing-ledger"
 import type { DelegateTaskArgs, ToolContextWithMetadata } from "./types"
 import type { ExecutorContext, ParentContext, SessionMessage } from "./executor-types"
 import { getDeliverableTag, isPlanFamily } from "./constants"
@@ -186,6 +187,13 @@ export async function executeSyncContinuation(
         return `Session ${continuationID} no longer exists; cannot resume this session. Start a new task using saved task context.`
       }
       resumeAgent = resumeContext.resumeAgent
+      if (resumeAgent && !args.category && !retainedTask?.category)
+        await recordNamedRoutingSkip({
+          agent: resumeAgent,
+          surface: "task",
+          parentSessionID: parentContext.sessionID,
+          reason: "continuation",
+        })
       resumeModel = resumeContext.resumeModel
       resumeVariant = resumeContext.resumeVariant
       anchorMessageCount = resumeContext.anchorMessageCount

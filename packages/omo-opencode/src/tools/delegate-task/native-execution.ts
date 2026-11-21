@@ -1,3 +1,4 @@
+import { recordNamedRoutingSkip } from "./jev-routing-ledger"
 import type { DelegateTaskArgs, ToolContextWithMetadata, DelegatedModelConfig } from "./types"
 import type { ExecutorContext, ParentContext } from "./executor-types"
 import type { FallbackEntry } from "../../shared/model-requirements"
@@ -37,6 +38,13 @@ export async function executeNativeDelegate(input: {
   try {
     const existing = continuation?.task
     const agent = existing?.agent ?? stripAgentListSortPrefix(input.agent ?? "")
+    if (existing && !existing.category)
+      await recordNamedRoutingSkip({
+        agent,
+        surface: "task",
+        parentSessionID: parent.sessionID,
+        reason: "continuation",
+      })
     const retainedModel = requiredModelFromMetadata(existing?.nativeMetadata)
     assertRequiredModel(retainedModel, args.required_model ?? retainedModel)
     const requiredModel = retainedModel ?? args.required_model

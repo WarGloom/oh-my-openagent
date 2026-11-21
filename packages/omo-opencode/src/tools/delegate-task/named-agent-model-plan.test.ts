@@ -90,7 +90,7 @@ test("does not truncate an oversized brief or send it externally", async () => {
   expect(plan?.decision).toMatchObject({
     error: "oversized_request",
     answers: null,
-    named_model: { action: "default" },
+    named_model: { action: "default", skip_reason: "oversized_request" },
   })
   expect(plan?.decision.named_model?.request_payload).toBeUndefined()
 })

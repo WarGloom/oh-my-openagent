@@ -1,4 +1,4 @@
-import { recordJevRouting } from "./jev-routing-ledger"
+import { recordJevRouting, recordNamedRoutingSkip } from "./jev-routing-ledger"
 import { tool, type ToolDefinition } from "@opencode-ai/plugin"
 import type { DelegatedModelConfig, ToolContextWithMetadata, DelegateTaskToolOptions } from "./types"
 import { log } from "../../shared/logger"
@@ -101,6 +101,19 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
       }
       const skillsOmitted = args.load_skills === undefined
       const delegateTaskArgs = await prepareDelegateTaskArgs(args, originalContext)
+      const named = !delegateTaskArgs.category && delegateTaskArgs.subagent_type
+      if (
+        named &&
+        !delegateTaskArgs.task_id &&
+        (delegateTaskArgs.required_model || delegateTaskArgs.model_routing === false)
+      ) {
+        await recordNamedRoutingSkip({
+          agent: named,
+          surface: "task",
+          parentSessionID: originalContext.sessionID,
+          reason: delegateTaskArgs.required_model ? "explicit_model" : "opt_out",
+        })
+      }
       if (delegateTaskArgs.required_model && !options.manager.nativeJobs)
         throw new ExecutorRequirementError("unsupported_execution")
       if (
@@ -356,6 +369,19 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
           )
         }
       } else {
+        if (
+          delegateTaskArgs.requested_subagent_type !== delegateTaskArgs.subagent_type &&
+          !delegateTaskArgs.required_model &&
+          delegateTaskArgs.model_routing !== false &&
+          delegateTaskArgs.subagent_type
+        ) {
+          await recordNamedRoutingSkip({
+            agent: delegateTaskArgs.subagent_type,
+            surface: "task",
+            parentSessionID: ctx.sessionID,
+            reason: "pinned_by_rule",
+          })
+        }
         const resolution = await resolveSubagentExecution(
           delegateTaskArgs,
           { ...modelOptions, requiredModel: delegateTaskArgs.required_model },

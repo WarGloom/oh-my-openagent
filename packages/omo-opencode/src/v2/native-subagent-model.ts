@@ -6,7 +6,11 @@ import { parseModelString } from "../shared/model-string-parser"
 import { transformModelForProvider } from "../shared/provider-model-id-transform"
 import { buildFallbackChainFromModels } from "../shared/fallback-chain-from-models"
 import { registerDelegatedChildSessionBootstrap } from "../shared/delegated-child-session-bootstrap"
-import { recordJevRouting } from "../tools/delegate-task/jev-routing-ledger"
+import {
+  recordJevRouting,
+  recordNamedRoutingSkip,
+  type NamedSkipReason,
+} from "../tools/delegate-task/jev-routing-ledger"
 import { configuredAgentModelChain, planNamedAgentModels } from "../tools/delegate-task/named-agent-model-plan"
 import type { V2PluginContext, V2Registration } from "./context-types"
 
@@ -27,7 +31,6 @@ export async function installNativeSubagentModel(
   context: V2PluginContext,
   hooks: Hooks,
 ): Promise<V2Registration | undefined> {
-  if (!agentModelOverrides.has(hooks)) return undefined
   // The host's markdown-agent transform runs after external plugins; override new dispatches instead.
   const routing = routingConfigs.get(hooks)
   const maxPendingAdmissions = 256
@@ -46,11 +49,30 @@ export async function installNativeSubagentModel(
     if (event.tool !== "subagent") return
     const input = event.input
     if (typeof input !== "object" || input === null || Array.isArray(input)) return
-    if ("model" in input || "sessionID" in input || !("agent" in input) || typeof input.agent !== "string") return
+    if (!("agent" in input) || typeof input.agent !== "string" || !input.agent.trim()) return
     const agentKey = getAgentConfigKey(input.agent)
+    const skip = (reason: NamedSkipReason) =>
+      recordNamedRoutingSkip({ agent: agentKey, surface: "subagent", parentSessionID: event.sessionID, reason })
+    if ("sessionID" in input || "model" in input) {
+      await skip("sessionID" in input ? "continuation" : "explicit_model")
+      return
+    }
     const override = Object.entries(agentModelOverrides.get(hooks) ?? {}).find(
       ([id]) => getAgentConfigKey(id) === agentKey,
     )?.[1]
+    const declarations = routing?.named_agent_tiers
+    const declared = declarations && Object.hasOwn(declarations, agentKey)
+    const reason =
+      "model_routing" in input && input.model_routing === false
+        ? "opt_out"
+        : !declared
+          ? "no_opt_in"
+          : !context.session.supportsNativeSubagentAdmission || override?.models_distribution === "round_robin"
+            ? "pinned_by_rule"
+            : !override?.model && !override?.models?.length
+              ? "no_available_pair"
+              : undefined
+    if (reason) await skip(reason)
     if (!override?.model && !override?.models?.length) return
     const models = (await context.model.list()).data
     if (pending.size >= maxPendingAdmissions) {
@@ -58,6 +80,7 @@ export async function installNativeSubagentModel(
       for (const [key, pendingPlan] of pending) if (pendingPlan.expiresAt <= now) pending.delete(key)
     }
     const plan =
+      !reason &&
       routing &&
       context.session.supportsNativeSubagentAdmission &&
       pending.size < maxPendingAdmissions &&
@@ -75,6 +98,13 @@ export async function installNativeSubagentModel(
             available: new Set(models.map((model) => model.providerID + "/" + model.modelID)),
           })
         : undefined
+    if (
+      !reason &&
+      !plan &&
+      (pending.size >= maxPendingAdmissions || !("prompt" in input) || typeof input.prompt !== "string")
+    )
+      await skip("pinned_by_rule")
+    if (plan) await recordJevRouting(plan.decision)
     const head = plan?.models[0]
     const primary = typeof head === "string" ? head : (head?.model ?? override?.model)
     const parsed = primary ? parseModelString(primary) : undefined
@@ -99,7 +129,6 @@ export async function installNativeSubagentModel(
         expiresAt: Date.now() + pendingAdmissionLifetimeMs,
         fallbacks: buildFallbackChainFromModels(plan.models.slice(1), parsed.providerID),
       })
-      await recordJevRouting(plan.decision)
     }
   })
   if (!routing?.named_agent_tiers || !context.session.supportsNativeSubagentAdmission) return before

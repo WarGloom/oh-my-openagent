@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { constants } from "node:fs"
 import { mkdir, open, readdir } from "node:fs/promises"
 import { join } from "node:path"
@@ -15,6 +16,28 @@ const common = {
   timestamp: z.iso.datetime(),
   decision_id: z.uuid(),
 }
+const NamedSkipReasonSchema = z.enum([
+  "no_opt_in",
+  "explicit_model",
+  "opt_out",
+  "continuation",
+  "pinned_by_rule",
+  "no_available_pair",
+  "oversized_request",
+  "router_failure",
+])
+const NamedSkipSchema = z
+  .object({
+    ...common,
+    event: z.literal("named_skip"),
+    agent: identifier,
+    surface: z.enum(["task", "subagent"]),
+    parent_session_id: identifier.nullable(),
+    reason: NamedSkipReasonSchema,
+  })
+  .strict()
+export type NamedSkipReason = z.infer<typeof NamedSkipReasonSchema>
+
 const DecisionSchema = z
   .object({
     ...common,
@@ -30,6 +53,7 @@ const DecisionSchema = z
         agent: identifier,
         selected_model: identifier.nullable(),
         action: z.enum(["automatic", "default"]),
+        skip_reason: NamedSkipReasonSchema.optional(),
         fallback_plan: z.array(identifier),
         request_payload: z.string().max(32768).optional(),
       })
@@ -107,7 +131,7 @@ const OutcomeSchema = z
     producing_model: identifier.nullable(),
   })
   .strict()
-const RecordSchema = z.discriminatedUnion("event", [DecisionSchema, AttemptSchema, OutcomeSchema])
+const RecordSchema = z.discriminatedUnion("event", [DecisionSchema, AttemptSchema, OutcomeSchema, NamedSkipSchema])
 export type JevDecisionRecord = z.infer<typeof DecisionSchema>
 export type JevRoutingRecord = z.infer<typeof RecordSchema>
 
@@ -154,4 +178,23 @@ export async function appendJevRoutingRecord(record: JevRoutingRecord): Promise<
 
 export function recordJevRouting(record: JevRoutingRecord): Promise<void> {
   return appendJevRoutingRecord(record).catch(() => warnJevRouting("ledger_write_failures"))
+}
+
+export function recordNamedRoutingSkip(input: {
+  readonly agent: string
+  readonly surface: "task" | "subagent"
+  readonly parentSessionID?: string
+  readonly reason: NamedSkipReason
+}): Promise<void> {
+  return recordJevRouting({
+    schema_version: 1,
+    event: "named_skip",
+    timestamp: new Date().toISOString(),
+    decision_id: randomUUID(),
+    event_id: randomUUID(),
+    agent: input.agent,
+    surface: input.surface,
+    parent_session_id: input.parentSessionID ?? null,
+    reason: input.reason,
+  })
 }

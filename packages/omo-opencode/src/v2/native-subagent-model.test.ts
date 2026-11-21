@@ -1,3 +1,4 @@
+import { getJevLedgerDirectory } from "../tools/delegate-task/jev-routing-ledger"
 import { describe, expect, spyOn, test } from "bun:test"
 import * as fs from "node:fs"
 import type { Hooks } from "@opencode-ai/plugin"
@@ -32,7 +33,7 @@ const hostModel: V2ModelInfo = {
 }
 
 describe("V2 native subagent OMO model overrides", () => {
-  test.each(["routed", "unavailable", "old-host", "explicit", "opt-out"] as const)(
+  test.each(["routed", "unavailable", "old-host", "explicit", "opt-out", "continuation"] as const)(
     "preserves native admission for %s",
     async (scenario) => {
       const other = "openai/gpt-6-luna"
@@ -50,7 +51,12 @@ describe("V2 native subagent OMO model overrides", () => {
       using fetchMock = spyOn(globalThis, "fetch").mockImplementation(async () =>
         Response.json({
           model: "jev-test",
-          answers: { unknown_cause: { type: "noul", noul: 0.71 }, cross_component: { type: "noul", noul: 0.1 }, open_decision: { type: "noul", noul: 0.1 }, specified_method: { type: "noul", noul: 0.9 } },
+          answers: {
+            unknown_cause: { type: "noul", noul: 0.71 },
+            cross_component: { type: "noul", noul: 0.1 },
+            open_decision: { type: "noul", noul: 0.1 },
+            specified_method: { type: "noul", noul: 0.9 },
+          },
         }),
       )
       const hooks: Hooks = {}
@@ -64,10 +70,11 @@ describe("V2 native subagent OMO model overrides", () => {
       )
       const dispose = await installHooks(context, hooks, { warn: () => {} })
       const id = crypto.randomUUID()
+      const parentID = "ses_" + id
       try {
         const event = await fake.triggerToolBefore({
           tool: "subagent",
-          sessionID: "ses_parent",
+          sessionID: parentID,
           messageID: "msg_parent",
           id: "call_named",
           agent: "controller",
@@ -76,10 +83,12 @@ describe("V2 native subagent OMO model overrides", () => {
             prompt: "Compare the two source files.",
             ...(scenario === "explicit" ? { model: other } : {}),
             ...(scenario === "opt-out" ? { model_routing: false } : {}),
+            ...(scenario === "continuation" ? { sessionID: "ses_existing" } : {}),
           },
         })
         const model = scenario === "old-host" || scenario === "opt-out" ? primary : other
-        expect(event.input).toMatchObject({ model })
+        if (scenario === "continuation") expect(event.input).not.toHaveProperty("model")
+        else expect(event.input).toMatchObject({ model })
         expect(fetchMock).toHaveBeenCalledTimes(scenario === "routed" ? 1 : 0)
         await fake.triggerNativeSubagentAdmitted({
           parentSessionID: event.sessionID,
@@ -89,6 +98,34 @@ describe("V2 native subagent OMO model overrides", () => {
           agent,
           model: { providerID: alternate.providerID, id: alternate.modelID },
         })
+        const ledger = getJevLedgerDirectory()
+        const entries = fs
+          .readdirSync(ledger)
+          .filter((file) => file.endsWith(".jsonl"))
+          .flatMap((file) =>
+            fs
+              .readFileSync(join(ledger, file), "utf8")
+              .trim()
+              .split("\n")
+              .map((line) => JSON.parse(line)),
+          )
+          .filter((entry) => entry.parent_session_id === parentID)
+        const reason =
+          scenario === "old-host"
+            ? "pinned_by_rule"
+            : scenario === "explicit"
+              ? "explicit_model"
+              : scenario === "opt-out"
+                ? "opt_out"
+                : scenario === "continuation"
+                  ? "continuation"
+                  : undefined
+        if (reason) {
+          expect(entries).toEqual([
+            expect.objectContaining({ event: "named_skip", agent, surface: "subagent", reason }),
+          ])
+          expect(JSON.stringify(entries)).not.toContain("Compare the two source files.")
+        }
         const plan = getDelegatedChildSessionBootstrap(id)
         if (scenario === "routed" || scenario === "unavailable") {
           expect(plan?.fallbackChain?.map((entry) => entry.model)).toEqual([hostModel.modelID])

@@ -17,6 +17,7 @@ import { resolveModelForDelegateTask } from "./model-selection"
 import type { AgentInfo } from "./subagent-discovery"
 import type { ResolvedSubagentModel } from "./subagent-resolution-types"
 import { configuredAgentModelChain, planNamedAgentModels, type NamedAgentModelRequest } from "./named-agent-model-plan"
+import { recordNamedRoutingSkip } from "./jev-routing-ledger"
 import { distributeTaskModels } from "./models-distribution"
 
 function findAgentOverride(agentOverrides: AgentOverrides | undefined, agentConfigKey: string) {
@@ -63,6 +64,14 @@ export async function resolveSubagentModel(
     Boolean(useNamedPlan && executorCtx.manager.nativeJobs),
   )
   const unavailable = await getNativeUnavailableModels(executorCtx.client)
+  if (namedModelRouting && agentOverride?.models_distribution === "round_robin") {
+    await recordNamedRoutingSkip({
+      agent: agentConfigKey,
+      surface: "task",
+      parentSessionID: namedModelRouting.parentSessionID,
+      reason: "pinned_by_rule",
+    })
+  }
   const plan =
     namedModelRouting && !executorCtx.requiredModel && agentOverride?.models_distribution !== "round_robin"
       ? await planNamedAgentModels({
