@@ -7,6 +7,7 @@ import { routeCategoryWithJev } from "./jev-category-routing"
 import { PG_ARTIFACT, PG_ROUTER, VISUAL_GUARDED_ARTIFACT } from "./jev-router-artifacts"
 import { categoryReply, nonVisualVectors } from "./jev-router.test-support"
 import * as ledger from "./jev-routing-ledger"
+import * as health from "../../shared/jev-routing-health"
 
 describe("guarded visual routing", () => {
   const oldData = process.env.XDG_DATA_HOME
@@ -19,11 +20,13 @@ describe("guarded visual routing", () => {
   let directory: string
   let fetchSpy: ReturnType<typeof spyOn>
   let ledgerSpy: ReturnType<typeof spyOn>
+  let warningSpy: ReturnType<typeof spyOn>
   let records: ledger.JevRoutingRecord[]
   const fallback = mock(() => {})
   beforeEach(() => {
     directory = mkdtempSync(join(tmpdir(), "jev-visual-"))
     process.env.XDG_DATA_HOME = directory
+    warningSpy = spyOn(health, "warnJevRouting").mockResolvedValue(undefined)
     records = []
     fallback.mockClear()
     ledgerSpy = spyOn(ledger, "recordJevRouting").mockImplementation((record) => {
@@ -35,6 +38,7 @@ describe("guarded visual routing", () => {
   afterEach(() => {
     fetchSpy.mockRestore()
     ledgerSpy.mockRestore()
+    warningSpy.mockRestore()
     if (oldData === undefined) delete process.env.XDG_DATA_HOME
     else process.env.XDG_DATA_HOME = oldData
     rmSync(directory, { recursive: true, force: true })
