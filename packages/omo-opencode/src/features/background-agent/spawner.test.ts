@@ -246,7 +246,7 @@ describe("background-agent spawner resume guard", () => {
     const input = {
       sessionId,
       prompt: "continuation prompt",
-      parentSessionId: "parent-session-new",
+      parentSessionId: task.parentSessionId,
       parentMessageId: "parent-message-new",
     }
 
@@ -347,6 +347,8 @@ describe("background-agent spawner agent-not-found fallback", () => {
       question: false,
       team_create: false,
       team_delete: false,
+      team_add_member: false,
+      team_remove_member: false,
       team_shutdown_request: false,
       team_approve_shutdown: false,
       team_reject_shutdown: false,

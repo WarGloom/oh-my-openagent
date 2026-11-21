@@ -18,7 +18,7 @@ const selectFallbackProviderMock = mock((providers: string[]) => providers[0])
 const transformModelForProviderMock = mock((_provider: string, model: string) => model)
 
 import type { BackgroundTask } from "./types"
-import type { ConcurrencyManager } from "./concurrency"
+import { ConcurrencyManager } from "./concurrency"
 import type { OpencodeClient, QueueItem } from "./constants"
 
 const retryHandlerDeps: Partial<FallbackRetryHandlerDeps> = {
@@ -66,13 +66,13 @@ function createMockTask(overrides: Partial<BackgroundTask> = {}): BackgroundTask
   }
 }
 
-function createMockConcurrencyManager(): ConcurrencyManager {
-  return {
+function createMockConcurrencyManager() {
+  return Object.assign(new ConcurrencyManager(), {
     release: mock(() => {}),
     acquire: mock(async () => {}),
     getQueueLength: mock(() => 0),
     getActiveCount: mock(() => 0),
-  } as never
+  })
 }
 
 function createMockClient(): {

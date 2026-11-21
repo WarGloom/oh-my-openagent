@@ -2038,6 +2038,7 @@ describe("BackgroundManager.getTasksSnapshot", () => {
     //#then
     expect(first).toEqual({
       title: "inspect background task",
+      parentSessionId: "parent-session",
       status: "running",
       toolCalls: 2,
       lastTool: "glob",
@@ -2047,6 +2048,7 @@ describe("BackgroundManager.getTasksSnapshot", () => {
     expect(manager.getTasksSnapshot()).toEqual([
       {
         title: "changed internal task",
+        parentSessionId: "parent-session",
         status: "running",
         toolCalls: 2,
         lastTool: "glob",
@@ -4282,6 +4284,7 @@ describe("BackgroundManager - Non-blocking Queue Integration", () => {
       expect(firstAttempt).toEqual({
         attemptId: firstAttempt.attemptId,
         attemptNumber: 1,
+        cause: "initial",
         providerId: "openai",
         modelId: "gpt-5.6-luna-fast",
         variant: "medium",
@@ -10339,6 +10342,7 @@ describe("BackgroundManager.launch - attempt state initialization", () => {
   test("newly launched task has attempt state with attemptNumber 1 and currentAttemptID pointing at it", async () => {
     //#given
     const manager = createBackgroundManager()
+    cast<{ processKey: (key: string) => Promise<void> }>(manager).processKey = async () => {}
     cast<{
       reserveSubagentSpawn: () => Promise<{
         spawnContext: { rootSessionID: string; parentDepth: number; childDepth: number }
