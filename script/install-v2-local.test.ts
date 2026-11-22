@@ -12,10 +12,12 @@ const agents = ["sisyphus", "hephaestus", "prometheus", "atlas"].map((id) => ({ 
 const ready = { status: 200, body: JSON.stringify({ data: agents }) }
 const credential = "fixture-private-credential"
 
-async function runActivation(replies: readonly Reply[], cwd = repo) {
+async function runActivation(replies: readonly Reply[], cwd = repo, profile: "port" | "dev" = "port") {
   if (!activation) throw new Error("Installer activation block missing")
   if (!bun) throw new Error("Bun executable missing")
   // Only the embedded client runs. The shell installer and live network are never executed.
+  const target = profile === "dev" ? "http://127.0.0.1:49581" : "http://127.0.0.1:49375"
+  const plugin = profile === "dev" ? "/fixture/private-dev-omo" : "/.omo/worktrees/omo-v2-dev"
   const fixture = `
     const replies = ${JSON.stringify(replies)}
     let requests = 0
@@ -30,7 +32,7 @@ async function runActivation(replies: readonly Reply[], cwd = repo) {
     }
     globalThis.fetch = async (input, options) => {
       const url = new URL(input)
-      if (url.origin !== "http://127.0.0.1:49375" ||
+      if (url.origin !== ${JSON.stringify(target)} ||
           url.searchParams.get("location[directory]") !== "/fixture/workspace") {
         throw new Error("Unexpected activation target")
       }
@@ -44,7 +46,7 @@ async function runActivation(replies: readonly Reply[], cwd = repo) {
         return Response.json({ _tag: "RpcError", type: "rpc.unavailable" }, { status: 400 })
       }
       if (url.pathname === "/api/plugin") return Response.json({ data: [
-        "/.omo/worktrees/omo-v2-dev", "/.omo/worktrees/owc-v2-tui", "/oc-codex-multi-auth",
+        ${JSON.stringify(plugin)}, "/.omo/worktrees/owc-v2-tui", "/oc-codex-multi-auth",
       ].map(path => ({ source: { type: "local", path }, state: { status: "active" } })) })
       if (url.pathname !== "/api/agent") throw new Error("Unexpected activation route")
       const reply = replies[Math.min(agentRequests++, replies.length - 1)]
@@ -63,7 +65,9 @@ async function runActivation(replies: readonly Reply[], cwd = repo) {
       "-c",
       `
     set -o pipefail
-    repo=$1
+    canonical_repo=$1
+    repo=$2
+    activation_url=$3
     evidence=$(mktemp -d)
     trap 'rm -rf -- "$evidence"' EXIT
     ws=/fixture/workspace
@@ -73,6 +77,8 @@ async function runActivation(replies: readonly Reply[], cwd = repo) {
   `,
       "activation",
       repo,
+      plugin,
+      target,
     ],
     {
       cwd,
@@ -152,4 +158,11 @@ test("resolves activation dependencies from the repo when invoked from a foreign
   expect(result.code).toBe(0)
   expect(result.stdout).toContain("primary agents 4")
   expect(result.stderr).toContain(`"cwd":${JSON.stringify(repo)}`)
+})
+
+
+test("checks only the isolated Dev endpoint and plugin when activating Dev", async () => {
+  const result = await runActivation([ready], repo, "dev")
+  expect(result.code).toBe(0)
+  expect(result.stdout).toContain("primary agents 4")
 })
