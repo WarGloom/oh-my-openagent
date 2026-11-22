@@ -442,6 +442,18 @@ Explicit categories dispatch unchanged while their model opinion is collected in
 
 Decisions are durable JSONL records under the telemetry data directory, normally `$XDG_DATA_HOME/oh-my-opencode/jev-routing` or `~/.local/share/oh-my-opencode/jev-routing`. Files use mode 0600, one month per file, with numbered parts after 50 MiB. Old files are never deleted. Each versioned event has an event ID and decision ID. Decisions contain numeric answers, top-2 probabilities, artifact identity, model/backend identifiers, timing, usage, category choices, configuration hash, brief status, and the original task prompt's SHA-256 and byte size. Task lifecycle owners publish attempt and outcome events. Retries, replacements and continuations receive new attempt IDs under the original decision. A child whose first line is `ESCALATE: deep-high` has an escalated outcome, not a failed or retried outcome. Restart does not replay past attempt events or infer missing outcomes. The ledger contains no prompt, brief text, filesystem paths or credentials. Writes never delay dispatch. Write failures, unknown artifacts and model mismatches produce warning counters; the existing doctor Models check shows those counters.
 
+### V2 reply checks
+
+Set `[opencode].reply_check` in `.omo/omo.jsonc` to check final replies in root sessions. The default is off.
+
+- `patterns[]`: `name`, `citation`, `rule_text`, `pattern`, and optional `ignore[]`. The checker uses case-insensitive Unicode regular expressions. It excludes matches inside HTTP(S) URLs or spans matched by `ignore`. Keep patterns simple and use only trusted configuration.
+- `phrases[]`: `name`, `citation`, `rule_text`, and `phrases[]`. The checker matches case-insensitive literal text. Use this for references to earlier messages and translated terms that must remain in English.
+- `jev` (optional): `progress_only` and `missing_decision_options`, each with `name`, `citation`, `rule_text`, and `question`. Phrase each question so that yes means a violation. The checker warns at a probability of 0.7 or higher.
+
+Configure code patterns for issue and pull request identifiers, 7–40 character hex tokens, and UUID-like fact IDs. For issue references, use `ignore` to exclude Markdown links whose label includes a title. For hashes, use `ignore` to exclude inline code and code blocks. The checker does not resolve or verify titles. Set citations and rule text to the applicable local policy.
+
+If you set `jev` and provide `TYPESAFE_API_KEY`, the checker sends the **exact** reply to TypeSafe. Omit `jev` for local-only checks. The checker skips replies longer than 32,768 characters instead of truncating them. It does not send chat history or tool output. A finding queues one steer message with the cited rules and matched text; it does not start another turn or change the reply.
+
 ### Model Resolution
 
 Runtime priority:

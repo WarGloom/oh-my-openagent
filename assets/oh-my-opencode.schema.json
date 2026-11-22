@@ -9020,6 +9020,160 @@
       },
       "additionalProperties": false
     },
+    "reply_check": {
+      "type": "object",
+      "properties": {
+        "patterns": {
+          "default": [],
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "citation": {
+                "type": "string",
+                "minLength": 1
+              },
+              "rule_text": {
+                "type": "string",
+                "minLength": 1
+              },
+              "pattern": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "ignore": {
+                "default": [],
+                "maxItems": 16,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                }
+              }
+            },
+            "required": [
+              "name",
+              "citation",
+              "rule_text",
+              "pattern"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "phrases": {
+          "default": [],
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "citation": {
+                "type": "string",
+                "minLength": 1
+              },
+              "rule_text": {
+                "type": "string",
+                "minLength": 1
+              },
+              "phrases": {
+                "minItems": 1,
+                "maxItems": 32,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "name",
+              "citation",
+              "rule_text",
+              "phrases"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "jev": {
+          "type": "object",
+          "properties": {
+            "progress_only": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "citation": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "rule_text": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "question": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "name",
+                "citation",
+                "rule_text",
+                "question"
+              ],
+              "additionalProperties": false
+            },
+            "missing_decision_options": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "citation": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "rule_text": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "question": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "name",
+                "citation",
+                "rule_text",
+                "question"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "progress_only",
+            "missing_decision_options"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "claude_code": {
       "type": "object",
       "properties": {
