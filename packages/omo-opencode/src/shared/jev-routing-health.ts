@@ -31,8 +31,7 @@ async function stored(directory: string): Promise<Health> {
   }
 }
 
-export async function readJevRoutingHealth(): Promise<Health> {
-  const directory = getJevRoutingStateDirectory()
+export async function readJevRoutingHealth(directory = getJevRoutingStateDirectory()): Promise<Health> {
   const disk = await stored(directory)
   const local = pending.get(directory) ?? empty()
   return {
@@ -42,12 +41,15 @@ export async function readJevRoutingHealth(): Promise<Health> {
   }
 }
 
-export function warnJevRouting(counter: Counter): Promise<void> {
-  log("[jev-routing] routing warning", {
+export function warnJevRouting(
+  counter: Counter,
+  directory = getJevRoutingStateDirectory(),
+  ledger = "jev-routing",
+): Promise<void> {
+  log("[" + ledger + "] ledger warning", {
     severity: counter === "unknown_artifacts" ? "error" : "warning",
     reason: counter,
   })
-  const directory = getJevRoutingStateDirectory()
   const local = pending.get(directory) ?? empty()
   local[counter]++
   pending.set(directory, local)
@@ -62,6 +64,6 @@ export function warnJevRouting(counter: Counter): Promise<void> {
       local[counter]--
     })
   })().catch((error: unknown) => {
-    log("[jev-routing] health persistence failed", { error: error instanceof Error ? error.name : "unknown" })
+    log("[" + ledger + "] health persistence failed", { error: error instanceof Error ? error.name : "unknown" })
   })
 }
