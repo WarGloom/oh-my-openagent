@@ -1,6 +1,7 @@
 import { expect, spyOn, test } from "bun:test"
 import { WorkerReportCheckSchema } from "../config/schema/reply-check"
 import type { V2SessionMessage } from "./context-types"
+import { sha256, type Question } from "./reply-check-ledger"
 import { workerReportFindings } from "./worker-report-check"
 
 const exact = { name: "Worker evidence", citation: "Owner rule", rule_text: "Check exact values." }
@@ -21,17 +22,17 @@ const input = (reply: string, history: V2SessionMessage[]) => ({
   },
 })
 
-test("worker evidence checks exact verdict and number-unit pairs from current and earlier delivered reports", async () => {
+test("worker evidence checks exact verdicts and numbers beside configured unit words from current and earlier delivered reports", async () => {
   const earlier = record("PASS, 12 tests. 3 findings.", "msg_earlier")
   const current = record("Worker reported FAIL; exit: 7.", "msg_current")
-  const reply = "The worker reported APPROVE. The worker reported PASS and 12 tests. Exit 0; 12 findings."
+  const reply = "The worker reported APPROVE. The worker reported PASS and 12 tests. Exit 0; 13 findings."
   const findings = await workerReportFindings(
     config,
     input(reply, [earlier, idle("msg_previous"), current, idle("msg_finished")]),
   )
   expect(findings.map(({ provenance }) => provenance)).toEqual([
     "Not found in delivered reports: APPROVE",
-    "Not found in delivered reports: Exit 0, 12 findings",
+    "Not found in delivered reports: Exit 0, 13 findings",
   ])
   expect(
     await workerReportFindings(config, input(reply, [earlier, idle("msg_previous"), idle("msg_finished")])),
@@ -95,18 +96,45 @@ test("oversized delivery envelope sends the exact final report and records the f
     }),
   )
   try {
-    const findings = await workerReportFindings(config, input(reply, [current, idle("msg_finished")]))
+    const observed: Question[] = []
+    const findings = await workerReportFindings(config, {
+      ...input(reply, [current, idle("msg_finished")]),
+      observe: (question) => observed.push(question),
+    })
     expect(findings).toHaveLength(2)
     expect(findings[1]?.provenance).toContain("worker final message only")
     const payload = request.mock.calls[0]?.[1]?.body
+    const state = { report: final, reply, sentences: [reply] }
     expect(typeof payload === "string" && JSON.parse(payload).state).toEqual({
       report: final,
       reply,
       sentences: [reply],
     })
+    expect(observed.map((record) => record.evidence)).toEqual(
+      Array(2).fill({
+        report_message_ids: ["msg_report"],
+        report_input: "final_message",
+        state_bytes: Buffer.byteLength(JSON.stringify(state)),
+        state_sha256: sha256(JSON.stringify(state)),
+      }),
+    )
   } finally {
     request.mockRestore()
     if (old === undefined) delete process.env.TYPESAFE_API_KEY
     else process.env.TYPESAFE_API_KEY = old
   }
+})
+
+test.each([
+  ["226 passed; 31 passed; unrelated 91.", "226 тестов и 31 тест. 91 тест."],
+  ["226 тестов и 31 тест. Не относится: 91.", "226 passed, 31 passed. 91 passed."],
+])("supports numbers across configured report and reply languages: %s", async (source, reply) => {
+  const bilingual = WorkerReportCheckSchema.parse({ exact, units: ["passed", "тестов", "тест"] })
+  const findings = await workerReportFindings(
+    bilingual,
+    input(reply, [record(source, "msg_report"), idle("msg_finished")]),
+  )
+  expect(findings.map(({ provenance }) => provenance)).toEqual([
+    "Not found in delivered reports: 91 " + (reply.endsWith("тест.") ? "тест" : "passed"),
+  ])
 })

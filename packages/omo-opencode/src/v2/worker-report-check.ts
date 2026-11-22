@@ -1,13 +1,10 @@
-import { z } from "zod"
+import { observeReplyJev, replyJevPayload, type JevQuestions } from "./reply-check-jev"
+import { sha256, type CodeFinding, type Question, type Skip } from "./reply-check-ledger"
 import type { WorkerReportCheck } from "../config/schema/reply-check"
 import type { V2SessionMessage } from "./context-types"
 
 const MAX_REQUEST_BYTES = 24_000
 const MAX_SEMANTIC_SENTENCES = 24
-const HIGH = 0.7
-const scores = z.object({
-  answers: z.record(z.string(), z.object({ type: z.literal("noul"), noul: z.number().min(0).max(1) })),
-})
 const words = (values: readonly string[]) =>
   values.map((value) => value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")).join("|")
 const left = "(?<![\\p{L}\\p{N}_])"
@@ -19,7 +16,7 @@ function report(message: V2SessionMessage) {
     message.text,
   )
   if (!match?.[1]) return undefined
-  return { exact: message.text, final: match[1] }
+  return { id: message.id, exact: message.text, final: match[1] }
 }
 
 export async function workerReportFindings(
@@ -29,12 +26,18 @@ export async function workerReportFindings(
     readonly reply: string
     readonly signal: AbortSignal
     readonly warn: (message: string) => void
+    readonly observe?: (question: Question) => void
+    readonly code?: (finding: CodeFinding) => void
+    readonly mode?: (ran: boolean, skip: Skip | null) => void
   },
 ) {
   const { history, reply, signal, warn } = input
   const priorIdle = history.slice(0, -1).findLastIndex((message) => message.type === "idle")
   const current = history.slice(priorIdle + 1).flatMap((message) => report(message) ?? [])
-  if (!current.length) return []
+  if (!current.length) {
+    input.mode?.(false, "no_report_in_turn")
+    return []
+  }
   const reports = history.flatMap((message) => report(message) ?? [])
   const sentences = [...new Intl.Segmenter(undefined, { granularity: "sentence" }).segment(reply)]
     .map(({ segment }) => segment.trim())
@@ -59,7 +62,7 @@ export async function workerReportFindings(
     count
       ? [...text.matchAll(count)].map((m) => ({
           text: m[0],
-          key: (m[1] ?? m[4]) + ":" + (m[2] ?? m[3])?.toLowerCase(),
+          key: m[1] ?? m[4],
         }))
       : []
   const supportedCounts = new Set(reports.flatMap((item) => values(item.final).map((value) => value.key)))
@@ -74,7 +77,9 @@ export async function workerReportFindings(
       verdict && attribution.test(sentence)
         ? [...sentence.matchAll(verdict)].map((match) => match[0]).filter((value) => !supportedVerdicts.has(value))
         : []
-    const unsupported = [...new Set([...unsupportedCounts, ...unsupportedVerdicts])]
+    const matches = [...unsupportedCounts, ...unsupportedVerdicts]
+    const unsupported = [...new Set(matches)]
+    if (matches.length) input.code?.({ rule: config.exact.name, count: matches.length })
     return unsupported.length
       ? [
           {
@@ -86,19 +91,24 @@ export async function workerReportFindings(
       : []
   })
   const key = process.env.TYPESAFE_API_KEY
-  if (!config.jev || !key) return findings
+  if (!config.jev || !key) {
+    input.mode?.(true, config.jev ? "no_key" : "disabled")
+    return findings
+  }
   const rules = config.jev
   if (sentences.length > MAX_SEMANTIC_SENTENCES) {
+    input.mode?.(true, "reply_over_limit")
     warn("Reply check: reply exceeds the worker-report TypeSafe question limit.")
     return findings
   }
-  const questions = {
-    omitted: { type: "noul", instructions: rules.omitted },
+  const questions: JevQuestions = {
+    omitted: { key: "omitted", name: rules.omitted, instructions: rules.omitted },
     ...Object.fromEntries(
       sentences.map((_, i) => [
         "sentence_" + i,
         {
-          type: "noul",
+          key: "unsupported",
+          name: rules.unsupported,
           instructions:
             rules.unsupported +
             " Evaluate only sentence " +
@@ -108,13 +118,14 @@ export async function workerReportFindings(
       ]),
     ),
   }
+  let attempted = false
   for (const item of current) {
     if (signal.aborted) break
-    const payload = (report: string) =>
-      JSON.stringify({ model: "jev-latest", state: { report, reply, sentences }, questions })
-    const full = payload(item.exact)
+    const state = (report: string) => ({ report, reply, sentences })
+    const full = replyJevPayload(state(item.exact), questions)
     const finalOnly = Buffer.byteLength(full) > MAX_REQUEST_BYTES
-    const body = finalOnly ? payload(item.final) : full
+    const sent = state(finalOnly ? item.final : item.exact)
+    const body = finalOnly ? replyJevPayload(sent, questions) : full
     if (Buffer.byteLength(body) > MAX_REQUEST_BYTES) {
       warn("Reply check: worker report exceeds the TypeSafe input limit even without its delivery envelope.")
       continue
@@ -122,38 +133,40 @@ export async function workerReportFindings(
     const provenance = finalOnly
       ? "TypeSafe input: worker final message only (delivery envelope exceeded input limit)."
       : "TypeSafe input: exact delivered worker report."
-    try {
-      const response = await fetch("https://api.typesafe.ai/v1/systemone", {
-        method: "POST",
-        redirect: "error",
-        headers: { "content-type": "application/json", authorization: "Bearer " + key },
-        body,
-        signal: AbortSignal.any([signal, AbortSignal.timeout(3000)]),
-      })
-      if (!response.ok) {
-        await response.body?.cancel()
-        throw new Error("TypeSafe request failed")
-      }
-      const { answers } = scores.parse(await response.json())
-      if (Object.keys(questions).some((name) => !Object.hasOwn(answers, name)))
-        throw new Error("TypeSafe answer missing")
-      const rule = (name: string) => ({ name, citation: rules.citation, rule_text: rules.rule_text })
-      for (const [i, sentence] of sentences.entries()) {
-        if ((answers["sentence_" + i]?.noul ?? 0) >= HIGH)
-          findings.push({ rule: rule(rules.unsupported), text: sentence, provenance })
-      }
-      if ((answers.omitted?.noul ?? 0) >= HIGH) {
-        const sentence = sentences.find((value) => attribution.test(value)) ?? sentences[0]
-        if (sentence)
-          findings.push({
-            rule: rule(rules.omitted),
-            text: sentence,
-            provenance: provenance + " Omission judged against the complete reply.",
-          })
-      }
-    } catch {
+    attempted = true
+    const serialized = JSON.stringify(sent)
+    const hits = await observeReplyJev({
+      mode: "worker_reports",
+      key,
+      body,
+      questions,
+      signal,
+      observe: input.observe,
+      evidence: {
+        report_message_ids: [item.id],
+        state_sha256: sha256(serialized),
+        state_bytes: Buffer.byteLength(serialized),
+        report_input: finalOnly ? "final_message" : "whole_report",
+      },
+    })
+    if (!hits) {
       if (!signal.aborted) warn("Reply check: worker-report TypeSafe judgment unavailable.")
+      continue
+    }
+    const rule = (name: string) => ({ name, citation: rules.citation, rule_text: rules.rule_text })
+    for (const [i, sentence] of sentences.entries()) {
+      if (hits.has("sentence_" + i)) findings.push({ rule: rule(rules.unsupported), text: sentence, provenance })
+    }
+    if (hits.has("omitted")) {
+      const sentence = sentences.find((value) => attribution.test(value)) ?? sentences[0]
+      if (sentence)
+        findings.push({
+          rule: rule(rules.omitted),
+          text: sentence,
+          provenance: provenance + " Omission judged against the complete reply.",
+        })
     }
   }
+  input.mode?.(true, attempted ? null : signal.aborted ? "cancelled" : "state_over_limit")
   return findings
 }

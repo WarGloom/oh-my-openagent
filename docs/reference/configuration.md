@@ -466,11 +466,27 @@ Set `[opencode].reply_check.worker_reports` to check a final reply after a child
 
 - `verdicts`: exact case-sensitive words to check in sentences that attribute a verdict to a worker.
 - `attribution`: case-insensitive Unicode regex that identifies an attributed sentence.
-- `units`: case-insensitive labels for exact number–unit pairs, such as `12 tests` or `exit: 7`.
+- `units`: case-insensitive labels that identify numbers to compare, such as `12 tests` or `exit: 7`. A report can support the same number with any configured unit, including a unit in another language.
 - `exact`: `name`, `citation`, and `rule_text` for an unsupported value.
 - `jev`: optional `citation` and `rule_text`, with `unsupported` and `omitted` question overrides. Enable this only if exact replies and worker reports may be sent to TypeSafe.
 
 The client uses a 24,000-byte request cap. If the complete delivered report exceeds it, the client tries the exact final message without the delivery envelope and labels that input in the warning. If the exact message still does not fit, the client skips that judgment and logs the reason. It also skips Jev when more than 24 sentences would generate questions. Exact checks still run. The reply stays unchanged.
+
+### V2 reply-check ledger
+
+When `reply_check` is configured, OMO records each evaluated final reply and every Jev question it submits. The private JSONL ledger lives at `$XDG_DATA_HOME/oh-my-opencode/jev-reply-check/evaluations-YYYY-MM.jsonl` (typically `~/.local/share/oh-my-opencode/jev-reply-check/`). It uses a locked append, mode `0600`, and numbered parts after 50 MiB. It does not store reply text, report text, matched text, or API credentials. A write failure does not affect the warning; `health.json` records `ledger_write_failures`.
+
+Both record types include `schema_version`, `event`, `timestamp`, and `evaluation_id`:
+
+- `evaluation`: `session_id`, `assistant_message_id`, `reply_sha256`, `reply_bytes`, `config_sha256` (effective parsed `reply_check`), per-mode `ran` and `jev_skip`, `code_findings` (rule and count), and `warning_queued`. A mode can run its code checks while Jev is disabled or unavailable.
+- `question`: `mode`, configured `question_key` and `question_name`, concrete `request_key`, `question_sha256` (submitted instructions), `probability`, `threshold`, `finding`, `latency_ms`, `model_id`, `backend`, and `error`. Worker-report questions also include `evidence` with report message IDs, the SHA-256 and UTF-8 byte count of the serialized state, and whether the request used the whole report or the final message. An unanswered question has no probability and cannot become a finding.
+
+List questions whose probability was within 0.15 of the threshold:
+
+```sh
+jq -c 'select(.event == "question" and .probability != null) | select((.probability - .threshold | fabs) <= 0.15)' \
+  "${XDG_DATA_HOME:-$HOME/.local/share}"/oh-my-opencode/jev-reply-check/evaluations-*.jsonl
+```
 
 ### Model Resolution
 
