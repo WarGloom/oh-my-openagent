@@ -306,7 +306,7 @@ describe("runtime fallback error classifier", () => {
         expected: true,
       },
       {
-        error: { error: { statusCode: 401, isRetryable: true, message: "Unauthorized" } },
+        error: { error: { statusCode: 400, isRetryable: true, message: "Bad request" } },
         expected: false,
       },
       {
@@ -381,6 +381,32 @@ describe("runtime fallback error classifier", () => {
 
     // then
     expect(type).toBeUndefined()
+  })
+
+  test("#given a rejected credential #when classified #then runtime fallback moves to the next model", () => {
+    // given
+    const errors = [
+      { name: "provider.auth", type: "provider.auth", status: 401, message: "authentication_error: Claude authentication expired or invalid. Run 'claude login' in your terminal to re-authenticate, then restart the proxy." },
+      { name: "APIError", data: { statusCode: 401, message: "invalid x-api-key" } },
+      { name: "provider.internal", status: 200, message: "api_error: Claude Code returned an error result: Failed to authenticate. API Error: 401" },
+    ]
+
+    // when
+    const retryable = errors.map((error) => isRuntimeFallbackRetryableError(error, DEFAULT_RETRY_CODES))
+
+    // then
+    expect(retryable).toEqual([true, true, true])
+  })
+
+  test("#given a permission or validation error #when classified #then it is not treated as a credential failure", () => {
+    // given
+    const error = { name: "APIError", data: { statusCode: 403, message: "permission_error: this tool is not allowed" } }
+
+    // when
+    const retryable = isRuntimeFallbackRetryableError(error, DEFAULT_RETRY_CODES)
+
+    // then
+    expect(retryable).toBe(false)
   })
 
   test("leaves OpenCode context overflow to native compaction", () => {

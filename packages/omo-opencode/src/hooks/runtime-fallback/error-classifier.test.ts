@@ -132,7 +132,7 @@ describe("runtime-fallback error classifier", () => {
     expect(retryable).toBe(true)
   })
 
-  test("isRetryableError REJECTS isRetryable=true when status code is 401 Unauthorized", () => {
+  test("isRetryableError ACCEPTS a 401 Unauthorized so the chain moves to the next model", () => {
     //#given
     const error = { error: { statusCode: 401, isRetryable: true } }
 
@@ -140,7 +140,7 @@ describe("runtime-fallback error classifier", () => {
     const retryable = isRetryableError(error, [429, 503, 529])
 
     //#then
-    expect(retryable).toBe(false)
+    expect(retryable).toBe(true)
   })
 
   test("isRetryableError REJECTS isRetryable=true when status code is 403 Forbidden", () => {

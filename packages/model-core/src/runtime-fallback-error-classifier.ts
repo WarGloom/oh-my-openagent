@@ -222,6 +222,12 @@ export function isRuntimeFallbackRetryableError(
     return true
   }
 
+  // A rejected credential (expired OAuth, revoked or invalid key) does not heal by retrying the same
+  // model, but the next model in the chain may use another provider or account.
+  if (isRuntimeFallbackAuthError(error, statusCode, message)) {
+    return true
+  }
+
   if (statusCode && retryOnErrors.includes(statusCode)) {
     return true
   }
@@ -237,4 +243,19 @@ export function isRuntimeFallbackRetryableError(
 
   return message.includes("an error occurred while processing your request") ||
     RUNTIME_FALLBACK_RETRYABLE_ERROR_PATTERNS.some((pattern) => pattern.test(message))
+}
+
+const AUTH_ERROR_PATTERNS = [
+  /\bauthentication_error\b/i,
+  /invalid x-api-key/i,
+  /failed to authenticate/i,
+  /oauth (?:access )?token has expired/i,
+  /\bunauthorized\b/i,
+] as const
+
+function isRuntimeFallbackAuthError(error: unknown, statusCode: number | undefined, message: string): boolean {
+  if (statusCode === 401) return true
+  const name = getRuntimeFallbackErrorName(error)?.toLowerCase()
+  if (name === "provider.auth" || name === "providerautherror" || name === "authenticationerror") return true
+  return AUTH_ERROR_PATTERNS.some((pattern) => pattern.test(message))
 }
