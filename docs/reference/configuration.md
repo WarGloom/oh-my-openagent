@@ -454,6 +454,18 @@ Configure code patterns for issue and pull request identifiers, 7–40 character
 
 If you set `jev` and provide `TYPESAFE_API_KEY`, the checker sends the **exact** reply to TypeSafe. Omit `jev` for local-only checks. The checker skips replies longer than 32,768 characters instead of truncating them. It does not send chat history or tool output. A finding queues one steer message with the cited rules and matched text; it does not start another turn or change the reply.
 
+### V2 worker-report checks
+
+Set `[opencode].reply_check.worker_reports` to check a final reply after a child report arrived in that execution. Without the block, this mode is off. Earlier reports in the same session can support exact values, but do not trigger the check.
+
+- `verdicts`: exact case-sensitive words to check in sentences that attribute a verdict to a worker.
+- `attribution`: case-insensitive Unicode regex that identifies an attributed sentence.
+- `units`: case-insensitive labels for exact number–unit pairs, such as `12 tests` or `exit: 7`.
+- `exact`: `name`, `citation`, and `rule_text` for an unsupported value.
+- `jev`: optional `citation` and `rule_text`, with `unsupported` and `omitted` question overrides. Enable this only if exact replies and worker reports may be sent to TypeSafe.
+
+The client uses a 24,000-byte request cap. If the complete delivered report exceeds it, the client tries the exact final message without the delivery envelope and labels that input in the warning. If the exact message still does not fit, the client skips that judgment and logs the reason. It also skips Jev when more than 24 sentences would generate questions. Exact checks still run. The reply stays unchanged.
+
 ### Model Resolution
 
 Runtime priority:

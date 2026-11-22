@@ -9105,6 +9105,109 @@
             "additionalProperties": false
           }
         },
+        "worker_reports": {
+          "type": "object",
+          "properties": {
+            "verdicts": {
+              "default": [
+                "PASS",
+                "FAIL",
+                "INCONCLUSIVE",
+                "APPROVE",
+                "REJECT",
+                "BLOCKED",
+                "EXECUTED"
+              ],
+              "maxItems": 40,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "units": {
+              "default": [
+                "tests",
+                "passed",
+                "failed",
+                "jobs",
+                "findings",
+                "exit"
+              ],
+              "maxItems": 40,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "attribution": {
+              "default": "\\b(?:worker|reviewer|subagent|agent|child|reported)\\b",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "exact": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "citation": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "rule_text": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "name",
+                "citation",
+                "rule_text"
+              ],
+              "additionalProperties": false
+            },
+            "jev": {
+              "type": "object",
+              "properties": {
+                "citation": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "rule_text": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "unsupported": {
+                  "default": "Does the reply state a result, verdict or cause for the worker's task that the report does not state?",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1500
+                },
+                "omitted": {
+                  "default": "Does the report state a failure, a blocker or an unmet condition that the reply does not mention?",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1500
+                }
+              },
+              "required": [
+                "citation",
+                "rule_text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "exact"
+          ],
+          "additionalProperties": false
+        },
         "jev": {
           "type": "object",
           "properties": {
