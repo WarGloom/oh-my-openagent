@@ -1,3 +1,4 @@
+import { installNativeRework } from "./native-rework-ledger"
 import type { Hooks } from "@opencode-ai/plugin"
 import type { V2PluginContext, V2Registration } from "./context-types"
 import { installConfigBridge, type BeforeCommandHook, type ConfigHook } from "./config-bridge"
@@ -80,6 +81,8 @@ export async function installHooks(
   if (bridgesSessionHook) {
     registrations.push({ dispose: await installSessionHooks(context, hooks, { warn: deps.warn }) })
   }
+  const rework = await installNativeRework(context, hooks)
+  if (rework) registrations.push(rework)
   const replyCheck = installReplyCheck(context, hooks, deps.warn)
   if (replyCheck) registrations.push(replyCheck)
 

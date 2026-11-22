@@ -579,6 +579,11 @@ describe("Jev task dispatch", () => {
     // then: only the disagreement produces a hint, and it names Jev's category
     expect(await other.routingHint).toContain('"visual-engineering"')
     expect(await same.routingHint).toBeUndefined()
+    other.finishRoutingHint?.("delivered")
+    const late = await resolveCategoryExecution({ ...args, category: "unspecified-low" }, context, undefined, undefined)
+    late.finishRoutingHint?.("missed_budget")
+    await late.routingHint
+    expect(recordSpy.mock.calls.map(([entry]) => entry).filter((entry) => entry.event === "decision").map((entry) => entry.hint_status)).toEqual(expect.arrayContaining(["delivered", "not_produced", "missed_budget"]))
   })
 
   test("category resolution retains the full cross-provider fallback chain and category team wiring", async () => {

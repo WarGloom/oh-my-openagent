@@ -1,3 +1,4 @@
+import { noteNativeDecision } from "./native-rework-ledger"
 import type { Hooks } from "@opencode-ai/plugin"
 import type { OhMyOpenCodeConfig } from "../config"
 import { getAgentConfigKey } from "../shared/agent-display-names"
@@ -104,7 +105,10 @@ export async function installNativeSubagentModel(
       (pending.size >= maxPendingAdmissions || !("prompt" in input) || typeof input.prompt !== "string")
     )
       await skip("pinned_by_rule")
-    if (plan) await recordJevRouting(plan.decision)
+    if (plan) {
+      noteNativeDecision(context, event.sessionID, event.id, plan.decision.decision_id)
+      await recordJevRouting(plan.decision)
+    }
     const head = plan?.models[0]
     const primary = typeof head === "string" ? head : (head?.model ?? override?.model)
     const parsed = primary ? parseModelString(primary) : undefined

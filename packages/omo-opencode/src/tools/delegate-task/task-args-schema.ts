@@ -34,6 +34,7 @@ export function buildDelegateTaskArgsSchema(
   prompt: StringSchema
   run_in_background: OptionalBooleanSchema
   completion_group: OptionalStringSchema
+  replaces_session_id: OptionalStringSchema
   category: OptionalStringSchema
   model_routing: OptionalBooleanSchema
   subagent_type: OptionalStringSchema | OptionalEnumSchema
@@ -64,6 +65,7 @@ export function buildDelegateTaskArgsSchema(
       .describe(
         "true is the standard spawn: returns a background task ID `bg_...` at once; inspect the result/error delivered in the native completion notification. background_output is optional for missing/truncated output or transcript/diagnostic detail. false blocks this response until the child finishes; use it only for a short child whose result gates your very next call. Omitted counts as false.",
       ),
+    replaces_session_id: tool.schema.string().regex(/^ses_[a-zA-Z0-9_-]+$/).optional().describe("Use when a new worker takes over the same work from an earlier child; this does not stop the earlier child."),
     completion_group: tool.schema
       .string()
       .min(1)

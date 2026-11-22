@@ -1,3 +1,4 @@
+import { bindNativeRework } from "../v2/native-rework-ledger"
 import type { Hooks, Plugin } from "@opencode-ai/plugin"
 import type { HookName } from "../config"
 import { validatePluginConfig } from "../config/validate"
@@ -385,6 +386,7 @@ export function createPluginModule(overrides: Partial<PluginModuleDeps> = {}): D
     bindNativeRuntimeFallback(pluginHooks, hooks.runtimeFallback)
     bindAgentModelOverrides(pluginHooks, pluginConfig.agents, pluginConfig.jev_routing)
     bindReplyCheck(pluginHooks, pluginConfig.reply_check)
+    bindNativeRework(pluginHooks)
     if (modelConfigReload && pluginHooks.config) bindModelConfigReload(pluginHooks.config, modelConfigReload)
     return pluginHooks
   }

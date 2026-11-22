@@ -73,6 +73,7 @@ export interface DelegateTaskArgs {
   requested_subagent_type?: string
   run_in_background: boolean
   completion_group?: string
+  replaces_session_id?: string
   task_id?: string
   command?: string
   load_skills: string[]

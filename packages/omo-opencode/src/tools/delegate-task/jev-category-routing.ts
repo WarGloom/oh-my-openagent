@@ -28,6 +28,7 @@ export type JevCategoryInput = {
   readonly configGeneration?: string
   readonly onFallback?: (reason: string, category: string) => void
   /** Jev's own pick when it differs from an explicit category. The explicit category still runs. */
+  readonly observeDecision?: (record: JevDecisionRecord) => void
   readonly onOpinion?: (opinion: { readonly category: string; readonly probability: number }) => void
 }
 
@@ -208,7 +209,7 @@ export async function routeCategoryWithJev(input: JevCategoryInput): Promise<str
       error !== "domain_uncertain"
     )
       input.onFallback?.(error, fallback)
-    recordJevRouting({
+    const record: JevDecisionRecord = {
       schema_version: 1,
       event_id: randomUUID(),
       decision_id: decisionId,
@@ -240,7 +241,9 @@ export async function routeCategoryWithJev(input: JevCategoryInput): Promise<str
         input.configGeneration ?? createHash("sha256").update(JSON.stringify(input.enabledCategories)).digest("hex"),
       brief_sha256: createHash("sha256").update(input.brief).digest("hex"),
       brief_bytes: Buffer.byteLength(input.brief),
-    })
+    }
+    if (input.observeDecision) input.observeDecision(record)
+    else void recordJevRouting(record)
     input.signal?.throwIfAborted()
   }
 }

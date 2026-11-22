@@ -107,6 +107,12 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
       ) {
         return "completion_group requires run_in_background: true on an OpenCode V2 host."
       }
+      if (delegateTaskArgs.replaces_session_id) {
+        if (delegateTaskArgs.task_id || !options.manager.nativeJobs) return "replaces_session_id requires a new OpenCode V2 child."
+        const replaced = await options.client.session.get({ path: { id: delegateTaskArgs.replaces_session_id } })
+        const info: unknown = replaced.data
+        if (typeof info !== "object" || info === null || !("parentID" in info) || info.parentID !== originalContext.sessionID) return "The replaced session must be a child of the current session."
+      }
       const named = !delegateTaskArgs.category && delegateTaskArgs.subagent_type
       if (
         named &&
@@ -276,6 +282,7 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
         abortSignal: ctx.abort,
         jevParentSessionID: ctx.sessionID,
         jevOrchestratorCategory: orchestratorCategory,
+        trackHintDelivery: true,
       }
 
       let agentToUse: string
@@ -288,14 +295,16 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
       let maxPromptTokens: number | undefined
       let routingNotice: string | undefined
       let routingHint: Promise<string | undefined> | undefined
+      let finishRoutingHint: ((status: "delivered" | "missed_budget" | "not_produced") => void) | undefined
       const withRoutingNotice = async (result: Promise<string>) => {
         const text = await result
         if (!routingHint) return routingNotice ? `${text}\n${routingNotice}` : text
         // A foreground child outlasts the observation; a background launch waits for it only briefly.
-        const budget = Promise.withResolvers<undefined>()
-        const timer = setTimeout(budget.resolve, Math.min(modelOptions.jevRouting?.timeout_ms ?? 0, 750))
+        const budget = Promise.withResolvers<null>()
+        const timer = setTimeout(() => budget.resolve(null), Math.min(modelOptions.jevRouting?.timeout_ms ?? 0, 750))
         const hint = await Promise.race([routingHint, budget.promise])
         clearTimeout(timer)
+        finishRoutingHint?.(hint === null ? "missed_budget" : hint ? "delivered" : "not_produced")
         return [text, routingNotice, hint].filter(Boolean).join("\n")
       }
 
@@ -321,6 +330,7 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
         maxPromptTokens = resolution.maxPromptTokens
         routingNotice = resolution.routingNotice
         routingHint = resolution.routingHint
+        finishRoutingHint = resolution.finishRoutingHint
 
         const isRunInBackgroundExplicitlyFalse = isExplicitSyncRun(delegateTaskArgs.run_in_background)
 

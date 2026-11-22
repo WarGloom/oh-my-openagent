@@ -91,6 +91,7 @@ export async function prepareDelegateTaskArgs(
     descriptionSource,
     prompt,
     run_in_background: runInBackground === true,
+    replaces_session_id: typeof args.replaces_session_id === "string" ? args.replaces_session_id : undefined,
     completion_group: typeof args.completion_group === "string" ? args.completion_group : undefined,
     task_id: taskID,
     command,

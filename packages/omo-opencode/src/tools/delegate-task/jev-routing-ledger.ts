@@ -41,6 +41,7 @@ const DecisionSchema = z
     event: z.literal("decision"),
     parent_session_id: identifier.nullable(),
     parent_decision_id: z.uuid().nullable(),
+    hint_status: z.enum(["not_produced", "produced", "delivered", "missed_budget"]).optional(),
     surface: z.enum(["task", "team", "ladder", "subagent"]),
     mode: z.enum(["active", "observe"]),
     orchestrator_category: category,
@@ -128,7 +129,80 @@ const OutcomeSchema = z
     producing_model: identifier.nullable(),
   })
   .strict()
-const RecordSchema = z.discriminatedUnion("event", [DecisionSchema, AttemptSchema, OutcomeSchema, NamedSkipSchema])
+const ReworkCommon = { ...common, parent_session_id: identifier, child_session_id: identifier }
+const Classification = {
+  classification: z.string().regex(/^[a-z_]{1,64}$/),
+  probabilities: z.record(z.string().regex(/^[a-z_]{1,64}$/), probability).nullable(),
+  error: z.enum(["no_key", "over_limit", "http_error", "malformed", "unavailable"]).nullable(),
+}
+const Digest = { text_sha256: z.string().regex(/^[a-f0-9]{64}$/), text_bytes: z.number().int().nonnegative() }
+const DispatchSchema = z.object({ ...ReworkCommon, event: z.literal("dispatch"), category: identifier }).strict()
+const ReportSchema = z
+  .object({
+    ...ReworkCommon,
+    ...Digest,
+    ...Classification,
+    event: z.literal("report"),
+    report_message_id: identifier,
+    terminal: z.boolean(),
+    producing_model: identifier.nullable(),
+  })
+  .strict()
+const RoundSchema = z
+  .object({
+    ...ReworkCommon,
+    ...Digest,
+    ...Classification,
+    event: z.literal("round"),
+    tool_call_id: identifier,
+    round_index: z.number().int().positive(),
+  })
+  .strict()
+const ReplacementSchema = z
+  .object({
+    ...ReworkCommon,
+    event: z.literal("replacement"),
+    replaced_child_session_id: identifier,
+    replaced_decision_id: z.uuid(),
+  })
+  .strict()
+const ClaimCheckSchema = z
+  .object({
+    ...common,
+    event: z.literal("claim_check"),
+    parent_session_id: identifier,
+    tool_call_id: identifier,
+    tool: z.enum(["jev_verify", "jev_compare", "jev_audit"]),
+    claim_sha256: Digest.text_sha256,
+    claim_bytes: Digest.text_bytes,
+    evidence_sha256: Digest.text_sha256,
+    evidence_bytes: Digest.text_bytes,
+    judgments: z
+      .array(
+        z.object({
+          verdict: z
+            .string()
+            .regex(/^[a-zA-Z_ -]{1,40}$/)
+            .nullable(),
+          probability: probability.nullable(),
+        }),
+      )
+      .max(128),
+    latency_ms: z.number().nonnegative(),
+    status: z.enum(["completed", "error"]),
+  })
+  .strict()
+const RecordSchema = z.discriminatedUnion("event", [
+  DecisionSchema,
+  AttemptSchema,
+  OutcomeSchema,
+  NamedSkipSchema,
+  DispatchSchema,
+  ReportSchema,
+  RoundSchema,
+  ReplacementSchema,
+  ClaimCheckSchema,
+])
 export type JevDecisionRecord = z.infer<typeof DecisionSchema>
 export type JevRoutingRecord = z.infer<typeof RecordSchema>
 

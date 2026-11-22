@@ -1,3 +1,4 @@
+import { recordJevRouting, type JevDecisionRecord } from "./jev-routing-ledger"
 import type { ModelFallbackInfo } from "../../features/task-toast-manager/types"
 import { getNativeUnavailableModels } from "../../hooks/runtime-fallback/native-controller"
 import type { DelegateTaskArgs } from "./types"
@@ -72,7 +73,6 @@ function mergeConfiguredAndRequiredFallbackChains(
 // 0.8: in 605 recorded explicit delegations Jev disagreed with at least this confidence 36 times (6%).
 const JEV_OPINION_CONFIDENCE = 0.8
 
-
 export async function resolveCategoryExecution(
   args: DelegateTaskArgs,
   executorCtx: ExecutorContext,
@@ -88,6 +88,7 @@ export async function resolveCategoryExecution(
   const routing = executorCtx.jevRouting
   let routingNotice: string | undefined
   let routingHint: Promise<string | undefined> | undefined
+  let finishRoutingHint: CategoryResolutionResult["finishRoutingHint"]
   const decision = routing && routing.mode !== "off" ? beginJevDecision(args) : undefined
   const jevInput = {
     brief: args.prompt,
@@ -137,9 +138,31 @@ export async function resolveCategoryExecution(
     const hint = Promise.withResolvers<string | undefined>()
     routingHint = hint.promise
     let opinion: string | undefined
+    let hintStatus: "delivered" | "missed_budget" | "not_produced" | undefined
+    let pendingDecision: JevDecisionRecord | undefined
+    let expiry: ReturnType<typeof setTimeout> | undefined
+    const logHint = (status: JevDecisionRecord["hint_status"]) => {
+      if (!pendingDecision) return
+      void recordJevRouting({ ...pendingDecision, hint_status: status })
+      pendingDecision = undefined
+      clearTimeout(expiry)
+    }
+    finishRoutingHint = (status) => {
+      hintStatus = status
+      logHint(status)
+    }
     queueMicrotask(() => {
       void selectCategoryTierWithJev({
         ...jevInput,
+        observeDecision: (record) => {
+          pendingDecision = record
+          if (!opinion && !hintStatus) logHint("not_produced")
+          else if (hintStatus) logHint(opinion ? hintStatus : "not_produced")
+          else if (!executorCtx.trackHintDelivery) {
+            expiry = setTimeout(() => logHint("produced"), 30_000)
+            expiry.unref?.()
+          }
+        },
         onOpinion: ({ category, probability }) => {
           if (probability >= JEV_OPINION_CONFIDENCE)
             opinion = `Routing note: Jev rated this brief as "${category}" (${probability.toFixed(2)}); it ran as "${requested}" as requested. Omit category or pass category="auto" unless a rule, skill or roster fixes the category.`
@@ -437,5 +460,6 @@ Available categories: ${categoryNames.join(", ")}`)
     fallbackChain: runtimeFallbackChain,
     routingNotice,
     routingHint,
+    finishRoutingHint,
   }
 }

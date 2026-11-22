@@ -115,6 +115,7 @@ export async function executeNativeDelegate(input: {
         sessionId: task.sessionId,
         taskId: task.sessionId,
         backgroundTaskId: task.id,
+        ...(task.decisionId ? { decisionId: task.decisionId } : {}),
         category: args.category ?? task.category,
         agent,
         load_skills: args.load_skills,

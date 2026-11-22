@@ -15,6 +15,7 @@ export interface CategoryResolutionResult {
   routingNotice?: string
   /** Settles after the background Jev observation of an explicit category; undefined when Jev agrees or is unsure. */
   routingHint?: Promise<string | undefined>
+  finishRoutingHint?: (status: "delivered" | "missed_budget" | "not_produced") => void
 }
 
 export function categoryResolutionError(error: string): CategoryResolutionResult {

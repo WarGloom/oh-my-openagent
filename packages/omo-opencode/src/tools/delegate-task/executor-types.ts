@@ -22,6 +22,7 @@ export interface ExecutorContext {
   abortSignal?: AbortSignal
   jevParentSessionID?: string
   jevOrchestratorCategory?: string
+  trackHintDelivery?: boolean
   jevSurface?: "task" | "team"
   gitMasterConfig?: GitMasterConfig
   sisyphusJuniorModel?: string
