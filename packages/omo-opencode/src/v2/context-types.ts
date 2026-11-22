@@ -702,7 +702,7 @@ export type V2CommandDomain = {
 }
 
 /** A host event: `data` is the event's schema fields, which for session events include `sessionID`. */
-export type V2Event = { readonly type: string; readonly data?: unknown }
+export type V2Event = { readonly type: string; readonly id?: string; readonly data?: unknown }
 
 export type V2EventDomain = {
   readonly subscribe: (options?: { readonly signal?: AbortSignal }) => AsyncIterable<V2Event>

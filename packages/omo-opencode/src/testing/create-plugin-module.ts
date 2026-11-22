@@ -42,6 +42,7 @@ import { createV2Setup, type DualPluginModule } from "../v2"
 import { isV2PluginInput } from "../v2/create-plugin-input"
 import { bindNativeRuntimeFallback } from "../v2/native-runtime-fallback"
 import { bindAgentModelOverrides } from "../v2/native-subagent-model"
+import { bindReplyCheck } from "../v2/native-reply-check"
 import { bindModelConfigReload, createModelConfigReload } from "../v2/model-config-reload"
 
 type StartupToastClient = {
@@ -383,6 +384,7 @@ export function createPluginModule(overrides: Partial<PluginModuleDeps> = {}): D
 
     bindNativeRuntimeFallback(pluginHooks, hooks.runtimeFallback)
     bindAgentModelOverrides(pluginHooks, pluginConfig.agents, pluginConfig.jev_routing)
+    bindReplyCheck(pluginHooks, pluginConfig.reply_check)
     if (modelConfigReload && pluginHooks.config) bindModelConfigReload(pluginHooks.config, modelConfigReload)
     return pluginHooks
   }

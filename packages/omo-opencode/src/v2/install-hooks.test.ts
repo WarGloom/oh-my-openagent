@@ -1,9 +1,11 @@
-import { describe, expect, it, mock } from "bun:test"
+import { describe, expect, it, mock, spyOn } from "bun:test"
 import { tool } from "@opencode-ai/plugin/tool"
 import type { Hooks } from "@opencode-ai/plugin"
 import type { V2PluginContext, V2Registration, V2ToolEditor, V2ToolInfo } from "./context-types"
 import { createFakePluginContext } from "./fake-plugin-context"
 import { installHooks } from "./install-hooks"
+import { bindReplyCheck } from "./native-reply-check"
+import { ReplyCheckConfigSchema } from "../config/schema/reply-check"
 
 function createFakeContext() {
   const added: V2ToolInfo[] = []
@@ -26,6 +28,78 @@ const echo = tool({
 })
 
 describe("installHooks", () => {
+  it("queues one warning for the final reply, without waking or rewriting it", async () => {
+    const fake = createFakePluginContext()
+    const hooks: Hooks = {}
+    const rule = { name: "Reference format", citation: "Owner reply policy", rule_text: "Format hashes as code." }
+    const progress = { ...rule, name: "Progress only", question: "Does the reply only report progress?" }
+    const decision = { ...rule, name: "Options", question: "Does the reply ask for a decision without its options?" }
+    bindReplyCheck(
+      hooks,
+      ReplyCheckConfigSchema.parse({
+        patterns: [{ ...rule, pattern: "\\b[0-9a-f]{7,40}\\b", ignore: ["`+[^`]+`+"] }],
+        phrases: [{ ...rule, name: "English terms", phrases: ["translated.term"] }],
+        jev: { progress_only: progress, missing_decision_options: decision },
+      }),
+    )
+    const delivered = Promise.withResolvers<void>()
+    const context: V2PluginContext = {
+      ...fake.context,
+      session: {
+        ...fake.context.session,
+        synthetic: async (input) => {
+          await fake.context.session.synthetic(input)
+          delivered.resolve()
+        },
+      },
+    }
+    const dispose = await installHooks(context, hooks, { warn: () => {} })
+    const previousKey = process.env.TYPESAFE_API_KEY
+    process.env.TYPESAFE_API_KEY = "fixture-key"
+    const request = spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        answers: { progress_only: { type: "noul", noul: 0.2 }, missing_decision_options: { type: "noul", noul: 0.8 } },
+      }),
+    )
+    try {
+      const reply = "Use `abcdef0`, https://example.com/abcdef1, abcdef2, and translated.term."
+      const history = fake.sessionHistory("ses_reply")
+      history.push(
+        {
+          type: "assistant",
+          id: "msg_reply",
+          agent: "sisyphus",
+          model: { providerID: "test", id: "test" },
+          finish: "stop",
+          time: { created: 1, completed: 2 },
+          content: [{ type: "text", text: reply }],
+        },
+        { type: "idle", id: "msg_finished", outcome: "succeeded", time: { created: 3 } },
+      )
+      fake.emit({ type: "session.execution.succeeded", id: "evt_stale", data: { sessionID: "ses_reply" } })
+      fake.emit({ type: "session.execution.succeeded", id: "evt_finished", data: { sessionID: "ses_reply" } })
+      await delivered.promise
+      const notices = fake.sessionCalls.flatMap((call) => (call.kind === "synthetic" ? [call.input] : []))
+      expect(notices).toHaveLength(1)
+      expect(notices[0]).toMatchObject({ sessionID: "ses_reply", delivery: "steer", resume: false })
+      expect(notices[0]?.text).toContain('"matched_text":"abcdef2"')
+      expect(notices[0]?.text).toContain('"matched_text":"translated.term"')
+      expect(notices[0]?.text).not.toContain('"matched_text":"abcdef0"')
+      expect(notices[0]?.text).not.toContain('"matched_text":"abcdef1"')
+      expect(notices[0]?.text).toContain('"rule":"Options"')
+      expect(notices[0]?.text).not.toContain('"rule":"Progress only"')
+      expect(request).toHaveBeenCalledTimes(1)
+      const payload = request.mock.calls[0]?.[1]?.body
+      expect(typeof payload === "string" ? JSON.parse(payload).state : undefined).toEqual({ reply })
+      expect(history[0]).toMatchObject({ content: [{ type: "text", text: reply }] })
+    } finally {
+      request.mockRestore()
+      if (previousKey === undefined) delete process.env.TYPESAFE_API_KEY
+      else process.env.TYPESAFE_API_KEY = previousKey
+      await dispose()
+    }
+  })
+
   describe("#given V1 hooks that define tools", () => {
     it("#when installed #then every tool is added through one 2.x tool transform", async () => {
       // given

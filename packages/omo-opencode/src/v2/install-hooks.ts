@@ -7,6 +7,7 @@ import { installSessionHooks } from "./session-hooks"
 import { installNativeSubagentModel } from "./native-subagent-model"
 import { installToolDefinitions } from "./tool-definition-bridge"
 import { registerSessionHandoff } from "./session-handoff"
+import { installReplyCheck } from "./native-reply-check"
 
 export type InstallHooksDeps = {
   readonly warn: (message: string) => void
@@ -79,6 +80,8 @@ export async function installHooks(
   if (bridgesSessionHook) {
     registrations.push({ dispose: await installSessionHooks(context, hooks, { warn: deps.warn }) })
   }
+  const replyCheck = installReplyCheck(context, hooks, deps.warn)
+  if (replyCheck) registrations.push(replyCheck)
 
   let disposed = false
   return async () => {
