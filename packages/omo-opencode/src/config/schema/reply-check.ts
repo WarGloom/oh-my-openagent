@@ -26,6 +26,7 @@ export const WorkerReportCheckSchema = z.object({
   exact: rule,
   jev: z
     .object({
+      summary: pattern.default("\\b(?:reported|reports|found|concluded|summarized|confirmed|delivered)\\b"),
       citation: z.string().min(1),
       rule_text: z.string().min(1),
       unsupported: z
@@ -47,6 +48,7 @@ export const WorkerReportCheckSchema = z.object({
 export type WorkerReportCheck = z.infer<typeof WorkerReportCheckSchema>
 
 export const ReplyCheckConfigSchema = z.object({
+  max_jev_calls: z.number().int().min(1).max(32).default(8),
   patterns: z
     .array(rule.extend({ pattern, ignore: z.array(pattern).max(16).default([]) }))
     .max(32)

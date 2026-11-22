@@ -29,6 +29,8 @@ async function evaluate(input: {
   writeFailure?: boolean
   fail?: boolean
   quiet?: boolean
+  budget?: number
+  multiple?: boolean
 }) {
   const root = await mkdtemp(join(tmpdir(), "reply-ledger-"))
   const oldData = process.env.XDG_DATA_HOME
@@ -65,7 +67,7 @@ async function evaluate(input: {
   })
   const fake = createFakePluginContext()
   const hooks: Hooks = {}
-  bindReplyCheck(hooks, config)
+  bindReplyCheck(hooks, input.budget ? { ...config, max_jev_calls: input.budget } : config)
   const registration = installReplyCheck(fake.context, hooks, () => {})
   try {
     if (input.writeFailure) {
@@ -76,8 +78,24 @@ async function evaluate(input: {
       )
     }
     const history = fake.sessionHistory("ses_ledger")
+    if (input.multiple) {
+      history.push({ type: "user", id: "msg_question", text: "Was the check complete?", time: { created: 0 } })
+      history.push({
+        type: "synthetic",
+        id: "msg_other",
+        text: report,
+        metadata: { agent: "examiner" },
+        time: { created: 0 },
+      })
+    }
     if (input.includeReport !== false)
-      history.push({ type: "synthetic", id: "msg_report", text: report, time: { created: 0 } })
+      history.push({
+        type: "synthetic",
+        id: "msg_report",
+        text: report,
+        metadata: { agent: "reviewer" },
+        time: { created: 0 },
+      })
     history.push(
       {
         type: "assistant",
@@ -199,4 +217,18 @@ test("a ledger write failure preserves the warning and increments its own counte
   const failure = await evaluate({ writeFailure: true })
   expect(failure.warning).toEqual(normal.warning)
   expect(failure.failures).toBe(1)
+})
+
+test("supplies the trigger, limits worker checks and records skipped HTTP calls", async () => {
+  const { rows, payloads } = await evaluate({
+    multiple: true,
+    budget: 1,
+    text: "The reviewer reported 4 tests. My own benchmark is green. The examiner reported results.",
+  })
+  expect(payloads).toHaveLength(1)
+  expect(payloads[0].state.trigger).toEqual({ kind: "user", text: "Was the check complete?" })
+  expect(rows[0]).toMatchObject({
+    jev_calls_skipped: 2,
+    modes: { worker_reports: { ran: true, jev_skip: "call_budget" } },
+  })
 })

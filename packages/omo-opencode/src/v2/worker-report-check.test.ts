@@ -61,7 +61,7 @@ test("worker Jev sends exact text and quotes the configured question and affecte
     expect(typeof payload === "string" && JSON.parse(payload).state).toEqual({
       report: current.text,
       reply,
-      sentences: ["The worker reported an authentication error.", "The review ended."],
+      sentences: ["The worker reported an authentication error."],
     })
     expect(findings.map(({ rule, text }) => [rule.name, text])).toEqual([
       [config.jev?.unsupported, "The worker reported an authentication error."],

@@ -16,7 +16,14 @@ function report(message: V2SessionMessage) {
     message.text,
   )
   if (!match?.[1]) return undefined
-  return { id: message.id, exact: message.text, final: match[1] }
+  const heading = message.text.slice(0, message.text.indexOf("\n"))
+  const aliases = [
+    message.metadata?.agent,
+    message.metadata?.childID,
+    /\bdescription="([^"]+)"/.exec(heading)?.[1],
+    /\bsessionID="([^"]+)"/.exec(heading)?.[1],
+  ].filter((value): value is string => typeof value === "string" && value.length > 0)
+  return { id: message.id, exact: message.text, final: match[1], aliases }
 }
 
 export async function workerReportFindings(
@@ -26,6 +33,7 @@ export async function workerReportFindings(
     readonly reply: string
     readonly signal: AbortSignal
     readonly warn: (message: string) => void
+    readonly reserveCall?: () => boolean
     readonly observe?: (question: Question) => void
     readonly code?: (finding: CodeFinding) => void
     readonly mode?: (ran: boolean, skip: Skip | null) => void
@@ -101,33 +109,61 @@ export async function workerReportFindings(
     warn("Reply check: reply exceeds the worker-report TypeSafe question limit.")
     return findings
   }
-  const questions: JevQuestions = {
-    omitted: { key: "omitted", name: rules.omitted, instructions: rules.omitted },
-    ...Object.fromEntries(
-      sentences.map((_, i) => [
-        "sentence_" + i,
-        {
-          key: "unsupported",
-          name: rules.unsupported,
-          instructions:
-            rules.unsupported +
-            " Evaluate only sentence " +
-            i +
-            " in state.sentences as the claim; state.reply is context.",
-        },
-      ]),
-    ),
+  type Report = (typeof current)[number]
+  const batches = new Map<string, { reports: readonly Report[]; claims: string[]; summary?: string }>()
+  const summary = new RegExp(rules.summary, "iu")
+  for (const sentence of sentences.filter((value) => attribution.test(value))) {
+    const named = current.filter((item) =>
+      item.aliases.some((alias) => new RegExp(left + words([alias]) + right, "iu").test(sentence)),
+    )
+    const selected = named.length ? named : current
+    const id = JSON.stringify(selected.map((item) => item.id))
+    const batch = batches.get(id) ?? { reports: selected, claims: [] }
+    batch.claims.push(sentence)
+    if (selected.length === 1 && summary.test(sentence)) batch.summary ??= sentence
+    batches.set(id, batch)
+  }
+  if (!batches.size) {
+    input.mode?.(true, "no_attributed_summary")
+    return findings
   }
   let attempted = false
-  for (const item of current) {
+  let capped = false
+  for (const batch of batches.values()) {
     if (signal.aborted) break
-    const state = (report: string) => ({ report, reply, sentences })
-    const full = replyJevPayload(state(item.exact), questions)
+    const questions: JevQuestions = {
+      ...(batch.summary
+        ? { omitted: { key: "omitted", name: rules.omitted, instructions: rules.omitted } as const }
+        : {}),
+      ...Object.fromEntries(
+        batch.claims.map((_, index) => [
+          "sentence_" + index,
+          {
+            key: "unsupported",
+            name: rules.unsupported,
+            instructions:
+              rules.unsupported +
+              " Evaluate only sentence " +
+              index +
+              " in state.sentences as the claim; state.reply is context.",
+          },
+        ]),
+      ),
+    }
+    const state = (final: boolean) => {
+      const texts = batch.reports.map((item) => (final ? item.final : item.exact))
+      return { ...(texts.length === 1 ? { report: texts[0] } : { reports: texts }), reply, sentences: batch.claims }
+    }
+    const full = replyJevPayload(state(false), questions)
     const finalOnly = Buffer.byteLength(full) > MAX_REQUEST_BYTES
-    const sent = state(finalOnly ? item.final : item.exact)
+    const sent = state(finalOnly)
     const body = finalOnly ? replyJevPayload(sent, questions) : full
     if (Buffer.byteLength(body) > MAX_REQUEST_BYTES) {
       warn("Reply check: worker report exceeds the TypeSafe input limit even without its delivery envelope.")
+      continue
+    }
+    if (input.reserveCall && !input.reserveCall()) {
+      capped = true
       continue
     }
     const provenance = finalOnly
@@ -143,7 +179,7 @@ export async function workerReportFindings(
       signal,
       observe: input.observe,
       evidence: {
-        report_message_ids: [item.id],
+        report_message_ids: batch.reports.map((item) => item.id),
         state_sha256: sha256(serialized),
         state_bytes: Buffer.byteLength(serialized),
         report_input: finalOnly ? "final_message" : "whole_report",
@@ -154,19 +190,12 @@ export async function workerReportFindings(
       continue
     }
     const rule = (name: string) => ({ name, citation: rules.citation, rule_text: rules.rule_text })
-    for (const [i, sentence] of sentences.entries()) {
-      if (hits.has("sentence_" + i)) findings.push({ rule: rule(rules.unsupported), text: sentence, provenance })
+    for (const [index, sentence] of batch.claims.entries()) {
+      if (hits.has("sentence_" + index)) findings.push({ rule: rule(rules.unsupported), text: sentence, provenance })
     }
-    if (hits.has("omitted")) {
-      const sentence = sentences.find((value) => attribution.test(value)) ?? sentences[0]
-      if (sentence)
-        findings.push({
-          rule: rule(rules.omitted),
-          text: sentence,
-          provenance: provenance + " Omission judged against the complete reply.",
-        })
-    }
+    if (batch.summary && hits.has("omitted"))
+      findings.push({ rule: rule(rules.omitted), text: batch.summary, provenance })
   }
-  input.mode?.(true, attempted ? null : signal.aborted ? "cancelled" : "state_over_limit")
+  input.mode?.(true, capped ? "call_budget" : attempted ? null : signal.aborted ? "cancelled" : "state_over_limit")
   return findings
 }

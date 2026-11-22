@@ -61,6 +61,24 @@ export function installReplyCheck(
         worker_reports: { ran: false, jev_skip: "disabled" },
       }
       const questions: Question[] = []
+      let calls = 0
+      let skipped = 0
+      const reserveCall = () => {
+        if (calls >= config.max_jev_calls) {
+          skipped++
+          return false
+        }
+        calls++
+        return true
+      }
+      const boundary = history.slice(0, -1).findLastIndex((message) => message.type === "idle")
+      const trigger = history
+        .slice(boundary + 1)
+        .find((message) => message.type === "user" || message.type === "synthetic")
+      const triggerState =
+        trigger && (trigger.type === "user" || trigger.type === "synthetic")
+          ? { kind: trigger.type, text: trigger.text }
+          : undefined
       const code = new Map<string, number>()
       const count = (rule: string, matches: number) => code.set(rule, (code.get(rule) ?? 0) + matches)
       let warning_queued = false
@@ -110,14 +128,19 @@ export function installReplyCheck(
                 {
                   key: name,
                   name: rules[name].name,
-                  instructions: rules[name].question,
+                  instructions:
+                    name === "progress_only"
+                      ? rules[name].question +
+                        " Do not count a substantive answer to the triggering message as a progress-only update."
+                      : rules[name].question,
                 },
               ]),
             )
+            reserveCall()
             const hits = await observeReplyJev({
               mode: "reply_rules",
               key,
-              body: replyJevPayload({ reply }, spec),
+              body: replyJevPayload({ reply, ...(triggerState ? { trigger: triggerState } : {}) }, spec),
               questions: spec,
               signal,
               observe: (question) => questions.push(question),
@@ -134,6 +157,7 @@ export function installReplyCheck(
               signal,
               warn,
               observe: (question) => questions.push(question),
+              reserveCall,
               code: (finding) => count(finding.rule, finding.count),
               mode: (ran, jev_skip) => {
                 modes.worker_reports = { ran, jev_skip }
@@ -182,6 +206,7 @@ export function installReplyCheck(
             config_sha256: configHash,
             modes,
             code_findings: [...code].map(([rule, count]) => ({ rule, count })),
+            jev_calls_skipped: skipped,
             warning_queued,
           },
           questions,

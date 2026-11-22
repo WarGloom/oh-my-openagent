@@ -9023,6 +9023,12 @@
     "reply_check": {
       "type": "object",
       "properties": {
+        "max_jev_calls": {
+          "default": 8,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
         "patterns": {
           "default": [],
           "maxItems": 32,
@@ -9175,6 +9181,12 @@
             "jev": {
               "type": "object",
               "properties": {
+                "summary": {
+                  "default": "\\b(?:reported|reports|found|concluded|summarized|confirmed|delivered)\\b",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
                 "citation": {
                   "type": "string",
                   "minLength": 1

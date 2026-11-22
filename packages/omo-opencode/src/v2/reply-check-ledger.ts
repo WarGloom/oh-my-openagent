@@ -5,7 +5,15 @@ import { warnJevRouting } from "../shared/jev-routing-health"
 import { getPostHogActivityStateDir } from "../shared/posthog-activity-state"
 
 export type Mode = "reply_rules" | "worker_reports"
-export type Skip = "disabled" | "no_key" | "reply_over_limit" | "no_report_in_turn" | "state_over_limit" | "cancelled"
+export type Skip =
+  | "disabled"
+  | "no_key"
+  | "reply_over_limit"
+  | "no_report_in_turn"
+  | "state_over_limit"
+  | "cancelled"
+  | "no_attributed_summary"
+  | "call_budget"
 export type CodeFinding = { readonly rule: string; readonly count: number }
 type Joined = { readonly schema_version: 1; readonly evaluation_id: string; readonly timestamp: string }
 export type EvaluationRecord = Joined & {
@@ -17,6 +25,7 @@ export type EvaluationRecord = Joined & {
   readonly config_sha256: string
   readonly modes: Readonly<Record<Mode, { readonly ran: boolean; readonly jev_skip: Skip | null }>>
   readonly code_findings: readonly CodeFinding[]
+  readonly jev_calls_skipped?: number
   readonly warning_queued: boolean
 }
 export type Question = {
