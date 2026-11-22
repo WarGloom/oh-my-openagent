@@ -86,7 +86,10 @@ export async function installNativeRework(context: V2PluginContext, hooks: Hooks
     const identity = reportKey(parent, message.id)
     const current = reports.get(identity)
     if (current) return current
-    const terminal = !/^<background-result [^\n]*\bstate="running"/.test(message.text)
+    const header = /^<background-result [^\n]*?\bstate="([a-z_]+)"/.exec(message.text)?.[1]
+    const report_state = header ?? metadata.data.state
+    const terminal = report_state !== "running"
+    const classify = report_state === "completed" || report_state === "running"
     const reserved = run(parent, child, async () => {
       if (await storage.get(identity)) return undefined
       const state = await ensure(parent, child)
@@ -98,7 +101,9 @@ export async function installNativeRework(context: V2PluginContext, hooks: Hooks
       .then(async (link) => {
         if (!link) return undefined
         const [judgment, history] = await Promise.all([
-          classifyRework("report", message.text),
+          classify
+            ? classifyRework("report", message.text)
+            : Promise.resolve({ classification: "unclassified", probabilities: null, error: null }),
           context.session.context({ sessionID: child }).catch(() => []),
         ])
         const producer = history.findLast(
@@ -114,10 +119,11 @@ export async function installNativeRework(context: V2PluginContext, hooks: Hooks
           report_message_id: message.id,
           producing_model,
           terminal,
+          report_state,
         })
         const probability = judgment.probabilities?.[judgment.classification] ?? 0
         if (
-          terminal &&
+          report_state === "completed" &&
           probability >= 0.7 &&
           (judgment.classification === "partial" || judgment.classification === "not_delivered")
         )

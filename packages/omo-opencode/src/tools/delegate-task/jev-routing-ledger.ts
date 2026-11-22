@@ -145,6 +145,10 @@ const ReportSchema = z
     event: z.literal("report"),
     report_message_id: identifier,
     terminal: z.boolean(),
+    report_state: z
+      .string()
+      .regex(/^[a-z_]{1,32}$/)
+      .optional(),
     producing_model: identifier.nullable(),
   })
   .strict()

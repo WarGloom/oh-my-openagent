@@ -133,15 +133,13 @@ test("a TypeSafe failure records an unclassified report without changing the not
   const request = spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 503 }))
   const registration = await installNativeRework(fake.context, hooks)
   try {
-    fake
-      .sessionHistory("ses_parent")
-      .push({
-        type: "synthetic",
-        id: "msg_failure",
-        text: reportText,
-        time: { created: 3 },
-        metadata: { source: "subagent", childID: "ses_child", state: "completed" },
-      })
+    fake.sessionHistory("ses_parent").push({
+      type: "synthetic",
+      id: "msg_failure",
+      text: reportText,
+      time: { created: 3 },
+      metadata: { source: "subagent", childID: "ses_child", state: "completed" },
+    })
     const visible = await fake.triggerContext({
       sessionID: "ses_parent",
       agent: "build",
@@ -164,3 +162,55 @@ test("a TypeSafe failure records an unclassified report without changing the not
     else process.env.TYPESAFE_API_KEY = old
   }
 })
+
+test.each(["cancelled", "error", "timeout", "timed_out"])(
+  "records terminal %s without invoking Jev or annotating",
+  async (state) => {
+    const fixture = createFakePluginContext()
+    const hooks: Hooks = {}
+    bindNativeRework(hooks)
+    const row = Promise.withResolvers<ledger.JevRoutingRecord>()
+    const write = spyOn(ledger, "recordJevRouting").mockImplementation(async (entry) => {
+      if (entry.event === "report") row.resolve(entry)
+    })
+    const fetchSpy = spyOn(globalThis, "fetch").mockRejectedValue(new Error("must not be called"))
+    const old = process.env.TYPESAFE_API_KEY
+    process.env.TYPESAFE_API_KEY = "fixture-only"
+    const registration = await installNativeRework(fixture.context, hooks)
+    const text = '<background-result kind="subagent" state="' + state + '">\nSubagent cancelled\n</background-result>'
+    try {
+      fixture
+        .sessionHistory("ses_parent")
+        .push({
+          type: "synthetic",
+          id: "msg_failure",
+          text,
+          time: { created: 1 },
+          metadata: { source: "subagent", childID: "ses_child", state },
+        })
+      const event = await fixture.triggerContext({
+        sessionID: "ses_parent",
+        agent: "build",
+        model: { providerID: "test", id: "test" },
+        system: [],
+        options: {},
+        messages: [{ id: "msg_failure", role: "user", content: text }],
+      })
+      expect(event.messages[0]?.content).toBe(text)
+      expect(await row.promise).toMatchObject({
+        report_state: state,
+        terminal: true,
+        classification: "unclassified",
+        probabilities: null,
+        error: null,
+      })
+      expect(fetchSpy).not.toHaveBeenCalled()
+    } finally {
+      await registration?.dispose()
+      write.mockRestore()
+      fetchSpy.mockRestore()
+      if (old === undefined) delete process.env.TYPESAFE_API_KEY
+      else process.env.TYPESAFE_API_KEY = old
+    }
+  },
+)
