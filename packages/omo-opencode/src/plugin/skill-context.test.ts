@@ -28,6 +28,27 @@ describe("createSkillContext", () => {
     rmSync(mockGlobalConfigDir, { recursive: true, force: true })
   })
 
+  it("lists a nested skill under its plain name and ignores hidden copies in V2", async () => {
+    const write = (dir: string, body: string) => {
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, "SKILL.md"), "---\nname: nested-review\ndescription: Fixture\n---\n" + body)
+    }
+    write(join(testDirectory, ".claude", "skills", "nested-review"), "Lower priority")
+    const skills = join(testDirectory, ".opencode", "skills")
+    write(join(skills, "synced", "account", "nested-review"), "Live")
+    write(join(skills, ".staging", "x", ".replaced-y", "nested-review"), "Stale")
+    write(join(skills, ".trash", "nested-review"), "Trash")
+    const result = await createSkillContext({
+      directory: testDirectory,
+      pluginConfig: OhMyOpenCodeConfigSchema.parse({}),
+      plainNames: true,
+    })
+    const matching = result.mergedSkills.filter((skill) => skill.name.endsWith("nested-review"))
+    expect(matching.map((skill) => [skill.name, skill.path])).toEqual([
+      ["nested-review", join(skills, "synced", "account", "nested-review", "SKILL.md")],
+    ])
+  })
+
   it("exposes security skills to the OMO skill tool context", async () => {
     // given
     const discoverConfigSourceSkillsSpy = spyOn(skillLoader, "discoverConfigSourceSkills").mockResolvedValue([])

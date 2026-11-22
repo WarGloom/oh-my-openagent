@@ -65,6 +65,7 @@ export async function loadSkillFromPath(options: {
 
     return {
       name: skillName,
+      ...(namePrefix ? { frontmatterName: baseName } : {}),
       provenance,
       mcpSourcePath:
         mcpJsonMcp && existsSync(join(mcpDirectory, "mcp.json")) ? join(mcpDirectory, "mcp.json") : options.skillPath,

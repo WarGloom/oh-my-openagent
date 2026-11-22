@@ -28,6 +28,7 @@ export interface LoadedSkill {
   provenance?: SkillProvenance
   mcpSourcePath?: string
   name: string
+  frontmatterName?: string
   path?: string
   resolvedPath?: string
   definition: CommandDefinition

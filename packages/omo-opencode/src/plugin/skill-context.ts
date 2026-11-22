@@ -2,6 +2,7 @@ import type { AvailableSkill } from "../agents/dynamic-agent-prompt-builder"
 import type { OhMyOpenCodeConfig } from "../config"
 import type { BrowserAutomationProvider } from "../config/schema/browser-automation"
 import type { LoadedSkill, SkillScope } from "../features/opencode-skill-loader/types"
+import { skillFileIdentity } from "@oh-my-opencode/skills-loader-core/opencode-skill-loader/skill-deduplication"
 
 import {
   discoverConfigSourceSkills,
@@ -67,6 +68,7 @@ function isDisabledConfigSkillEntryName(name: string, disabledSkills: ReadonlySe
 
 export async function createSkillContext(args: {
   directory: string
+  plainNames?: boolean
   pluginConfig: OhMyOpenCodeConfig
   /**
    * Host skill config from opencode's merged runtime config (e.g. fetched via
@@ -163,19 +165,36 @@ export async function createSkillContext(args: {
       filterProviderGatedSkills(sharedSkills, browserProvider),
       disabledSkills,
     )
-    const mergedSkills = mergeSkills(
+    const plain = (skills: LoadedSkill[]) =>
+      args.plainNames
+        ? skills.map((skill) => {
+            const name = skill.frontmatterName
+            return name === undefined ? skill : { ...skill, name, definition: { ...skill.definition, name } }
+          })
+        : skills
+    const merged = mergeSkills(
       builtinSkills,
       pluginConfig.skills,
-      activeConfigSourceSkills,
-      [...activeUserSkills, ...activeAgentsGlobalSkills, ...filteredSharedSkills],
-      activeGlobalSkills,
-      [...activeProjectSkills, ...activeAgentsProjectSkills],
-      activeOpencodeProjectSkills,
+      plain(activeConfigSourceSkills),
+      plain([...activeUserSkills, ...activeAgentsGlobalSkills, ...filteredSharedSkills]),
+      plain(activeGlobalSkills),
+      plain([...activeProjectSkills, ...activeAgentsProjectSkills]),
+      plain(activeOpencodeProjectSkills),
       {
         configDir: directory,
         isConfigEntryAllowed: (name) => !isDisabledConfigSkillEntryName(name, disabledSkills),
       },
     )
+    const paths = new Set<string>()
+    const mergedSkills = args.plainNames
+      ? merged.filter((skill) => {
+          if (!skill.path) return true
+          const path = skillFileIdentity(skill.path)
+          if (paths.has(path)) return false
+          paths.add(path)
+          return true
+        })
+      : merged
 
     const availableSkills: AvailableSkill[] = mergedSkills.map((skill) => ({
       name: skill.name,

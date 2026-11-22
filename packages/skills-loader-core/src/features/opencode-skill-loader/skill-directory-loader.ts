@@ -1,5 +1,5 @@
 import * as fs from "node:fs/promises"
-import { join } from "node:path"
+import { join, relative, sep } from "node:path"
 import { log } from "@oh-my-opencode/utils"
 import type { DiscoveredProjectDirectory } from "../../shared/project-discovery-dirs"
 import type { LoadedSkill, SkillScope } from "./types"
@@ -47,13 +47,19 @@ export async function loadSkillsFromDir(options: {
     const canonical = checkSkillPath(discovered, provenance, true)
     if (options.ancestry?.has(canonical)) return []
     const ancestry = new Set([...(options.ancestry ?? []), canonical])
+    const source = await fs.realpath(provenance.selectedRoot)
+    const hidden = (target: string) => {
+      const segments = relative(source, target).split(sep)
+      return segments[0] !== ".." && segments.some((segment) => segment.startsWith("."))
+    }
     const entries = await fs.readdir(discovered, { withFileTypes: true })
-    for (const entry of entries) {
+    for (const entry of entries.toSorted((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
       if (entry.name.startsWith(".")) continue
       const path = join(discovered, entry.name)
       try {
         const entryProvenance = skillProvenance(path, options.scope, provenance)
         const resolved = checkSkillPath(path, entryProvenance, true)
+        if (hidden(resolved)) continue
         const stat = await fs.stat(resolved)
         if (stat.isDirectory()) {
           if (ancestry.has(resolved)) continue
@@ -69,6 +75,11 @@ export async function loadSkillsFromDir(options: {
               break
             }
             found = true
+            const target = await fs.realpath(skillPath).catch((error: unknown) => {
+              if (error instanceof Error && "code" in error && error.code === "ENOENT") return skillPath
+              throw error
+            })
+            if (hidden(target)) continue
             const skill = await loadSkillFromPath({
               skillPath,
               resolvedPath: resolved,

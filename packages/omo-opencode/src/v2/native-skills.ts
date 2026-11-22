@@ -1,4 +1,5 @@
 import type { PluginInput } from "@opencode-ai/plugin"
+import { skillFileIdentity } from "@oh-my-opencode/skills-loader-core/opencode-skill-loader/skill-deduplication"
 import type { LoadedSkill } from "../features/opencode-skill-loader"
 import { extractSkillBody } from "../tools/skill/skill-body"
 import type { V2Registration } from "./context-types"
@@ -31,6 +32,7 @@ export async function installNativeSkills(input: PluginInput): Promise<V2Registr
     state.entries.clear()
     state.published.clear()
     state.hostEntries.clear()
+    const paths = new Map(editor.list().map((skill) => [skillFileIdentity(skill.path), skill]))
     for (const existing of editor.list()) {
       const metadata = discovered.find((skill) => skill.name === existing.name && skill.path === existing.path)
       if (metadata && (metadata.mcpConfig || metadata.definition.agent)) {
@@ -52,6 +54,8 @@ export async function installNativeSkills(input: PluginInput): Promise<V2Registr
       }
     }
     for (const { skill, content } of prepared) {
+      const sameFile = skill.path === undefined ? undefined : paths.get(skillFileIdentity(skill.path))
+      if (sameFile && editor.get(sameFile.id) && sameFile.name !== skill.name) continue
       const existing = editor
         .list()
         .find((entry) => entry.id === skill.name || entry.name.toLowerCase() === skill.name.toLowerCase())

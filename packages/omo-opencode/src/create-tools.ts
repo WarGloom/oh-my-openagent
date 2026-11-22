@@ -8,6 +8,7 @@ import type { Managers } from "./create-managers"
 import { createAvailableCategories } from "./plugin/available-categories"
 import { createSkillContext } from "./plugin/skill-context"
 import { createToolRegistry } from "./plugin/tool-registry"
+import { isV2PluginInput } from "./v2/create-plugin-input"
 
 type CreateToolsResult = {
   filteredTools: ToolsRecord
@@ -35,6 +36,7 @@ export async function createTools(args: {
 
   const skillContext = await createSkillContext({
     directory: ctx.directory,
+    plainNames: isV2PluginInput(ctx),
     pluginConfig,
   })
 
