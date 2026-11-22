@@ -33,6 +33,7 @@ export function buildDelegateTaskArgsSchema(
   description: OptionalStringSchema
   prompt: StringSchema
   run_in_background: OptionalBooleanSchema
+  completion_group: OptionalStringSchema
   category: OptionalStringSchema
   model_routing: OptionalBooleanSchema
   subagent_type: OptionalStringSchema | OptionalEnumSchema
@@ -62,6 +63,15 @@ export function buildDelegateTaskArgsSchema(
       .optional()
       .describe(
         "true is the standard spawn: returns a background task ID `bg_...` at once; inspect the result/error delivered in the native completion notification. background_output is optional for missing/truncated output or transcript/diagnostic detail. false blocks this response until the child finishes; use it only for a short child whose result gates your very next call. Omitted counts as false.",
+      ),
+    completion_group: tool.schema
+      .string()
+      .min(1)
+      .max(128)
+      .regex(/^[\p{L}\p{N}_.:-]+$/u)
+      .optional()
+      .describe(
+        "Use the same name for several background reviewers or checks whose results are judged together. Ready reports arrive in dispatch order within one delivery; a failure wakes the parent immediately.",
       ),
     category: tool.schema
       .string()

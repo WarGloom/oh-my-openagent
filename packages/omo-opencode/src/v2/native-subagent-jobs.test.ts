@@ -23,6 +23,42 @@ afterEach(async () => {
 })
 
 describe("native subagent consumer", () => {
+  it("passes task completion_group to the same native admission as other job options", async () => {
+    const f = await fixture({ requireSystem: false })
+    const start = spyOn(f.domain, "start")
+    const started = f.nextStart()
+    const client = {
+      ...f.input.client,
+      app: {
+        ...f.input.client.app,
+        agents: async () =>
+          unsafeTestValue({
+            data: [{ name: "worker", mode: "subagent", model: { providerID: "test", modelID: "model" } }],
+          }),
+      },
+    }
+    const tool = createDelegateTask({ manager: f.manager, client, directory: f.input.directory })
+    const context = {
+      sessionID: "parent",
+      messageID: "message",
+      agent: "parent-agent",
+      callID: "grouped-task",
+      abort: new AbortController().signal,
+      directory: f.input.directory,
+      worktree: f.input.directory,
+      ask: async () => {},
+      metadata: async () => {},
+    }
+    const args = { subagent_type: "worker", prompt: "Review the fixture", load_skills: [], completion_group: "review" }
+    const invalid = await tool.execute({ ...args, run_in_background: false }, context)
+    expect(invalid).toContain("requires run_in_background: true")
+    expect(start).not.toHaveBeenCalled()
+    const answer = await tool.execute({ ...args, run_in_background: true }, context)
+    expect(answer).toContain("Background Task ID:")
+    await started
+    expect(start.mock.calls[0]?.[0]).toMatchObject({ completion: "parent", completionGroup: "review" })
+  })
+
   it("records the observed model per generation and leaves a continuation without evidence unknown", async () => {
     const f = await fixture()
     const decisionId = crypto.randomUUID()
@@ -470,12 +506,28 @@ describe("native subagent consumer", () => {
     const update = spyOn(f.context.session, "update")
     const steer = spyOn(f.domain, "steer")
     const completion = f.manager.waitForNativeTask(task.id, new AbortController().signal)
-    const result = await createDelegateTask({ manager: f.manager, client: f.input.client, directory: f.input.directory }).execute(
-      { task_id: task.sessionId ?? "", prompt: "clarification", description: "continue", run_in_background: true, load_skills: [] },
+    const result = await createDelegateTask({
+      manager: f.manager,
+      client: f.input.client,
+      directory: f.input.directory,
+    }).execute(
       {
-        sessionID: "parent", messageID: "followup-message", agent: "parent-agent", callID: "followup",
-        abort: new AbortController().signal, directory: f.input.directory, worktree: f.input.directory,
-        ask: async () => {}, metadata: async () => {},
+        task_id: task.sessionId ?? "",
+        prompt: "clarification",
+        description: "continue",
+        run_in_background: true,
+        load_skills: [],
+      },
+      {
+        sessionID: "parent",
+        messageID: "followup-message",
+        agent: "parent-agent",
+        callID: "followup",
+        abort: new AbortController().signal,
+        directory: f.input.directory,
+        worktree: f.input.directory,
+        ask: async () => {},
+        metadata: async () => {},
       },
     )
     expect(result).toContain(task.id)
@@ -525,12 +577,28 @@ describe("native subagent consumer", () => {
       return admitted
     })
 
-    const receipt = await createDelegateTask({ manager: f.manager, client: f.input.client, directory: f.input.directory }).execute(
-      { task_id: task.sessionId ?? "", prompt: "clarify", description: "continue", run_in_background: false, load_skills: [] },
+    const receipt = await createDelegateTask({
+      manager: f.manager,
+      client: f.input.client,
+      directory: f.input.directory,
+    }).execute(
       {
-        sessionID: "parent", messageID: "foreground-message", agent: "parent-agent", callID: "foreground-steer",
-        abort: caller.signal, directory: f.input.directory, worktree: f.input.directory,
-        ask: async () => {}, metadata: async () => {},
+        task_id: task.sessionId ?? "",
+        prompt: "clarify",
+        description: "continue",
+        run_in_background: false,
+        load_skills: [],
+      },
+      {
+        sessionID: "parent",
+        messageID: "foreground-message",
+        agent: "parent-agent",
+        callID: "foreground-steer",
+        abort: caller.signal,
+        directory: f.input.directory,
+        worktree: f.input.directory,
+        ask: async () => {},
+        metadata: async () => {},
       },
     )
 
@@ -567,12 +635,28 @@ describe("native subagent consumer", () => {
       return steer(input, options)
     })
     const nextStart = f.nextStart()
-    const reply = createDelegateTask({ manager: f.manager, client: f.input.client, directory: f.input.directory }).execute(
-      { task_id: task.sessionId ?? "", prompt: "clarify", description: "continue", run_in_background: false, load_skills: [] },
+    const reply = createDelegateTask({
+      manager: f.manager,
+      client: f.input.client,
+      directory: f.input.directory,
+    }).execute(
       {
-        sessionID: "parent", messageID: "successor-message", agent: "parent-agent", callID: "successor",
-        abort: new AbortController().signal, directory: f.input.directory, worktree: f.input.directory,
-        ask: async () => {}, metadata: async () => {},
+        task_id: task.sessionId ?? "",
+        prompt: "clarify",
+        description: "continue",
+        run_in_background: false,
+        load_skills: [],
+      },
+      {
+        sessionID: "parent",
+        messageID: "successor-message",
+        agent: "parent-agent",
+        callID: "successor",
+        abort: new AbortController().signal,
+        directory: f.input.directory,
+        worktree: f.input.directory,
+        ask: async () => {},
+        metadata: async () => {},
       },
     )
     await entered.promise
@@ -609,18 +693,28 @@ describe("native subagent consumer", () => {
     })
     const caller = new AbortController()
     const steering = f.manager.resume({
-      sessionId: task.sessionId ?? "", parentSessionId: "parent", parentMessageId: "next",
-      prompt: "clarify", nativeSignal: caller.signal,
+      sessionId: task.sessionId ?? "",
+      parentSessionId: "parent",
+      parentMessageId: "next",
+      prompt: "clarify",
+      nativeSignal: caller.signal,
       nativeInvocation: { kind: "tool", agent: "parent-agent", messageID: "next", toolCallID: "steer" },
     })
-    const settledSteering = steering.then(() => "started", () => "aborted")
+    const settledSteering = steering.then(
+      () => "started",
+      () => "aborted",
+    )
     await entered.promise
     const cancellation = f.manager.cancelTask(task.id)
     const deadline = AbortSignal.timeout(2000)
     try {
       await Promise.race([
         cancellation,
-        new Promise<never>((_, reject) => deadline.addEventListener("abort", () => reject(new Error("Cancellation did not abort steer admission")), { once: true })),
+        new Promise<never>((_, reject) =>
+          deadline.addEventListener("abort", () => reject(new Error("Cancellation did not abort steer admission")), {
+            once: true,
+          }),
+        ),
       ])
       expect(f.rows.get(admission)?.status).toBe("cancelled")
       expect(f.starts).toEqual([task.sessionId])
@@ -653,7 +747,10 @@ describe("native subagent consumer", () => {
       return result
     })
     const resume = {
-      sessionId: task.sessionId ?? "", parentSessionId: "parent", parentMessageId: "next", prompt: "clarify",
+      sessionId: task.sessionId ?? "",
+      parentSessionId: "parent",
+      parentMessageId: "next",
+      prompt: "clarify",
       nativeInvocation: { kind: "tool" as const, agent: "parent-agent", messageID: "next", toolCallID: "steer" },
     }
     await expect(f.manager.resume(resume)).rejects.toThrow("steer response lost")
@@ -662,7 +759,11 @@ describe("native subagent consumer", () => {
     expect(f.starts).toEqual([task.sessionId])
     const restored = backgroundTaskRecord.parse(f.stored.get(task.id))
     await f.createJobs().restore([restored], async () => {})
-    expect(restored).toMatchObject({ status: "running", nativeAdmissionID: original.nativeAdmissionID, nativeRun: original.nativeRun })
+    expect(restored).toMatchObject({
+      status: "running",
+      nativeAdmissionID: original.nativeAdmissionID,
+      nativeRun: original.nativeRun,
+    })
     const completion = f.manager.waitForNativeTask(task.id, new AbortController().signal)
     f.finish(original.nativeAdmissionID ?? "")
     await completion
@@ -696,7 +797,10 @@ describe("native subagent consumer", () => {
     })
     const nextStart = f.nextStart()
     const input = {
-      sessionId: task.sessionId ?? "", parentSessionId: "parent", parentMessageId: "next", prompt: "clarify",
+      sessionId: task.sessionId ?? "",
+      parentSessionId: "parent",
+      parentMessageId: "next",
+      prompt: "clarify",
       nativeInvocation: { kind: "tool" as const, agent: "parent-agent", messageID: "next", toolCallID: "steer" },
     }
     const continuation = f.manager.resume(input)

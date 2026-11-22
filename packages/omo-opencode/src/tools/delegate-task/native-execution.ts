@@ -80,6 +80,7 @@ export async function executeNativeDelegate(input: {
           nativeSignal: ctx.abort,
           skills: args.load_skills.length ? args.load_skills : existing.skills,
           nativeInheritedPermit: !args.run_in_background && subagentSessions.has(parent.sessionID),
+          nativeCompletionGroup: args.completion_group,
           nativeCompletion: args.run_in_background ? "parent" : "none",
           nativeMode: args.run_in_background ? "background" : "foreground",
         })
@@ -103,6 +104,7 @@ export async function executeNativeDelegate(input: {
           userPermission: input.model?.tools ? migrateToolsToPermission(input.model.tools) : undefined,
           nativeInvocation,
           nativeSignal: ctx.abort,
+          nativeCompletionGroup: args.completion_group,
           nativeCompletion: args.run_in_background ? "parent" : "none",
           nativeMode: args.run_in_background ? "background" : "foreground",
           nativeInheritedPermit: !args.run_in_background && subagentSessions.has(parent.sessionID),

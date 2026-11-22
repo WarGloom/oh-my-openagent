@@ -36,6 +36,7 @@ export async function fixture(
     readonly restoredText?: string
     readonly denied?: boolean
     readonly cleanupDelay?: number
+    readonly requireSystem?: boolean
   } = {},
 ) {
   const directory = mkdtempSync(join(tmpdir(), "omo-native-jobs-"))
@@ -57,7 +58,10 @@ export async function fixture(
   let generation = 0
   const anchors = new Set<string>()
   const revoked = new Set<string>()
-  const steered = new Map<string, { readonly run: NonNullable<NativeSubagentReceipt["run"]>; readonly promptID: string }>()
+  const steered = new Map<
+    string,
+    { readonly run: NonNullable<NativeSubagentReceipt["run"]>; readonly promptID: string }
+  >()
   const current = (target: Parameters<NativeSubagentDomain["get"]>[0]) =>
     [...rows.values()].find((row) =>
       "admissionID" in target ? row.admissionID === target.admissionID : row.run?.generation === target.run.generation,
@@ -97,7 +101,8 @@ export async function fixture(
       const prepared = rows.get(input.admissionID)
       if (!prepared) throw new Error("unprepared start")
       if (prepared.status !== "prepared") return prepared
-      if (!instructions.has(prepared.childSessionID)) throw new Error("child bootstrap missing before wake")
+      if (options.requireSystem !== false && !instructions.has(prepared.childSessionID))
+        throw new Error("child bootstrap missing before wake")
       const active = [...rows.values()].find(
         (row) => row.childSessionID === prepared.childSessionID && row.status === "running",
       )

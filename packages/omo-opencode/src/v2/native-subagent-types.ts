@@ -95,6 +95,7 @@ export type NativeSubagentDomain = {
       readonly delivery: "queue" | "steer"
       readonly mode: "foreground" | "background"
       readonly completion: "parent" | "none"
+      readonly completionGroup?: string
     },
     options?: { readonly signal?: AbortSignal },
   ) => Promise<NativeSubagentReceipt>

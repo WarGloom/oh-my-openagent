@@ -63,6 +63,7 @@ export interface BackgroundTask {
   nativePromptID?: string
   nativeRun?: NativeSubagentRun
   nativeInvocation?: NativeSubagentInvocation
+  nativeCompletionGroup?: string
   nativeCompletion?: "parent" | "none"
   nativeMode?: "foreground" | "background"
   nativeInheritedPermit?: boolean
@@ -162,6 +163,7 @@ export interface LaunchInput {
   nativeMetadata?: Readonly<Record<string, unknown>>
   nativeTaskKey?: string
   nativeInvocation?: NativeSubagentInvocation
+  nativeCompletionGroup?: string
   nativeCompletion?: "parent" | "none"
   nativeMode?: "foreground" | "background"
   description: string
@@ -196,6 +198,7 @@ export interface ResumeInput {
   nativeMetadata?: Readonly<Record<string, unknown>>
   nativePromptID?: string
   nativeInvocation?: NativeSubagentInvocation
+  nativeCompletionGroup?: string
   nativeCompletion?: "parent" | "none"
   nativeMode?: "foreground" | "background"
   skills?: string[]

@@ -442,6 +442,12 @@ Explicit categories dispatch unchanged while their model opinion is collected in
 
 Decisions are durable JSONL records under the telemetry data directory, normally `$XDG_DATA_HOME/oh-my-opencode/jev-routing` or `~/.local/share/oh-my-opencode/jev-routing`. Files use mode 0600, one month per file, with numbered parts after 50 MiB. Old files are never deleted. Each versioned event has an event ID and decision ID. Decisions contain numeric answers, top-2 probabilities, artifact identity, model/backend identifiers, timing, usage, category choices, configuration hash, brief status, and the original task prompt's SHA-256 and byte size. Task lifecycle owners publish attempt and outcome events. Retries, replacements and continuations receive new attempt IDs under the original decision. A child whose first line is `ESCALATE: deep-high` has an escalated outcome, not a failed or retried outcome. Restart does not replay past attempt events or infer missing outcomes. The ledger contains no prompt, brief text, filesystem paths or credentials. Writes never delay dispatch. Write failures, unknown artifacts and model mismatches produce warning counters; the existing doctor Models check shows those counters.
 
+### V2 background completion groups
+
+Set `completion_group` on native `subagent`, or on OMO `task` with `run_in_background: true`. Use the same name for several reviewers or checks whose results you judge together. Group names are scoped to the parent session.
+
+A successful member queues its separate report until the last member finishes or the parent starts another turn. The parent receives ready reports in dispatch order within one delivery. An error, cancellation, or terminal timeout wakes the parent immediately and the remaining members then report independently. A background continuation of a finished member reopens that member only.
+
 ### V2 reply checks
 
 Set `[opencode].reply_check` in `.omo/omo.jsonc` to check final replies in root sessions. The default is off.

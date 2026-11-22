@@ -101,6 +101,12 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
       }
       const skillsOmitted = args.load_skills === undefined
       const delegateTaskArgs = await prepareDelegateTaskArgs(args, originalContext)
+      if (
+        delegateTaskArgs.completion_group !== undefined &&
+        (!options.manager.nativeJobs || !delegateTaskArgs.run_in_background)
+      ) {
+        return "completion_group requires run_in_background: true on an OpenCode V2 host."
+      }
       const named = !delegateTaskArgs.category && delegateTaskArgs.subagent_type
       if (
         named &&

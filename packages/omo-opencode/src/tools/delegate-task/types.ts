@@ -72,6 +72,7 @@ export interface DelegateTaskArgs {
   reasoning?: DelegatedModelConfig["reasoning"]
   requested_subagent_type?: string
   run_in_background: boolean
+  completion_group?: string
   task_id?: string
   command?: string
   load_skills: string[]

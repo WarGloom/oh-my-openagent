@@ -453,7 +453,10 @@ export class BackgroundManager {
   readonly nativeJobs?: NativeBackgroundJobs
   private nativeRestoring = false
   private readonly nativeSettlements = new Map<string, Promise<void>>()
-  private readonly nativeSteers = new Map<string, { key: string; promise: Promise<void>; result?: Promise<BackgroundTask> }>()
+  private readonly nativeSteers = new Map<
+    string,
+    { key: string; promise: Promise<void>; result?: Promise<BackgroundTask> }
+  >()
   private readonly nativeLaunches = new Map<string, Promise<BackgroundTask>>()
   private readonly nativeStartWaiters = new Map<string, Set<() => void>>()
   private config?: BackgroundTaskConfig
@@ -916,6 +919,7 @@ export class BackgroundManager {
         cwd: input.cwd,
         onSessionCreated: input.onSessionCreated,
         nativeInvocation: input.nativeInvocation,
+        nativeCompletionGroup: input.nativeCompletionGroup,
         nativeCompletion: input.nativeCompletion,
         nativeMode: input.nativeMode,
         nativeInheritedPermit: input.nativeInheritedPermit,
@@ -2063,10 +2067,7 @@ export class BackgroundManager {
       listeners.add(started.resolve)
       this.nativeStartWaiters.set(taskID, listeners)
       const abort = () => {
-        void this.cancelInterruptedForegroundTask(taskID).then(
-          () => started.reject(signal.reason),
-          started.reject,
-        )
+        void this.cancelInterruptedForegroundTask(taskID).then(() => started.reject(signal.reason), started.reject)
       }
       signal.addEventListener("abort", abort, { once: true })
       try {
@@ -2167,21 +2168,35 @@ export class BackgroundManager {
     }
 
     if (
-      this.nativeJobs && input.nativeInvocation?.kind === "tool" && existingTask.nativeAdmissionID &&
-      existingTask.nativeRun && existingTask.status !== "pending"
+      this.nativeJobs &&
+      input.nativeInvocation?.kind === "tool" &&
+      existingTask.nativeAdmissionID &&
+      existingTask.nativeRun &&
+      existingTask.status !== "pending"
     ) {
       const previous = existingTask.nativeInvocation
       if (
-        existingTask.nativeContinued && previous?.kind === "tool" &&
-        previous.agent === input.nativeInvocation.agent && previous.messageID === input.nativeInvocation.messageID &&
-        previous.toolCallID === input.nativeInvocation.toolCallID && existingTask.parentSessionId === input.parentSessionId
+        existingTask.nativeContinued &&
+        previous?.kind === "tool" &&
+        previous.agent === input.nativeInvocation.agent &&
+        previous.messageID === input.nativeInvocation.messageID &&
+        previous.toolCallID === input.nativeInvocation.toolCallID &&
+        existingTask.parentSessionId === input.parentSessionId
       ) {
         await this.nativeJobs.reconcileAdmission(existingTask)
         return existingTask
       }
       const key = JSON.stringify([
-        input.parentSessionId, input.nativeInvocation, input.prompt, input.system, input.skills,
-        input.nativePrompt, input.nativeMetadata, input.nativeCompletion, input.nativeMode,
+        input.parentSessionId,
+        input.nativeInvocation,
+        input.prompt,
+        input.system,
+        input.skills,
+        input.nativePrompt,
+        input.nativeMetadata,
+        input.nativeCompletion,
+        input.nativeMode,
+        input.nativeCompletionGroup,
       ])
       const active = this.nativeSteers.get(existingTask.id)
       if (active) {
@@ -2189,11 +2204,15 @@ export class BackgroundManager {
         if (active.result) return active.result
         throw new Error(`Task ${existingTask.id} already has a continuation being admitted`)
       }
-      if (this.resumesAwaitingAdmission.has(existingTask.id)) throw new Error(`Task ${existingTask.id} is already being resumed`)
+      if (this.resumesAwaitingAdmission.has(existingTask.id))
+        throw new Error(`Task ${existingTask.id} is already being resumed`)
       const jobs = this.nativeJobs
       const wasRunning = existingTask.status === "running"
       const admission = jobs.steer(existingTask, input)
-      const promise = admission.then(() => {}, () => {})
+      const promise = admission.then(
+        () => {},
+        () => {},
+      )
       const result = (async () => {
         try {
           const outcome = await admission
@@ -2204,7 +2223,8 @@ export class BackgroundManager {
         this.resumesAwaitingAdmission.add(existingTask.id)
         try {
           await this.nativeSettlements.get(existingTask.id)
-          if (wasRunning && existingTask.status === "cancelled") throw new Error(`Task ${existingTask.id} was cancelled`)
+          if (wasRunning && existingTask.status === "cancelled")
+            throw new Error(`Task ${existingTask.id} was cancelled`)
           return await this.queueNativeResume(existingTask, input)
         } finally {
           this.resumesAwaitingAdmission.delete(existingTask.id)
@@ -2358,6 +2378,7 @@ export class BackgroundManager {
         nativeMetadata: input.nativeMetadata,
         nativeInheritedPermit: input.nativeInheritedPermit ?? false,
         skills: input.skills ?? [],
+        nativeCompletionGroup: input.nativeCompletionGroup,
         nativeCompletion: input.nativeCompletion ?? task.nativeCompletion,
         nativeMode: input.nativeMode ?? task.nativeMode,
         parentMessageId: input.parentMessageId,
@@ -3253,11 +3274,7 @@ export class BackgroundManager {
       // OpenCode may publish the error before promptAsync returns. Let the dispatch commit its cursor first.
       const generation = pendingRetry.dispatchGeneration
       if (generation === undefined || !(await pendingRetry.promise)) return
-      if (
-        task.status !== "running" ||
-        task.sessionId !== sessionID ||
-        task.fallbackDispatchGeneration !== generation
-      ) {
+      if (task.status !== "running" || task.sessionId !== sessionID || task.fallbackDispatchGeneration !== generation) {
         return
       }
     }

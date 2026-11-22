@@ -180,6 +180,7 @@ export class V2NativeSubagentJobs implements NativeBackgroundJobs {
       },
       delivery: "steer",
       mode: "background",
+      ...(task.nativeCompletionGroup ? { completionGroup: task.nativeCompletionGroup } : {}),
       completion: task.nativeCompletion ?? (task.teamRunId ? "none" : "parent"),
       metadata: {
         ...task.nativeMetadata,
@@ -200,19 +201,26 @@ export class V2NativeSubagentJobs implements NativeBackgroundJobs {
   async steer(task: BackgroundTask, input: ResumeInput) {
     if (!task.nativeAdmissionID || !task.nativeRun) throw new Error("Native task has no running admission")
     if (input.nativeInvocation?.kind !== "tool") throw new Error("Native steer requires a tool invocation")
-    return this.domain.steer({
-      admissionID: task.nativeAdmissionID,
-      run: task.nativeRun,
-      invocation: input.nativeInvocation,
-      prompt: input.nativePrompt ?? { text: createInternalAgentTextPart(input.prompt).text },
-      metadata: input.nativeMetadata,
-    }, { signal: input.nativeSignal })
+    return this.domain.steer(
+      {
+        admissionID: task.nativeAdmissionID,
+        run: task.nativeRun,
+        invocation: input.nativeInvocation,
+        prompt: input.nativePrompt ?? { text: createInternalAgentTextPart(input.prompt).text },
+        metadata: input.nativeMetadata,
+      },
+      { signal: input.nativeSignal },
+    )
   }
 
   async reconcileAdmission(task: BackgroundTask): Promise<void> {
     if (!task.nativeAdmissionID || !task.nativeRun) throw new Error("Native task has no running admission")
     const receipt = await this.domain.get({ admissionID: task.nativeAdmissionID })
-    if (!receipt?.run || receipt.run.generation !== task.nativeRun.generation || receipt.childSessionID !== task.sessionId) {
+    if (
+      !receipt?.run ||
+      receipt.run.generation !== task.nativeRun.generation ||
+      receipt.childSessionID !== task.sessionId
+    ) {
       throw new Error("Native continuation admission could not be reconciled")
     }
   }
