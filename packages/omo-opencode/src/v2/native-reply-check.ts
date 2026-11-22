@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import type { Hooks } from "@opencode-ai/plugin"
 import { z } from "zod"
 import type { ReplyCheckConfig } from "../config/schema/reply-check"
+import { workerReportFindings } from "./worker-report-check"
 import { isRecord } from "../shared/record-type-guard"
 import type { V2Event, V2PluginContext, V2Registration } from "./context-types"
 
@@ -12,7 +13,7 @@ const noul = z.object({ type: z.literal("noul"), noul: z.number().min(0).max(1) 
 const answersSchema = z.object({ answers: z.object({ progress_only: noul, missing_decision_options: noul }) })
 
 type Rule = { readonly name: string; readonly citation: string; readonly rule_text: string }
-type Finding = { readonly rule: Rule; readonly text: string }
+type Finding = { readonly rule: Rule; readonly text: string; readonly provenance?: string }
 
 export function bindReplyCheck(hooks: Hooks, config: ReplyCheckConfig | undefined): void {
   if (config) configs.set(hooks, config)
@@ -113,10 +114,19 @@ export function installReplyCheck(
           if (!signal.aborted) warn("Reply check: TypeSafe judgment unavailable.")
         }
       }
+      if (config.worker_reports) {
+        findings.push(...(await workerReportFindings(config.worker_reports, { history, reply, signal, warn })))
+      }
       if (!findings.length || signal.aborted) return
       const details = findings
-        .map(({ rule, text }) =>
-          JSON.stringify({ rule: rule.name, citation: rule.citation, rule_text: rule.rule_text, matched_text: text }),
+        .map(({ rule, text, provenance }) =>
+          JSON.stringify({
+            rule: rule.name,
+            citation: rule.citation,
+            rule_text: rule.rule_text,
+            matched_text: text,
+            provenance,
+          }),
         )
         .join("\n")
       const id = createHash("sha256")
