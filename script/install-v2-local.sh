@@ -10,18 +10,31 @@ binary=$host/packages/cli/dist/cli-linux-x64/bin/opencode
 launcher=/home/nikita/.local/bin/opencode-v2-lab
 host_oid=7bbf2e1dbd0e14fe74a4d57e778dacc3b5f64389
 host_checkout_oid=7bbf2e1dbd0e14fe74a4d57e778dacc3b5f64389
-host_hash=43c847bdb37c65b76664b8c5a7ebd55788941cf9065ca135cd5181fdb2ff5758
+host_hash=1ee4b517f92c7be31bb516e024c0216aad6bddfa78b18b744b4b85865295da8d
 old_host_hash=397b5d1a360dd7703b2b1e4d25de44ce405b26fe0be70d09bdf6c22de736a159
-host_candidate=$ws/.tmp/v2-host-7bbf2e1dbd0e14fe74a4d57e778dacc3b5f64389/cli-linux-x64/bin/opencode
+host_candidate=$ws/.tmp/v2-host-local-7bbf2e1dbd/cli-linux-x64/bin/opencode
 paths=(dist packages/lsp-tools-mcp/dist packages/lsp-daemon/dist packages/git-bash-mcp/dist packages/shared-skills/skills)
 
 fail() {
+	if [[ -n ${evidence:-} && -d $evidence ]]; then
+		printf '%s\n' "$*" >>"$evidence/failure.log"
+	fi
 	printf '%s\n' "$*" >&2
 	exit 1
 }
 g() { GIT_MASTER=1 GIT_OPTIONAL_LOCKS=0 command git "$@"; }
 digest() { sha256sum "$1" | cut -d ' ' -f 1; }
 lab() { env -u OPENCODE_V2_BIN HOME=/home/nikita "$launcher" port "$@" 9>&-; }
+
+host_flavor() {
+	local executable=$1 root=$2 user_agent db
+	mkdir -p "$root"
+	user_agent=$(LC_ALL=C grep -aEo 'opencode/[a-zA-Z0-9._-]+/[0-9][a-zA-Z0-9.+-]*/cli' "$executable" | sort -u) || return 1
+	[[ $user_agent =~ ^opencode/local/[^/]+/cli$ ]] || return 1
+	db=$(env -i PATH=/usr/bin:/bin HOME="$root" XDG_CONFIG_HOME="$root/config" XDG_STATE_HOME="$root/state" XDG_DATA_HOME="$root/data" XDG_CACHE_HOME="$root/cache" TMPDIR="$root" "$executable" debug paths db) || return 1
+	[[ $db == "$root/data/opencode/opencode-local.db" && ! -e $db ]] || return 1
+	printf '%s\n' 'channel=local' 'default_port=49375' 'registration=service-local.json' 'database=opencode-local.db'
+}
 
 operation=${1:-install}
 case $operation in
@@ -77,6 +90,9 @@ if [[ $operation != --activate-built ]]; then
 	work=$(mktemp -d "$ws/.tmp/omo-v2-build.XXXXXXXX")
 	copy=$work/source
 	mkdir "$copy" "$work/home" "$work/tmp"
+	host_flavor "$binary" "$work/probe-installed" >"$evidence/host-flavor-installed.log" || fail 'Installed host is not the expected local flavor.'
+	host_flavor "$host_candidate" "$work/probe-candidate" >"$evidence/host-flavor-candidate.log" || fail 'Staged host is not the expected local flavor.'
+	cmp -s "$evidence/host-flavor-installed.log" "$evidence/host-flavor-candidate.log" || fail 'Staged and installed host flavors differ.'
 	# Archive committed bytes, never the dirty port tree or generated Senpi working files.
 	g -C "$repo" archive "$omo_oid" | tar -xf - -C "$copy"
 	cp -p "$repo/.git" "$copy/.git"
@@ -204,7 +220,7 @@ rollback() {
 		if ((restored)); then
 			lab service restart >>"$evidence/rollback.log" 2>&1 || restored=0
 		fi
-		printf 'Activation failed; restored=%s. Backups and candidates: %s\n' "$restored" "$evidence" >&2
+		printf 'Activation failed; exit=%s; restored=%s. Backups and candidates: %s\n' "$result" "$restored" "$evidence" | tee -a "$evidence/failure.log" >&2
 	fi
 	exit "$result"
 }
