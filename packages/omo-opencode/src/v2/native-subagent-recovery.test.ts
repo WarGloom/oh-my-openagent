@@ -264,6 +264,69 @@ describe("native recovery failure boundaries", () => {
     expect(f.ready).toEqual([runningGeneration, settledGeneration])
   })
 
+  it("leaves a continuation's new generation alone when the settled sweep fails on its task", async () => {
+    // given a settled task whose sweep is paused inside skill replay
+    const f = await fixture()
+    const started = f.nextStart()
+    const settled = await f.manager.launch(f.launch("settled"))
+    await started
+    const completed = f.manager.waitForNativeTask(settled.id, new AbortController().signal)
+    f.finish(settled.nativeAdmissionID ?? "")
+    await completed
+    await f.manager.shutdown()
+    const persisted = backgroundTaskRecord.parse(f.stored.get(settled.id))
+    const replaying = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const outcome = Promise.withResolvers<string>()
+    const cancels: unknown[] = []
+    const jobs = new V2NativeSubagentJobs(
+      f.context,
+      {
+        ...f.domain,
+        cancel: async (target) => {
+          cancels.push(target)
+          outcome.resolve("cancelled")
+          return f.domain.cancel(target)
+        },
+        ready: async (input) => {
+          outcome.resolve("replayed")
+          return f.domain.ready(input)
+        },
+      },
+      {
+        activateSkills: async () => ({ text: "", activationIDs: [], selections: [] }),
+        restoreSkills: async () => {
+          replaying.resolve()
+          await release.promise
+          throw new Error("activation unavailable")
+        },
+        save: async () => {},
+        notifyRecovery: async () => {},
+      },
+    )
+    const manager = new BackgroundManager({
+      pluginContext: f.input,
+      nativeJobs: jobs,
+      nativeLifecycle: { save: async () => {}, notify: async () => {} },
+      preserveSessionsOnShutdown: true,
+    })
+    cleanups.push(() => manager.shutdown())
+    manager.adoptRetainedTask(persisted)
+    await manager.restoreNativeJobs()
+    await replaying.promise
+    const task = manager.getTask(settled.id)
+    if (!task) throw new Error("restored task missing")
+    // when a continuation assigns its new admission to the task, as BackgroundManager.queueNativeResume does
+    task.nativeAdmissionID = "omo:continuation"
+    task.nativeRun = undefined
+    task.status = "pending"
+    release.resolve()
+    // then the sweep only replays the old run
+    expect(await outcome.promise).toBe("replayed")
+    expect(cancels).toEqual([])
+    expect(task).toMatchObject({ status: "pending", nativeAdmissionID: "omo:continuation" })
+  })
+
   it("opens admission after whole reconciliation fails", async () => {
     // given a native host whose reconciliation fails before any task is visited
     const f = await fixture()

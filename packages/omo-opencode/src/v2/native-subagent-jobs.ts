@@ -315,24 +315,42 @@ export class V2NativeSubagentJobs implements NativeBackgroundJobs {
   }
 
   private async resumeRestored({ task, receipt }: NativeRestoredTask): Promise<void> {
-    if (!receipt.run) return
-    if (this.recoveryFailures.has(receipt.admissionID)) return
+    const run = receipt.run
+    if (!run || this.recoveryFailures.has(receipt.admissionID)) return
+    // The settled sweep outlives restore, so a continuation can move this very task object (BackgroundManager.queueNativeResume
+    // assigns its new admission to it) to another generation. Only the replay of the restored run is still owed then: the
+    // task's own state, and failing it, now belong to the continuation.
+    const restored = () => task.nativeRun?.generation === run.generation
+    if (restored()) {
+      try {
+        await enforceNativeExecutorRequirement(this.context, task)
+        await this.deps.restoreSkills(task)
+        if (this.stopped) return
+        const system = task.skillContent
+        if (system && task.sessionId)
+          await this.context.session.instructions.entry.put({
+            sessionID: task.sessionId,
+            key: "omo-delegation",
+            value: system,
+          })
+        if (this.stopped) return
+        if (receipt.status === "running" && restored()) await this.announceRestart(task)
+      } catch (error) {
+        if (restored()) {
+          await this.failRecovery(task, error)
+          return
+        }
+        log("[v2] Skipped preparing a native generation that a continuation replaced", { taskID: task.id })
+      }
+    }
     try {
-      await enforceNativeExecutorRequirement(this.context, task)
-      await this.deps.restoreSkills(task)
-      if (this.stopped) return
-      const system = task.skillContent
-      if (system && task.sessionId)
-        await this.context.session.instructions.entry.put({
-          sessionID: task.sessionId,
-          key: "omo-delegation",
-          value: system,
-        })
-      if (this.stopped) return
-      if (receipt.status === "running") await this.announceRestart(task)
-      await this.domain.ready({ run: receipt.run })
+      await this.domain.ready({ run })
     } catch (error) {
-      await this.failRecovery(task, error)
+      if (restored()) {
+        await this.failRecovery(task, error)
+        return
+      }
+      log("[v2] Replay of a replaced native generation failed", { taskID: task.id, error: String(error) })
     }
   }
 
