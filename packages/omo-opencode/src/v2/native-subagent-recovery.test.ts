@@ -205,6 +205,65 @@ describe("native recovery failure boundaries", () => {
     expect(f.starts).toEqual([previous.sessionId, "child-2"])
   })
 
+  it("resumes running children first and does not hold restore behind the settled sweep", async () => {
+    // given a settled task stored before a running one, the order a long history produces
+    const f = await fixture()
+    const settledStarted = f.nextStart()
+    const settled = await f.manager.launch(f.launch("settled"))
+    await settledStarted
+    const completed = f.manager.waitForNativeTask(settled.id, new AbortController().signal)
+    f.finish(settled.nativeAdmissionID ?? "")
+    await completed
+    const runningStarted = f.nextStart()
+    const running = await f.manager.launch(f.launch("running"))
+    await runningStarted
+    await f.manager.shutdown()
+    const persisted = [settled.id, running.id].map((id) => backgroundTaskRecord.parse(f.stored.get(id)))
+    const [settledGeneration, runningGeneration] = persisted.map((task) => task.nativeRun?.generation)
+    const sweepEntered = Promise.withResolvers<void>()
+    const sweepRelease = Promise.withResolvers<void>()
+    const swept = Promise.withResolvers<void>()
+    const order: string[] = []
+    const jobs = new V2NativeSubagentJobs(
+      f.context,
+      {
+        ...f.domain,
+        ready: async (input) => {
+          order.push(input.run.generation)
+          if (input.run.generation !== settledGeneration) return f.domain.ready(input)
+          sweepEntered.resolve()
+          await sweepRelease.promise
+          const receipt = await f.domain.ready(input)
+          swept.resolve()
+          return receipt
+        },
+      },
+      {
+        activateSkills: async () => ({ text: "", activationIDs: [], selections: [] }),
+        restoreSkills: async () => ({ text: "" }),
+        save: async () => {},
+        notifyRecovery: async () => {},
+      },
+    )
+    const manager = new BackgroundManager({
+      pluginContext: f.input,
+      config: { defaultConcurrency: 1 },
+      nativeJobs: jobs,
+      nativeLifecycle: { save: async () => {}, notify: async () => {} },
+      preserveSessionsOnShutdown: true,
+    })
+    cleanups.push(() => manager.shutdown())
+    for (const task of persisted) manager.adoptRetainedTask(task)
+    // when restore returns while the settled admission is still being swept
+    await manager.restoreNativeJobs()
+    await sweepEntered.promise
+    // then the running child resumed first, and the sweep still finishes
+    expect(order).toEqual([runningGeneration ?? "", settledGeneration ?? ""])
+    sweepRelease.resolve()
+    await swept.promise
+    expect(f.ready).toEqual([runningGeneration, settledGeneration])
+  })
+
   it("opens admission after whole reconciliation fails", async () => {
     // given a native host whose reconciliation fails before any task is visited
     const f = await fixture()

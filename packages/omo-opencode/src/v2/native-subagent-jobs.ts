@@ -293,27 +293,46 @@ export class V2NativeSubagentJobs implements NativeBackgroundJobs {
     }
     if (this.stopped) return
     await reconciled(states)
-    for (const { task, receipt } of states) {
+    const live = ({ receipt }: NativeRestoredTask) => receipt.status === "running" || receipt.status === "accepted"
+    for (const state of states.filter(live)) {
       if (this.stopped) return
-      if (!receipt.run) continue
-      if (this.recoveryFailures.has(receipt.admissionID)) continue
-      try {
-        await enforceNativeExecutorRequirement(this.context, task)
-        await this.deps.restoreSkills(task)
+      await this.resumeRestored(state)
+    }
+    // `ready` finds an admission by scanning every admission, so replaying the reports of thousands of settled ones takes
+    // minutes. Sweep them after restore returns, so that queued launches and continuations do not wait behind it.
+    void this.sweepSettled(states.filter((state) => !live(state)))
+  }
+
+  private async sweepSettled(states: readonly NativeRestoredTask[]): Promise<void> {
+    try {
+      for (const state of states) {
         if (this.stopped) return
-        const system = task.skillContent
-        if (system && task.sessionId)
-          await this.context.session.instructions.entry.put({
-            sessionID: task.sessionId,
-            key: "omo-delegation",
-            value: system,
-          })
-        if (this.stopped) return
-        if (receipt.status === "running") await this.announceRestart(task)
-        await this.domain.ready({ run: receipt.run })
-      } catch (error) {
-        await this.failRecovery(task, error)
+        await this.resumeRestored(state)
       }
+    } catch (error) {
+      log("[v2] Settled native admission sweep failed", { severity: "error", error: String(error) })
+    }
+  }
+
+  private async resumeRestored({ task, receipt }: NativeRestoredTask): Promise<void> {
+    if (!receipt.run) return
+    if (this.recoveryFailures.has(receipt.admissionID)) return
+    try {
+      await enforceNativeExecutorRequirement(this.context, task)
+      await this.deps.restoreSkills(task)
+      if (this.stopped) return
+      const system = task.skillContent
+      if (system && task.sessionId)
+        await this.context.session.instructions.entry.put({
+          sessionID: task.sessionId,
+          key: "omo-delegation",
+          value: system,
+        })
+      if (this.stopped) return
+      if (receipt.status === "running") await this.announceRestart(task)
+      await this.domain.ready({ run: receipt.run })
+    } catch (error) {
+      await this.failRecovery(task, error)
     }
   }
 
