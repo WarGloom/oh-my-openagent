@@ -11,6 +11,10 @@ import { bindNativeTeamJobs } from "./native-team-jobs"
 import { bindNativeCommandJobs } from "./config-bridge/command-subtasks"
 import { log } from "../shared/logger"
 
+// Same wording as the host's own notice for children it resumes after a restart (SessionRestart).
+const RESTART_NOTICE =
+  "The server restarted while you were working. Continue from where you left off without repeating completed work."
+
 function messageID(task: BackgroundTask, kind: string): string {
   return `msg_${createHash("sha256")
     .update(
@@ -130,6 +134,24 @@ export class V2BackgroundLifecycle implements NativeBackgroundLifecycle {
       manager.adoptRetainedTask(task)
       if (!retainedIDs.has(task.id) && !runningInProcess) this.recovered.add(task.id)
     }
+  }
+
+  // The host releases the claims of plugin-admitted children and leaves their recovery to the plugin, so it adds no
+  // restart notice for them. Only a task this plugin recovered from storage lived through a restart: a reload keeps
+  // the retained or in-process task, and a child that was idle already has no interrupted turn.
+  async announceRestart(task: BackgroundTask): Promise<void> {
+    if (this.stopped || !task.sessionId || !this.recovered.has(task.id) || this.idleBeforeSetup.has(task.id)) return
+    const messages = await this.context.session.context({ sessionID: task.sessionId })
+    // The last message is stable until the child resumes, so a repeated recovery pass of one restart reuses the ID.
+    await this.context.session.synthetic({
+      sessionID: task.sessionId,
+      id: messageID(task, `restart:${messages.at(-1)?.id ?? "initial"}`),
+      text: RESTART_NOTICE,
+      description: "Continuing after restart",
+      metadata: { notice: "restart" },
+      delivery: "steer",
+      resume: false,
+    })
   }
 
   hasPendingWork(sessionID: string): boolean {

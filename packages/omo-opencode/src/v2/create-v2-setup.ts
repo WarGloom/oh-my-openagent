@@ -91,6 +91,7 @@ export function createV2Setup(deps: V2SetupDeps): (context: V2PluginContext) => 
       jobs = new V2NativeSubagentJobs(context, context.experimental.subagent, {
         load: (sessionID, parentSessionID) => background.findRetainedTask(sessionID, parentSessionID),
         save: (task) => background.save(task),
+        announceRestart: (task) => background.announceRestart(task),
         notifyRecovery: createNativeRecoveryNotifier(context, input, () => !stopping),
         activateSkills: (task) => {
           if (!task.nativeAdmissionID || !task.nativePromptID || !task.sessionId)

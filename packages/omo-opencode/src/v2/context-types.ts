@@ -367,6 +367,7 @@ export type V2SyntheticInput = {
   readonly description?: string | null
   readonly delivery?: "steer" | "queue" | null
   readonly resume?: boolean | null
+  readonly metadata?: Record<string, unknown>
 }
 
 export type V2TokenUsage = {

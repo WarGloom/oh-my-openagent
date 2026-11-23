@@ -32,6 +32,7 @@ export type NativeSubagentJobsDeps = {
   readonly activateSkills: (task: BackgroundTask) => Promise<NativeDelegationSkills>
   readonly restoreSkills: (task: BackgroundTask) => Promise<{ readonly text: string }>
   readonly save: (task: BackgroundTask) => Promise<void>
+  readonly announceRestart?: (task: BackgroundTask) => Promise<void>
   readonly notifyRecovery: (task: BackgroundTask, error: string) => Promise<void>
 }
 
@@ -308,6 +309,7 @@ export class V2NativeSubagentJobs implements NativeBackgroundJobs {
             value: system,
           })
         if (this.stopped) return
+        if (receipt.status === "running") await this.announceRestart(task)
         await this.domain.ready({ run: receipt.run })
       } catch (error) {
         await this.failRecovery(task, error)
@@ -360,6 +362,15 @@ export class V2NativeSubagentJobs implements NativeBackgroundJobs {
     }
     await this.notifyRecovery(task, message)
     return failed
+  }
+
+  // Failing to add the notice must not cancel the child: it still resumes, only without the restart explanation.
+  private async announceRestart(task: BackgroundTask): Promise<void> {
+    try {
+      await this.deps.announceRestart?.(task)
+    } catch (error) {
+      log("[v2] Failed to add the restart notice to a recovered native subagent", { taskID: task.id, error: String(error) })
+    }
   }
 
   private async notifyRecovery(task: BackgroundTask, message: string): Promise<void> {
