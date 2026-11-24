@@ -28,6 +28,7 @@ import { mergeCategories } from "../../shared/merge-categories"
 import { suggestDelegateSkills } from "./jev-skill-suggestions"
 import { ExecutorRequirementError, assertRequiredModel } from "../../shared/delegated-executor-requirement"
 import { resolveRequiredCategory } from "./required-category-resolution"
+import { configuredContentFilterModel } from "./configured-content-filter-model"
 import { getAvailableModelsForDelegateTask } from "./available-models"
 
 const RUNTIME_PLAN_AGENT_DISABLED_MESSAGE = `OpenCode runtime plan agent is disabled in OMO task routing. Use metis for pre-plan sanity, momus for saved .omo/plans/*.md review, oracle for hard architecture/debugging, or a category for execution.`
@@ -108,10 +109,17 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
         return "completion_group requires run_in_background: true on an OpenCode V2 host."
       }
       if (delegateTaskArgs.replaces_session_id) {
-        if (delegateTaskArgs.task_id || !options.manager.nativeJobs) return "replaces_session_id requires a new OpenCode V2 child."
+        if (delegateTaskArgs.task_id || !options.manager.nativeJobs)
+          return "replaces_session_id requires a new OpenCode V2 child."
         const replaced = await options.client.session.get({ path: { id: delegateTaskArgs.replaces_session_id } })
         const info: unknown = replaced.data
-        if (typeof info !== "object" || info === null || !("parentID" in info) || info.parentID !== originalContext.sessionID) return "The replaced session must be a child of the current session."
+        if (
+          typeof info !== "object" ||
+          info === null ||
+          !("parentID" in info) ||
+          info.parentID !== originalContext.sessionID
+        )
+          return "The replaced session must be a child of the current session."
       }
       const named = !delegateTaskArgs.category && delegateTaskArgs.subagent_type
       if (
@@ -308,6 +316,7 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
         return [text, routingNotice, hint].filter(Boolean).join("\n")
       }
 
+      const contentFilterModel = configuredContentFilterModel(delegateTaskArgs.required_model, agentOverrides)
       if (delegateTaskArgs.category) {
         const resolution = delegateTaskArgs.required_model
           ? await resolveRequiredCategory({
@@ -400,7 +409,7 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
         }
         const resolution = await resolveSubagentExecution(
           delegateTaskArgs,
-          { ...modelOptions, requiredModel: delegateTaskArgs.required_model },
+          { ...modelOptions, requiredModel: contentFilterModel ? undefined : delegateTaskArgs.required_model },
           parentContext.agent,
           categoryExamples,
           {
@@ -417,7 +426,14 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
           return resolution.error
         }
         agentToUse = resolution.agentToUse
-        categoryModel = resolution.categoryModel
+        categoryModel = contentFilterModel
+          ? {
+              ...resolution.categoryModel,
+              ...contentFilterModel,
+              reasoning: delegateTaskArgs.reasoning ?? contentFilterModel.reasoning,
+              reasoningEffort: contentFilterModel.reasoningEffort,
+            }
+          : resolution.categoryModel
         fallbackChain = resolution.fallbackChain
         assertRequiredModel(
           delegateTaskArgs.required_model,

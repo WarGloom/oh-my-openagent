@@ -5,10 +5,30 @@ import { backgroundTaskRecord } from "./background-task-record"
 import { cleanupNativeFixtures, cleanups, completedFixture, fixture } from "./native-subagent-jobs-test-fixture"
 import { createNativeRecoveryNotifier } from "./native-recovery-notice"
 import { clearBackgroundTaskRegistryForTesting } from "../features/background-agent/task-registry"
+import { nativeRecoveryState } from "./native-recovery-state"
 
 afterEach(cleanupNativeFixtures)
 
 describe("native recovery failure boundaries", () => {
+  it("includes a completed child model handoff in the parent task result", async () => {
+    // given
+    const f = await fixture({ cleanupDelay: 0 })
+    const started = f.nextStart()
+    const task = await f.manager.launch(f.launch("content-filter work"))
+    await started
+    if (!task.sessionId) throw new Error("Child session missing")
+    nativeRecoveryState.contentFilterHandoffs.set(task.sessionId, { from: "openai/gpt-sol", to: "openai/gpt-daybreak" })
+    cleanups.push(() => nativeRecoveryState.contentFilterHandoffs.delete(task.sessionId ?? ""))
+    // when
+    const settled = f.manager.waitForNativeTask(task.id, new AbortController().signal)
+    f.finish(task.nativeAdmissionID ?? "", "completed", { providerID: "openai", id: "gpt-daybreak" })
+    const result = await settled
+    // then
+    expect(result.result).toContain("Model handoff: openai/gpt-sol -> openai/gpt-daybreak (provider.content-filter)")
+    expect(result.result).toContain("child result")
+    expect(result.producingModel).toBe("openai/gpt-daybreak")
+  })
+
   it.each(["missing", "failed"] as const)("continues the owned native task when agent lookup is %s", async (lookup) => {
     const f = await completedFixture("completed", "test/model")
     if (lookup === "failed") {

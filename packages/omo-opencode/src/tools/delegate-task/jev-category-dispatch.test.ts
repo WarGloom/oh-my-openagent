@@ -131,7 +131,12 @@ describe("Jev task dispatch", () => {
         ? new Response(null, { status: 503 })
         : Response.json({
             model: "jev-test",
-            answers: { unknown_cause: { type: "noul", noul: 0.71 }, cross_component: { type: "noul", noul: 0.1 }, open_decision: { type: "noul", noul: 0.1 }, specified_method: { type: "noul", noul: 0.9 } },
+            answers: {
+              unknown_cause: { type: "noul", noul: 0.71 },
+              cross_component: { type: "noul", noul: 0.1 },
+              open_decision: { type: "noul", noul: 0.1 },
+              specified_method: { type: "noul", noul: 0.9 },
+            },
           }),
     )
     if ("coldPrimary" in row)
@@ -170,17 +175,28 @@ describe("Jev task dispatch", () => {
     const request = launch.mock.calls[0]?.[0]
     expect(request).toMatchObject({ agent: worker, model: { modelID: row.expected } })
     expect(fetchSpy).toHaveBeenCalledTimes(row.calls)
-    const reason = "required_model" in row ? "explicit_model" : "model_routing" in row ? "opt_out" : "undeclared" in row ? "no_opt_in" : undefined
+    const reason =
+      "required_model" in row
+        ? "explicit_model"
+        : "model_routing" in row
+          ? "opt_out"
+          : "undeclared" in row
+            ? "no_opt_in"
+            : undefined
     if (reason) {
       const skips = ledgerRows().filter((entry) => entry.event === "named_skip")
       expect(skips).toEqual([expect.objectContaining({ surface: "task", agent: worker, reason })])
       expect(JSON.stringify(skips)).not.toContain("Compare the two audit results.")
     }
     if ("offline" in row || "coldPrimary" in row) {
-      expect(ledgerRows()).toContainEqual(expect.objectContaining({
-        error: "offline" in row ? "http_error" : null,
-        named_model: expect.objectContaining({ skip_reason: "offline" in row ? "router_failure" : "no_available_pair" }),
-      }))
+      expect(ledgerRows()).toContainEqual(
+        expect.objectContaining({
+          error: "offline" in row ? "http_error" : null,
+          named_model: expect.objectContaining({
+            skip_reason: "offline" in row ? "router_failure" : "no_available_pair",
+          }),
+        }),
+      )
     }
     if (row.label === "selected an available model") {
       expect(request?.fallbackChain?.map((entry) => entry.model)).toEqual(["default", "visual"])
@@ -196,6 +212,90 @@ describe("Jev task dispatch", () => {
       )
     }
   })
+
+  test.each([
+    {
+      selector: { category: "unspecified-low" },
+      replacement: false,
+      provider: "openai",
+      role: "daybreak",
+      target: "target",
+    },
+    {
+      selector: { subagent_type: "configured-worker" },
+      replacement: false,
+      provider: "openai",
+      role: "daybreak",
+      target: "target",
+    },
+    {
+      selector: { subagent_type: "configured-worker" },
+      replacement: true,
+      provider: "openai",
+      role: "daybreak",
+      target: "target",
+    },
+    { selector: { category: "deep-high" }, replacement: false, provider: "openai", role: "daybreak", target: "target" },
+    {
+      selector: { category: "unspecified-low" },
+      replacement: false,
+      provider: "anthropic",
+      role: "mythos",
+      target: "mythos",
+    },
+  ])(
+    "accepts a configured $role required model for $selector with replacement $replacement",
+    async ({ selector, replacement, provider, role, target }) => {
+      // given
+      const { options, ctx, launch } = setup("off", true)
+      cacheSpy.mockReturnValue({
+        connected: ["example", "openai", "anthropic"],
+        models: { example: ["default"], openai: ["target"], anthropic: ["mythos"] },
+        updatedAt: "2026-11-24",
+      })
+      const client = {
+        ...options.client,
+        app: {
+          agents: async () => ({ data: [{ name: "configured-worker", mode: "subagent", model: "example/default" }] }),
+        },
+        session: {
+          ...options.client.session,
+          get: async () => ({ data: { directory: root, parentID: "ses_parent" } }),
+        },
+      }
+      const delegate = createDelegateTask(
+        unsafeTestValue({
+          ...options,
+          client,
+          agentOverrides: {
+            [role]: { models: [{ model: `${provider}/${target}`, reasoning: "high" }] },
+            "configured-worker": { models: ["example/default"] },
+          },
+        }),
+      )
+      // when
+      await delegate.execute(
+        {
+          ...selector,
+          ...(replacement ? { replaces_session_id: "ses_old" } : {}),
+          required_model: `${provider}/${target}`,
+          prompt: "Review the fixture",
+          reasoning: "medium",
+          run_in_background: true,
+          load_skills: [],
+        },
+        ctx,
+      )
+      // then
+      expect(launch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: expect.objectContaining({ providerID: provider, modelID: target, reasoning: "medium" }),
+          nativeMetadata: { requiredModel: `${provider}/${target}`, explicitReasoning: "medium" },
+          fallbackChain: [],
+        }),
+      )
+    },
+  )
 
   test("rejects an exact model with no eligible category before classifier or child launch", async () => {
     const { delegate, ctx, launch } = setup("active", true)
@@ -583,7 +683,12 @@ describe("Jev task dispatch", () => {
     const late = await resolveCategoryExecution({ ...args, category: "unspecified-low" }, context, undefined, undefined)
     late.finishRoutingHint?.("missed_budget")
     await late.routingHint
-    expect(recordSpy.mock.calls.map(([entry]) => entry).filter((entry) => entry.event === "decision").map((entry) => entry.hint_status)).toEqual(expect.arrayContaining(["delivered", "not_produced", "missed_budget"]))
+    expect(
+      recordSpy.mock.calls
+        .map(([entry]) => entry)
+        .filter((entry) => entry.event === "decision")
+        .map((entry) => entry.hint_status),
+    ).toEqual(expect.arrayContaining(["delivered", "not_produced", "missed_budget"]))
   })
 
   test("category resolution retains the full cross-provider fallback chain and category team wiring", async () => {

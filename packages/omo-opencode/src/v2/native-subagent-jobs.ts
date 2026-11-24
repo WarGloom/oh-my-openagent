@@ -166,6 +166,8 @@ export class V2NativeSubagentJobs implements NativeBackgroundJobs {
       sessionID: task.sessionId,
       promptText: task.prompt,
       fallbackChain: task.fallbackChain,
+      explicitReasoning:
+        typeof task.nativeMetadata?.explicitReasoning === "string" ? task.nativeMetadata.explicitReasoning : undefined,
       namedModelPlan: task.nativeMetadata?.namedModelPlan === true ? true : undefined,
       category: task.category,
       system,
@@ -406,7 +408,10 @@ export class V2NativeSubagentJobs implements NativeBackgroundJobs {
     try {
       await this.deps.announceRestart?.(task)
     } catch (error) {
-      log("[v2] Failed to add the restart notice to a recovered native subagent", { taskID: task.id, error: String(error) })
+      log("[v2] Failed to add the restart notice to a recovered native subagent", {
+        taskID: task.id,
+        error: String(error),
+      })
     }
   }
 

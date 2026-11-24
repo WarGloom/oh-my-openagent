@@ -8,7 +8,9 @@ import { filterProvidersServingModel } from "../features/background-agent/fallba
 import { log } from "../shared/logger"
 import type { V2Event, V2ModelRef, V2PluginContext, V2SessionRequestKind, V2StructuredError } from "./context-types"
 import { createNativeProgressWatchdog } from "./native-progress-watchdog"
-import { recoverNativeFailure, recoveryMessageID } from "./native-recovery-state"
+import { recoverNativeFailure, recoveryMessageID, nativeRecoveryState } from "./native-recovery-state"
+import { getDelegatedChildSessionBootstrap } from "../shared/delegated-child-session-bootstrap"
+import { applySessionPromptParams } from "../shared/session-prompt-params-helpers"
 
 const controllers = new WeakMap<Hooks, NativeFallbackController>()
 
@@ -184,7 +186,8 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
     },
     apply: (model: V2ModelRef) => Promise<void | "declined" | "duplicate">,
   ): Promise<boolean> => {
-    if ((input.kind !== undefined && input.kind !== "primary") || (isRateLimit(input.error) && !input.hostExhausted)) return false
+    if ((input.kind !== undefined && input.kind !== "primary") || (isRateLimit(input.error) && !input.hostExhausted))
+      return false
     const error = classifierError(input.error)
     const errorType = classifyErrorType(error)
     const retryable = isRetryableError(error, controller.retryOnErrors)
@@ -264,6 +267,72 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
     return recovered
   }
   const registration = await context.session.hook("retry", async (event) => {
+    if (
+      event.error.type === "provider.content-filter" &&
+      (getDelegatedChildSessionBootstrap(event.sessionID) ||
+        nativeRecoveryState.contentFilterHandoffs.has(event.sessionID))
+    ) {
+      const model = `${event.model.providerID}/${event.model.id}`
+      const handoff = nativeRecoveryState.contentFilterHandoffs.get(event.sessionID)
+      if (handoff) {
+        if (handoff.to === model) event.decision = { retry: false }
+        return
+      }
+      if (event.model.providerID !== "openai" && event.model.providerID !== "anthropic") return
+      let pending = nativeRecoveryState.contentFilterPending.get(event.sessionID)
+      if (!pending) {
+        pending = (async () => {
+          const host = await hostModels(context)
+          if (disposed || !host.isAvailable) return false
+          const target = await controller.contentFilterTarget({
+            sessionID: event.sessionID,
+            providerID: event.model.providerID === "openai" ? "openai" : "anthropic",
+            failedModel: model,
+            isAvailable: host.isAvailable,
+            explicitReasoning: getDelegatedChildSessionBootstrap(event.sessionID)?.explicitReasoning,
+          })
+          if (!target) return false
+          const current = await context.session.get({ sessionID: event.sessionID })
+          if (
+            disposed ||
+            current.model?.providerID !== event.model.providerID ||
+            current.model.id !== event.model.id ||
+            current.location.directory !== context.location.directory
+          )
+            return false
+          const next = host.modelRef(event.sessionID, target)
+          if (event.exhausted) {
+            if (!event.switchModel || !(await event.switchModel(next))) return false
+          } else {
+            await context.session.switchModel({ sessionID: event.sessionID, model: next })
+          }
+          nativeRecoveryState.contentFilterHandoffs.set(event.sessionID, {
+            from: model,
+            to: `${next.providerID}/${next.id}`,
+          })
+          if (target.reasoningEffort)
+            applySessionPromptParams(event.sessionID, {
+              providerID: next.providerID,
+              modelID: next.id,
+              reasoningEffort: target.reasoningEffort,
+            })
+          log("[runtime-fallback] Delegated content-filter handoff", {
+            sessionID: event.sessionID,
+            from: model,
+            to: `${next.providerID}/${next.id}`,
+          })
+          return true
+        })()
+        nativeRecoveryState.contentFilterPending.set(event.sessionID, pending)
+      }
+      try {
+        if (await pending) event.decision = { retry: true, delay: 0 }
+      } finally {
+        if (nativeRecoveryState.contentFilterPending.get(event.sessionID) === pending)
+          nativeRecoveryState.contentFilterPending.delete(event.sessionID)
+      }
+      return
+    }
     if ((event.kind === undefined || event.kind === "primary") && isRateLimit(event.error) && event.decision.retry)
       watchdog.defer(event.sessionID, event.decision.delay)
     if (event.exhausted && isRateLimit(event.error)) {
@@ -321,6 +390,14 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
       }
       if (event.type !== "session.execution.failed" || !("error" in data)) return false
       const error = data.error
+      if (
+        nativeRecoveryState.contentFilterHandoffs.has(sessionID) &&
+        typeof error === "object" &&
+        error !== null &&
+        "type" in error &&
+        error.type === "provider.content-filter"
+      )
+        return false
       if (
         typeof error !== "object" ||
         error === null ||

@@ -9,6 +9,10 @@ import {
 } from "../hooks/runtime-fallback/native-controller"
 import { toBackgroundTaskSnapshots } from "../features/background-agent/task-snapshot"
 import { SessionCategoryRegistry } from "../shared/session-category-registry"
+import {
+  registerDelegatedChildSessionBootstrap,
+  clearDelegatedChildSessionBootstrap,
+} from "../shared/delegated-child-session-bootstrap"
 import { tryFallbackRetry } from "../features/background-agent/fallback-retry-handler"
 import { ConcurrencyManager } from "../features/background-agent/concurrency"
 import type { BackgroundTask } from "../features/background-agent/types"
@@ -136,26 +140,192 @@ async function triggerQuotaResponse(f: ReturnType<typeof fixture>, event: V2Http
 }
 
 describe("native runtime fallback", () => {
+  test("hands a filtered child to Daybreak in its existing session before the host repeats the refused model", async () => {
+    // given
+    const failed = { providerID: "openai", id: "gpt-sol" }
+    const target = { providerID: "openai", id: "gpt-daybreak-blue" }
+    const f = fixture(
+      { agents: { daybreak: { models: [{ model: "openai/gpt-daybreak-blue", reasoning: "high" }] } } },
+      [
+        {
+          type: "idle",
+          id: "msg_filtered",
+          outcome: "failed",
+          error: { type: "provider.content-filter", message: "blocked again" },
+          time: { created: 1 },
+        },
+      ],
+      failed,
+      [hostModel("openai", "gpt-sol"), { ...hostModel("openai", "gpt-daybreak-blue"), variants: [{ id: "high" }] }],
+    )
+    registerDelegatedChildSessionBootstrap({ sessionID: "ses_child", promptText: "private task" })
+    cleanups.push(() => clearDelegatedChildSessionBootstrap("ses_child"))
+    const installed = await install(f)
+    // when
+    const outcome = await f.fake.triggerRetry(
+      retry(
+        { type: "provider.content-filter", message: "blocked" },
+        {
+          sessionID: "ses_child",
+          agent: "sisyphus",
+          model: failed,
+          kind: "subagent",
+          attempt: 2,
+          decision: { retry: true, delay: 1000 },
+        },
+      ),
+    )
+    // then
+    expect(outcome.decision).toEqual({ retry: true, delay: 0 })
+    expect(f.fake.sessionCalls).toEqual([
+      { kind: "switchModel", sessionID: "ses_child", model: { ...target, variant: "high" } },
+    ])
+    const second = await f.fake.triggerRetry(
+      retry(
+        { type: "provider.content-filter", message: "blocked again" },
+        {
+          sessionID: "ses_child",
+          agent: "sisyphus",
+          model: target,
+          kind: "subagent",
+          attempt: 2,
+          decision: { retry: true, delay: 1000 },
+        },
+      ),
+    )
+    expect(second.decision).toEqual({ retry: false })
+    expect(f.fake.sessionCalls).toHaveLength(1)
+    const terminal = await installed.beforeEvent({
+      type: "session.execution.failed",
+      data: { sessionID: "ses_child", error: { type: "provider.content-filter", message: "blocked again" } },
+    })
+    expect(terminal).toBe(false)
+    expect(f.fake.sessionCalls).toHaveLength(1)
+  })
+
+  test.each([
+    { provider: "anthropic", failed: "claude-sonnet", target: "claude-mythos", agent: "mythos" },
+    { provider: "openai", failed: "gpt-sol", target: "gpt-daybreak", agent: "daybreak" },
+  ])("switches a $provider child once and preserves explicit effort", async ({ provider, failed, target, agent }) => {
+    // given
+    const sessionID = `ses_${provider}_child`
+    const f = fixture(
+      { agents: { [agent]: { models: [{ model: `${provider}/${target}`, reasoning: "low" }] } } },
+      [],
+      { providerID: provider, id: failed },
+      [hostModel(provider, failed), { ...hostModel(provider, target), variants: [{ id: "high" }, { id: "low" }] }],
+    )
+    registerDelegatedChildSessionBootstrap({ sessionID, promptText: "private task", explicitReasoning: "high" })
+    cleanups.push(() => clearDelegatedChildSessionBootstrap(sessionID))
+    await install(f)
+    // when
+    const events = await Promise.all(
+      [1, 2].map(() =>
+        f.fake.triggerRetry(
+          retry(
+            { type: "provider.content-filter", message: "blocked" },
+            { sessionID, model: { providerID: provider, id: failed }, kind: "subagent", attempt: 2 },
+          ),
+        ),
+      ),
+    )
+    // then
+    expect(events.map((event) => event.decision)).toEqual([
+      { retry: true, delay: 0 },
+      { retry: true, delay: 0 },
+    ])
+    expect(f.fake.sessionCalls).toEqual([
+      { kind: "switchModel", sessionID, model: { providerID: provider, id: target, variant: "high" } },
+    ])
+    expect((await f.fake.context.session.get({ sessionID })).model).toEqual({
+      providerID: provider,
+      id: target,
+      variant: "high",
+    })
+  })
+
+  test.each([
+    {
+      name: "failed model already belongs to target chain",
+      models: ["openai/gpt-sol", "openai/gpt-daybreak"],
+      available: true,
+      provider: "openai",
+    },
+    { name: "target is not configured", models: [], available: true, provider: "openai" },
+    { name: "target is unavailable", models: ["openai/gpt-daybreak"], available: false, provider: "openai" },
+    { name: "unsupported provider", models: ["openai/gpt-daybreak"], available: true, provider: "other" },
+  ])("leaves existing retry unchanged when $name", async ({ models, available, provider }) => {
+    // given
+    const sessionID = `ses_excluded_${provider}_${models.length}_${available}`
+    const f = fixture(
+      { agents: { daybreak: { models } } },
+      [],
+      { providerID: provider, id: "gpt-sol" },
+      available
+        ? [hostModel("openai", "gpt-sol"), hostModel("openai", "gpt-daybreak")]
+        : [hostModel("openai", "gpt-sol")],
+    )
+    registerDelegatedChildSessionBootstrap({ sessionID, promptText: "private task" })
+    cleanups.push(() => clearDelegatedChildSessionBootstrap(sessionID))
+    await install(f)
+    // when
+    const event = await f.fake.triggerRetry(
+      retry(
+        { type: "provider.content-filter", message: "blocked" },
+        {
+          sessionID,
+          model: { providerID: provider, id: "gpt-sol" },
+          kind: "subagent",
+          attempt: 2,
+          decision: { retry: true, delay: 800 },
+        },
+      ),
+    )
+    // then
+    expect(event.decision).toEqual({ retry: true, delay: 800 })
+    expect(f.fake.sessionCalls).toEqual([])
+  })
+
   test("keeps the host retry for a strict-pool 429 after a configured Mythos fallback", async () => {
     const mythos = { providerID: "anthropic", id: "claude-mythos-5-2" }
     const daybreak = { providerID: "openai", id: "gpt-daybreak-blue-latest" }
-    const f = fixture({ agents: { mythos: { models: ["anthropic/claude-mythos-5-2", "openai/gpt-daybreak-blue-latest(high)"] } } }, [], mythos)
+    const f = fixture(
+      { agents: { mythos: { models: ["anthropic/claude-mythos-5-2", "openai/gpt-daybreak-blue-latest(high)"] } } },
+      [],
+      mythos,
+    )
     await install(f)
 
-    const firstAttempt = await f.fake.triggerRetry(retry(
-      { type: "provider.quota", message: "fake quota unavailable" },
-      { agent: "mythos", model: mythos, attempt: 2 },
-    ))
+    const firstAttempt = await f.fake.triggerRetry(
+      retry(
+        { type: "provider.quota", message: "fake quota unavailable" },
+        { agent: "mythos", model: mythos, attempt: 2 },
+      ),
+    )
     expect(firstAttempt.decision).toEqual({ retry: true, delay: 0 })
     expect(f.fake.sessionCalls).toEqual([
       { kind: "switchModel", sessionID: "ses_main", model: { ...daybreak, variant: "high" } },
     ])
 
-    const message = "Account exclusions: #1=outside-pool; #2=quota-exhausted; #3=token-bucket-empty; #4=quota-exhausted,outside-pool. Strict account pool unavailable for gpt-daybreak-blue-latest. Try again in 9s. No fresh eligible Codex credit balance is known to be available."
-    const limited = await f.fake.triggerRetry(retry(
-      { type: "provider.rate-limit", status: 429, message, retryAfterMs: 9981, response: { body: JSON.stringify({ error: { code: "strict_pool_unavailable", message } }) } },
-      { agent: "mythos", model: { ...daybreak, variant: "high" }, attempt: 7, decision: { retry: true, delay: 9981 } },
-    ))
+    const message =
+      "Account exclusions: #1=outside-pool; #2=quota-exhausted; #3=token-bucket-empty; #4=quota-exhausted,outside-pool. Strict account pool unavailable for gpt-daybreak-blue-latest. Try again in 9s. No fresh eligible Codex credit balance is known to be available."
+    const limited = await f.fake.triggerRetry(
+      retry(
+        {
+          type: "provider.rate-limit",
+          status: 429,
+          message,
+          retryAfterMs: 9981,
+          response: { body: JSON.stringify({ error: { code: "strict_pool_unavailable", message } }) },
+        },
+        {
+          agent: "mythos",
+          model: { ...daybreak, variant: "high" },
+          attempt: 7,
+          decision: { retry: true, delay: 9981 },
+        },
+      ),
+    )
     expect(limited.decision).toEqual({ retry: true, delay: 9981 })
     expect(f.fake.sessionCalls).toHaveLength(1)
   })
@@ -554,9 +724,7 @@ describe("native runtime fallback", () => {
     SessionCategoryRegistry.register("ses_child", "quick")
     await install(f)
     // when
-    await f.fake.triggerRetry(
-      retry({ type: "provider.quota", message: "quota exceeded" }, { sessionID: "ses_child" }),
-    )
+    await f.fake.triggerRetry(retry({ type: "provider.quota", message: "quota exceeded" }, { sessionID: "ses_child" }))
     // then
     expect(f.fake.sessionCalls).toEqual([
       { kind: "switchModel", sessionID: "ses_child", model: { ...second, variant: "high" } },

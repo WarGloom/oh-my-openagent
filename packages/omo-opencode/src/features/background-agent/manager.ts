@@ -6,6 +6,7 @@ import { withDispatchTimeout } from "@oh-my-opencode/utils/prompt-async-gate/tim
 import type { PluginInput } from "@opencode-ai/plugin"
 import type { NativeBackgroundJobs, NativeBackgroundLifecycle } from "./native-lifecycle"
 import type { NativeSubagentReceipt } from "../../v2/native-subagent-types"
+import { nativeRecoveryState } from "../../v2/native-recovery-state"
 import type { BackgroundTaskConfig, TmuxConfig } from "../../config/schema"
 import type { ModelFallbackControllerAccessor } from "../../hooks/model-fallback"
 import {
@@ -2108,7 +2109,12 @@ export class BackgroundManager {
         case "completed":
         case "error":
         case "cancelled":
-          task.result = receipt.output
+          const contentFilterHandoff = task.sessionId
+            ? nativeRecoveryState.contentFilterHandoffs.get(task.sessionId)
+            : undefined
+          task.result = contentFilterHandoff
+            ? `Model handoff: ${contentFilterHandoff.from} -> ${contentFilterHandoff.to} (provider.content-filter)\n\n${receipt.output ?? ""}`
+            : receipt.output
           task.producingModel =
             receipt.status === "completed" && receipt.outputModel
               ? `${receipt.outputModel.providerID}/${receipt.outputModel.id}`

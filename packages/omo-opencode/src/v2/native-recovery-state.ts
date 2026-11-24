@@ -14,16 +14,26 @@ type NativeRecoveryState = {
   readonly failures: Map<string, FailureReservation>
   readonly models: Map<string, NonNullable<ReturnType<typeof buildRetryModelPayload>>>
   readonly promptParams: Set<string>
+  readonly contentFilterHandoffs: Map<string, { readonly from: string; readonly to: string }>
+  readonly contentFilterPending: Map<string, Promise<boolean>>
 }
 
 const processState: typeof globalThis & { __omoNativeRecovery?: NativeRecoveryState } = globalThis
-export const nativeRecoveryState: NativeRecoveryState = processState.__omoNativeRecovery ?? {
-  states: new Map(),
-  inFlight: new Set(),
-  failures: new Map(),
-  models: new Map(),
-  promptParams: new Set(),
-}
+const previousRecoveryState = processState.__omoNativeRecovery
+export const nativeRecoveryState: NativeRecoveryState = previousRecoveryState
+  ? Object.assign(previousRecoveryState, {
+      contentFilterHandoffs: previousRecoveryState.contentFilterHandoffs ?? new Map(),
+      contentFilterPending: previousRecoveryState.contentFilterPending ?? new Map(),
+    })
+  : {
+      states: new Map(),
+      inFlight: new Set(),
+      failures: new Map(),
+      models: new Map(),
+      promptParams: new Set(),
+      contentFilterHandoffs: new Map(),
+      contentFilterPending: new Map(),
+    }
 processState.__omoNativeRecovery = nativeRecoveryState
 
 export function recoveryMessageID(failureID: string): string {
@@ -39,6 +49,8 @@ export function forgetNativeRecovery(sessionID: string): void {
   nativeRecoveryState.inFlight.delete(sessionID)
   nativeRecoveryState.failures.delete(sessionID)
   nativeRecoveryState.models.delete(sessionID)
+  nativeRecoveryState.contentFilterHandoffs.delete(sessionID)
+  nativeRecoveryState.contentFilterPending.delete(sessionID)
 }
 
 export function recoverNativeFailure(

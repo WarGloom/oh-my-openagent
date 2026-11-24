@@ -2,6 +2,7 @@ import { ExecutorRequirementError, assertRequiredModel } from "../../shared/dele
 import { getAgentConfigKey } from "../../shared/agent-display-names"
 import { mergeCategories } from "../../shared/merge-categories"
 import { getAvailableModelsForDelegateTask } from "./available-models"
+import { configuredContentFilterModel } from "./configured-content-filter-model"
 import { resolveCategoryExecution } from "./category-resolver"
 import type { CategoryResolutionResult } from "./category-resolution-result"
 import { beginJevDecision, jevConfigGeneration } from "./jev-routing-context"
@@ -9,6 +10,17 @@ import { selectCategoryTierWithJev } from "./jev-routing"
 import { SISYPHUS_JUNIOR_AGENT } from "./sisyphus-junior-agent"
 import type { ExecutorContext } from "./executor-types"
 import type { DelegateTaskArgs } from "./types"
+
+function withRequiredContentFilterCategory(context: ExecutorContext, category: string, model: string): ExecutorContext {
+  if (!mergeCategories(context.userCategories)[category]) return context
+  return {
+    ...context,
+    userCategories: {
+      ...context.userCategories,
+      [category]: { ...context.userCategories?.[category], models: [model] },
+    },
+  }
+}
 
 export async function resolveRequiredCategory(input: {
   readonly args: DelegateTaskArgs
@@ -20,17 +32,34 @@ export async function resolveRequiredCategory(input: {
   if (context.disabledAgents?.some((agent) => getAgentConfigKey(agent) === getAgentConfigKey(SISYPHUS_JUNIOR_AGENT))) {
     throw new ExecutorRequirementError("no_eligible_executor")
   }
+  const contentFilterModel = configuredContentFilterModel(args.required_model, context.agentOverrides)
   const available = await getAvailableModelsForDelegateTask(context.client)
   if (!args.required_model || !available.has(args.required_model))
     throw new ExecutorRequirementError("no_eligible_executor")
-  if (args.category !== "auto") {
-    const result = await resolveCategoryExecution(args, context, inheritedModel, defaultModel)
+  if (args.category && args.category !== "auto") {
+    const result = await resolveCategoryExecution(
+      contentFilterModel ? { ...args, required_model: undefined } : args,
+      contentFilterModel ? withRequiredContentFilterCategory(context, args.category, args.required_model) : context,
+      inheritedModel,
+      defaultModel,
+    )
     if (result.error) return result
     assertRequiredModel(
-      args.required_model,
+      contentFilterModel ? undefined : args.required_model,
       result.categoryModel && `${result.categoryModel.providerID}/${result.categoryModel.modelID}`,
     )
-    return { ...result, fallbackChain: [] }
+    return {
+      ...result,
+      categoryModel: contentFilterModel
+        ? {
+            ...result.categoryModel,
+            ...contentFilterModel,
+            reasoning: args.reasoning ?? contentFilterModel.reasoning,
+            reasoningEffort: contentFilterModel.reasoningEffort,
+          }
+        : result.categoryModel,
+      fallbackChain: [],
+    }
   }
 
   const categories = mergeCategories(context.userCategories)
@@ -45,15 +74,22 @@ export async function resolveRequiredCategory(input: {
   const eligible = new Map<string, CategoryResolutionResult>()
   for (const category of Object.keys(categories)) {
     const result = await resolveCategoryExecution(
-      { ...args, category },
-      { ...context, userCategories, jevRouting: undefined },
+      { ...args, category, ...(contentFilterModel ? { required_model: undefined } : {}) },
+      contentFilterModel
+        ? withRequiredContentFilterCategory(
+            { ...context, userCategories, jevRouting: undefined },
+            category,
+            args.required_model,
+          )
+        : { ...context, userCategories, jevRouting: undefined },
       inheritedModel,
       defaultModel,
     )
     if (
       !result.error &&
       result.categoryModel &&
-      `${result.categoryModel.providerID}/${result.categoryModel.modelID}` === args.required_model
+      (contentFilterModel ||
+        `${result.categoryModel.providerID}/${result.categoryModel.modelID}` === args.required_model)
     ) {
       eligible.set(category, result)
     }
@@ -98,5 +134,17 @@ export async function resolveRequiredCategory(input: {
   const result = selected ? eligible.get(selected) : undefined
   if (!result) throw new ExecutorRequirementError("no_eligible_executor")
   args.category = selected
-  return { ...result, fallbackChain: [], routingNotice: notice }
+  return {
+    ...result,
+    categoryModel: contentFilterModel
+      ? {
+          ...result.categoryModel,
+          ...contentFilterModel,
+          reasoning: args.reasoning ?? contentFilterModel.reasoning,
+          reasoningEffort: contentFilterModel.reasoningEffort,
+        }
+      : result.categoryModel,
+    fallbackChain: [],
+    routingNotice: notice,
+  }
 }

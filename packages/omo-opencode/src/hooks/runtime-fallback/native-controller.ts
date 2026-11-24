@@ -227,6 +227,41 @@ export function createNativeFallbackController(deps: HookDeps) {
         nativeRecoveryState.inFlight.delete(input.sessionID)
       }
     },
+    async contentFilterTarget(input: {
+      readonly sessionID: string
+      readonly providerID: "openai" | "anthropic"
+      readonly failedModel: string
+      readonly isAvailable: (model: { providerID: string; modelID: string }) => boolean
+      readonly explicitReasoning?: string
+    }): Promise<RetryModel | undefined> {
+      const target = input.providerID === "openai" ? "daybreak" : "mythos"
+      const config = capture(input.sessionID)?.agents?.[target]
+      const chain = config?.models
+      const first = chain?.[0]
+      if (
+        !first ||
+        chain?.some((entry) =>
+          areRuntimeModelsEquivalent(typeof entry === "string" ? entry : entry.model, input.failedModel),
+        )
+      )
+        return undefined
+      const parsed = parseModelString(typeof first === "string" ? first : first.model)
+      if (!parsed || parsed.providerID !== input.providerID) return undefined
+      const modelID = transformModelForProvider(parsed.providerID, parsed.modelID)
+      if (!input.isAvailable({ providerID: parsed.providerID, modelID })) return undefined
+      if ((await unavailable()).has(`${parsed.providerID}/${modelID}`)) return undefined
+      const model = buildRetryModelPayload(`${parsed.providerID}/${parsed.modelID}`, {
+        reasoning:
+          input.explicitReasoning ??
+          (typeof first === "string" ? parsed.variant : (first.reasoning ?? first.variant ?? parsed.variant)),
+        reasoningEffort: input.explicitReasoning
+          ? undefined
+          : typeof first === "string"
+            ? undefined
+            : first.reasoningEffort,
+      })
+      return model
+    },
     async recover(
       input: NativeFallbackInput,
       apply: (model: RetryModel) => Promise<RetryModel | "declined" | "duplicate" | void>,

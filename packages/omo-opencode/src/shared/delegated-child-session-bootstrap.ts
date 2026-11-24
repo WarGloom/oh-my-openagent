@@ -10,6 +10,7 @@ export type DelegatedChildSessionRetryPart = {
 
 export type DelegatedChildSessionBootstrap = {
   retryParts: DelegatedChildSessionRetryPart[]
+  explicitReasoning?: string
   namedModelPlan?: true
   fallbackChain?: FallbackEntry[]
   category?: string
@@ -37,6 +38,7 @@ function cloneTools(tools: Record<string, boolean> | undefined): Record<string, 
 export function registerDelegatedChildSessionBootstrap(_args: {
   sessionID: string
   promptText: string
+  explicitReasoning?: string
   namedModelPlan?: true
   fallbackChain?: FallbackEntry[]
   category?: string
@@ -50,6 +52,7 @@ export function registerDelegatedChildSessionBootstrap(_args: {
   delegatedChildSessionBootstraps.set(_args.sessionID, {
     retryParts,
     ...(fallbackChain ? { fallbackChain } : {}),
+    ...(_args.explicitReasoning ? { explicitReasoning: _args.explicitReasoning } : {}),
     ...(_args.namedModelPlan ? { namedModelPlan: true } : {}),
     ...(_args.category ? { category: _args.category } : {}),
     ...(_args.system ? { system: _args.system } : {}),
@@ -74,6 +77,7 @@ export function getDelegatedChildSessionBootstrap(_sessionID: string): Delegated
     retryParts: cloneRetryParts(bootstrap.retryParts),
     ...(fallbackChain ? { fallbackChain } : {}),
     ...(bootstrap.namedModelPlan ? { namedModelPlan: true } : {}),
+    ...(bootstrap.explicitReasoning ? { explicitReasoning: bootstrap.explicitReasoning } : {}),
     ...(bootstrap.category ? { category: bootstrap.category } : {}),
     ...(bootstrap.system ? { system: bootstrap.system } : {}),
     ...(tools ? { tools } : {}),
