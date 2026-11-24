@@ -4,9 +4,9 @@ set -Eeuo pipefail
 umask 077
 
 ws=/home/nikita/work/Projects/ai/op
-repo=$ws/.omo/worktrees/omo-v2-dev
+repo=$ws/oh-my-openagent
 canonical_repo=$repo
-host=$ws/opencode-wt/v2
+host=$ws/opencode
 binary=$host/packages/cli/dist/cli-linux-x64/bin/opencode
 launcher=/home/nikita/.local/bin/opencode-v2-lab
 standard_launcher=/home/nikita/.local/bin/opencode
@@ -147,7 +147,7 @@ install) [[ $# == 0 ]] || fail 'Default installation takes no arguments.' ;;
 *) fail 'Usage: script/install-v2-local.sh [--build-only | --activate-built EVIDENCE | --activate-built-detached EVIDENCE [dev]]' ;;
 esac
 [[ $(realpath -- "$0") == "$repo/script/install-v2-local.sh" ]] || fail 'Use the canonical dev helper.'
-[[ $(g -C "$repo" branch --show-current) == local/opencode-v2-dev ]] || fail 'Canonical dev branch required.'
+[[ $(g -C "$repo" branch --show-current) == local/v2-stack ]] || fail 'Active branch local/v2-stack required.'
 omo_oid=$(g -C "$repo" rev-parse HEAD)
 [[ $profile == dev ]] || g -C "$repo" show "$omo_oid:script/install-v2-local.sh" | cmp -s - "$0" || fail 'Commit this helper before use.'
 
@@ -166,7 +166,7 @@ identity
 [[ -x $host_candidate && $(digest "$host_candidate") == "$host_hash" ]] || fail 'Verified staged host missing or changed.'
 (cd "$repo" && grep -v '  packages/shared-skills/skills/' dist/v2-artifacts.sha256 | sha256sum --status --check) || fail 'Installed prebuilt asset manifest mismatch.'
 if [[ $profile == dev ]]; then
-	grep -Fxq "  port|dev) omo=\$ws/.omo/worktrees/omo-v2-dev ;;" "$launcher" ||
+	grep -Fxq "  port|dev) omo=\$ws/oh-my-openagent ;;" "$launcher" ||
 		fail 'Apply the canonical port/dev launcher mapping before installation.'
 else
 	jq -e --arg plugin "file://$repo" 'any(.plugin[]; . == $plugin or (type == "array" and .[0] == $plugin))' /home/nikita/.config/opencode/opencode.json >/dev/null ||
@@ -460,7 +460,7 @@ try {
 	const pluginUrl = new URL("/api/plugin", process.env.OMO_INSTALL_URL)
 	pluginUrl.searchParams.set("location[directory]", process.env.OMO_INSTALL_WORKSPACE)
 	const plugins = z.object({ data: z.array(z.object({ source: z.object({ type: z.string(), path: z.string().optional() }), state: z.object({ status: z.string() }) })) })
-	const requiredPaths = [process.env.OMO_INSTALL_PLUGIN, "/.omo/worktrees/owc-v2-tui", "/oc-codex-multi-auth"]
+	const requiredPaths = [process.env.OMO_INSTALL_PLUGIN, "/op/opencode-with-claude", "/oc-codex-multi-auth"]
 	const primary = [/sisyphus/i, /hephaestus/i, /prometheus/i, /atlas/i]
 	let last = "catalog or plugin inventory incomplete"
 	async function request(endpoint, schema) {
