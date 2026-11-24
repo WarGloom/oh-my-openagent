@@ -207,7 +207,12 @@ if [[ $operation == install || $operation == --build-only ]]; then
 	cmp -s "$evidence/host-flavor-installed.log" "$evidence/host-flavor-candidate.log" || fail 'Staged and installed host flavors differ.'
 	# Archive committed bytes, never the dirty port tree or generated Senpi working files.
 	g -C "$repo" archive "$omo_oid" | tar -xf - -C "$copy"
-	cp -p "$repo/.git" "$copy/.git"
+	# A main checkout has a .git directory: the sandbox mounts the overlay of that directory on this mount point.
+	if [[ -d $repo/.git ]]; then
+		mkdir "$copy/.git"
+	else
+		cp -p "$repo/.git" "$copy/.git"
+	fi
 	for deps in "$repo/node_modules" "$repo"/packages/*/node_modules "$repo/packages/omo-codex/plugin/node_modules"; do
 		[[ -d $deps ]] || continue
 		relative=${deps#"$repo/"}
