@@ -213,12 +213,11 @@ export function createRuntimeFallbackHook(
         if (Date.now() - lastRearm >= 5_000) {
           lastFallbackProgressRearm.set(sessionID, Date.now())
           const compaction = getCompaction(sessionID)
-          const timeoutMs = options?.session_timeout_ms ?? config.timeout_seconds * 1000
-          const delayOverride =
+          const compactionBudget =
             compaction && !compaction.endedAt
-              ? Math.max(0, Math.min(timeoutMs, COMPACTION_WATCHDOG_BUDGET_MS - (Date.now() - compaction.startedAt)))
+              ? { remainingCompactionMs: COMPACTION_WATCHDOG_BUDGET_MS - (Date.now() - compaction.startedAt) }
               : undefined
-          helpers.scheduleSessionFallbackTimeout(sessionID, undefined, delayOverride)
+          helpers.scheduleSessionFallbackTimeout(sessionID, undefined, compactionBudget)
           log(`[runtime-fallback] watchdog-part-progress-rearm`, { sessionID })
         }
       }

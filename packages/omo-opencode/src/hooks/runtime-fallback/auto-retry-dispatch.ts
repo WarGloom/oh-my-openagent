@@ -44,7 +44,9 @@ export function createAutoRetryDispatcher(
     isPositiveNumber(config.timeout_seconds) ||
     isPositiveNumber(config.first_progress_timeout_seconds) ||
     isPositiveNumber(config.stall_timeout_seconds) ||
-    isPositiveNumber(config.hard_timeout_seconds)
+    isPositiveNumber(config.hard_timeout_seconds) ||
+    options?.config?.model_timeouts !== undefined ||
+    options?.config?.provider_timeouts !== undefined
 
   return async (
     sessionID: string,

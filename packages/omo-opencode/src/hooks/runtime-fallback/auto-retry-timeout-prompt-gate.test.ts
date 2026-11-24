@@ -156,6 +156,44 @@ describe("session timeout fallback through the real internal-prompt gate", () =>
     restoreRuntimeFallbackTestClock()
   })
 
+  test.each([
+    { model: "slow/exact(high)", seconds: 9, global: 3 },
+    { model: "slow/exact-extra", seconds: 6, global: 3 },
+    { model: "other/exact", seconds: 3, global: 3 },
+    { model: "slow/exact-zero", seconds: 0, global: 3 },
+    { model: "untimed/other", seconds: 0, global: 3 },
+    { model: "slow/exact", seconds: 9, global: 0 },
+  ])("replaces the previous attempt's first-progress deadline for $model (global=$global)", async ({ model, seconds, global }) => {
+    // given
+    const harness = createGateHarness()
+    const deps = createDeps(harness)
+    deps.config.timeout_seconds = global
+    deps.config.stall_timeout_seconds = 0
+    deps.config.hard_timeout_seconds = 0
+    deps.options = {
+      config: {
+        model_timeouts: { "before/primary": 2, "slow/exact": 9, "slow/exact-zero": 0 },
+        provider_timeouts: { slow: 6, untimed: 0 },
+      },
+    }
+    deps.sessionStates.set(SESSION_ID, createFallbackState("before/primary"))
+    const helpers = createAutoRetryHelpers(deps)
+    const clock = installRuntimeFallbackTestClock()
+    helpers.scheduleSessionFallbackTimeout(SESSION_ID)
+
+    // when
+    const outcome = await helpers.autoRetryWithFallback(SESSION_ID, model, undefined, "session.error")
+    expect(outcome.accepted).toBe(true)
+    await clock.advanceBy(seconds === 0 ? 12_000 : seconds * 1000 - 1)
+
+    // then
+    expect(harness.abortSources).toEqual([])
+    if (seconds > 0) {
+      await clock.advanceBy(1)
+      expect(harness.abortSources).toEqual(["abort"])
+    }
+  })
+
   test("#given the real gate rejects every timeout dispatch as reserved #when the attempt cap is reached #then no prompt is sent, attempts are preserved, and the caller is failed terminally", async () => {
     // given
     SessionCategoryRegistry.register(SESSION_ID, "test")

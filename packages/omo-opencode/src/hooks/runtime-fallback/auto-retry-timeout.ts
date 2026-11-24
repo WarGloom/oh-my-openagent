@@ -7,6 +7,7 @@ import { isInternalPromptFenced } from "../shared/prompt-async-gate"
 import { restoreFallbackState, snapshotFallbackState } from "./fallback-state-snapshot"
 import { subagentSessions } from "../../features/claude-code-session-state"
 import { getCompaction, recordCompactionEnd } from "../../shared/compaction-in-flight"
+import { legacyFirstResponseOverrideMs } from "./timeout-config"
 
 declare function setTimeout(callback: () => void | Promise<void>, delay?: number): RuntimeFallbackTimeout
 declare function clearTimeout(timeout: RuntimeFallbackTimeout): void
@@ -152,7 +153,11 @@ export function createFallbackTimeoutHelpers(
     await abortSessionRequest(sessionID, TERMINAL_ABORT_SOURCE)
   }
 
-  const scheduleSessionFallbackTimeout = (sessionID: string, resolvedAgent?: string, delayOverride?: number) => {
+  const scheduleSessionFallbackTimeout = (
+    sessionID: string,
+    resolvedAgent?: string,
+    delayOverride?: number | { readonly remainingCompactionMs: number },
+  ) => {
     const effectiveResolvedAgent = resolvedAgent ?? sessionResolvedAgents.get(sessionID)
     clearSessionFallbackTimeout(sessionID)
     if (isInternalPromptFenced(sessionID)) return
@@ -179,11 +184,24 @@ export function createFallbackTimeoutHelpers(
           ? config.first_progress_timeout_seconds
           : config.timeout_seconds
         : config.stall_timeout_seconds
-    const timeoutMs = options?.session_timeout_ms ?? configuredTimeoutSeconds * 1000
-    if (timeoutMs <= 0) return
-    const delayMs = delayOverride ?? timeoutMs
-    const wasSubagentSession = subagentSessions.has(sessionID)
     const fallbackState = sessionStates.get(sessionID)
+    const firstResponseMs =
+      timeoutKind === "first-progress"
+        ? legacyFirstResponseOverrideMs(options?.config, fallbackState?.currentModel)
+        : undefined
+    const timeoutMs = firstResponseMs ?? options?.session_timeout_ms ?? configuredTimeoutSeconds * 1000
+    if (timeoutMs <= 0) return
+    const delayMs =
+      typeof delayOverride === "object"
+        ? Math.max(
+            0,
+            Math.min(
+              firstResponseMs ?? options?.session_timeout_ms ?? config.timeout_seconds * 1000,
+              delayOverride.remainingCompactionMs,
+            ),
+          )
+        : delayOverride ?? timeoutMs
+    const wasSubagentSession = subagentSessions.has(sessionID)
 
     sessionFallbackTimeoutKinds.set(sessionID, timeoutKind)
     const timer = setTimeout(async () => {

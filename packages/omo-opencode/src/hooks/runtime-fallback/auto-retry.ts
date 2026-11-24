@@ -37,9 +37,13 @@ export function createAutoRetryHelpers(deps: HookDeps) {
   )
   const { clearSessionFallbackTimeout } = timeoutHelpers
 
-  const scheduleSessionFallbackTimeout = (sessionID: string, resolvedAgent?: string, delayOverride?: number): void => {
+  const scheduleSessionFallbackTimeout = (
+    sessionID: string,
+    resolvedAgent?: string,
+    compactionBudget?: { readonly remainingCompactionMs: number },
+  ): void => {
     deps.sessionFallbackTimeoutAgents.set(sessionID, resolvedAgent)
-    timeoutHelpers.scheduleSessionFallbackTimeout(sessionID, resolvedAgent, delayOverride)
+    timeoutHelpers.scheduleSessionFallbackTimeout(sessionID, resolvedAgent, compactionBudget)
   }
 
   const clearSessionFallbackState = (sessionID: string): void => {

@@ -10,6 +10,7 @@ import { createFallbackState } from "./fallback-state"
 import { getFallbackModelsForSession } from "./fallback-models"
 import { resolveFallbackBootstrapModel } from "./fallback-bootstrap-model"
 import { dispatchFallbackRetry, suppressUnsafeAutoReplay } from "./fallback-retry-dispatcher"
+import { legacyFirstResponseOverrideMs } from "./timeout-config"
 
 const SOURCE = "first-prompt-watchdog"
 const SESSION_NEXT_EVENT_PREFIX = "session.next."
@@ -122,7 +123,7 @@ export function observeEventForWatchdog(
 export function createFirstPromptWatchdog(
   deps: HookDeps,
   helpers: AutoRetryHelpers,
-  watchdogMs: number = DEFAULT_FIRST_PROMPT_WATCHDOG_MS,
+  defaultWatchdogMs: number = DEFAULT_FIRST_PROMPT_WATCHDOG_MS,
 ): FirstPromptWatchdog {
   const timers = new Map<string, RuntimeFallbackTimeout>()
   const armed = new Set<string>()
@@ -138,7 +139,12 @@ export function createFirstPromptWatchdog(
     armed.delete(sessionID)
   }
 
-  const fire = async (sessionID: string, model: string | undefined, agent: string | undefined): Promise<void> => {
+  const fire = async (
+    sessionID: string,
+    message: { readonly model: string | undefined; readonly agent: string | undefined },
+    watchdogMs: number,
+  ): Promise<void> => {
+    const { model, agent } = message
     timers.delete(sessionID)
     armed.delete(sessionID)
 
@@ -212,15 +218,17 @@ export function createFirstPromptWatchdog(
   return {
     onUserMessage(sessionID, model, agent) {
       if (!sessionID) return
-      if (watchdogMs <= 0) return
       if (!subagentSessions.has(sessionID)) return
       if (terminalSessions.has(sessionID)) return
       if (progressSatisfied.has(sessionID)) return
       if (armed.has(sessionID)) return
 
+      const watchdogMs = legacyFirstResponseOverrideMs(deps.options?.config, model) ?? defaultWatchdogMs
+      if (watchdogMs <= 0) return
+
       armed.add(sessionID)
       const timer = setTimeout(async () => {
-        await fire(sessionID, model, agent)
+        await fire(sessionID, { model, agent }, watchdogMs)
       }, watchdogMs)
       timers.set(sessionID, timer)
 
