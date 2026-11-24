@@ -20,6 +20,7 @@ import { createTeamCreateTool } from "../tools/lifecycle-create-tool"
 import { createToolContext } from "../tools/lifecycle-test-fixture"
 import { clearSessionTeamRunCleanupRegistry, getSessionCreatedTeamRunIds } from "./session-cleanup"
 import { createLaunchConcurrencyProbe } from "../test-support/async-test-helpers"
+import { preserveModuleMocksForTestFile } from "../../../testing/module-mock-lifecycle"
 import { bindNativeTeamWorktrees, getNativeTeamWorktrees } from "../../../v2/native-team-worktrees"
 import { deleteTeam } from "./delete-team"
 import { createPluginInput } from "../../../v2/create-plugin-input"
@@ -34,6 +35,7 @@ const resolveMemberMock = mock(async (member: TeamSpec["members"][number]) => ({
 }))
 
 mock.module("./resolve-member", () => ({ resolveMember: resolveMemberMock }))
+preserveModuleMocksForTestFile(import.meta.url)
 
 const { createTeamRun, TeamRunCreateError } = await import("./create")
 
@@ -122,6 +124,7 @@ describe("createTeamRun", () => {
   })
 
   afterAll(async () => {
+    mock.restore()
     clearSessionTeamRunCleanupRegistry()
     await Promise.all(
       temporaryDirectories.splice(0).map(async (directoryPath) => rm(directoryPath, { recursive: true, force: true })),

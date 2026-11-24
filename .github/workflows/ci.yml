@@ -22,12 +22,14 @@ permissions:
   contents: read
 
 jobs:
+  # Job timeouts are about twice each job's measured p95 (25 green PR runs + 12 green dev pushes, 2026-11-22),
+  # with a 3-minute floor for setup noise, so a regression fails loudly instead of creeping (#14573).
   # A stable, unconditional context that dev's required checks can enforce even
   # when the rest of CI takes a docs/web/release fast path.
   lint-ratchet:
     name: Lint ratchet
     runs-on: ubuntu-26.04
-    timeout-minutes: 10
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@v7
 
@@ -59,6 +61,7 @@ jobs:
 
   ci-mode:
     runs-on: ubuntu-26.04
+    timeout-minutes: 3
     outputs:
       generated_release_push: ${{ steps.classify.outputs.generated_release_push }}
       web_only: ${{ steps.classify.outputs.web_only }}
@@ -66,6 +69,7 @@ jobs:
       full_matrix: ${{ steps.classify.outputs.full_matrix }}
       runtime_touching: ${{ steps.classify.outputs.runtime_touching }}
       label_refused: ${{ steps.classify.outputs.label_refused }}
+      shard_timings_key: ${{ steps.shard-timings.outputs.cache-matched-key }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -119,6 +123,16 @@ jobs:
           fi
           jq . <<< "$MODE_JSON"
 
+      # Resolve the prefix once. Independent prefix lookups could see different dev snapshots mid-run.
+      - name: Select shard timing snapshot
+        id: shard-timings
+        if: steps.classify.outputs.run_heavy == 'true'
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/ci-test-timings.json
+          key: ci-test-timings-${{ github.run_id }}
+          restore-keys: ci-test-timings-
+
       # The report-only temp-leak list (#9766) may only shrink: a new leak is fixed, not listed.
       - name: Report-only temp-leak list only shrinks
         if: github.event_name == 'pull_request'
@@ -137,6 +151,7 @@ jobs:
             - Generated release push: `${{ steps.classify.outputs.generated_release_push || 'unknown' }}`.
             - Web-only change: `${{ steps.classify.outputs.web_only || 'unknown' }}`.
             - Run heavy validation: `${{ steps.classify.outputs.run_heavy || 'unknown' }}`.
+            - Shard timing snapshot: `${{ steps.shard-timings.outputs.cache-matched-key || 'committed fallback' }}`.
             - Runtime-touching change: `${{ steps.classify.outputs.runtime_touching || 'unknown' }}` (informational; the OS matrix follows the full-matrix flag below).
             - `ci:full-matrix` refused: `${{ steps.classify.outputs.label_refused || 'unknown' }}` (the label needs a platform path in the diff or a `Platform-reason: <why>` line in the PR body).
             - Full 3-OS matrix: `${{ steps.classify.outputs.full_matrix || 'unknown' }}` (pull requests set it only for the `ci:full-matrix` label or a release-state head, #13802; false keeps heavy work on ubuntu; add `ci:full-matrix` for a separate run with optional `full-matrix / ...` checks that do not gate merge; keep the label and push a commit or reopen the PR to run the full matrix in required checks).
@@ -417,7 +432,7 @@ jobs:
     needs: [ci-mode]
     if: needs.ci-mode.outputs.run_heavy == 'true'
     runs-on: ubuntu-26.04
-    timeout-minutes: 30
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -441,7 +456,15 @@ jobs:
       # The full install runs the root `prepare` (`bun run build`), whose `build:lsp-daemon` step already runs
       # `npm ci && npm run build` in packages/lsp-daemon, so its node_modules and dist exist before the tests.
       - name: Install dependencies
+        if: matrix.part != 'memory-core'
         run: bun install --frozen-lockfile
+
+      # memory-core needs only the vendored LSP daemon built by the shared test preload.
+      - name: Install memory-core test dependencies
+        if: matrix.part == 'memory-core'
+        run: |
+          bun install --frozen-lockfile --ignore-scripts
+          bun run build:lsp-daemon
 
       - name: Remove stale self-package test copies
         run: bun run script/remove-stale-self-package-tests.ts
@@ -485,6 +508,22 @@ jobs:
           echo "PID namespace ready ($procs processes visible)"
           unshare -Upf --mount-proc --map-current-user -- env CI=1 bun test --timeout 20000 packages/memory-core
 
+      - name: Restore selected shard timing snapshot
+        id: shard-timings
+        if: startsWith(matrix.part, 'remainder-') && needs.ci-mode.outputs.shard_timings_key != ''
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/ci-test-timings.json
+          key: ${{ needs.ci-mode.outputs.shard_timings_key }}
+          fail-on-cache-miss: true
+
+      - name: Copy the timing snapshot for this shard
+        if: startsWith(matrix.part, 'remainder-')
+        env:
+          TIMINGS_KEY: ${{ needs.ci-mode.outputs.shard_timings_key }}
+          TIMINGS_EXACT_HIT: ${{ steps.shard-timings.outputs.cache-hit }}
+        run: bash .github/scripts/ci-copy-shard-timings.sh
+
       - name: Run the first remainder half
         id: root-tests-linux-first
         if: matrix.part == 'remainder-1'
@@ -495,6 +534,16 @@ jobs:
         if: matrix.part == 'remainder-2'
         run: bash .github/scripts/ci-root-shard-2.sh second
 
+      - name: Upload root shard record
+        if: startsWith(matrix.part, 'remainder-')
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-shard-root-${{ matrix.part }}
+          path: .omo/ci-shard-record.json
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: true
+
       - name: Write job summary
         if: always()
         shell: bash
@@ -504,7 +553,7 @@ jobs:
           JOB_SUMMARY_DETAILS: |
             - omo-opencode: the omo-opencode tree in one process, the vendored lsp-daemon tests, then the shared serial quarantine.
             - memory-core: memory-core inside an unprivileged PID namespace.
-            - remainder-1 / remainder-2: every other root test, split by `bun test --shard` on `.github/ci-test-timings.json`.
+            - remainder-1 / remainder-2: every other root test, split by `bun test --shard` on the selected timing snapshot.
           JOB_SUMMARY_NEXT: Open the first failing test; `test (ubuntu-latest, 1/2)` and `2/2` report this job's combined result.
         run: GITHUB_STEP_SUMMARY="$GITHUB_STEP_SUMMARY" bash .github/scripts/write-job-summary.sh
 
@@ -527,11 +576,26 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        if: needs.test-linux.result == 'success'
+        with:
+          bun-version: "1.4.4"
+      - name: Download root shard records
+        if: needs.test-linux.result == 'success'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ci-shard-root-*
+          path: ${{ runner.temp }}/ci-shard-records
+      - name: Verify root shard coverage
+        id: coverage
+        if: needs.test-linux.result == 'success'
+        run: bun script/ci-shard-coverage.ts root "$RUNNER_TEMP/ci-shard-records"
       - name: Write job summary
+        if: always()
         env:
           LEG_OS: ${{ matrix.os }}
           LEG_JOB_STATUS: ${{ needs.test-linux.result }}
-          TEST_OUTCOMES: ${{ needs.test-linux.result }}
+          TEST_OUTCOMES: ${{ needs.test-linux.result }} ${{ steps.coverage.outcome || 'missing' }}
           RUN_HEAVY: ${{ needs.ci-mode.outputs.run_heavy }}
           FULL_MATRIX: ${{ needs.ci-mode.outputs.full_matrix }}
           RUNTIME_TOUCHING: ${{ needs.ci-mode.outputs.runtime_touching }}
@@ -551,7 +615,8 @@ jobs:
     timeout-minutes: 110
     outputs:
       lsp: ${{ steps.lsp-daemon-tests.outcome }}
-      shard1: ${{ steps.root-tests-posix-1.outcome }}
+      shard1a: ${{ steps.root-tests-posix-1a.outcome }}
+      shard1b: ${{ steps.root-tests-posix-1b.outcome }}
       shard2a: ${{ steps.root-tests-posix-2a.outcome }}
       shard2b: ${{ steps.root-tests-posix-2b.outcome }}
       codex: ${{ steps.codex-platform-tests.outcome }}
@@ -579,15 +644,29 @@ jobs:
         timeout-minutes: 5
         working-directory: packages/lsp-daemon
         run: npm test
-      - name: Run root test shard 1
-        id: root-tests-posix-1
+      # Shard 1 is split by measured time (#14849): one 20-minute step did not fit a runner 2.4-2.7x slower than the
+      # fast one (571 s fast, ~1350-1545 s projected on the slow runners). memory-core's sync and memfs trees (249 s fast,
+      # ~672 s at 2.7x) run in 1a; the rest of memory-core and omo-opencode (322 s fast, ~870 s at 2.7x) run in 1b, which
+      # ignores those two trees.
+      - name: Run root test shard 1 memory-core sync
+        id: root-tests-posix-1a
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        # 14, not 20: the part budgets must stay inside the job's 110 minutes (ci-macos-combined.test.ts); ~11 min at 2.7x.
+        timeout-minutes: 14
+        env:
+          CI_JUNIT_DIR: ${{ runner.temp }}/junit
+        run: |
+          mkdir -p "$CI_JUNIT_DIR"
+          bun test --timeout 20000 packages/memory-core/src/sync/ packages/memory-core/src/memfs/ --reporter=junit --reporter-outfile="$CI_JUNIT_DIR/root-1a.xml"
+      - name: Run root test shard 1 rest
+        id: root-tests-posix-1b
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         timeout-minutes: 20
         env:
           CI_JUNIT_DIR: ${{ runner.temp }}/junit
         run: |
           mkdir -p "$CI_JUNIT_DIR"
-          bun test --timeout 20000 packages/omo-opencode packages/memory-core --reporter=junit --reporter-outfile="$CI_JUNIT_DIR/root-1.xml"
+          bun --config=bunfig.macos-shard-1b.toml test --timeout 20000 packages/omo-opencode packages/memory-core --reporter=junit --reporter-outfile="$CI_JUNIT_DIR/root-1b.xml"
       - name: Run root test shard 2 heavy
         id: root-tests-posix-2a
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
@@ -636,7 +715,8 @@ jobs:
           JOB_SUMMARY_STATUS: ${{ job.status }}
           JOB_SUMMARY_DETAILS: |
             - LSP daemon: `${{ steps.lsp-daemon-tests.outcome }}`.
-            - Root shard 1: `${{ steps.root-tests-posix-1.outcome }}`.
+            - Root shard 1 memory-core sync: `${{ steps.root-tests-posix-1a.outcome }}`.
+            - Root shard 1 rest: `${{ steps.root-tests-posix-1b.outcome }}`.
             - Root shard 2 heavy: `${{ steps.root-tests-posix-2a.outcome }}`.
             - Root shard 2 light: `${{ steps.root-tests-posix-2b.outcome }}`.
             - Codex platform: `${{ steps.codex-platform-tests.outcome }}`.
@@ -665,7 +745,7 @@ jobs:
         env:
           LEG_OS: ${{ matrix.os }}
           LEG_JOB_STATUS: ${{ needs.macos-combined.result }}
-          TEST_OUTCOMES: ${{ needs.macos-combined.outputs.lsp }} ${{ needs.macos-combined.outputs.shard1 }}
+          TEST_OUTCOMES: ${{ needs.macos-combined.outputs.lsp }} ${{ needs.macos-combined.outputs.shard1a }} ${{ needs.macos-combined.outputs.shard1b }}
           RUN_HEAVY: ${{ needs.ci-mode.outputs.run_heavy }}
           FULL_MATRIX: ${{ needs.ci-mode.outputs.full_matrix }}
           RUNTIME_TOUCHING: ${{ needs.ci-mode.outputs.runtime_touching }}
@@ -747,6 +827,7 @@ jobs:
   typecheck:
     needs: [ci-mode]
     runs-on: ubuntu-26.04
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@v7
 
@@ -1038,7 +1119,7 @@ jobs:
     needs: [ci-mode]
     if: needs.ci-mode.outputs.run_heavy == 'true'
     runs-on: ubuntu-26.04
-    timeout-minutes: 20
+    timeout-minutes: 4
     steps:
       - uses: actions/checkout@v7
 
@@ -1090,7 +1171,7 @@ jobs:
     needs: [ci-mode]
     if: needs.ci-mode.outputs.run_heavy == 'true'
     runs-on: ubuntu-26.04
-    timeout-minutes: 60
+    timeout-minutes: 11
     steps:
       - uses: actions/checkout@v7
 
@@ -1117,7 +1198,7 @@ jobs:
       # linux-x64 B0 goldens. The collectors, normalizer and fake model server are the senpi EQ harness at a pinned commit.
       - name: Run omo fused-path equivalence (EQ.omo E21-E24)
         shell: bash
-        timeout-minutes: 45
+        timeout-minutes: 10
         env:
           SENPI_EQ_HARNESS_SHA: 5ab795e3392325c961596d7944a1740f4d0a9e20
         run: |
@@ -1150,7 +1231,7 @@ jobs:
     needs: [ci-mode]
     if: needs.ci-mode.outputs.run_heavy == 'true'
     runs-on: ubuntu-26.04
-    timeout-minutes: 30
+    timeout-minutes: 18
     strategy:
       fail-fast: false
       matrix:
@@ -1177,9 +1258,33 @@ jobs:
       - name: Remove stale self-package test copies
         run: bun run script/remove-stale-self-package-tests.ts
 
+      - name: Restore selected shard timing snapshot
+        id: shard-timings
+        if: needs.ci-mode.outputs.shard_timings_key != ''
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/ci-test-timings.json
+          key: ${{ needs.ci-mode.outputs.shard_timings_key }}
+          fail-on-cache-miss: true
+
+      - name: Copy the timing snapshot for this shard
+        env:
+          TIMINGS_KEY: ${{ needs.ci-mode.outputs.shard_timings_key }}
+          TIMINGS_EXACT_HIT: ${{ steps.shard-timings.outputs.cache-hit }}
+        run: bash .github/scripts/ci-copy-shard-timings.sh
+
       - name: Run Senpi compatibility tests
         shell: bash
         run: bash .github/scripts/ci-senpi-posix.sh "${{ matrix.part }}"
+
+      - name: Upload Senpi shard record
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-shard-senpi-${{ matrix.part }}
+          path: .omo/ci-shard-record.json
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: true
 
       - name: Write job summary
         if: always()
@@ -1188,7 +1293,7 @@ jobs:
           JOB_SUMMARY_TITLE: Senpi compatibility tests (ubuntu-latest, part ${{ matrix.part }})
           JOB_SUMMARY_STATUS: ${{ job.status }}
           JOB_SUMMARY_DETAILS: |
-            - Builds the Senpi plugin and runs this part of `bun test packages/omo-senpi`, split by `--shard` on `.github/ci-test-timings.json`.
+            - Builds the Senpi plugin and runs this part of `bun test packages/omo-senpi`, split by `--shard` on the selected timing snapshot.
             - Part one also packs the plugin, runs the LSP daemon round trip, `bun check` and the evidence-dir test.
           JOB_SUMMARY_NEXT: Open the first failing test; `senpi-compatibility (ubuntu-latest)` reports this job's result.
         run: GITHUB_STEP_SUMMARY="$GITHUB_STEP_SUMMARY" bash .github/scripts/write-job-summary.sh
@@ -1208,19 +1313,69 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        if: needs.senpi-tests-linux.result == 'success'
+        with:
+          bun-version: "1.4.4"
+      - name: Download Senpi shard records
+        if: needs.senpi-tests-linux.result == 'success'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ci-shard-senpi-*
+          path: ${{ runner.temp }}/ci-shard-records
+      - name: Verify Senpi shard coverage
+        id: coverage
+        if: needs.senpi-tests-linux.result == 'success'
+        run: bun script/ci-shard-coverage.ts senpi "$RUNNER_TEMP/ci-shard-records"
       - name: Write job summary
+        if: always()
         env:
           LEG_OS: ${{ matrix.os }}
           LEG_JOB_STATUS: ${{ (needs.senpi-bundle-check.result == 'skipped' && needs.senpi-eq.result == 'skipped' && needs.senpi-tests-linux.result == 'skipped') && 'skipped' || 'success' }}
-          TEST_OUTCOMES: ${{ needs.senpi-bundle-check.result }} ${{ needs.senpi-eq.result }} ${{ needs.senpi-tests-linux.result }}
+          TEST_OUTCOMES: ${{ needs.senpi-bundle-check.result }} ${{ needs.senpi-eq.result }} ${{ needs.senpi-tests-linux.result }} ${{ steps.coverage.outcome || 'missing' }}
           RUN_HEAVY: ${{ needs.ci-mode.outputs.run_heavy }}
           FULL_MATRIX: ${{ needs.ci-mode.outputs.full_matrix }}
           RUNTIME_TOUCHING: ${{ needs.ci-mode.outputs.runtime_touching }}
         run: GITHUB_STEP_SUMMARY="$GITHUB_STEP_SUMMARY" bash .github/scripts/ci-macos-status.sh
 
+  save-shard-timings:
+    needs: [test-linux, senpi-tests-linux]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.4.4"
+      - name: Download both groups' shard records
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ci-shard-*
+          path: ${{ runner.temp }}/ci-shard-records
+      - name: Verify and merge shard timings
+        run: bun script/ci-shard-coverage.ts merge "$RUNNER_TEMP/ci-shard-records" "$RUNNER_TEMP/ci-test-timings.json"
+      - name: Save shard timing snapshot
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/ci-test-timings.json
+          key: ci-test-timings-${{ github.run_id }}
+      - name: Write job summary
+        if: always()
+        shell: bash
+        env:
+          JOB_SUMMARY_TITLE: Save Linux shard timings
+          JOB_SUMMARY_STATUS: ${{ job.status }}
+          JOB_SUMMARY_DETAILS: |
+            - Verifies and merges the root remainder and Senpi file records from this dev push.
+            - Cache key: `ci-test-timings-${{ github.run_id }}`.
+          JOB_SUMMARY_NEXT: Inspect the coverage diff or cache step; future runs can still use the previous snapshot or committed fallback.
+        run: GITHUB_STEP_SUMMARY="$GITHUB_STEP_SUMMARY" bash .github/scripts/write-job-summary.sh
+
   lazycodex-published-smoke:
     needs: [ci-mode]
     runs-on: ubuntu-26.04
+    timeout-minutes: 3
     continue-on-error: true
     steps:
       - uses: actions/setup-node@v7
@@ -1310,6 +1465,7 @@ jobs:
   build:
     needs: [ci-mode]
     runs-on: ubuntu-26.04
+    timeout-minutes: 4
     permissions:
       contents: read
     steps:
@@ -1375,6 +1531,7 @@ jobs:
   omo-ai-payload-check:
     needs: [ci-mode]
     runs-on: ubuntu-26.04
+    timeout-minutes: 6
     steps:
       - uses: actions/checkout@v7
 
@@ -1396,7 +1553,13 @@ jobs:
 
       - name: Install dependencies
         if: needs.ci-mode.outputs.run_heavy == 'true'
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Build native payload inputs
+        if: needs.ci-mode.outputs.run_heavy == 'true'
+        env:
+          OMO_BUILD_PROFILE: omo-native
+        run: bun run build
 
       - name: Build omo-native
         if: needs.ci-mode.outputs.run_heavy == 'true'

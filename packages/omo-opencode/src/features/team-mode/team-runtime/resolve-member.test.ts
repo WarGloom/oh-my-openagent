@@ -1,11 +1,12 @@
 /// <reference types="bun-types" />
 
-import { beforeEach, describe, expect, mock, test } from "bun:test"
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test"
 import { randomUUID } from "node:crypto"
 
 import type { Agent, PermissionRuleset } from "@opencode-ai/sdk/v2"
 
 import { unsafeTestValue } from "../../../../../../test-support/unsafe-test-value"
+import { preserveModuleMocksForTestFile } from "../../../testing/module-mock-lifecycle"
 import type { ExecutorContext } from "../../../tools/delegate-task/executor-types"
 import { replaceProjectAgentProvenance } from "../final-open-code-agent-registry"
 import type { Member } from "../types"
@@ -19,6 +20,11 @@ mock.module("./resolve-member-dependencies", () => ({
   resolveSubagentExecution: resolveSubagentExecutionMock,
   buildSystemContent: buildSystemContentMock,
 }))
+preserveModuleMocksForTestFile(import.meta.url)
+
+afterAll(() => {
+  mock.restore()
+})
 
 const { resolveMember, TeamMemberResolutionError } = await import("./resolve-member?resolve-member-test")
 
@@ -99,7 +105,6 @@ function createProvenRegistryContext(response: unknown): ContextFixture {
 
 describe("resolveMember", () => {
   beforeEach(() => {
-    mock.restore()
     resolveCategoryExecutionMock.mockReset()
     resolveSubagentExecutionMock.mockReset()
     buildSystemContentMock.mockReset()
