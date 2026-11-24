@@ -28,6 +28,7 @@ export { formatStaleLockFixLines, reclaimDeadOwnerLocks, runStaleLockReaper } fr
 // memory-core's `#memory-completion-links` (the dream archive link repair, #12642) maps here in the plugin manifest:
 // it runs only when a dream or reflection run is finalized, so the entry bundle loads it from here.
 export { applyLinkRepair, recognizeLinkRepair } from "@oh-my-opencode/memory-core/completion-links"
+export { classifyRetryableModelMiss } from "../worker/model-miss"
 
 type CommandRegistrar = (pi: MemoryCommandPort, deps: MemoryCommandDeps) => void
 

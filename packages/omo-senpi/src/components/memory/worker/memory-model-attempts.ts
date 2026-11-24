@@ -1,6 +1,7 @@
+import { loadMemoryCommandsRuntime } from "../commands/runtime-loader"
 import type { ReflectionChildResult } from "./spawn"
 import type { ReflectionModelCandidate } from "./resolve-model"
-import { classifyRetryableModelMiss, type RetryableModelMiss } from "./model-miss"
+import type { RetryableModelMiss } from "./model-miss"
 import type { RunAttempt } from "./run-artifacts"
 
 export type MemoryModelChain = readonly [ReflectionModelCandidate, ...ReflectionModelCandidate[]]
@@ -42,6 +43,8 @@ export async function runMemoryModelAttempts(
             ...(nextCandidate.thinking === undefined ? {} : { thinking: nextCandidate.thinking }),
           }
     const child = await attempt(candidate, index + 1, nextAttempt)
+    if (child.timedOut || child.code === 0) return { candidate, child }
+    const { classifyRetryableModelMiss } = await loadMemoryCommandsRuntime()
     const miss = classifyRetryableModelMiss(child)
     if (miss === undefined) return { candidate, child }
     misses.push({ candidate, miss })
