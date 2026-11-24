@@ -4,6 +4,7 @@ import { log } from "../shared/logger"
 import { recoverNativeFailure, recoveryMessageID } from "./native-recovery-state"
 
 type Request = {
+  readonly firstProgressMs: number
   progressed: boolean
   readonly waits: Map<string, "pending" | "settled">
   cancelled: boolean
@@ -88,7 +89,7 @@ export function createNativeProgressWatchdog(deps: {
     clearTimeout(request.timer)
     if (request.cancelled || [...request.waits.values()].includes("pending")) return
     const timer = request.progressed ? "stall" : "first-progress"
-    const ms = request.progressed ? deps.timeouts.stallMs : deps.timeouts.firstProgressMs
+    const ms = request.progressed ? deps.timeouts.stallMs : request.firstProgressMs
     if (ms > 0) request.timer = setTimeout(() => expire(sessionID, request, timer).catch(deps.warn), ms)
     if (deps.timeouts.hardMs > 0 && !request.hard) {
       request.hard = setTimeout(() => expire(sessionID, request, "hard").catch(deps.warn), deps.timeouts.hardMs)
@@ -119,11 +120,11 @@ export function createNativeProgressWatchdog(deps: {
       }
       resume()
     },
-    start(sessionID: string) {
+    start(sessionID: string, firstProgressMs = deps.timeouts.firstProgressMs) {
       clear(sessionID)
       recovering.delete(sessionID)
-      if (disposed || !Object.values(deps.timeouts).some((value) => value > 0)) return
-      const request: Request = { progressed: false, waits: new Map(), cancelled: false }
+      if (disposed || (firstProgressMs <= 0 && deps.timeouts.stallMs <= 0 && deps.timeouts.hardMs <= 0)) return
+      const request: Request = { firstProgressMs, progressed: false, waits: new Map(), cancelled: false }
       requests.set(sessionID, request)
       arm(sessionID, request)
     },

@@ -133,7 +133,7 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
   )
   const watchdog = createNativeProgressWatchdog({
     context,
-    timeouts: controller.timeouts,
+    timeouts: controller.timeouts(),
     stalledAgain: (sessionID) => {
       log("[runtime-fallback] Native watchdog observed a repeated stall; request continues", { sessionID })
       controller.notifyStalledAgain()
@@ -144,10 +144,9 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
       }),
   })
   const watchdogRegistration = await context.session.hook("model.request", (event) => {
-    if (event.kind === "primary") {
-      controller.capture(event.sessionID)
-      watchdog.start(event.sessionID)
-    }
+    if (event.kind !== "primary") return
+    controller.capture(event.sessionID)
+    watchdog.start(event.sessionID, controller.timeouts(`${event.model.providerID}/${event.model.id}`).firstProgressMs)
   })
   const promptRegistration = await context.session.hook("prompt", async (event) => {
     if (disposed) return
@@ -212,6 +211,7 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
     // V2 increments attempt before the retry hook, so its first event has attempt 2.
     const immediate = errorType === "quota_exceeded" || errorType === "model_not_found"
     const retryAfterMs = getRuntimeFallbackRetryAfterMs(input.error)
+    const { firstProgressMs } = controller.timeouts(input.model)
     // Reserve one second for retry dispatch and initial progress before the watchdog expires.
     if (
       input.onProviderWindow &&
@@ -220,7 +220,7 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
       !immediate &&
       retryAfterMs !== undefined &&
       retryAfterMs <= 30_000 &&
-      (controller.timeouts.firstProgressMs <= 0 || retryAfterMs < controller.timeouts.firstProgressMs - 1_000)
+      (firstProgressMs <= 0 || retryAfterMs < firstProgressMs - 1_000)
     ) {
       input.onProviderWindow(retryAfterMs)
       log("[runtime-fallback] Native recovery decision", {

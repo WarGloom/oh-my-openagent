@@ -25,6 +25,7 @@ import { forgetNativeRecovery, nativeRecoveryState } from "../../v2/native-recov
 import { showFallbackToast } from "./fallback-retry-dispatcher"
 import { createNativeQuotaSignals } from "./native-quota-signals"
 import { getRuntimeFallbackRetryAfterMs } from "@oh-my-opencode/model-core"
+import { firstResponseOverrideMs } from "./timeout-config"
 import { modelIdentity } from "./model-identity"
 
 const nativeClients = new WeakSet<object>()
@@ -129,9 +130,9 @@ export function createNativeFallbackController(deps: HookDeps) {
     get retryOnErrors() {
       return deps.config.retry_on_errors
     },
-    get timeouts() {
+    timeouts(model?: string) {
       return {
-        firstProgressMs: deps.config.first_progress_timeout_seconds * 1000,
+        firstProgressMs: firstResponseOverrideMs(deps.options?.config, model) ?? deps.config.first_progress_timeout_seconds * 1000,
         stallMs: deps.config.stall_timeout_seconds * 1000,
         hardMs: deps.config.hard_timeout_seconds * 1000,
       }
