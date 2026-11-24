@@ -9,6 +9,7 @@ canonical_repo=$repo
 host=$ws/opencode-wt/v2
 binary=$host/packages/cli/dist/cli-linux-x64/bin/opencode
 launcher=/home/nikita/.local/bin/opencode-v2-lab
+standard_launcher=/home/nikita/.local/bin/opencode
 host_oid=751c96ed038e2d7ef1f15ca86f4373e9aed50696
 host_checkout_oid=751c96ed038e2d7ef1f15ca86f4373e9aed50696
 host_hash=bdbc6167a21922715f0b5003cc2eb943e9150fbc4b799f98e7d7baab8f4b9fb5
@@ -25,7 +26,13 @@ fail() {
 }
 g() { GIT_MASTER=1 GIT_OPTIONAL_LOCKS=0 command git "$@"; }
 digest() { sha256sum "$1" | cut -d ' ' -f 1; }
-lab() { env -u OPENCODE_V2_BIN HOME=/home/nikita "$launcher" port "$@" 9>&-; }
+lab() {
+	if [[ $profile == dev ]]; then
+		env -u OPENCODE_V2_BIN HOME=/home/nikita "$launcher" dev "$@" 9>&-
+	else
+		env -u OPENCODE_V2_BIN -u XDG_CONFIG_HOME -u XDG_DATA_HOME -u XDG_STATE_HOME -u XDG_CACHE_HOME HOME=/home/nikita "$standard_launcher" "$@" 9>&-
+	fi
+}
 
 host_flavor() {
 	local executable=$1 root=$2 user_agent db
@@ -58,9 +65,18 @@ try:
     old = parse(sys.stdin.buffer.read())
     if mode == "validate":
         profile, pid, expected = args
-        base = os.fsencode("/home/nikita/.local/share/opencode-v2-lab/" + profile)
-        for key, subdir in ((b"HOME", b"home"), (b"XDG_STATE_HOME", b"state"), (b"XDG_DATA_HOME", b"data"), (b"XDG_CONFIG_HOME", b"config")):
-            if old.get(key) != base + b"/" + subdir:
+        if profile == "dev":
+            base = os.fsencode("/home/nikita/.local/share/opencode-v2-lab/" + profile)
+            for key, subdir in ((b"HOME", b"home"), (b"XDG_STATE_HOME", b"state"), (b"XDG_DATA_HOME", b"data"), (b"XDG_CONFIG_HOME", b"config")):
+                if old.get(key) != base + b"/" + subdir:
+                    raise ValueError()
+        else:
+            if old.get(b"HOME") != b"/home/nikita":
+                raise ValueError()
+            for key, path in ((b"XDG_STATE_HOME", b"/home/nikita/.local/state"), (b"XDG_DATA_HOME", b"/home/nikita/.local/share"), (b"XDG_CONFIG_HOME", b"/home/nikita/.config"), (b"XDG_CACHE_HOME", b"/home/nikita/.cache")):
+                if key in old and old[key] != path:
+                    raise ValueError()
+            if any(b"opencode-v2-lab" in value for value in old.values()):
                 raise ValueError()
         proc = Path("/proc") / pid
         argv = (proc / "cmdline").read_bytes().split(bytes(1))
@@ -114,6 +130,7 @@ if [[ $operation == --detached-worker ]]; then
 fi
 lab_root=/home/nikita/.local/share/opencode-v2-lab/$profile
 registration=$lab_root/state/opencode/service-local.json
+[[ $profile == dev ]] || registration=/home/nikita/.local/state/opencode/service-local.json
 activation_url=http://127.0.0.1:49375
 [[ $profile == port ]] || activation_url=http://127.0.0.1:49581
 registered_pid() {
@@ -148,8 +165,13 @@ identity() {
 identity
 [[ -x $host_candidate && $(digest "$host_candidate") == "$host_hash" ]] || fail 'Verified staged host missing or changed.'
 (cd "$repo" && grep -v '  packages/shared-skills/skills/' dist/v2-artifacts.sha256 | sha256sum --status --check) || fail 'Installed prebuilt asset manifest mismatch.'
-grep -Fxq "  port|dev) omo=\$ws/.omo/worktrees/omo-v2-dev ;;" "$launcher" ||
-	fail 'Apply the canonical port/dev launcher mapping before installation.'
+if [[ $profile == dev ]]; then
+	grep -Fxq "  port|dev) omo=\$ws/.omo/worktrees/omo-v2-dev ;;" "$launcher" ||
+		fail 'Apply the canonical port/dev launcher mapping before installation.'
+else
+	jq -e --arg plugin "file://$repo" 'any(.plugin[]; . == $plugin or (type == "array" and .[0] == $plugin))' /home/nikita/.config/opencode/opencode.json >/dev/null ||
+		fail 'Standard V2 configuration does not load the canonical OMO plugin.'
+fi
 for tool in bun node git tar cp bwrap jq flock; do
 	command -v "$tool" >/dev/null || fail "Missing existing tool: $tool"
 done
@@ -312,7 +334,11 @@ if [[ $operation == --detached-worker ]]; then
 		done
 		jq -e --arg plugin "file://$repo" 'any(.plugin[]; . == $plugin or (type == "array" and .[0] == $plugin))' "$lab_root/config/opencode/opencode.json" >/dev/null || fail 'Dev is not configured to load its isolated OMO copy.'
 	fi
-	lab() { with_snapshot launcher "$launcher" "$profile" "$@"; }
+	if [[ $profile == dev ]]; then
+		lab() { with_snapshot launcher "$launcher" "$profile" "$@"; }
+	else
+		lab() { with_snapshot launcher "$standard_launcher" "$@"; }
+	fi
 fi
 
 restart_service() {
@@ -337,7 +363,11 @@ restart_service() {
 }
 
 lab_config=$lab_root/config/opencode
-[[ -e $lab_root/.credentials-imported ]] || fail 'Credential-import marker missing; refusing to modify credentials.'
+if [[ $profile == dev ]]; then
+	[[ -e $lab_root/.credentials-imported ]] || fail 'Credential-import marker missing; refusing to modify credentials.'
+else
+	lab_config=/home/nikita/.config/opencode
+fi
 config_before=$(sha256sum "$lab_config/opencode.json" "$lab_config/cli.json")
 printf '\n- Install checkpoint: OMO commit `%s`, host commit `%s`, host SHA-256 `%s`; staged and rollback artifacts `%s`; build copy `%s`. Activation will replace both artifacts and restart the selected profile once.\n' \
 	"$omo_oid" "$host_oid" "$host_hash" "$evidence" "$copy" >"$evidence/activation-checkpoint.md"
