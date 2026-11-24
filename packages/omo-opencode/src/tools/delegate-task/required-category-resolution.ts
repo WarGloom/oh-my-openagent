@@ -33,12 +33,12 @@ export async function resolveRequiredCategory(input: {
     throw new ExecutorRequirementError("no_eligible_executor")
   }
   const contentFilterModel = configuredContentFilterModel(args.required_model, context.agentOverrides)
-  const available = await getAvailableModelsForDelegateTask(context.client)
+  const available = await getAvailableModelsForDelegateTask(context.client, true)
   if (!args.required_model || !available.has(args.required_model))
     throw new ExecutorRequirementError("no_eligible_executor")
   if (args.category && args.category !== "auto") {
     const result = await resolveCategoryExecution(
-      contentFilterModel ? { ...args, required_model: undefined } : args,
+      args,
       contentFilterModel ? withRequiredContentFilterCategory(context, args.category, args.required_model) : context,
       inheritedModel,
       defaultModel,
@@ -74,7 +74,7 @@ export async function resolveRequiredCategory(input: {
   const eligible = new Map<string, CategoryResolutionResult>()
   for (const category of Object.keys(categories)) {
     const result = await resolveCategoryExecution(
-      { ...args, category, ...(contentFilterModel ? { required_model: undefined } : {}) },
+      { ...args, category },
       contentFilterModel
         ? withRequiredContentFilterCategory(
             { ...context, userCategories, jevRouting: undefined },

@@ -139,7 +139,7 @@ export function createDelegateTask(options: DelegateTaskToolOptions): ToolDefini
       if (
         delegateTaskArgs.required_model &&
         !delegateTaskArgs.task_id &&
-        !(await getAvailableModelsForDelegateTask(options.client)).has(delegateTaskArgs.required_model)
+        !(await getAvailableModelsForDelegateTask(options.client, true)).has(delegateTaskArgs.required_model)
       ) {
         throw new ExecutorRequirementError("no_eligible_executor")
       }

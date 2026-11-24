@@ -237,6 +237,40 @@ describe("Jev task dispatch", () => {
     },
     { selector: { category: "deep-high" }, replacement: false, provider: "openai", role: "daybreak", target: "target" },
     {
+      selector: { category: "deep-high" },
+      replacement: false,
+      provider: "openai",
+      role: "daybreak",
+      target: "gpt-6-sol-daybreak",
+      coldCache: true,
+    },
+    {
+      selector: { subagent_type: "explore" },
+      replacement: false,
+      provider: "openai",
+      role: "daybreak",
+      target: "gpt-6-sol-daybreak",
+      coldCache: true,
+    },
+    {
+      selector: { subagent_type: "explore" },
+      replacement: false,
+      provider: "openai",
+      role: "daybreak",
+      target: "gpt-6-sol-daybreak",
+      coldCache: true,
+      required: "openai/gpt-6.2-sol-pro",
+      reject: true,
+    },
+    {
+      selector: { subagent_type: "pinion-rust-dev-deep" },
+      replacement: false,
+      provider: "openai",
+      role: "daybreak",
+      target: "gpt-6-sol-daybreak",
+      coldCache: true,
+    },
+    {
       selector: { category: "unspecified-low" },
       replacement: false,
       provider: "anthropic",
@@ -244,56 +278,104 @@ describe("Jev task dispatch", () => {
       target: "mythos",
     },
   ])(
-    "accepts a configured $role required model for $selector with replacement $replacement",
-    async ({ selector, replacement, provider, role, target }) => {
+    "enforces a configured $role required model for $selector with replacement $replacement",
+    async ({ selector, replacement, provider, role, target, ...scenario }) => {
       // given
       const { options, ctx, launch } = setup("off", true)
-      cacheSpy.mockReturnValue({
-        connected: ["example", "openai", "anthropic"],
-        models: { example: ["default"], openai: ["target"], anthropic: ["mythos"] },
-        updatedAt: "2026-11-24",
-      })
-      const client = {
-        ...options.client,
-        app: {
-          agents: async () => ({ data: [{ name: "configured-worker", mode: "subagent", model: "example/default" }] }),
-        },
-        session: {
-          ...options.client.session,
-          get: async () => ({ data: { directory: root, parentID: "ses_parent" } }),
-        },
-      }
-      const delegate = createDelegateTask(
-        unsafeTestValue({
-          ...options,
-          client,
-          agentOverrides: {
-            [role]: { models: [{ model: `${provider}/${target}`, reasoning: "high" }] },
-            "configured-worker": { models: ["example/default"] },
+      const coldCache = "coldCache" in scenario
+      cacheSpy.mockReturnValue(
+        coldCache
+          ? null
+          : {
+              connected: ["example", "openai", "anthropic"],
+              models: { example: ["default"], openai: ["target"], anthropic: ["mythos"] },
+              updatedAt: "2026-11-24",
+            },
+      )
+      const connectedSpy = coldCache
+        ? spyOn(providerCache, "readConnectedProvidersCache").mockReturnValue(null)
+        : undefined
+      try {
+        const client = {
+          ...options.client,
+          app: {
+            agents: async () => ({
+              data: [
+                { name: "configured-worker", mode: "subagent", model: "example/default" },
+                { name: "explore", mode: "subagent", model: "anthropic/claude-haiku-5-5" },
+                { name: "pinion-rust-dev-deep", mode: "subagent", model: "anthropic/claude-haiku-5-5" },
+              ],
+            }),
           },
-        }),
-      )
-      // when
-      await delegate.execute(
-        {
-          ...selector,
-          ...(replacement ? { replaces_session_id: "ses_old" } : {}),
-          required_model: `${provider}/${target}`,
-          prompt: "Review the fixture",
-          reasoning: "medium",
-          run_in_background: true,
-          load_skills: [],
-        },
-        ctx,
-      )
-      // then
-      expect(launch).toHaveBeenCalledWith(
-        expect.objectContaining({
-          model: expect.objectContaining({ providerID: provider, modelID: target, reasoning: "medium" }),
-          nativeMetadata: { requiredModel: `${provider}/${target}`, explicitReasoning: "medium" },
-          fallbackChain: [],
-        }),
-      )
+          model: {
+            list: async () => ({
+              data: [
+                { provider: "example", id: "default" },
+                { provider: "openai", id: "target" },
+                { provider: "anthropic", id: "mythos" },
+                { provider: "openai", id: "gpt-6-sol-daybreak" },
+                { provider: "openai", id: "gpt-6.2-sol-pro" },
+              ],
+            }),
+          },
+          session: {
+            ...options.client.session,
+            get: async () => ({ data: { directory: root, parentID: "ses_parent" } }),
+          },
+        }
+        const agentOverrides = {
+          [role]: { models: [{ model: `${provider}/${target}`, reasoning: "high" }] },
+          "configured-worker": { models: ["example/default"] },
+          explore: { models: ["anthropic/claude-haiku-5-5"] },
+          "pinion-rust-dev-deep": { models: ["anthropic/claude-haiku-5-5"] },
+        }
+        const delegate = createDelegateTask(
+          unsafeTestValue({
+            ...options,
+            client,
+            agentOverrides,
+            ...(coldCache
+              ? {
+                  loadCurrentModelConfig: () => ({
+                    agents: agentOverrides,
+                    categories: options.userCategories,
+                    jev_routing: options.jevRouting,
+                  }),
+                }
+              : {}),
+          }),
+        )
+        // when
+        const requested = "required" in scenario ? scenario.required : `${provider}/${target}`
+        const execution = delegate.execute(
+          {
+            ...selector,
+            ...(replacement ? { replaces_session_id: "ses_old" } : {}),
+            required_model: requested,
+            prompt: "Review the fixture",
+            reasoning: "medium",
+            run_in_background: true,
+            load_skills: [],
+          },
+          ctx,
+        )
+        // then
+        if ("reject" in scenario) {
+          await expect(execution).rejects.toMatchObject({ code: "executor_requirement", reason: "model_mismatch" })
+          expect(launch).not.toHaveBeenCalled()
+          return
+        }
+        await execution
+        expect(launch).toHaveBeenCalledWith(
+          expect.objectContaining({
+            model: expect.objectContaining({ providerID: provider, modelID: target, reasoning: "medium" }),
+            nativeMetadata: { requiredModel: `${provider}/${target}`, explicitReasoning: "medium" },
+            fallbackChain: [],
+          }),
+        )
+      } finally {
+        connectedSpy?.mockRestore()
+      }
     },
   )
 

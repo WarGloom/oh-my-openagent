@@ -199,7 +199,7 @@ export async function resolveCategoryExecution(
   }
 
   const availableModels = new Set(
-    [...(await getAvailableModelsForDelegateTask(client))].filter(
+    [...(await getAvailableModelsForDelegateTask(client, Boolean(args.required_model)))].filter(
       (model) => !args.required_model || model === args.required_model,
     ),
   )
