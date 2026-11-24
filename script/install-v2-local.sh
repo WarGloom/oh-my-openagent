@@ -219,9 +219,12 @@ if [[ $operation == install || $operation == --build-only ]]; then
 		mkdir -p "$copy/$(dirname "$relative")"
 		cp -a --reflink=auto "$deps" "$copy/$relative"
 	done
+	# OMO_PREBUILT_ROOT names a checkout that holds freshly built vendored MCP packages; the default reuses the installed ones.
+	prebuilt=${OMO_PREBUILT_ROOT:-$repo}
 	for asset in packages/lsp-tools-mcp/dist packages/lsp-daemon/dist packages/git-bash-mcp/dist; do
+		[[ -s $prebuilt/$asset/cli.js ]] || fail "Missing prebuilt asset in $prebuilt: $asset"
 		mkdir -p "$copy/$asset"
-		cp -a --reflink=auto "$repo/$asset/." "$copy/$asset/"
+		cp -a --reflink=auto "$prebuilt/$asset/." "$copy/$asset/"
 	done
 	common=$(g -C "$repo" rev-parse --path-format=absolute --git-common-dir)
 	printf 'omo_commit=%s\nhost_commit=%s\nhost_sha256=%s\nbuild_copy=%s\n' \
