@@ -95,7 +95,7 @@ export interface RuntimeFallbackHook {
 
 export interface HookDeps {
   ctx: RuntimeFallbackPluginInput
-  config: Required<RuntimeFallbackConfig>
+  config: Required<Omit<RuntimeFallbackConfig, "model_timeouts" | "provider_timeouts">>
   options: RuntimeFallbackOptions | undefined
   pluginConfig: OhMyOpenCodeConfig | undefined
   sessionStates: Map<string, FallbackState>

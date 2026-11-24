@@ -17,13 +17,16 @@ import { OmoTelemetrySettingsLayerSchema, OmoTelemetrySettingsSchema } from "./t
 import { OmoDeviceServiceSettingsLayerSchema, OmoDeviceServiceSettingsSchema } from "./device-service"
 import { OmoFormatOnMutationLayerSchema, OmoFormatOnMutationSchema } from "./format-on-mutation"
 import { OmoProvenanceSettingsSchema } from "./provenance"
+import { RuntimeFallbackSettingSchema } from "./runtime-fallback"
 import { OmoSessionWakeSettingsSchema } from "./session-wake"
 import { OmoOperatorAlertsSettingsSchema } from "./operator-alerts"
 
 export type { OmoHarnessId }
 export { OmoHarnessIdSchema }
 
-export const OmoOpenCodeHarnessConfigSchema = z.record(z.string(), z.unknown())
+export const OmoOpenCodeHarnessConfigSchema = z.looseObject({
+  runtime_fallback: RuntimeFallbackSettingSchema.optional(),
+})
 
 /**
  * Canonical skill denylist. Names listed here are absent from the run on every harness that

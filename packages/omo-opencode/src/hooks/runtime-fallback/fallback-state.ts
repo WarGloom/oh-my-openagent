@@ -80,7 +80,7 @@ export function prepareFallback(
   sessionID: string,
   state: FallbackState,
   fallbackModels: string[],
-  config: Required<RuntimeFallbackConfig>,
+  config: Required<Pick<RuntimeFallbackConfig, "max_fallback_attempts" | "cooldown_seconds">>,
 ): FallbackResult {
   if (state.attemptCount >= config.max_fallback_attempts) {
     log(`[${HOOK_NAME}] Max fallback attempts reached`, { sessionID, attempts: state.attemptCount })

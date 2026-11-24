@@ -20,7 +20,7 @@ import { OpenClawConfigSchema } from "./openclaw"
 import { ModelCapabilitiesConfigSchema } from "./model-capabilities"
 import { GoalConfigSchema } from "./goal"
 import { MonitorConfigSchema } from "./monitor"
-import { RuntimeFallbackConfigSchema } from "./runtime-fallback"
+import { RuntimeFallbackSettingSchema } from "./runtime-fallback"
 import { ReplyCheckConfigSchema } from "./reply-check"
 import { TeamModeConfigSchema } from "./team-mode"
 import { SkillsConfigSchema } from "./skills"
@@ -84,7 +84,7 @@ export const OhMyOpenCodeConfigSchema = z.object({
    * Set to false to disable, or use object for advanced config:
    * { "enabled": true, "retry_on_errors": [413, 429, 500, 502, 503, 504], "first_progress_timeout_seconds": 30 }
    */
-  runtime_fallback: z.union([z.boolean(), RuntimeFallbackConfigSchema]).optional(),
+  runtime_fallback: RuntimeFallbackSettingSchema.optional(),
   background_task: BackgroundTaskConfigSchema.optional(),
   notification: NotificationConfigSchema.optional(),
   model_capabilities: ModelCapabilitiesConfigSchema.optional(),

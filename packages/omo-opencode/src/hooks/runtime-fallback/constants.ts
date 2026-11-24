@@ -5,7 +5,7 @@
  */
 
 import { RUNTIME_FALLBACK_RETRYABLE_ERROR_PATTERNS } from "@oh-my-opencode/model-core"
-import type { RuntimeFallbackConfig } from "../../config"
+import type { HookDeps } from "./types"
 
 /**
  * First-prompt watchdog: how long to wait for the first sign of progress
@@ -22,7 +22,7 @@ export const DEFAULT_FIRST_PROMPT_WATCHDOG_MS = 300_000
 /**
  * Default configuration values for runtime fallback
  */
-export const DEFAULT_CONFIG: Required<RuntimeFallbackConfig> = {
+export const DEFAULT_CONFIG: HookDeps["config"] = {
   enabled: false,
   retry_on_errors: [413, 429, 500, 502, 503, 504],
   max_fallback_attempts: 3,
