@@ -1280,6 +1280,27 @@ Auto-switches to backup models on API errors.
 
 On OpenCode 2.x, `first_progress_timeout_seconds`, `stall_timeout_seconds` and `hard_timeout_seconds` never switch models. A stall carries no provider error, so the watchdog interrupts the request and resumes the session once per user turn on the same model and variant. A second stall in the same turn interrupts the request and reports it. Model fallback there follows provider errors only.
 
+#### First-response limits by model or provider
+
+In `omo.jsonc`, place the overrides under `"[opencode]".runtime_fallback`:
+
+```jsonc
+{
+  "[opencode]": {
+    "runtime_fallback": {
+      "enabled": true,
+      "timeout_seconds": 300,
+      "provider_timeouts": { "spark3-variants": 900 },
+      "model_timeouts": { "spark3-variants/inkling-2-mini-abliterated": 1200 }
+    }
+  }
+}
+```
+
+Values are seconds. An exact `provider/model` entry wins over a provider entry, then the existing global limit applies. A matching `0` disables only the first-response timer. Model variants do not change the lookup key.
+
+On OpenCode 2.x, OMO selects the limit from the resolved model for each request, including delegated jobs and retries after a model switch. The stall, hard and transport limits do not change. The maps have no effect if runtime fallback is disabled.
+
 #### Speeding Up Fallback (Proxy APIs)
 
 If you are using a proxy API provider, they may return different error codes (e.g., `401`, `403`, `404`) for quota exhaustion or model unavailability. To make fallback trigger instantly without waiting for long timeouts:
