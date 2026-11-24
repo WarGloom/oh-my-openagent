@@ -169,8 +169,15 @@ if [[ $profile == dev ]]; then
 	grep -Fxq "  port|dev) omo=\$ws/oh-my-openagent ;;" "$launcher" ||
 		fail 'Apply the canonical port/dev launcher mapping before installation.'
 else
-	jq -e --arg plugin "file://$repo" 'any(.plugin[]; . == $plugin or (type == "array" and .[0] == $plugin))' /home/nikita/.config/opencode/opencode.json >/dev/null ||
-		fail 'Standard V2 configuration does not load the canonical OMO plugin.'
+	standard_config=/home/nikita/.config/opencode/opencode.json
+	[[ -f $standard_config ]] || standard_config=/home/nikita/.config/opencode/opencode.jsonc
+	bun --cwd "$canonical_repo" -e '
+import { parse } from "jsonc-parser"
+const errors = []
+const config = parse(await Bun.file(process.argv[1]).text(), errors, { allowTrailingComma: true })
+if (errors.length || !Array.isArray(config?.plugin) || !config.plugin.some((plugin) =>
+    (Array.isArray(plugin) ? plugin[0] : plugin) === "file://" + process.argv[2])) process.exit(1)
+' "$standard_config" "$repo" >/dev/null || fail 'Standard V2 configuration does not load the canonical OMO plugin.'
 fi
 for tool in bun node git tar cp bwrap jq flock; do
 	command -v "$tool" >/dev/null || fail "Missing existing tool: $tool"
@@ -376,7 +383,9 @@ if [[ $profile == dev ]]; then
 else
 	lab_config=/home/nikita/.config/opencode
 fi
-config_before=$(sha256sum "$lab_config/opencode.json" "$lab_config/cli.json")
+config_file=$lab_config/opencode.json
+[[ $profile == dev ]] || config_file=$standard_config
+config_before=$(sha256sum "$config_file" "$lab_config/cli.json")
 printf '\n- Install checkpoint: OMO commit `%s`, host commit `%s`, host SHA-256 `%s`; staged and rollback artifacts `%s`; build copy `%s`. Activation will replace both artifacts and restart the selected profile once.\n' \
 	"$omo_oid" "$host_oid" "$host_hash" "$evidence" "$copy" >"$evidence/activation-checkpoint.md"
 
@@ -420,7 +429,7 @@ activation=1
 printf 'Stopping %s service and installing verified artifacts.\n' "$profile"
 lab service stop >"$evidence/stop.log" 2>&1
 identity
-[[ $(sha256sum "$lab_config/opencode.json" "$lab_config/cli.json") == "$config_before" ]] || fail 'Activation changed lab configuration.'
+[[ $(sha256sum "$config_file" "$lab_config/cli.json") == "$config_before" ]] || fail 'Activation changed lab configuration.'
 if [[ $installed_host_hash != "$host_hash" ]]; then
 	[[ ! -e $binary.staged.$stamp && ! -L $binary.staged.$stamp ]] || fail 'Host staging path already exists.'
 	cp -p "$evidence/candidate/host-opencode" "$binary.staged.$stamp"
@@ -446,7 +455,7 @@ running_matches() {
 }
 running_matches || fail 'Running V2 executable does not match the installed host.'
 identity
-[[ $(sha256sum "$lab_config/opencode.json" "$lab_config/cli.json") == "$config_before" ]] || fail 'Activation changed lab configuration.'
+[[ $(sha256sum "$config_file" "$lab_config/cli.json") == "$config_before" ]] || fail 'Activation changed lab configuration.'
 (
 	cd "$repo"
 	sha256sum --check "$evidence/artifacts.sha256"
@@ -510,6 +519,6 @@ try {
 }
 ' 2>&1 | tee "$evidence/activation-check.log" || fail 'OMO plugin activation was not verified.'
 unset password
-[[ $(sha256sum "$lab_config/opencode.json" "$lab_config/cli.json") == "$config_before" ]] || fail 'Activation changed lab configuration.'
+[[ $(sha256sum "$config_file" "$lab_config/cli.json") == "$config_before" ]] || fail 'Activation changed lab configuration.'
 activation=0
 printf 'Installed OMO %s using host %s; receipt and rollback: %s\n' "$omo_oid" "$host_oid" "$evidence"
