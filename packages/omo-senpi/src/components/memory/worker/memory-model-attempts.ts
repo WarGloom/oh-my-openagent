@@ -1,4 +1,3 @@
-import { loadMemoryCommandsRuntime } from "../commands/runtime-loader"
 import type { ReflectionChildResult } from "./spawn"
 import type { ReflectionModelCandidate } from "./resolve-model"
 import type { RetryableModelMiss } from "./model-miss"
@@ -44,7 +43,7 @@ export async function runMemoryModelAttempts(
           }
     const child = await attempt(candidate, index + 1, nextAttempt)
     if (child.timedOut || child.code === 0) return { candidate, child }
-    const { classifyRetryableModelMiss } = await loadMemoryCommandsRuntime()
+    const { classifyRetryableModelMiss } = await import("#omo-memory-commands-runtime")
     const miss = classifyRetryableModelMiss(child)
     if (miss === undefined) return { candidate, child }
     misses.push({ candidate, miss })

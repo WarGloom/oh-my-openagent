@@ -40,11 +40,7 @@ export type ReflectionLockRuntimeModule = Pick<
 >
 
 export const loadMemoryCommandsRuntime: () => Promise<
-  MemoryCommandsRuntimeModule &
-    DreamSelectionRuntimeModule &
-    MemoryRetentionRuntimeModule &
-    ReflectionLockRuntimeModule &
-    Pick<typeof CommandsRuntime, "classifyRetryableModelMiss">
+  MemoryCommandsRuntimeModule & DreamSelectionRuntimeModule & MemoryRetentionRuntimeModule & ReflectionLockRuntimeModule
 > = createMemoryCommandsRuntimeLoader(() => import("#omo-memory-commands-runtime"))
 
 export function memoryCommandsRuntimeLoadFailure(command: string, error: unknown): string {
