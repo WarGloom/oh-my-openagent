@@ -10,11 +10,11 @@ host=$ws/opencode
 binary=$host/packages/cli/dist/cli-linux-x64/bin/opencode
 launcher=/home/nikita/.local/bin/opencode-v2-lab
 standard_launcher=/home/nikita/.local/bin/opencode
-host_oid=29850d96d8cf950fd17741ecbaf716cdf0a09d25
-host_checkout_oid=29850d96d8cf950fd17741ecbaf716cdf0a09d25
-host_hash=2764a3b9546b3070f50f4599dc3726a2494ef01ac1c70ff806ca7316874575a6
-old_host_hash=bdbc6167a21922715f0b5003cc2eb943e9150fbc4b799f98e7d7baab8f4b9fb5
-host_candidate=$ws/.tmp/v2-host-local-29850d96d8cf950fd17741ecbaf716cdf0a09d25/cli-linux-x64/bin/opencode
+host_oid=58b9f9f406ae22acfac5fbe914fe9c13416dda5d
+host_checkout_oid=58b9f9f406ae22acfac5fbe914fe9c13416dda5d
+host_hash=a79ba0b08c632a93d7ade13907955bd36828cecf4fe0b874bc0898a237e7c4cb
+old_host_hash=2764a3b9546b3070f50f4599dc3726a2494ef01ac1c70ff806ca7316874575a6
+host_candidate=$ws/.tmp/v2-host-local-58b9f9f406ae22acfac5fbe914fe9c13416dda5d/cli-linux-x64/bin/opencode
 paths=(dist packages/lsp-tools-mcp/dist packages/lsp-daemon/dist packages/git-bash-mcp/dist packages/shared-skills/skills)
 
 fail() {
