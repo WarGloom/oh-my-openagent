@@ -92,7 +92,7 @@ export function buildDelegateTaskArgsSchema(
       .string()
       .optional()
       .describe(
-        "Exact provider/model requirement for V2 native delegation. A registered subagent_type keeps its configured model chain unless required_model is set. Category auto considers only matching configured executors. No match rejects before launch. Existing task metadata constrains bypass, observation, fallback and retained continuation; unavailable trusted records refuse continuation. Do not infer requirements from prompt prose.",
+        "Exact provider/model requirement for V2 native delegation. Setting it disables the agent's or category's fallback chain, so quota or provider failures end the task if same-model retries do not recover it. Set it only when the user names an exact model. Category auto considers only matching configured executors. No match rejects before launch. Existing task metadata constrains bypass, observation, fallback and retained continuation; unavailable trusted records refuse continuation. Do not infer requirements from prompt prose.",
       ),
     reasoning: tool.schema
       .string()
