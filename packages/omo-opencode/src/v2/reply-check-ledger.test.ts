@@ -2,6 +2,7 @@ import { expect, spyOn, test } from "bun:test"
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { setImmediate as drainEventTurn } from "node:timers/promises"
 import type { Hooks } from "@opencode-ai/plugin"
 import { ReplyCheckConfigSchema } from "../config/schema/reply-check"
 import { readJevRoutingHealth } from "../shared/jev-routing-health"
@@ -109,9 +110,12 @@ async function evaluate(input: {
       { type: "idle", id: "msg_end", outcome: "succeeded", time: { created: 2 } },
     )
     fake.emit({ type: "session.execution.succeeded", id: "evt_end", data: { sessionID: "ses_ledger" } })
-    await stored.promise
-    const files = (await readdir(directory)).filter((name) => name.endsWith(".jsonl"))
-    const log = input.writeFailure ? "" : await readFile(join(directory, files[0] ?? ""), "utf8")
+    await drainEventTurn()
+    const evaluated = record.mock.calls.length > 0 || request.mock.calls.length > 0
+    if (evaluated) await stored.promise
+    const log = evaluated && !input.writeFailure
+      ? await readFile(join(directory, (await readdir(directory)).find((name) => name.endsWith(".jsonl")) ?? ""), "utf8")
+      : ""
     return {
       log,
       rows: log
@@ -231,4 +235,20 @@ test("supplies the trigger, limits worker checks and records skipped HTTP calls"
     jev_calls_skipped: 2,
     modes: { worker_reports: { ran: true, jev_skip: "call_budget" } },
   })
+})
+
+test.each([
+  { label: "synthetic period", input: { text: " \t.\n" }, evaluated: false },
+  { label: "user period with a later synthetic message", input: { text: ".", multiple: true }, evaluated: true },
+  { label: "period without a trigger", input: { text: ".", includeReport: false }, evaluated: true },
+  { label: "synthetic non-marker", input: { text: ".." }, evaluated: true },
+  { label: "empty reply", input: { text: " \n" }, evaluated: false },
+])("checks replies according to trigger and text: $label", async ({ input, evaluated }) => {
+  // given: reply rules and worker checks are enabled, and the stubbed Jev reply rule finds a violation.
+  // when
+  const { rows, payloads, warning } = await evaluate(input)
+  // then
+  expect(warning).toHaveLength(evaluated ? 1 : 0)
+  expect(payloads).toHaveLength(evaluated ? 1 : 0)
+  expect(rows.filter((row) => row.event === "evaluation")).toHaveLength(evaluated ? 1 : 0)
 })

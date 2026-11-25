@@ -75,6 +75,7 @@ export function installReplyCheck(
       const trigger = history
         .slice(boundary + 1)
         .find((message) => message.type === "user" || message.type === "synthetic")
+      if (trigger?.type === "synthetic" && reply.trim() === ".") return
       const triggerState =
         trigger && (trigger.type === "user" || trigger.type === "synthetic")
           ? { kind: trigger.type, text: trigger.text }
