@@ -19,17 +19,21 @@ export async function enforceNativeExecutorRequirement(context: V2PluginContext,
 export function bindNativeExecutorRequirements(
   context: V2PluginContext,
   load: (sessionID: string, parentSessionID: string) => Promise<BackgroundTask | undefined>,
-): V2PluginContext {
-  const requiredModel = async (sessionID: string): Promise<string | undefined> => {
+): V2PluginContext & { readonly readRequiredModel: (sessionID: string) => Promise<string | undefined> } {
+  const retainedTask = async (sessionID: string) => {
     const session = await context.session.get({ sessionID })
     if (!session.parentID) return undefined
-    const task = await load(sessionID, session.parentID)
+    return load(sessionID, session.parentID)
+  }
+  const requiredModel = async (sessionID: string): Promise<string | undefined> => {
+    const task = await retainedTask(sessionID)
     if (!task) return undefined
     await enforceNativeExecutorRequirement(context, task)
     return requiredModelFromMetadata(task.nativeMetadata)
   }
   return {
     ...context,
+    readRequiredModel: async (sessionID) => requiredModelFromMetadata((await retainedTask(sessionID))?.nativeMetadata),
     session: {
       ...context.session,
       switchModel: async (input) => {

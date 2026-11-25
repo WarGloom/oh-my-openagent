@@ -1,4 +1,5 @@
 import type { Hooks } from "@opencode-ai/plugin"
+import type { bindNativeExecutorRequirements } from "./native-executor-requirement"
 import { getRuntimeFallbackErrorEvidence, getRuntimeFallbackRetryAfterMs } from "@oh-my-opencode/model-core"
 import type { RuntimeFallbackHook } from "../hooks/runtime-fallback/types"
 import type { NativeFallbackController } from "../hooks/runtime-fallback/native-controller"
@@ -89,7 +90,10 @@ async function hostModels(context: V2PluginContext) {
   return { isAvailable, modelRef }
 }
 
-export async function installNativeRuntimeFallback(context: V2PluginContext, hooks: Hooks) {
+export async function installNativeRuntimeFallback(
+  context: V2PluginContext & Partial<Pick<ReturnType<typeof bindNativeExecutorRequirements>, "readRequiredModel">>,
+  hooks: Hooks,
+) {
   const controller = controllers.get(hooks)
   if (!controller) return undefined
   let disposed = false
@@ -152,6 +156,7 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
     if (disposed) return
     const session = await context.session.get({ sessionID: event.sessionID })
     if (session.location.directory !== context.location.directory || !session.model) return
+    if (session.parentID && (await context.readRequiredModel?.(event.sessionID)) !== undefined) return
     controller.capture(event.sessionID)
     const host = await hostModels(context)
     await controller.restorePrimary(
@@ -233,6 +238,13 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
       log("[runtime-fallback] Native recovery decision", { ...details, outcome: "left to V2's same-model retry" })
       return false
     }
+    const requiredModel = await context.readRequiredModel?.(input.sessionID)
+    if (disposed) return false
+    if (requiredModel !== undefined) {
+      input.onExhausted?.()
+      log("[runtime-fallback] Native recovery decision", { ...details, outcome: "declined: required_model pin", requiredModel })
+      return false
+    }
     const host = await hostModels(context)
     if (disposed) return false
     if (input.hostExhausted && isRateLimit(input.error) && !host.isAvailable) return false
@@ -282,6 +294,18 @@ export async function installNativeRuntimeFallback(context: V2PluginContext, hoo
       let pending = nativeRecoveryState.contentFilterPending.get(event.sessionID)
       if (!pending) {
         pending = (async () => {
+          const requiredModel = await context.readRequiredModel?.(event.sessionID)
+          if (disposed) return false
+          if (requiredModel !== undefined) {
+            log("[runtime-fallback] Native recovery decision", {
+              sessionID: event.sessionID,
+              source: "retry",
+              error: { type: event.error.type },
+              outcome: "declined: required_model pin",
+              requiredModel,
+            })
+            return false
+          }
           const host = await hostModels(context)
           if (disposed || !host.isAvailable) return false
           const target = await controller.contentFilterTarget({
