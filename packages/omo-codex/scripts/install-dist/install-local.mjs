@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// omo-codex-install:d9d812ac9e12c511a330a92f5c1e901f4891e1b35e21222c632b66fb924dd4ff:0e4808a40a0c199cc8774634bea47517bd0eb227242f6fd1182a279d56c278d5
+// omo-codex-install:a530e59d6b2d3ab08b6b9b2d8061cdf7655ef2fa275421f1a6773100f64cec82:5d0e42e2f88863533778661cad2edd189413d6516876306ef43b5e9e093b014a
 var __esm = (fn, res, err) => () => {
   if (fn)
     try {
@@ -5212,6 +5212,14 @@ function object(shape, params) {
   };
   return new ZodObject(def);
 }
+function looseObject(shape, params) {
+  return new ZodObject({
+    type: "object",
+    shape,
+    catchall: unknown(),
+    ...normalizeParams(params)
+  });
+}
 function union(options, params) {
   return new ZodUnion({
     type: "union",
@@ -6123,6 +6131,7 @@ var init_external = __esm(() => {
 
 // node_modules/.bun/zod@4.6.7/node_modules/zod/index.js
 var init_zod = __esm(() => {
+  init_external();
   init_external();
 });
 
@@ -7076,6 +7085,28 @@ var init_provenance = __esm(() => {
   }).strict();
 });
 
+// packages/omo-config-core/src/schema/runtime-fallback.ts
+var RuntimeFallbackConfigSchema, RuntimeFallbackSettingSchema;
+var init_runtime_fallback = __esm(() => {
+  init_zod();
+  RuntimeFallbackConfigSchema = object({
+    enabled: boolean2().optional(),
+    retry_on_errors: array(number2()).optional(),
+    max_fallback_attempts: number2().min(1).max(20).optional(),
+    cooldown_seconds: number2().min(0).optional(),
+    timeout_seconds: number2().min(0).optional(),
+    first_progress_timeout_seconds: number2().min(0).optional(),
+    model_timeouts: record(string2().regex(/^[^/]+\/.+$/), number2().min(0)).optional(),
+    provider_timeouts: record(string2().regex(/^[^/]+$/), number2().min(0)).optional(),
+    stall_timeout_seconds: number2().min(0).optional(),
+    hard_timeout_seconds: number2().min(0).optional(),
+    first_prompt_timeout_seconds: number2().min(0).optional(),
+    notify_on_fallback: boolean2().optional(),
+    restore_primary_after_cooldown: boolean2().optional()
+  });
+  RuntimeFallbackSettingSchema = union([boolean2(), RuntimeFallbackConfigSchema]);
+});
+
 // packages/omo-config-core/src/schema/session-wake.ts
 var OmoSessionWakeSettingsSchema;
 var init_session_wake = __esm(() => {
@@ -7120,9 +7151,12 @@ var init_config = __esm(() => {
   init_device_service();
   init_format_on_mutation();
   init_provenance();
+  init_runtime_fallback();
   init_session_wake();
   init_operator_alerts();
-  OmoOpenCodeHarnessConfigSchema = record(string2(), unknown());
+  OmoOpenCodeHarnessConfigSchema = looseObject({
+    runtime_fallback: RuntimeFallbackSettingSchema.optional()
+  });
   OmoDisabledSkillsSchema = array(string2());
   OmoExcludedModelsSchema = array(string2());
   OmoTypedHarnessConfigSchema = object({
@@ -7367,6 +7401,7 @@ var init_schema = __esm(() => {
   init_model_profile();
   init_model_ref();
   init_provenance();
+  init_runtime_fallback();
   init_session_wake();
   init_operator_alerts();
   init_side_panel();
@@ -7377,14 +7412,59 @@ var init_schema = __esm(() => {
   init_computer();
 });
 
+// packages/omo-config-core/src/loader/account-home.ts
+import { readFileSync as readFileSync2 } from "node:fs";
+import { homedir, userInfo } from "node:os";
+function parsePasswdHome(passwd, uid) {
+  for (const line of passwd.split(/\r?\n/)) {
+    const fields = line.split(":");
+    if (fields.length >= 7 && fields[2] === String(uid) && fields[5])
+      return fields[5];
+  }
+  return;
+}
+function selectAccountHome(options) {
+  try {
+    if (options.platform !== "win32" && options.getuid !== undefined) {
+      const home = parsePasswdHome(options.readPasswd(), options.getuid());
+      if (home !== undefined)
+        return home;
+    }
+  } catch {}
+  return options.fallbackHome();
+}
+function readAccountHome() {
+  try {
+    return userInfo().homedir;
+  } catch {
+    try {
+      return homedir();
+    } catch {
+      return process.env.HOME ?? process.env.USERPROFILE ?? ".";
+    }
+  }
+}
+function resolveAccountHomeDir() {
+  return ACCOUNT_HOME;
+}
+var ACCOUNT_HOME;
+var init_account_home = __esm(() => {
+  ACCOUNT_HOME = selectAccountHome({
+    readPasswd: () => readFileSync2("/etc/passwd", "utf8"),
+    getuid: process.getuid,
+    platform: process.platform,
+    fallbackHome: readAccountHome
+  });
+});
+
 // packages/omo-config-core/src/loader/types.ts
-import { existsSync as existsSync3, lstatSync, readFileSync as readFileSync2, realpathSync as realpathSync2 } from "node:fs";
+import { existsSync as existsSync3, lstatSync, readFileSync as readFileSync3, realpathSync as realpathSync2 } from "node:fs";
 var MERGED_OMO_CONFIG_PATH = "(merged omo config)", DEFAULT_READ_FILE_SYSTEM;
 var init_types = __esm(() => {
   DEFAULT_READ_FILE_SYSTEM = {
     existsSync: existsSync3,
     lstatSync,
-    readFileSync: readFileSync2,
+    readFileSync: readFileSync3,
     realpathSync: realpathSync2
   };
 });
@@ -8627,7 +8707,6 @@ function toPosixPath2(path) {
 var init_posix_path = () => {};
 
 // packages/omo-config-core/src/loader/paths.ts
-import { userInfo } from "node:os";
 import { dirname as dirname8, join as join19, posix, resolve as resolve7 } from "node:path";
 function resolveHomeDir(env = process.env) {
   const homeDir = env.HOME ?? env.USERPROFILE ?? process.cwd();
@@ -8710,8 +8789,9 @@ function resolveOmoConfigPaths(options) {
 var MAX_PROJECT_CONFIG_DIRECTORY_DEPTH = 256, ACCOUNT_HOME_DIR;
 var init_paths = __esm(() => {
   init_posix_path();
+  init_account_home();
   init_types();
-  ACCOUNT_HOME_DIR = userInfo().homedir;
+  ACCOUNT_HOME_DIR = resolveAccountHomeDir();
 });
 
 // packages/omo-config-core/src/loader/resolution.ts
@@ -8962,6 +9042,7 @@ var init_loader = __esm(() => {
 
 // packages/omo-config-core/src/loader/index.ts
 var init_loader2 = __esm(() => {
+  init_account_home();
   init_diagnostic_lines();
   init_disabled_skills();
   init_loader();
@@ -8989,7 +9070,7 @@ import {
   existsSync as existsSync4,
   lstatSync as lstatSync2,
   mkdirSync,
-  readFileSync as readFileSync3,
+  readFileSync as readFileSync4,
   readdirSync,
   renameSync,
   unlinkSync,
@@ -9002,7 +9083,7 @@ var init_types2 = __esm(() => {
     existsSync: existsSync4,
     lstatSync: lstatSync2,
     mkdirSync,
-    readFileSync: readFileSync3,
+    readFileSync: readFileSync4,
     readdirSync,
     renameSync,
     unlinkSync,
@@ -9228,7 +9309,7 @@ var CLAIM_PREFIX = "daily-active.", CLAIM_SUFFIX = ".claim";
 var init_day_claim = () => {};
 
 // packages/telemetry-core/src/activity-state.ts
-import { existsSync as existsSync6, mkdirSync as mkdirSync4, readFileSync as readFileSync4 } from "node:fs";
+import { existsSync as existsSync6, mkdirSync as mkdirSync4, readFileSync as readFileSync5 } from "node:fs";
 import { basename as basename6, join as join36 } from "node:path";
 function resolveTelemetryStateDir(product, options = {}) {
   const dataDir = resolveXdgDataDir(product.cacheDirName, {
@@ -9279,7 +9360,7 @@ function readPostHogActivityState(stateDir, diagnostics) {
     return {};
   }
   try {
-    const stateContent = readFileSync4(stateFilePath, "utf-8");
+    const stateContent = readFileSync5(stateFilePath, "utf-8");
     const stateJson = JSON.parse(stateContent);
     if (!isPostHogActivityState(stateJson)) {
       return {};
@@ -9322,7 +9403,7 @@ var init_activity_state = __esm(() => {
 var init_consent_gated_fetch = () => {};
 
 // packages/telemetry-core/src/diagnostics.ts
-import { appendFileSync, existsSync as existsSync7, mkdirSync as mkdirSync5, readFileSync as readFileSync5 } from "node:fs";
+import { appendFileSync, existsSync as existsSync7, mkdirSync as mkdirSync5, readFileSync as readFileSync6 } from "node:fs";
 import { join as join37 } from "node:path";
 function getTelemetryDiagnosticsFilePath(diagnosticsDir) {
   return join37(diagnosticsDir, DIAGNOSTICS_FILE_NAME);
@@ -9348,7 +9429,7 @@ function cleanupTelemetryDiagnostics(options) {
   }
   try {
     const cutoffMs = (options.now ?? new Date).getTime() - DIAGNOSTICS_RETENTION_MS;
-    const retainedLines = trimToMaxBytes(readFileSync5(diagnosticsFilePath, "utf-8").split(`
+    const retainedLines = trimToMaxBytes(readFileSync6(diagnosticsFilePath, "utf-8").split(`
 `).filter((line) => shouldRetainLine(line, cutoffMs)));
     writeFileAtomically(diagnosticsFilePath, retainedLines.length === 0 ? "" : `${retainedLines.join(`
 `)}
@@ -19154,7 +19235,7 @@ var init_events = () => {};
 
 // packages/telemetry-core/src/install-id.ts
 import { createHash as createHash5, randomBytes } from "node:crypto";
-import { mkdirSync as mkdirSync6, readFileSync as readFileSync6, writeFileSync as writeFileSync3 } from "node:fs";
+import { mkdirSync as mkdirSync6, readFileSync as readFileSync7, writeFileSync as writeFileSync3 } from "node:fs";
 import { dirname as dirname12, join as join38 } from "node:path";
 function getTelemetryInstallDistinctId(stateDir) {
   return createHash5("sha256").update(readOrCreateInstallId(join38(stateDir, TELEMETRY_INSTALL_ID_FILE_NAME))).digest("hex");
@@ -19189,7 +19270,7 @@ function readOrCreateInstallId(path) {
 }
 function readInstallId(path) {
   try {
-    const value = readFileSync6(path, "utf8").trim();
+    const value = readFileSync7(path, "utf8").trim();
     return INSTALL_ID_PATTERN.test(value) ? value : undefined;
   } catch {
     return;
@@ -19732,7 +19813,7 @@ var defaultRunCommand = async (command, args, options) => {
 // packages/omo-codex/src/install/install-codex.ts
 import { join as join39, resolve as resolve10 } from "node:path";
 import { existsSync as existsSync8 } from "node:fs";
-import { homedir as homedir2 } from "node:os";
+import { homedir as homedir3 } from "node:os";
 
 // packages/omo-codex/src/install/codex-cache-bins.ts
 import { chmod, lstat as lstat4, mkdir, readFile as readFile3, readdir as readdir2, readlink as readlink3, rm as rm3, stat as stat2, symlink, writeFile } from "node:fs/promises";
@@ -24355,13 +24436,13 @@ function processIsRunning(pid) {
 }
 
 // packages/omo-codex/src/install/codex-installer-bin-dir.ts
-import { homedir } from "node:os";
+import { homedir as homedir2 } from "node:os";
 import { join as join30, resolve as resolve9 } from "node:path";
 function resolveCodexInstallerBinDir(input) {
   const explicitBinDir = input.binDir ?? input.env?.CODEX_LOCAL_BIN_DIR;
   if (explicitBinDir !== undefined && explicitBinDir.trim().length > 0)
     return resolve9(explicitBinDir.trim());
-  const homeDir = input.homeDir ?? homedir();
+  const homeDir = input.homeDir ?? homedir2();
   const defaultCodexHome = resolve9(homeDir, ".codex");
   const resolvedCodexHome = resolve9(input.codexHome);
   if (resolvedCodexHome !== defaultCodexHome)
@@ -24593,7 +24674,7 @@ async function runCodexInstaller(options = {}) {
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
   const repoRoot = resolve10(options.repoRoot ?? findRepoRoot({ importerDir: import.meta.dir, env }));
-  const codexHome = resolve10(options.codexHome ?? env.CODEX_HOME ?? join39(homedir2(), ".codex"));
+  const codexHome = resolve10(options.codexHome ?? env.CODEX_HOME ?? join39(homedir3(), ".codex"));
   const projectDirectory = resolve10(options.projectDirectory ?? env.OMO_CODEX_PROJECT ?? process.cwd());
   const binDir = resolveCodexInstallerBinDir({ binDir: options.binDir, codexHome, env });
   const runCommand = options.runCommand ?? defaultRunCommand;
@@ -25083,7 +25164,7 @@ function shellQuote(value) {
 
 // packages/omo-codex/src/install/lazycodex-manual-update.ts
 import { spawn as spawn3, spawnSync as spawnSync2 } from "node:child_process";
-import { readFileSync as readFileSync7 } from "node:fs";
+import { readFileSync as readFileSync8 } from "node:fs";
 import { dirname as dirname13, join as join41 } from "node:path";
 import { createInterface as createInterface2 } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
@@ -25324,7 +25405,7 @@ function resolveInstalledVersionPath(env, pluginRoot) {
 }
 function readVersionManifest(path) {
   try {
-    const parsed = JSON.parse(readFileSync7(path, "utf8"));
+    const parsed = JSON.parse(readFileSync8(path, "utf8"));
     if (typeof parsed === "object" && parsed !== null && "version" in parsed && typeof parsed.version === "string") {
       return parsed.version;
     }
