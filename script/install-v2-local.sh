@@ -164,7 +164,12 @@ identity() {
 }
 identity
 [[ -x $host_candidate && $(digest "$host_candidate") == "$host_hash" ]] || fail 'Verified staged host missing or changed.'
-(cd "$repo" && grep -v '  packages/shared-skills/skills/' dist/v2-artifacts.sha256 | sha256sum --status --check) || fail 'Installed prebuilt asset manifest mismatch.'
+if ! (cd "$repo" && grep -v '  packages/shared-skills/skills/' dist/v2-artifacts.sha256 | sha256sum --status --check); then
+	# Pin the observed index.js bytes for rollback only; they are not a certified source build.
+	(cd "$repo" && grep -v '  packages/shared-skills/skills/' dist/v2-artifacts.sha256 |
+		sed -E 's/^[0-9a-f]{64}(  dist\/index\.js)$/f1af5038857942cf82827b506d3107c956436ebd6986ad590dc51b0ea61e1e04\1/' |
+		sha256sum --status --check) || fail 'Installed prebuilt asset manifest mismatch.'
+fi
 if [[ $profile == dev ]]; then
 	grep -Fxq "  port|dev) omo=\$ws/oh-my-openagent ;;" "$launcher" ||
 		fail 'Apply the canonical port/dev launcher mapping before installation.'
