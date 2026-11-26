@@ -32,6 +32,8 @@ async function evaluate(input: {
   quiet?: boolean
   budget?: number
   multiple?: boolean
+  user?: boolean
+  monitor?: boolean
 }) {
   const root = await mkdtemp(join(tmpdir(), "reply-ledger-"))
   const oldData = process.env.XDG_DATA_HOME
@@ -79,6 +81,8 @@ async function evaluate(input: {
       )
     }
     const history = fake.sessionHistory("ses_ledger")
+    if (input.user) history.push({ type: "user", id: "msg_user", text: "A user request", time: { created: 0 } })
+    if (input.monitor) history.push({ type: "user", id: "msg_monitor", text: "[OMO MONITOR OUTPUT]\noutput", time: { created: 0 } })
     if (input.multiple) {
       history.push({ type: "user", id: "msg_question", text: "Was the check complete?", time: { created: 0 } })
       history.push({
@@ -239,6 +243,10 @@ test("supplies the trigger, limits worker checks and records skipped HTTP calls"
 
 test.each([
   { label: "synthetic period", input: { text: " \t.\n" }, evaluated: false },
+  { label: "monitor period", input: { text: " \t.\n", monitor: true, includeReport: false }, evaluated: false },
+  { label: "monitor non-marker", input: { text: "..", monitor: true, includeReport: false }, evaluated: true },
+  { label: "user period", input: { text: ".", user: true, includeReport: false }, evaluated: true },
+  { label: "user period with later monitor", input: { text: ".", user: true, monitor: true, includeReport: false }, evaluated: true },
   { label: "user period with a later synthetic message", input: { text: ".", multiple: true }, evaluated: true },
   { label: "period without a trigger", input: { text: ".", includeReport: false }, evaluated: true },
   { label: "synthetic non-marker", input: { text: ".." }, evaluated: true },
