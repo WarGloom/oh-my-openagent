@@ -30,7 +30,13 @@ function resolveTmuxExecutable(tmuxPath: string): string[] {
  * Quote-aware command tokenizer with escape handling
  * Handles single/double quotes and backslash escapes without external dependencies
  */
-export function tokenizeCommand(cmd: string): string[] {
+export class UnsupportedShellOperatorError extends Error {
+  constructor(operator: string) {
+    super(`Unsupported shell operator "${operator}": the command runs without a shell. Use bash -c '...' for redirects, pipes or &&/||.`)
+  }
+}
+
+export function tokenizeCommand(cmd: string, rejectShellOperators = false): string[] {
   const tokens: string[] = []
   let current = ""
   let inQuote = false
@@ -49,6 +55,14 @@ export function tokenizeCommand(cmd: string): string[] {
     if (char === "\\") {
       escaped = true
       continue
+    }
+
+    if (rejectShellOperators && !inQuote && char && "|&;><".includes(char)) {
+      let operator = char
+      if ((char === "|" || char === "&" || char === ">") && cmd[i + 1] === char) operator += char
+      if ((char === ">" || char === "<") && /^\d+$/.test(current)) operator = current + operator
+      if ((char === ">" || char === "<") && cmd[i + 1] === "&" && cmd[i + 2] === "1") operator += "&1"
+      throw new UnsupportedShellOperatorError(operator)
     }
 
     if ((char === "'" || char === '"') && !inQuote) {

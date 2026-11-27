@@ -8,6 +8,7 @@ import type { PluginContext } from "../../plugin/types"
 import { unsafeTestValue } from "../../../../../test-support/unsafe-test-value"
 import { createMonitorStart } from "./monitor-start"
 import { MonitorCapacityError } from "../../features/monitor"
+import { UnsupportedShellOperatorError } from "../interactive-bash/tools"
 
 type PermissionAsk = (input: BashPermissionAskInput) => Promise<void>
 
@@ -77,6 +78,16 @@ function createHarness(startResult: MonitorRecord = createRecord()) {
 }
 
 describe("createMonitorStart", () => {
+  test("#given an unsupported operator #when start fails #then it returns the actionable error", async () => {
+    const { manager, pluginContext, start } = createHarness()
+    start.mockImplementation(async () => { throw new UnsupportedShellOperatorError("&&") })
+    const result = await createMonitorStart(manager, createPluginConfig(), pluginContext)
+      .execute({ command: "echo ok && echo done" }, createToolContext())
+    expect(result).toContain("&&")
+    expect(result).toContain("without a shell")
+    expect(result).toContain("bash -c")
+  })
+
   describe("#given the session is at its active monitor cap", () => {
     test("#when monitor_start executes #then it reports count, limit, recovery and configuration", async () => {
       // given

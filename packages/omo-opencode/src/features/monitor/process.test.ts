@@ -120,6 +120,37 @@ afterEach(() => {
 })
 
 describe("spawnMonitoredProcess", () => {
+  test("#given unquoted shell operators #when starting a monitor #then it rejects before spawn", () => {
+    const clock = createFakeClock()
+    for (const [operator, expected] of [["|", "|"], ["||", "||"], ["&&", "&&"], [";", ";"], ["&", "&"], [">", ">"], [">>", ">>"], ["<", "<"], ["2>", "2>"], ["2>&1", "2>&1"], [">file", ">"]]) {
+      const calls: SpawnCall[] = []
+      const spawn = createFakeSpawn([], calls)
+      expect(() => spawnMonitoredProcess(
+        { command: "echo ok " + operator, maxRuntimeMs: 1000 },
+        { spawn, ...clock.deps },
+      )).toThrow('Unsupported shell operator "' + expected + '"')
+      expect(calls).toHaveLength(0)
+    }
+  })
+
+  test("#given quoted and escaped operators #when starting a monitor #then arguments reach spawn unchanged", () => {
+    const cases = [
+      { command: "grep 'a|b' file", argv: ["grep", "a|b", "file"] },
+      { command: 'printf "a > b"', argv: ["printf", "a > b"] },
+      { command: "echo \\|", argv: ["echo", "|"] },
+      { command: "bash -c 'echo ok | cat && echo done'", argv: ["bash", "-c", "echo ok | cat && echo done"] },
+      { command: "bun test", argv: ["bun", "test"] },
+    ]
+    for (const entry of cases) {
+      const calls: SpawnCall[] = []
+      const subprocess = createFakeSubprocess({ exited: Promise.resolve(0) })
+      spawnMonitoredProcess({ command: entry.command, maxRuntimeMs: 1000 }, {
+        spawn: createFakeSpawn([subprocess], calls), ...createFakeClock().deps,
+      })
+      expect(calls[0]?.command).toEqual(entry.argv)
+    }
+  })
+
   describe("#given a running subprocess", () => {
     test("#when kill runs #then it kills the process group and escalates after grace", () => {
       // given

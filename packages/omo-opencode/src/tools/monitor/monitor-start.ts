@@ -6,6 +6,7 @@ import { createMonitorFilter } from "../../features/monitor/filter"
 import { MonitorCapacityError } from "../../features/monitor"
 import type { MonitorManager, MonitorMode, MonitorStartArgs } from "../../features/monitor/types"
 import type { PluginContext } from "../../plugin/types"
+import { UnsupportedShellOperatorError } from "../interactive-bash/tools"
 
 type MonitorToolContext = {
   sessionID: string
@@ -85,7 +86,7 @@ export function createMonitorStart(
 ): ToolDefinition {
   return tool({
     description:
-      "Start a non-interactive background monitor command. Output is delivered automatically to the parent session; use labels instead of raw commands in transcripts.",
+      "Start a non-interactive background monitor command. The command is not run through a shell. Output is delivered automatically to the parent session; use labels instead of raw commands in transcripts.",
     args: {
       command: tool.schema.string().describe("Shell command to run in the background monitor"),
       label: tool.schema.string().optional().describe("Safe human-facing label for the monitor"),
@@ -140,6 +141,9 @@ export function createMonitorStart(
           note: effectiveMode.note,
         })
       } catch (error) {
+        if (error instanceof UnsupportedShellOperatorError) {
+          return `[ERROR] monitor_start: ${error.message}`
+        }
         if (error instanceof MonitorCapacityError) {
           return `[ERROR] monitor_start max_monitors_per_session reached: ${error.activeCount}/${error.limit} active monitors (starting/running). Call monitor_stop on a running monitor to free a slot; exited monitors don't count. Configure via monitor.max_monitors_per_session.`
         }

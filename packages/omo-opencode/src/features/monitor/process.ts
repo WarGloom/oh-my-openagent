@@ -68,7 +68,7 @@ export function spawnMonitoredProcess(
   opts: { command: string; cwd?: string; env?: Record<string, string>; maxRuntimeMs: number },
   deps: SpawnDeps,
 ): MonitoredProcess {
-  const argv = tokenizeCommand(opts.command)
+  const argv = tokenizeCommand(opts.command, true)
   if (argv.length === 0) {
     throw new Error("Cannot spawn an empty monitor command")
   }
