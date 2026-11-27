@@ -6,7 +6,7 @@ import {
   playwrightSkill,
   playwrightCliSkill,
   frontendSkill,
-  gitMasterSkill,
+  gitSkill,
   devBrowserSkill,
   initDeepSkill,
   customizeOpencodeSkill,
@@ -46,7 +46,7 @@ export function createBuiltinSkills(options: CreateBuiltinSkillsOptions = {}): B
   const skills = [
     browserSkills[browserProvider],
     frontendSkill,
-    gitMasterSkill,
+    gitSkill,
     reviewWorkSkill,
     customizeOpencodeSkill,
     removeAiSlopsSkill,

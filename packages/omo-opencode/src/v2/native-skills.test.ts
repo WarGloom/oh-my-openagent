@@ -121,6 +121,18 @@ describe("native skill convergence", () => {
     expect((await current.fake.context.skill.list()).data).toEqual([host, plugin])
   })
 
+  test("resolves the retired git skill name with the canonical host permission identity", async () => {
+    const current = await fixture()
+    setNativeSkillOptions(current.input, { directory: "/repo", skills: [loaded("git", "git-body")] })
+    await installNativeSkills(current.input)
+
+    const result = await current.execute({ name: "git-master" })
+
+    expect(result.content).toBe("git-body")
+    expect(current.fake.permissionCalls).toHaveLength(1)
+    expect(current.fake.permissionCalls[0]?.resources).toEqual(["git"])
+  })
+
   test.each(["id", "name"] as const)("expands dynamic arguments through native %s invocation", async (key) => {
     const current = await fixture()
     setNativeSkillOptions(current.input, {

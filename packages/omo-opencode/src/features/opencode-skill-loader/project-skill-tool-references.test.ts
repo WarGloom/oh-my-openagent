@@ -27,12 +27,12 @@ async function readMirroredProjectSkill(...segments: string[]) {
 
 describe("project skill tool references", () => {
   describe("#given work-with-pr skill instructions", () => {
-    test("#when reading the commit guidance #then commits delegate through git-master without a fabricated task category", async () => {
+    test("#when reading the commit guidance #then commits delegate through git without a fabricated task category", async () => {
       const skillContent = await readProjectSkill("work-with-pr")
 
-      const delegatesThroughGitMaster = skillContent.includes("commits through `git-master`")
+      const delegatesThroughGit = skillContent.includes("commits through `git`")
 
-      expect(delegatesThroughGitMaster).toBe(true)
+      expect(delegatesThroughGit).toBe(true)
       expect(skillContent).not.toContain(
         'task(category="quick", load_skills=["git-master"], prompt="Commit the changes atomically following git-master conventions. Repository is at {WORKTREE_PATH}.")',
       )

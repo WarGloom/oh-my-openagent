@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { resolveSkillAlias } from "@oh-my-opencode/skills-loader-core/opencode-skill-loader/skill-name-aliases"
 import type { V2ToolEditor, V2ToolResult } from "./context-types"
 import type { V2SkillInfo } from "./native-skill-types"
 import type { NativeSkillState } from "./native-skill-state"
@@ -17,10 +18,16 @@ export function resolveNativeSkill(skills: ReadonlyArray<V2SkillInfo>, name: str
   if (exact) return exact
   const normalized = name.replace(/^\//, "").toLowerCase()
   const full = skills.filter((skill) => skill.name.toLowerCase() === normalized)
+  const canonical = resolveSkillAlias(normalized)
+  const aliases = full.length === 0 && canonical !== normalized
+    ? skills.filter((skill) => skill.name.toLowerCase() === canonical)
+    : []
   const matches =
     full.length > 0
       ? full
-      : skills.filter((skill) => skill.name.includes("/") && skill.name.split("/").at(-1)?.toLowerCase() === normalized)
+      : aliases.length > 0
+        ? aliases
+        : skills.filter((skill) => skill.name.includes("/") && skill.name.split("/").at(-1)?.toLowerCase() === normalized)
   if (matches.length === 1 && matches[0]) return matches[0]
   throw new NativeSkillError(name, `Skill "${name}" ${matches.length > 1 ? "is ambiguous" : "was not found"}`)
 }

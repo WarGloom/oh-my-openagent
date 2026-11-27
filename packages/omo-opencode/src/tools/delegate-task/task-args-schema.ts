@@ -48,7 +48,7 @@ export function buildDelegateTaskArgsSchema(
       .array(tool.schema.string())
       .optional()
       .describe(
-        "Optional skill names. Omit for best-effort suggestions when Jev routing is active. Pass [] for none, or explicit names to use those names unchanged. Mandatory skill workflows still apply.",
+        "Optional skill names. Omit for best-effort suggestions when Jev routing is active. Pass [] for none, or explicit names (for example, [\"git\"]) to use those names unchanged. Mandatory skill workflows still apply.",
       ),
     description: tool.schema
       .string()
