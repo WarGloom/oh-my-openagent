@@ -10,11 +10,11 @@ host=$ws/opencode
 binary=$host/packages/cli/dist/cli-linux-x64/bin/opencode
 launcher=/home/nikita/.local/bin/opencode-v2-lab
 standard_launcher=/home/nikita/.local/bin/opencode
-host_oid=517c4483c7b093f86946196ec072262590da4096
+host_oid=617eff2aa77abbef9f56893335e0c50d5f2aa4f7
 host_checkout_oid=517c4483c7b093f86946196ec072262590da4096
-host_hash=60ff3160e6f22eceb249e7760ef9cca15cc159fef46ad173208c52ee91bc89bf
-old_host_hash=87d9b3958aa611145491f8b8e726fcf7bb4ec6810973507dd14c908279e5c797
-host_candidate=$ws/.tmp/v2-host-local-517c4483c7/cli-linux-x64/bin/opencode
+host_hash=67598cab9fd358c3b498334f3c1c6c1091a9bccc264c124072a25303c669454c
+old_host_hash=60ff3160e6f22eceb249e7760ef9cca15cc159fef46ad173208c52ee91bc89bf
+host_candidate=$ws/.tmp/v2-host-local-617eff2aa7/cli-linux-x64/bin/opencode
 paths=(dist packages/lsp-tools-mcp/dist packages/lsp-daemon/dist packages/git-bash-mcp/dist packages/shared-skills/skills)
 
 fail() {
