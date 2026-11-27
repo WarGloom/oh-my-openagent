@@ -238,7 +238,7 @@ export class MonitorOutputInjector {
     const sessionID = record.parentSessionId
     const content = formatMonitorBatch(record, batch, record.counters)
     const dispatchStartedAt = this.now()
-    const shouldReply = this.isTerminalBatch(batch)
+    const shouldReply = this.isTerminalBatch(batch) || batch.patternMatched === true
 
     try {
       const promptResult = await this.dispatchInternalPrompt({

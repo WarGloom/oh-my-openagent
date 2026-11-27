@@ -1,5 +1,10 @@
+export interface MonitorFilter {
+  matches(text: string): boolean
+  readonly explicitPattern?: true
+}
+
 export interface MonitorFilterResult {
-  filter: { matches(text: string): boolean } | null
+  filter: MonitorFilter | null
   error?: string
   pattern?: string
 }
@@ -145,6 +150,7 @@ export function createMonitorFilter(
   return {
     filter: {
       matches: (text: string) => re.test(stripAnsi(text)),
+      explicitPattern: true,
     },
     pattern,
   }

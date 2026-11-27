@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test"
 
 import { hasInternalNoReplyMarker } from "../../shared"
 import { MonitorBatcher } from "./batcher"
+import { createMonitorFilter } from "./filter"
+import { DEFAULT_MONITOR_CONFIG } from "./manager-internals"
+import { createMonitorState } from "./monitor-state-factory"
 import { MonitorOutputInjector } from "./output-injector"
+import { MonitorRingBuffer } from "./ring-buffer"
 import type {
   InternalPromptDispatchResult,
   PromptAsyncInput,
@@ -131,15 +135,51 @@ describe("monitor terminal batch parent wake", () => {
     expect(hasInternalNoReplyMarker(firstPartText(harness.calls[0] as DispatchCall))).toBe(false)
   })
 
-  test("streaming batch stays a no-reply observation", async () => {
+  test.each([
+    { pattern: undefined, noReply: true },
+    { pattern: "^build failed$", noReply: false },
+  ])("streaming output with pattern $pattern dispatches with noReply=$noReply", async ({ pattern, noReply }) => {
+    // given
     const harness = createHarness()
+    const batchReady = Promise.withResolvers<void>()
+    const { filter } = createMonitorFilter(pattern, { patternMaxLength: 512 })
+    if (!filter) throw new Error("Expected a valid fixture filter")
+    const record = createRecord({ status: "running", exitCode: undefined })
+    const state = createMonitorState({
+      record,
+      monitoredProcess: {
+        stdout: new ReadableStream<Uint8Array>({ start: (stream) => {
+          stream.enqueue(new TextEncoder().encode("build failed\n"))
+          stream.close()
+        } }),
+        stderr: new ReadableStream<Uint8Array>({ start: (stream) => stream.close() }),
+        exited: new Promise(() => {}),
+        kill: () => {},
+      },
+      filter,
+      ring: new MonitorRingBuffer({ ringMaxLines: 10 }),
+      batcher: new MonitorBatcher({ batchMaxLines: 1, batchMaxBytes: 1024, flushIntervalMs: 0 }),
+      injector: {
+        queueBatch: (record, batch) => {
+          harness.injector.queueBatch(record, batch)
+          batchReady.resolve()
+        },
+        flushMonitor: (id) => harness.injector.flushMonitor(id),
+      },
+      config: DEFAULT_MONITOR_CONFIG,
+      logger: () => {},
+    })
 
-    harness.injector.queueBatch(createRecord({ status: "running", exitCode: undefined }), createBatch(1, true))
-    await harness.injector.flushMonitor("mon_1")
+    // when
+    await batchReady.promise
+    await harness.injector.flushMonitor(record.id)
+    state.pipeline.stop()
 
+    // then
     expect(harness.calls).toHaveLength(1)
-    expect(harness.calls[0]?.input.body.noReply).toBe(true)
-    expect(hasInternalNoReplyMarker(firstPartText(harness.calls[0] as DispatchCall))).toBe(true)
+    expect(harness.calls[0]?.input.body.noReply).toBe(noReply)
+    const call = harness.calls[0]
+    expect(call && hasInternalNoReplyMarker(firstPartText(call))).toBe(noReply)
   })
 
   test("terminal batch over the active defer ceiling dispatches while the parent is busy", async () => {

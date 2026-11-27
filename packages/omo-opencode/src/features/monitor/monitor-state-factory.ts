@@ -2,6 +2,7 @@ import type { PluginInput } from "@opencode-ai/plugin"
 
 import { log } from "../../shared"
 import type { MonitorBatcher } from "./batcher"
+import type { MonitorFilter } from "./filter"
 import { LineStream } from "./line-stream"
 import type {
   DEFAULT_MONITOR_CONFIG,
@@ -27,7 +28,7 @@ import type { MonitorRecord, OutputBatch } from "./types"
 interface MonitorStateFactoryInput {
   record: MonitorRecord
   monitoredProcess: MonitoredProcess
-  filter: { matches(text: string): boolean }
+  filter: MonitorFilter
   ring: MonitorRingBuffer
   batcher: MonitorBatcher
   injector: MonitorInjector
@@ -74,6 +75,7 @@ export function createMonitorState(input: MonitorStateFactoryInput): InternalMon
       ...batch,
       monitorId: state.record.id,
       stillRunning: state.record.status === "running" || state.record.status === "starting",
+      ...(filter.explicitPattern && batch.lines.length > 0 ? { patternMatched: true } : {}),
     }
     state.record.counters = state.ring.getCounters()
     state.injector.queueBatch(state.record, outputBatch)

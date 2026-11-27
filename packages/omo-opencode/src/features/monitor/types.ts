@@ -27,6 +27,7 @@ export interface OutputBatch {
   batchSeq: number
   lines: OutputLine[]
   stillRunning: boolean
+  readonly patternMatched?: true
 }
 
 export interface MonitorRecord {
