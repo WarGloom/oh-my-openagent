@@ -88,7 +88,7 @@ export function createMonitorStart(
     description:
       "Start a non-interactive background monitor command. The command is not run through a shell. Output is delivered automatically to the parent session; use labels instead of raw commands in transcripts.",
     args: {
-      command: tool.schema.string().describe("Shell command to run in the background monitor"),
+      command: tool.schema.string().describe("Command to run in the background monitor (no shell; use bash -c '...' for pipes, redirects or &&/||)"),
       label: tool.schema.string().optional().describe("Safe human-facing label for the monitor"),
       mode: tool.schema
         .union([tool.schema.literal("idle"), tool.schema.literal("live_safe")])
