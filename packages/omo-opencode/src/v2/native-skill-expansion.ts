@@ -1,4 +1,5 @@
 import { dirname } from "node:path"
+import { isGitSkillName } from "@oh-my-opencode/skills-loader-core/builtin-skills/skills/git-skill-metadata"
 import type { LoadedSkill } from "../features/opencode-skill-loader"
 import { injectGitMasterConfig } from "../features/opencode-skill-loader/skill-content"
 import { extractSkillBody } from "../tools/skill/skill-body"
@@ -37,7 +38,7 @@ export async function expandLoadedSkill(
   const body = command
     ? await formatLoadedCommand(command, invocation.arguments)
     : (invocation.nativeContent ?? (await extractSkillBody(skill)))
-  const configured = skill.name === "git-master" ? injectGitMasterConfig(body, options.gitMasterConfig) : body
+  const configured = isGitSkillName(skill.name) ? injectGitMasterConfig(body, options.gitMasterConfig) : body
   const content =
     invocation.arguments === undefined || command
       ? configured

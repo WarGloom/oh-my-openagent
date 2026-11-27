@@ -128,9 +128,25 @@ describe("native skill convergence", () => {
 
     const result = await current.execute({ name: "git-master" })
 
-    expect(result.content).toBe("git-body")
+    expect(result.content).toContain("git-body")
     expect(current.fake.permissionCalls).toHaveLength(1)
     expect(current.fake.permissionCalls[0]?.resources).toEqual(["git"])
+  })
+
+  test.each(["git", "git-master"])("injects git configuration through native %s invocation", async (name) => {
+    const current = await fixture()
+    setNativeSkillOptions(current.input, {
+      directory: "/repo",
+      skills: [loaded("git", "git-body")],
+      gitMasterConfig: { commit_footer: "custom-footer-42", include_co_authored_by: true, git_env_prefix: "CUSTOM_GIT=42" },
+    })
+    await installNativeSkills(current.input)
+
+    const result = await current.execute({ name })
+
+    expect(result.content).toContain("custom-footer-42")
+    expect(result.content).toContain("CUSTOM_GIT=42")
+    expect(result.content).toContain("Co-authored-by:")
   })
 
   test.each(["id", "name"] as const)("expands dynamic arguments through native %s invocation", async (key) => {
