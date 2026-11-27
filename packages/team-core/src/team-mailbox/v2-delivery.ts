@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import type { TeamModeConfig } from "../config"
+import { DEFAULT_LEAD_FYI_WAKE_DELAY_SECONDS, type TeamModeConfig } from "../config"
 import { log } from "../logger"
 import { transitionRuntimeStateAsync } from "../team-state-store/store"
 import { withInboxConsumerLease } from "./consumer-lease"
@@ -8,12 +8,19 @@ import { selectMailboxMember, selectUnreadMailboxMessages } from "./eligibility"
 import { buildEnvelope } from "./poll"
 import { releaseDeliveryReservation, reserveMessageForDelivery, type DeliveryReservation } from "./reservation"
 
+export type V2MailboxAdmission = {
+  readonly sessionID: string
+  readonly id: string
+  readonly text: string
+  readonly wakeAfterMs?: number
+}
+
 type DeliveryInput = {
   readonly teamRunId: string
   readonly memberName: string
   readonly sessionID: string
   readonly config: TeamModeConfig
-  readonly admit: (input: { readonly sessionID: string; readonly id: string; readonly text: string }) => Promise<void>
+  readonly admit: (input: V2MailboxAdmission) => Promise<void>
 }
 
 export async function deliverMailboxV2(input: DeliveryInput): Promise<readonly string[]> {
@@ -59,7 +66,16 @@ export async function deliverMailboxV2(input: DeliveryInput): Promise<readonly s
                 const digest = createHash("sha256")
                   .update(JSON.stringify([input.sessionID, message.messageId]))
                   .digest("hex")
-                await input.admit({ sessionID: input.sessionID, id: `msg_${digest}`, text: buildEnvelope(message) })
+                const deferWake = member.agentType === "leader" && message.needsLeadAction === false &&
+                  (message.kind === "message" || message.kind === "announcement")
+                await input.admit({
+                  sessionID: input.sessionID,
+                  id: `msg_${digest}`,
+                  text: buildEnvelope(message),
+                  ...(deferWake ? {
+                    wakeAfterMs: (input.config.lead_fyi_wake_delay_seconds ?? DEFAULT_LEAD_FYI_WAKE_DELAY_SECONDS) * 1_000,
+                  } : {}),
+                })
               } finally {
                 clearTimeout(warning)
               }

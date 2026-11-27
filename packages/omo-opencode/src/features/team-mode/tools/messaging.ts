@@ -17,6 +17,8 @@ import {
 import type { RuntimeState } from "@oh-my-opencode/team-core/types"
 
 const MESSAGE_TOOL_KINDS = ["message", "announcement"] as const
+const LEAD_ACTION_DESCRIPTION =
+  "Required when sending to the lead. True for a decision, blocker, or final result. False for FYI progress, receipts, status, or acknowledgements. Ignored for other recipients."
 
 export const TEAM_SEND_MESSAGE_CORRELATION_ID_DESCRIPTION =
   "Optional UUID correlation ID for linking to an existing team message thread. Omit this field unless you are copying an existing UUID; do not invent slugs or task IDs."
@@ -33,6 +35,7 @@ const TeamSendMessageArgsSchema = z.object({
   teamRunId: z.string().min(1),
   to: z.string().min(1),
   body: z.string(),
+  needsLeadAction: z.boolean().optional(),
   kind: z.enum(MESSAGE_TOOL_KINDS).optional(),
   correlationId: z.preprocess((value) => (value === "" ? undefined : value), z.uuid().optional()),
   summary: z.string().optional(),
@@ -55,11 +58,12 @@ export function createTeamSendMessageTool(
 ): ToolDefinition {
   return tool({
     description:
-      "Send an async team message. Recipients receive it automatically as a future conversation turn; this tool returns delivery metadata, not replies or message history.",
+      "Send an async team message. In OpenCode V2, FYI messages to the lead wait for the next turn or the configured wake deadline. This tool returns delivery metadata, not replies or history.",
     args: {
       teamRunId: tool.schema.string().describe("Team run ID"),
       to: tool.schema.string().describe("Recipient member name, or * for lead-only broadcast."),
       body: tool.schema.string().describe("Message body delivered into the recipient's conversation."),
+      needsLeadAction: tool.schema.boolean().optional().describe(LEAD_ACTION_DESCRIPTION),
       kind: tool.schema.enum(MESSAGE_TOOL_KINDS).optional().default("message").describe("Message kind"),
       correlationId: tool.schema.string().optional().describe(TEAM_SEND_MESSAGE_CORRELATION_ID_DESCRIPTION),
       summary: tool.schema.string().optional().describe("Optional brief summary for notifications/status surfaces."),
@@ -87,12 +91,17 @@ export function createTeamSendMessageTool(
       const teamRuntime = await resolveTeamRuntimeDetails(args.teamRunId, sessionID, config, deps)
       const runtimeState = await deps.loadRuntimeState(teamRuntime.teamRunId, config)
       const resolvedRecipient = resolveRecipientAlias(args.to, runtimeState, teamRuntime.senderName)
+      const toLead = runtimeState.members.some((member) => member.name === resolvedRecipient && member.agentType === "leader")
+      if (toLead && args.needsLeadAction === undefined) {
+        throw new TypeError("needsLeadAction is required when sending to the lead")
+      }
       const message = MessageSchema.parse({
         version: 1,
         messageId: randomUUID(),
         from: teamRuntime.senderName,
         to: resolvedRecipient,
         body: args.body,
+        needsLeadAction: toLead ? args.needsLeadAction : undefined,
         kind: args.kind ?? "message",
         timestamp: Date.now(),
         correlationId: args.correlationId,

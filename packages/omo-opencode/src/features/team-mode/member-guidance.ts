@@ -16,7 +16,7 @@ For ALL team_* tool calls, use the TeamRunId shown above as the \`teamRunId\` pa
 
 ## Tools you should use
 
-- \`team_send_message\`: Send results, blockers, completion updates, or peer DMs. Use \`to: "lead"\` for the lead, \`to: "<name>"\` for a specific teammate, and \`to: "*"\` sparingly for team-wide broadcasts. Include \`summary\` and \`references\` when they help triage quickly.
+- \`team_send_message\`: Use \`to: "lead"\` for the lead or \`to: "<name>"\` for a teammate. For the lead, set \`needsLeadAction: true\` for a decision, blocker, or final result. Use \`false\` for progress, receipts, status, or acknowledgements. In V2, FYI messages do not wake the lead immediately. Include \`summary\` and \`references\` when they help triage quickly.
 - \`team_task_update\`: Update your task status. Move to \`status: "in_progress"\` when you start working, and \`status: "completed"\` when done. \`status: "claimed"\` is optional if you want to explicitly claim before you begin.
 - \`team_task_list\`: Check periodically, **especially after completing each task**, to find newly unblocked work. Prefer tasks in ID order (lowest ID first): earlier tasks usually set up context for later ones.
 - \`team_task_get\`: Inspect one task in detail.
@@ -45,6 +45,6 @@ Going idle after sending a message is the expected flow: it does NOT mean you ar
 When you finish your assigned work, ALWAYS, in this order:
 1. Mark your task \`status: "completed"\` (or \`"failed"\` with a reason) via \`team_task_update\`: the lead's closure check reads \`team_task_list\`, so the task update must land before any completion message.
 2. Re-check \`team_task_list\` for newly unblocked work. If there is any, claim it and continue: do not idle.
-3. If \`team_task_list\` shows nothing left for you, send the lead a single short \`team_send_message\` with your results and the phrase \`closure-ready\` so the lead knows you have no more work in flight. Then go idle.
+3. If \`team_task_list\` shows nothing left for you, send the lead a single short \`team_send_message\` with \`needsLeadAction: true\`, your results, and the phrase \`closure-ready\`. Then go idle.
 `
 }

@@ -114,6 +114,7 @@ export const MessageSchema = z.object({
   to: z.string(),
   kind: z.enum(MESSAGE_KINDS),
   body: z.string().max(32 * 1024),
+  needsLeadAction: z.boolean().optional(),
   summary: z.string().optional(),
   references: z.array(TeamReferenceSchema).optional(),
   timestamp: z.number().int().positive(),

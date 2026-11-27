@@ -1,6 +1,7 @@
 import * as z from "zod"
 
 export const MAX_TEAM_MEMBERS = 16
+export const DEFAULT_LEAD_FYI_WAKE_DELAY_SECONDS = 600
 
 export const TeamModeConfigSchema = z.object({
   enabled: z.boolean().default(false),
@@ -14,6 +15,8 @@ export const TeamModeConfigSchema = z.object({
   message_payload_max_bytes: z.number().int().min(1024).default(32768),
   recipient_unread_max_bytes: z.number().int().min(1024).default(262144),
   mailbox_poll_interval_ms: z.number().int().min(500).default(3000),
+  lead_fyi_wake_delay_seconds: z.number().int().min(0).max(2_147_483).optional()
+    .describe("Seconds before waking a V2 lead for undelivered FYI messages. Zero wakes immediately."),
 })
 
 export type TeamModeConfig = z.infer<typeof TeamModeConfigSchema>

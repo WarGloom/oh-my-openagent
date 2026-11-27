@@ -1,4 +1,5 @@
 import type { TeamModeConfig } from "../../config/schema/team-mode"
+import type { V2MailboxAdmission } from "@oh-my-opencode/team-core/team-mailbox/v2-delivery"
 import { findResolvedMemberSession } from "../../features/team-mode/member-session-resolution"
 import type { PluginContext } from "../../plugin/types"
 import type { ExecutorContext } from "../../tools/delegate-task/executor-types"
@@ -39,7 +40,7 @@ type TeamMailboxInjectorOutput = {
 export type TeamMailboxInjectorHook = {
   readonly nativeDeliver: (
     sessionID: string,
-    admit: (input: { readonly sessionID: string; readonly id: string; readonly text: string }) => Promise<void>,
+    admit: (input: V2MailboxAdmission) => Promise<void>,
   ) => Promise<readonly string[]>
   "experimental.chat.messages.transform"?: (
     input: TeamMailboxInjectorInput,

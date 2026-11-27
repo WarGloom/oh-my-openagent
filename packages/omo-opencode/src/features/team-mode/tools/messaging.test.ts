@@ -326,7 +326,7 @@ async function createTeamFixture() {
 }
 
 describe("createTeamSendMessageTool", () => {
-  test("#given an idle V2 lead #when a member sends a message #then the lead receives one synthetic wake", async () => {
+  test.each([true, false])("#given an idle V2 lead #when needsLeadAction is %s #then admission honors the declaration", async (needsLeadAction) => {
     // given
     const fixture = await createTeamFixture()
     const { createFakePluginContext } = await import("../../../v2/fake-plugin-context")
@@ -348,14 +348,14 @@ describe("createTeamSendMessageTool", () => {
     // when
     const result = parseToolResult(
       await tool.execute(
-        { teamRunId: fixture.teamRunId, to: "lead", body: "ready" },
+        { teamRunId: fixture.teamRunId, to: "lead", body: "ready", needsLeadAction },
         fixture.toolContext(fixture.memberOneSessionId),
       ),
     )
     // then
     expect(admitted).toHaveLength(1)
     expect(admitted[0]?.sessionID).toBe(fixture.leadSessionId)
-    expect(admitted[0]?.resume).toBe(true)
+    expect(admitted[0]?.resume).toBe(needsLeadAction)
     expect(admitted[0]?.text).toContain(result.messageId)
     expect(await listUnreadMessages(fixture.teamRunId, "team-lead", fixture.config)).toEqual([])
   })
@@ -479,18 +479,20 @@ describe("createTeamSendMessageTool", () => {
     expect(message.from).toBe("m1")
   })
 
-  test("#given the runtime leader is not named lead #when a member sends to lead #then it routes to the leader member", async () => {
+  test("#given a named runtime leader #when a member sends to lead #then it requires a declaration and routes to the leader", async () => {
     // given
     const fixture = await createTeamFixture()
 
     // when
+    const sender = fixture.toolContext(fixture.memberOneSessionId)
+    const messageArgs = { teamRunId: fixture.teamRunId, to: "lead", body: "closure-ready" }
+    await expect(fixture.tool.execute(messageArgs, sender)).rejects.toThrow("needsLeadAction")
     const result = await fixture.tool.execute(
       {
-        teamRunId: fixture.teamRunId,
-        to: "lead",
-        body: "closure-ready",
+        ...messageArgs,
+        needsLeadAction: true,
       },
-      fixture.toolContext(fixture.memberOneSessionId),
+      sender,
     )
     const parsedResult = parseToolResult(result)
 
