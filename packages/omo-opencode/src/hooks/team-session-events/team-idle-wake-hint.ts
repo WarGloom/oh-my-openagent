@@ -3,6 +3,7 @@ import { findResolvedMemberSession } from "../../features/team-mode/member-sessi
 import { isTeamSessionDenied } from "../../features/team-mode/team-session-registry"
 import { applyMemberSessionRouting, buildRecipientPromptBody } from "../../features/team-mode/member-session-routing"
 import { loadRuntimeState } from "../../features/team-mode/team-state-store/store"
+import type { NativeTeamMailbox } from "../../features/team-mode/tools/messaging-live-delivery-client"
 import { resolveSessionEventID } from "../../shared/event-session-id"
 import { isAmbiguousPostDispatchPromptFailure } from "../../shared/prompt-failure-classifier"
 import { log } from "../../shared/logger"
@@ -37,12 +38,7 @@ type TeamIdleWakeHintContext = {
       promptAsync?: (input: PromptAsyncInput) => Promise<unknown>
       status?: () => Promise<unknown>
       messages?: (input: { path: { id: string } }) => Promise<unknown>
-      nativeTeamMailbox?: (input: {
-        readonly teamRunId: string
-        readonly memberName: string
-        readonly sessionID: string
-        readonly config: TeamModeConfig
-      }) => Promise<readonly string[]>
+      nativeTeamMailbox?: NativeTeamMailbox
     }
   }
 }
@@ -156,6 +152,7 @@ export function createTeamIdleWakeHint(
           memberName: runtimeMember.memberName,
           sessionID,
           config,
+          source: "idle",
         })
         return
       }
