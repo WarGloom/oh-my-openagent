@@ -21,11 +21,12 @@ export async function deliverLive(
   config: TeamModeConfig,
   directory: string,
   deps: TeamSendMessageToolDeps,
-): Promise<void> {
+): Promise<readonly string[]> {
   const runtimeState = await loadRuntimeStateForLiveDelivery(teamRunId, deliveredTo, message.messageId, config, deps)
-  if (!runtimeState) return
+  if (!runtimeState) return []
 
   const envelope = buildEnvelope(message)
+  const admittedTo: string[] = []
 
   for (const recipientName of deliveredTo) {
     if (client.session.nativeTeamMailbox) {
@@ -39,12 +40,13 @@ export async function deliverLive(
       )
         continue
       try {
-        await client.session.nativeTeamMailbox({
+        const admitted = await client.session.nativeTeamMailbox({
           teamRunId,
           memberName: recipientName,
           sessionID: member.sessionId,
           config,
         })
+        if (admitted.includes(message.messageId)) admittedTo.push(recipientName)
       } catch (error) {
         log("[team-mailbox] V2 live delivery failed", {
           teamRunId,
@@ -81,4 +83,5 @@ export async function deliverLive(
       dispatchTiming: deps.dispatchTiming,
     })
   }
+  return admittedTo
 }

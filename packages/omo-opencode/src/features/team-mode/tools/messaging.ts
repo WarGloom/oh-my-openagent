@@ -58,7 +58,7 @@ export function createTeamSendMessageTool(
 ): ToolDefinition {
   return tool({
     description:
-      "Send an async team message. In OpenCode V2, FYI messages to the lead wait for the next turn or the configured wake deadline. This tool returns delivery metadata, not replies or history.",
+      "Send an async team message. In OpenCode V2, storedTo lists recipients with inbox copies, and admittedTo lists recipients whose session host accepted the message. FYI messages to the lead wait for the next turn or the configured wake deadline.",
     args: {
       teamRunId: tool.schema.string().describe("Team run ID"),
       to: tool.schema.string().describe("Recipient member name, or * for lead-only broadcast."),
@@ -133,8 +133,9 @@ export function createTeamSendMessageTool(
         reservedRecipients,
       })
 
+      let admittedTo: readonly string[] = []
       try {
-        await deliverLive(client, message, teamRuntime.teamRunId, result.deliveredTo, config, targetDirectory, deps)
+        admittedTo = await deliverLive(client, message, teamRuntime.teamRunId, result.deliveredTo, config, targetDirectory, deps)
       } catch (liveError) {
         log("[team-mailbox] deliverLive top-level error (message already in inbox, safe to ignore)", {
           error: liveError instanceof Error ? liveError.message : String(liveError),
@@ -143,7 +144,7 @@ export function createTeamSendMessageTool(
         })
       }
 
-      return JSON.stringify(result)
+      return JSON.stringify(client.session.nativeTeamMailbox ? { ...result, storedTo: result.deliveredTo, admittedTo } : result)
     },
   })
 }

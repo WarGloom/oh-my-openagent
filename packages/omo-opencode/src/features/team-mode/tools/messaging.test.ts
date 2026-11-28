@@ -104,6 +104,8 @@ const TeamSendToolResultSchema = z
   .object({
     messageId: z.string(),
     deliveredTo: z.array(z.string()),
+    storedTo: z.array(z.string()).optional(),
+    admittedTo: z.array(z.string()).optional(),
   })
   .strict()
 
@@ -353,11 +355,27 @@ describe("createTeamSendMessageTool", () => {
       ),
     )
     // then
+    expect(result.storedTo).toEqual(["team-lead"])
+    expect(result.admittedTo).toEqual(["team-lead"])
     expect(admitted).toHaveLength(1)
     expect(admitted[0]?.sessionID).toBe(fixture.leadSessionId)
     expect(admitted[0]?.resume).toBe(needsLeadAction)
     expect(admitted[0]?.text).toContain(result.messageId)
     expect(await listUnreadMessages(fixture.teamRunId, "team-lead", fixture.config)).toEqual([])
+  })
+  test("#given a native admission is deferred #then the sender sees storage but no admission", async () => {
+    const fixture = await createTeamFixture()
+    const tool = createTeamSendMessageTool(fixture.config, {
+      session: { ...mockClient.session, nativeTeamMailbox: async () => [] },
+    })
+    const result = parseToolResult(await tool.execute(
+      { teamRunId: fixture.teamRunId, to: "m2", body: "keep this queued" },
+      fixture.toolContext(fixture.leadSessionId),
+    ))
+    expect(result.storedTo).toEqual(["m2"])
+    expect(result.admittedTo).toEqual([])
+    expect((await listUnreadMessages(fixture.teamRunId, "m2", fixture.config)).map((message) => message.messageId))
+      .toEqual([result.messageId])
   })
   test("corrective: post-reservation EIO releases the fallback batch without dispatch or acknowledgement", async () => {
     // given
