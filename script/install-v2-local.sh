@@ -10,11 +10,11 @@ host=$ws/opencode
 binary=$host/packages/cli/dist/cli-linux-x64/bin/opencode
 launcher=/home/nikita/.local/bin/opencode-v2-lab
 standard_launcher=/home/nikita/.local/bin/opencode
-host_oid=06826109ce23f684b171317cbbad79fdd9c350ec
-host_checkout_oid=06826109ce23f684b171317cbbad79fdd9c350ec
-host_hash=61f0ecc61c0802b39f23769b277b7017668987282d794ad9d2b524bf404c6300
-old_host_hash=d6ea863e294508d0280891de9e9ae370d3f62c2110c6f6e3090a42b8d241c5c1
-host_candidate=$ws/.tmp/v2-host-local-06826109ce/cli-linux-x64/bin/opencode
+host_oid=7abc94cd105f2a849fd0e6418027558ddf31583d
+host_checkout_oid=7abc94cd105f2a849fd0e6418027558ddf31583d
+host_hash=86e413c0faa348f5d780bae8a23b1fc9dd991aed50f02303891b86dbf6f8e22c
+old_host_hash=61f0ecc61c0802b39f23769b277b7017668987282d794ad9d2b524bf404c6300
+host_candidate=$ws/.tmp/v2-host-local-7abc94cd10/cli-linux-x64/bin/opencode
 paths=(dist packages/lsp-tools-mcp/dist packages/lsp-daemon/dist packages/git-bash-mcp/dist packages/shared-skills/skills)
 
 fail() {
