@@ -9,6 +9,7 @@ import { loadRuntimeStateForLiveDelivery } from "./messaging-live-delivery-state
 import type { TeamSendMessageToolDeps } from "./messaging-runtime"
 import { isTeamSessionDenied } from "../team-session-registry"
 import { log } from "../../../shared/logger"
+import { nativeAdmissionErrorFields } from "../../../shared/native-admission-error-fields"
 
 export type { LiveDeliveryClient } from "./messaging-live-delivery-client"
 
@@ -48,7 +49,7 @@ export async function deliverLive(
         log("[team-mailbox] V2 live delivery failed", {
           teamRunId,
           recipientName,
-          error: error instanceof Error ? `${error.name}: ${error.message}` : error,
+          ...nativeAdmissionErrorFields(error),
         })
       }
       continue

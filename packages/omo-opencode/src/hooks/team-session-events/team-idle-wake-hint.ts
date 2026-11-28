@@ -7,6 +7,7 @@ import type { NativeTeamMailbox } from "../../features/team-mode/tools/messaging
 import { resolveSessionEventID } from "../../shared/event-session-id"
 import { isAmbiguousPostDispatchPromptFailure } from "../../shared/prompt-failure-classifier"
 import { log } from "../../shared/logger"
+import { nativeAdmissionErrorFields } from "../../shared/native-admission-error-fields"
 import { isSessionActive, settleAfterSessionIdle } from "../../shared/session-idle-settle"
 import {
   dispatchInternalPrompt,
@@ -268,7 +269,7 @@ export function createTeamIdleWakeHint(
       log("team idle wake hint failed", {
         event: "team-mode-idle-wake-hint-error",
         sessionID,
-        error: error instanceof Error ? error.message : String(error),
+        ...nativeAdmissionErrorFields(error),
       })
     }
   }
