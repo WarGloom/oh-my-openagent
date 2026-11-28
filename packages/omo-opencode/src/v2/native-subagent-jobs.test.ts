@@ -23,6 +23,56 @@ afterEach(async () => {
 })
 
 describe("native subagent consumer", () => {
+  it("defers a team message behind the member's queued continuation", async () => {
+    const f = await fixture()
+    const team = { teamRunID: "mailbox-team", member: "receiver" }
+    const provisioned = f.nextStart()
+    const member = await f.manager.launch({
+      ...f.launch("member startup"),
+      teamRunId: team.teamRunID,
+      nativeCompletion: "none",
+      nativeInvocation: { kind: "tool", agent: "parent-agent", messageID: "message", toolCallID: "team", team },
+    })
+    const { sessionId, nativeProvisioningAdmissionID } = member
+    if (!sessionId || !nativeProvisioningAdmissionID) throw new Error("missing provisioned team member")
+    await provisioned
+    f.finish(nativeProvisioningAdmissionID)
+    await f.manager.waitForNativeTask(member.id, new AbortController().signal)
+    const blockerStarted = f.nextStart()
+    const blocker = await f.manager.launch(f.launch("slot holder"))
+    await blockerStarted
+    const input = {
+      sessionId,
+      parentSessionId: "parent",
+      parentMessageId: "mail",
+      prompt: "NEXT_MAILBOX_MESSAGE",
+      nativePromptID: "msg_mail",
+      nativeCompletion: "none",
+      nativeInvocation: {
+        kind: "team", agent: "parent-agent", invocationID: "mail", ...team,
+        provisioningAdmissionID: nativeProvisioningAdmissionID,
+      },
+    } as const
+    const older = {
+      ...input,
+      prompt: "FIRST_MAILBOX_MESSAGE",
+      nativePromptID: "msg_first",
+      nativeInvocation: { ...input.nativeInvocation, invocationID: "first-mail" },
+    }
+    expect(await f.manager.tryResumeNativeTeamMailbox(older)).toBe(false)
+    expect(await f.manager.tryResumeNativeTeamMailbox(input)).toBe(false)
+    expect(f.prompts).toHaveLength(2)
+
+    const memberStarted = f.nextStart()
+    f.finish(blocker.nativeAdmissionID ?? "")
+    await memberStarted
+    await f.domain.get({ admissionID: member.nativeAdmissionID ?? "" })
+    expect(await f.manager.tryResumeNativeTeamMailbox(input)).toBe(true)
+    expect(f.prompts).toHaveLength(4)
+    expect(f.prompts[2]?.text).toContain("FIRST_MAILBOX_MESSAGE")
+    expect(f.prompts[3]?.text).toContain("NEXT_MAILBOX_MESSAGE")
+  })
+
   it("passes task completion_group to the same native admission as other job options", async () => {
     const f = await fixture({ requireSystem: false })
     const start = spyOn(f.domain, "start")

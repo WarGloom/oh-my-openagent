@@ -2157,6 +2157,19 @@ export class BackgroundManager {
     this.nativeStartWaiters.delete(task.id)
   }
 
+  async tryResumeNativeTeamMailbox(input: ResumeInput): Promise<boolean> {
+    const task = this.findBySession(input.sessionId)
+    if (
+      !task || this.shutdownTriggered || this.nativeRestoring || task.status === "pending" ||
+      this.resumesAwaitingAdmission.has(task.id) || this.activeSyncClaims.has(task.id) ||
+      this.nativeSteers.has(task.id) ||
+      (task.status === "running" && (!task.nativeRun || task.nativeCompletion === "parent"))
+    ) return false
+
+    const resumed = await this.resume(input)
+    return resumed.nativePromptID === input.nativePromptID && resumed.nativeRun !== undefined
+  }
+
   async resume(input: ResumeInput): Promise<BackgroundTask> {
     if (isInternalPromptFenced(input.sessionId)) throw new Error(`Session ${input.sessionId} is stopped`)
     assertTeamSessionCanContinue(input.sessionId)
@@ -2246,12 +2259,8 @@ export class BackgroundManager {
         const steering = (async () => {
           const prepared = { ...existingTask, skills: input.skills ?? [] }
           await jobs.prepare(prepared, input, getMaxSubagentDepth(this.config))
-          existingTask.nativeAdmissionID = prepared.nativeAdmissionID
-          existingTask.nativePromptID = prepared.nativePromptID
-          existingTask.nativeInvocation = prepared.nativeInvocation
-          existingTask.skills = prepared.skills
           const outcome = await jobs.start(
-            existingTask,
+            prepared,
             buildTaskPromptBody({
               kind: "resume",
               agent: existingTask.agent,
@@ -2262,7 +2271,17 @@ export class BackgroundManager {
               userPermission: existingTask.userPermission,
             }),
           )
-          if (outcome === "started") this.observeNativeTask(existingTask)
+          if (outcome !== "started" || existingTask.status !== "running") return
+          existingTask.nativeAdmissionID = prepared.nativeAdmissionID
+          existingTask.nativePromptID = prepared.nativePromptID
+          existingTask.nativeInvocation = prepared.nativeInvocation
+          existingTask.skills = prepared.skills
+          existingTask.nativeAcceptedSkillsAdmissionID = prepared.nativeAcceptedSkillsAdmissionID
+          existingTask.nativeSkillActivationIDs = prepared.nativeSkillActivationIDs
+          existingTask.nativeSkillSelections = prepared.nativeSkillSelections
+          const changedGeneration = existingTask.nativeRun?.generation !== prepared.nativeRun?.generation
+          existingTask.nativeRun = prepared.nativeRun
+          if (changedGeneration) this.observeNativeTask(existingTask)
         })()
         this.nativeSteers.set(existingTask.id, { key: "team", promise: steering })
         try {
