@@ -7,7 +7,7 @@ import { TERMINAL_TASK_TTL_MS } from "../features/background-agent/constants"
 import { getRegisteredBackgroundTask, takeBackgroundTasksAfterReload } from "../features/background-agent/task-registry"
 import type { V2IdleHookEvent, V2PluginContext, V2StorageDomain } from "./context-types"
 import { backgroundTaskRecord, encodeBackgroundTask } from "./background-task-record"
-import { bindNativeTeamJobs } from "./native-team-jobs"
+import { bindNativeTeamJobs, unbindNativeTeamJobs } from "./native-team-jobs"
 import { bindNativeCommandJobs } from "./config-bridge/command-subtasks"
 import { log } from "../shared/logger"
 
@@ -302,5 +302,6 @@ export class V2BackgroundLifecycle implements NativeBackgroundLifecycle {
 
   async dispose(): Promise<void> {
     this.stopped = true
+    unbindNativeTeamJobs(this.context)
   }
 }

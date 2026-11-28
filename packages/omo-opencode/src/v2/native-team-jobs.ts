@@ -3,8 +3,12 @@ import type { BackgroundManager } from "../features/background-agent/manager"
 import { log } from "../shared/logger"
 import type { V2PluginContext, V2SyntheticInput } from "./context-types"
 
-const managers = new WeakMap<V2PluginContext, BackgroundManager>()
+const managers = new Map<string, { readonly context: V2PluginContext; readonly manager: BackgroundManager }>()
 const deferredWakes = new WeakMap<V2PluginContext, Map<string, V2SyntheticInput>>()
+
+function locationKey(projectID: string, directory: string): string {
+  return JSON.stringify([projectID, directory])
+}
 
 function scheduleLeadWake(context: V2PluginContext, message: V2SyntheticInput, delayMs: number): void {
   const pending = deferredWakes.get(context) ?? new Map<string, V2SyntheticInput>()
@@ -26,7 +30,12 @@ function scheduleLeadWake(context: V2PluginContext, message: V2SyntheticInput, d
 }
 
 export function bindNativeTeamJobs(context: V2PluginContext, manager: BackgroundManager): void {
-  managers.set(context, manager)
+  managers.set(locationKey(context.location.project.id, context.location.directory), { context, manager })
+}
+
+export function unbindNativeTeamJobs(context: V2PluginContext): void {
+  const key = locationKey(context.location.project.id, context.location.directory)
+  if (managers.get(key)?.context === context) managers.delete(key)
 }
 
 export async function admitNativeTeamMessage(
@@ -42,14 +51,15 @@ export async function admitNativeTeamMessage(
     if (wakeAfterMs > 0) scheduleLeadWake(context, input, wakeAfterMs)
     return
   }
-  const manager = managers.get(context)
-  const task = manager?.findBySession(message.sessionID)
-  if (!manager?.nativeJobs || !task || task.teamRunId !== identity.teamRunId)
+  const parent = await context.session.get({ sessionID: child.parentID })
+  // Idle and context hooks also run in the child's worktree Location, which does not own this task.
+  const owner = managers.get(locationKey(parent.projectID, parent.location.directory))
+  const task = owner?.manager.findBySession(message.sessionID)
+  if (!owner?.manager.nativeJobs || !task || task.teamRunId !== identity.teamRunId)
     throw new Error("Native team member has no matching task owner")
   if (!task.nativeProvisioningAdmissionID)
     throw new Error("Native team member has no authenticated provisioning admission")
-  const parent = await context.session.get({ sessionID: child.parentID })
-  await manager.resume({
+  await owner.manager.resume({
     sessionId: message.sessionID,
     parentSessionId: child.parentID,
     parentMessageId: message.id,
