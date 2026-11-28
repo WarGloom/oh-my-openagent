@@ -51,7 +51,7 @@ async function setup() {
   return { config, teamRunId, memberName: "m1", sessionID: "session-A", messageId }
 }
 
-test("#given failed admission #when delivery retries #then the message remains pending until admitted", async () => {
+test("#given failed admission #when delivery retries #then only durable admission processes the mailbox file", async () => {
   // given
   const input = await setup()
   const error = new Error("offline")
@@ -68,10 +68,18 @@ test("#given failed admission #when delivery retries #then the message remains p
   const delivered = await deliverMailboxV2({ ...input, admit: async () => {} })
   // then
   expect(before.members[0]?.pendingInjectedMessageIds).toEqual([])
-  expect(delivered).toEqual([input.messageId])
+  expect(delivered).toEqual({ admitted: [input.messageId], deferred: false })
   expect(await inspectDeliveryReservationState(input.teamRunId, input.memberName, input.messageId, input.config)).toBe(
-    "reserved",
+    "processed",
   )
+})
+
+test("#given a busy admission slot #when mailbox delivery defers #then the message stays unread", async () => {
+  const input = await setup()
+  const deferred = await deliverMailboxV2({ ...input, admit: async () => false })
+  expect(deferred).toEqual({ admitted: [], deferred: true })
+  expect(await inspectDeliveryReservationState(input.teamRunId, input.memberName, input.messageId, input.config)).toBe("inbox")
+  expect(await deliverMailboxV2({ ...input, admit: async () => {} })).toEqual({ admitted: [input.messageId], deferred: false })
 })
 
 test("#given a crash after admission #when delivery retries #then the same synthetic ID is reused", async () => {
@@ -91,7 +99,7 @@ test("#given a crash after admission #when delivery retries #then the same synth
   const delivered = await deliverMailboxV2({ ...input, admit })
   // then
   expect(accepted.size).toBe(1)
-  expect(delivered).toEqual([input.messageId])
+  expect(delivered).toEqual({ admitted: [input.messageId], deferred: false })
 })
 
 test("#given an unread message already pending #when V2 checks the mailbox #then it is not readmitted", async () => {
@@ -116,7 +124,7 @@ test("#given an unread message already pending #when V2 checks the mailbox #then
     },
   })
   // then
-  expect(delivered).toEqual([])
+  expect(delivered).toEqual({ admitted: [], deferred: false })
   expect(admitted).toEqual([])
 })
 
@@ -147,8 +155,8 @@ test("#given a session replaced before delivery #when admission runs #then it ta
     },
   })
   // then
-  expect(stale).toEqual([])
-  expect(delivered).toEqual([input.messageId])
+  expect(stale).toEqual({ admitted: [], deferred: false })
+  expect(delivered).toEqual({ admitted: [input.messageId], deferred: false })
   expect(admitted).toEqual(["session-B"])
 })
 
@@ -186,6 +194,6 @@ test("#given admission holds the state lock #when a replacement runs concurrentl
   release.resolve()
   const [delivered] = await Promise.all([delivery, replacement])
   // then
-  expect(delivered).toEqual([input.messageId])
+  expect(delivered).toEqual({ admitted: [input.messageId], deferred: false })
   expect(order).toEqual(["admit:session-A", "admitted", "replacement"])
 })

@@ -8,6 +8,7 @@ import { getRegisteredBackgroundTask, takeBackgroundTasksAfterReload } from "../
 import type { V2IdleHookEvent, V2PluginContext, V2StorageDomain } from "./context-types"
 import { backgroundTaskRecord, encodeBackgroundTask } from "./background-task-record"
 import { bindNativeTeamJobs, unbindNativeTeamJobs } from "./native-team-jobs"
+import { stopNativeTeamMailbox } from "./native-team-mailbox"
 import { bindNativeCommandJobs } from "./config-bridge/command-subtasks"
 import { log } from "../shared/logger"
 
@@ -303,5 +304,6 @@ export class V2BackgroundLifecycle implements NativeBackgroundLifecycle {
   async dispose(): Promise<void> {
     this.stopped = true
     unbindNativeTeamJobs(this.context)
+    stopNativeTeamMailbox(this.context)
   }
 }

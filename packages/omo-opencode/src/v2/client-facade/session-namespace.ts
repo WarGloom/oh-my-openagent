@@ -7,9 +7,9 @@ import { translateMessages } from "./translate-messages"
 import type { V1Message } from "./v1-message-types"
 import { settle, v1Error, type V1Result } from "./v1-result"
 import { deliverMailboxV2 } from "@oh-my-opencode/team-core/team-mailbox"
-import type { TeamModeConfig } from "../../config/schema/team-mode"
+import type { NativeTeamMailboxInput } from "../../features/team-mode/tools/messaging-live-delivery-client"
 import { readSessionTodos } from "../session-todos"
-import { admitNativeTeamMessage } from "../native-team-jobs"
+import { deliverNativeTeamMailbox } from "../native-team-mailbox"
 
 type SessionRef = { readonly path: { readonly id: string } }
 
@@ -193,12 +193,12 @@ export function createSessionNamespace(context: V2PluginContext, deps: SessionNa
         return response
       })
     },
-    nativeTeamMailbox: (input: {
-      readonly teamRunId: string
-      readonly memberName: string
-      readonly sessionID: string
-      readonly config: TeamModeConfig
-    }) => deliverMailboxV2({ ...input, admit: (message) => admitNativeTeamMessage(context, message, input) }),
+    nativeTeamMailbox: (input: NativeTeamMailboxInput) => deliverNativeTeamMailbox(context, {
+      sessionID: input.sessionID,
+      source: input.source ?? "live",
+      identity: { teamRunId: input.teamRunId, memberName: input.memberName },
+      consume: (admit) => deliverMailboxV2({ ...input, admit }),
+    }),
 
     status: async () => ({ data: deps.tracker.statuses() }),
 

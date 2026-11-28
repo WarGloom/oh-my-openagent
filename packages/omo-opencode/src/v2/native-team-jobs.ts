@@ -2,6 +2,7 @@ import type { V2MailboxAdmission } from "@oh-my-opencode/team-core/team-mailbox/
 import type { BackgroundManager } from "../features/background-agent/manager"
 import { log } from "../shared/logger"
 import type { V2PluginContext, V2SyntheticInput } from "./context-types"
+import { nativeSubagentAdmissionID } from "./native-subagent-jobs"
 
 const managers = new Map<string, { readonly context: V2PluginContext; readonly manager: BackgroundManager }>()
 const deferredWakes = new WeakMap<V2PluginContext, Map<string, V2SyntheticInput>>()
@@ -42,7 +43,7 @@ export async function admitNativeTeamMessage(
   context: V2PluginContext,
   message: V2MailboxAdmission,
   identity: { readonly teamRunId: string; readonly memberName: string },
-): Promise<void> {
+): Promise<void | false> {
   const child = await context.session.get({ sessionID: message.sessionID })
   if (!child.parentID) {
     const { sessionID, id, text, wakeAfterMs = 0 } = message
@@ -59,7 +60,17 @@ export async function admitNativeTeamMessage(
     throw new Error("Native team member has no matching task owner")
   if (!task.nativeProvisioningAdmissionID)
     throw new Error("Native team member has no authenticated provisioning admission")
-  await owner.manager.resume({
+  let invocationID = message.id
+  for (let attempt = 1; ; attempt += 1) {
+    const receipt = await owner.context.experimental.subagent.get({
+      admissionID: nativeSubagentAdmissionID(task.id, invocationID),
+    })
+    if (receipt?.status === "running" || receipt?.status === "completed") return
+    if (receipt?.status !== "error" && receipt?.status !== "cancelled") break
+    // A terminal failed admission cannot be started again. The prompt ID still deduplicates a replay.
+    invocationID = message.id + ":retry:" + attempt
+  }
+  const admitted = await owner.manager.tryResumeNativeTeamMailbox({
     sessionId: message.sessionID,
     parentSessionId: child.parentID,
     parentMessageId: message.id,
@@ -70,7 +81,7 @@ export async function admitNativeTeamMessage(
     nativeInvocation: {
       kind: "team",
       agent: parent.agent ?? "",
-      invocationID: message.id,
+      invocationID,
       teamRunID: identity.teamRunId,
       member: identity.memberName,
       provisioningAdmissionID: task.nativeProvisioningAdmissionID,
@@ -78,4 +89,5 @@ export async function admitNativeTeamMessage(
     nativeCompletion: "none",
     nativeMode: "background",
   })
+  if (!admitted) return false
 }

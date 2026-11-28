@@ -27,6 +27,10 @@ function foregroundInterruptionNoteID(task: BackgroundTask): string {
   return `msg_${createHash("sha256").update(`foreground-interrupted:${run}`).digest("hex").slice(0, 26)}`
 }
 
+export function nativeSubagentAdmissionID(taskID: string, invocationID: string): string {
+  return `omo:${taskID}:${invocationID}`
+}
+
 export type NativeSubagentJobsDeps = {
   readonly load?: (sessionID: string, parentSessionID: string) => Promise<BackgroundTask | undefined>
   readonly activateSkills: (task: BackgroundTask) => Promise<NativeDelegationSkills>
@@ -77,7 +81,7 @@ export class V2NativeSubagentJobs implements NativeBackgroundJobs {
     assertRequiredModel(requiredModelFromMetadata(task.nativeMetadata), `${model.providerID}/${model.id}`)
     const invocationID =
       invocation.kind === "tool" ? `${invocation.messageID}:${invocation.toolCallID}` : invocation.invocationID
-    const admissionID = `omo:${task.id}:${invocationID}`
+    const admissionID = nativeSubagentAdmissionID(task.id, invocationID)
     const previous = task.nativeAdmissionID === admissionID ? await this.domain.get({ admissionID }) : undefined
     const receipt =
       previous ??

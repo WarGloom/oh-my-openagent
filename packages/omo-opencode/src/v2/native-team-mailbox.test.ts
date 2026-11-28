@@ -1,4 +1,5 @@
-import { expect, it } from "bun:test"
+import { expect, it, test } from "bun:test"
+import { mock } from "node:test"
 import type { Hooks } from "@opencode-ai/plugin"
 import { randomUUID } from "node:crypto"
 import { mkdtemp, rm } from "node:fs/promises"
@@ -12,6 +13,7 @@ import { clearTeamSessionRegistry, registerTeamSession } from "../features/team-
 import { createTeamMailboxInjector } from "../hooks/team-mailbox-injector/hook"
 import { createMessagesTransformHandler } from "../plugin/messages-transform"
 import { createFakePluginContext } from "./fake-plugin-context"
+import { deliverNativeTeamMailbox, stopNativeTeamMailbox } from "./native-team-mailbox"
 import { installSessionHooks } from "./session-hooks"
 
 it("#given an unread team message #when V2 builds context #then it admits the message once without bridge injection", async () => {
@@ -85,5 +87,46 @@ it("#given an unread team message #when V2 builds context #then it admits the me
     await cleanup()
     clearTeamSessionRegistry()
     await rm(baseDir, { recursive: true, force: true })
+  }
+})
+
+test("#given a host admission conflict #then a scheduled retry admits the same message without another caller", async () => {
+  const fake = createFakePluginContext()
+  const conflict = Object.assign(new Error(), { _tag: "SubagentAdmission.Conflict", reason: "Child generation changed" })
+  const receipt = Promise.withResolvers<readonly string[]>()
+  const accepted: string[] = []
+  let attempts = 0
+  const context = {
+    ...fake.context,
+    session: {
+      ...fake.context.session,
+      synthetic: async ({ id }: { readonly id?: string }) => {
+        if (++attempts === 1) throw conflict
+        if (id) accepted.push(id)
+      },
+    },
+  }
+  mock.timers.enable({ apis: ["setTimeout"] })
+  try {
+    const first = await deliverNativeTeamMailbox(context, {
+      sessionID: "retry-lead",
+      source: "live",
+      identity: { teamRunId: "team", memberName: "lead" },
+      consume: async (admit) => {
+        const deferred = await admit({ sessionID: "retry-lead", id: "msg_stored", text: "stored payload" }) === false
+        const admitted = deferred ? [] : ["msg_stored"]
+        if (!deferred) receipt.resolve(admitted)
+        return { admitted, deferred }
+      },
+    })
+    expect(first).toEqual([])
+    expect(accepted).toEqual([])
+    mock.timers.tick(250)
+    expect(await receipt.promise).toEqual(["msg_stored"])
+    mock.timers.tick(30_000)
+    expect(accepted).toEqual(["msg_stored"])
+  } finally {
+    stopNativeTeamMailbox(context)
+    mock.timers.reset()
   }
 })
